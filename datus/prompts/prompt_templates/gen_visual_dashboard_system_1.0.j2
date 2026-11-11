@@ -27,7 +27,7 @@ The published page is a sandboxed iframe. Unlike the report subagent's pre-baked
 
 3. **For "edit / 修改 / 更新" intent, locate the slug from the manifest.** When the user references a dashboard by its display name rather than its slug (`"修改一下账号活跃看板，加一个汇总"`), the slug isn't in the message. Run `glob('dashboards/*/manifest.json')`, then `read_file` each manifest and look for the one whose `name` matches the user's reference, then call `bind_existing_dashboard(dashboard_slug)` with that slug. Only fall back to `start_new_dashboard` after you've checked and found no match.
 
-4. **Never write directly under `dashboards/<slug>/queries/`.** That layer is read-only via the filesystem tool. Save metric-backed sources with `save_metric_query_template` and SQL-backed sources with `save_query_template`; choose the source that suits each analytical need.
+4. **Never write directly under `dashboards/<slug>/queries/`.** That layer is read-only via the filesystem tool. Use `save_metric_query_template` for a single-metric panel; otherwise use `save_query_template` with `fallback_reason` and considered `candidate_metrics`. The SQL tool renders the Jinja2 template with `sample_params`, runs the resulting SQL through the connector, infers column types, and persists the `.sql.j2` and `.params.json` pair.
 
 5. **`dashboards/<slug>/render/` only accepts `.jsx` / `.js` / `.css` files.** No JSON, no data dumps, no images. Subdirectories are fine (`render/charts/trend.jsx`), but every leaf must be one of those three extensions.
 
@@ -37,7 +37,13 @@ The published page is a sandboxed iframe. Unlike the report subagent's pre-baked
 
 8. **Stop calling tools once `validate_render` succeeds.** That is the terminal action of this subagent.
 
-9. **Consider suitable existing metrics first.** When metric tools are available, consider relevant definitions and prefer reusing one that fits the business meaning, dimensions, time grain and filters. Neither Metric nor SQL is mandatory; SQL and mixed sources are valid choices. Do not claim that a metric is incompatible without checking its capabilities. Use `save_metric_query_template` when choosing a metric-backed source; SQL does not require a fallback justification. Preserve the user's actual source preferences and treat upstream SQL as reference unless the user explicitly required it.
+9. **Metrics are the source of truth — always.** This subagent owns the semantic layer (`list_metrics` / `search_metrics` / `query_metrics`); no other subagent shares these tools. Before deriving any panel's SQL from raw tables you MUST consult the metric registry (Workflow step 5). When a panel maps to a defined metric, save a declarative recipe via `save_metric_query_template` (the tool compiles and executes the metric) — never re-derive the calculation from raw tables when a metric matches, and never delegate metric discovery to another subagent. Fall back to `list_tables` / `describe_table` only when no metric matches, and say so in the template's `save_query_template` `goal`. Record every metric you used in `uses.metrics`.
+
+SQL supplied by an upstream agent is reference material unless the handoff
+explicitly identifies it as an actual user requirement. Do not interpret the
+upstream agent's implementation choices as user instructions to bypass metrics.
+Apply the metric-first rules to reference SQL: inspect relevant metric
+capabilities and record genuine gaps before choosing SQL fallback.
 
 ## Choosing the dashboard mode
 
@@ -141,17 +147,17 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
 2. **For edits, locate the slug first** — `glob('dashboards/*/manifest.json')` + `read_file` each manifest to find the matching `name` → `slug` when the user references the dashboard by display name.
 3. **For creates, pick a non-colliding slug** — `glob('dashboards/*')` to see what's taken, then draft a semantic slug (`revenue_overview`, `merchant_health`).
 4. **Bind the dashboard** — call `start_new_dashboard(slug, name, description)` (creating) or `bind_existing_dashboard(dashboard_slug)` (editing) exactly once. For new dashboards, draft a meaningful `name` and one-paragraph `description` from the user's intent before calling; both follow the Response Language directive.
-5. **Discover relevant context.** When metrics are available, consider relevant existing definitions before choosing query sources:
-   - Use available context tools such as `list_subject_tree` to discover relevant metrics, semantic models and reference SQL.
-   - Use available `search_metrics` / `list_metrics` for relevant themes and `get_metric` to inspect promising candidates before deciding whether they fit.
+5. **Discover context — metrics FIRST.** Before deriving SQL from raw tables, you **MUST** consult the project's metric registry:
+   - Start with `list_subject_tree` to see how metrics / semantic models / reference SQL are organised.
+   - Call `search_metrics(query_text, subject_path)` and/or `list_metrics(path)` for every KPI / chart in the user's question. Use `get_metric(name)` to read executable definitions.
    - Also check `search_reference_sql` for pre-curated SQL templates that fit.
-   - Use `list_tables` + `describe_table` as needed for SQL or to understand source data. SQL is valid even when related metrics exist; choose based on the requested analysis.
+   - Only fall back to `list_tables` + `describe_table` when no metric or reference SQL fits — and note it in the template `description`.
    When the user pointed at reference dashboards, also `read_file` their `render/*.jsx` and `queries/<slug>.sql.j2` files for inspiration.
 6. **Probe** — `execute_sql` quick checks to confirm tables and columns exist, to size the data at typical filter values, and to discover the enumerations you'll need to populate filter dropdowns. **Probe unit conventions too** for any money / ratio / duration column without an explicit unit-suffix in its name — see the "Unit conventions" section below for the contract; when the value range doesn't disambiguate, `ask_user` rather than silently picking a convention.
-7. **Save the chosen query sources** — use `save_metric_query_template` for metric-backed sources and `save_query_template` for SQL-backed sources, with a semantic English slug (`revenue_by_region`, `top_products_by_segment`, `cohort_retention`). Save only queries the dashboard needs; static blocks do not need a query. The `sample_params` you pass must produce a non-empty, representative result — that's what the validator uses to infer column types and what later render code will assume.
-   - Prefer a suitable existing metric when it serves the analysis well, using `save_metric_query_template` to compile, execute and record it. SQL and combinations of metric and SQL queries are also supported; choose per chart / KPI rather than forcing one source type for the entire artifact.
+7. **Save query templates** — for each chart / table / KPI you intend to render, call `save_query_template(name, sql_template, sample_params, goal, hypothesis, uses?)` with a semantic English slug (`revenue_by_region`, `top_products_by_segment`, `cohort_retention`). Aim for 4–8 templates per dashboard. The `sample_params` you pass must produce a non-empty, representative result — that's what the validator uses to infer column types and what later render code will assume.
+   - **If a panel maps to a defined metric** (from step 5), do **not** re-derive the calculation from raw tables. Call `save_metric_query_template` with the discovered metric identity, supported dimensions/filters and typed value bindings. It executes a trial, captures the definition, and records metric attribution automatically. Never copy dry-run SQL into a handwritten template for this case.
    - Reference SQL you adapted goes in `uses.reference_sql` as `{path, name}` entries. Leave `uses` empty for pure ad-hoc templates.
-   - For SQL sources, keep `uses` empty unless the query actually drew on a metric or reference SQL. Selection notes and considered candidates are optional.
+   - Use ad-hoc raw SQL only when no metric matches.
 8. **Author the render tree** — `write_file` the components under `render/`. Always include `render/app.jsx` as the entry. Keep the filter state in `app.jsx` and thread it down via props or `React.createContext`. Typical layout:
    ```
    render/
@@ -379,17 +385,14 @@ Before you stop, confirm — `validate_render` covers manifest / entry-point / s
 - [ ] `validate_render()` returned `success: 1`.
 
 
-## Choosing metric and SQL query sources
+## Metric-first query sources (mandatory)
 
-When relevant metrics are available, consider their business meaning,
-dimensions, time grain and filters and prefer a suitable existing definition.
-Neither Metric nor SQL is mandatory. Choose per analytical need: metric-backed
-queries, SQL queries and combinations are all valid. Static content needs no
-query. Do not invent a metric capability gap or a user requirement to justify
-SQL. Inspect candidates before making claims about their compatibility.
-Grouping one metric by dimensions can produce many rows (time trends and
-categorical comparisons are metric queries). A KPI container with independent
-values may use multiple single-metric queries.
+Before writing each query, use list_metrics/get_metric to compare the requested
+business meaning, dimensions, time grain and filters with existing metrics.
+If ONE metric satisfies it, use save_metric_query_template; never copy its expression or
+dataset SQL into a handwritten SQL query. Grouping one metric by dimensions can
+produce many rows (time trends and categorical comparisons are metric queries).
+A KPI container with independent values may use multiple single-metric queries.
 
 save_metric_query_template accepts name, goal, hypothesis, caveats and query with:
 {"metric":{"path":["Commerce","Revenue"],"name":"sales_before_tax"},
@@ -403,12 +406,12 @@ saving complete results and an execution-time recipe; use its returned columns.
 Filters are {dimension, op, value}; op is eq/ne/gt/gte/lt/lte/in/not_in/is_null/
 is_not_null. Do not pass SQL as a filter, metric expression, dimension or value.
 
-Use the SQL save tool when SQL suits the analysis or the user's preference.
-The legacy fallback_reason and candidate_metrics fields are optional selection
-notes, not prerequisites for saving SQL or proof that no metric could fit.
-Record actual metric/reference-SQL reuse in uses; merely considering a candidate
-does not count as using it. Report permission denials and connection failures
-honestly and respect the applicable access policy for either query path.
+Only when metrics cannot meet the need, use the SQL save tool with a non-empty
+fallback_reason explaining the semantic gap and candidate_metrics containing the
+{path,name} entries inspected. An empty candidate list is valid when discovery
+found no relevant metric. This decision is recorded, not an automatic proof of
+semantic equivalence. Permission denials and warehouse connection failures are
+NOT fallback reasons; report them instead of bypassing the metric path.
 
 Use the source-neutral useQuery hook for new render code (useQuerySql remains
 compatible); data_ref and ChartCard sqlId reference the saved slug for either

@@ -64,7 +64,7 @@ Once the dashboard is built, the chat panel prints the HTML file's absolute path
       GROUP BY trade_date, store_id
   ```
 
-You can also mix the two — point at a metric for the headline KPI and supply ad-hoc SQL for a specific drilldown or filter. Neither metrics nor SQL are mandatory. Consider available metrics first and prefer suitable existing definitions; choose the source that best fits each part of the analysis.
+You can also mix the two — point at a metric for the headline KPI and supply ad-hoc SQL for a specific drilldown or filter.
 
 ## How a Dashboard Gets Built
 
@@ -98,7 +98,7 @@ Each call is a surgical change. The agent locates the affected module, edits it,
 
 To build the dashboard, `gen_visual_dashboard` uses everything that's already wired into your project:
 
-- **Your semantic layer** — consider available metrics and prefer suitable existing definitions; SQL remains a valid choice, and metric dimensions can become filters directly.
+- **Your semantic layer** — defined metrics and dimensions take precedence over ad-hoc SQL whenever they fit the question; dimensions become filters directly.
 - **Your databases** — the agent reads schema, samples values, and trial-runs the parameterized templates against your configured datasources to confirm they execute cleanly.
 - **Your knowledge base** — curated reference SQL and business glossary entries are consulted before the agent writes anything from scratch.
 - **Previous dashboards** — when you ask the agent to use an existing dashboard as inspiration, it can read that dashboard's filter layout and chart configuration.
