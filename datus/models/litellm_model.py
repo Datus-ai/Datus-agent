@@ -7,6 +7,7 @@
 from collections.abc import AsyncIterator
 from contextlib import aclosing
 from copy import deepcopy
+from dataclasses import replace
 from typing import Any
 
 import litellm
@@ -171,6 +172,7 @@ class DatusLitellmModel(ObservedLitellmModel):
         *args: Any,
         **kwargs: Any,
     ) -> Any:
+        """Fetch through LiteLLM with capacity checks, local options and truncation handling."""
         if is_kimi_model(self.model):
             input = normalize_kimi_tool_replay_items(input)
         input = tool_images_as_user_input(input)
@@ -181,12 +183,23 @@ class DatusLitellmModel(ObservedLitellmModel):
                 capacity,
                 self.capacity_payload(system_instructions, input, model_settings, tools, output_schema, handoffs),
             )
+        # Transport objects are not JSON model settings. Inject them only after
+        # SDK trace configuration and capacity serialization, at the HTTP boundary.
+        if options := getattr(self, "_datus_request_options", None):
+            model_settings = replace(model_settings, extra_args={**(model_settings.extra_args or {}), **options})
         result = await super()._fetch_response(
             system_instructions, input, model_settings, tools, output_schema, handoffs, span, tracing, *args, **kwargs
         )
         if isinstance(result, tuple):
             response, stream = result
-            return response, checked_chat_completion_stream(stream)
+            on_usage = None
+            if getattr(self, "_datus_capture_usage", False):
+
+                def on_usage(usage):
+                    """Retain provider usage for the isolated text-completion caller."""
+                    self._datus_reported_usage = usage
+
+            return response, checked_chat_completion_stream(stream, on_usage=on_usage)
         check_chat_completion(result)
         return result
 

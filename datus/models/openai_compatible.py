@@ -284,6 +284,7 @@ class OpenAICompatibleModel(LLMBaseModel):
     """
 
     def __init__(self, model_config: ModelConfig, **kwargs):
+        """Initialize provider settings, request capacity and optional process-level TLS configuration."""
         super().__init__(model_config, **kwargs)
 
         self.model_config = model_config
@@ -323,7 +324,9 @@ class OpenAICompatibleModel(LLMBaseModel):
             # litellm path only accepts a CA bundle via a file path, so spill inline
             # PEM content to a temp file; bool/path reuse the already-normalized
             # self.ssl_verify (avoids a second normalize + duplicate warning).
-            if is_pem_cert_content(ssl_verify_cfg):
+            if not kwargs.get("configure_ssl_env", True):
+                pass
+            elif is_pem_cert_content(ssl_verify_cfg):
                 os.environ["SSL_VERIFY"] = materialize_ca_bundle(ssl_verify_cfg)
             else:
                 os.environ["SSL_VERIFY"] = ssl_verify_to_env(self.ssl_verify)
@@ -563,6 +566,14 @@ class OpenAICompatibleModel(LLMBaseModel):
         applies its own defaults for both parameters.
         """
         return getattr(self.litellm_adapter, "provider", "") in (LLMProvider.CLAUDE, LLMProvider.ANTHROPIC)
+
+    async def complete_text(
+        self, prompt: str, *, instruction: str = "", max_tokens: Optional[int] = None, timeout: float = 60
+    ) -> Dict[str, Any]:
+        """One tool-less call using chat's model, settings and response adapters."""
+        from datus.models.text_completion import complete_text
+
+        return await complete_text(self, prompt, instruction=instruction, max_tokens=max_tokens, timeout=timeout)
 
     def generate(self, prompt: Any, enable_thinking: bool | None = None, **kwargs) -> str:
         """
