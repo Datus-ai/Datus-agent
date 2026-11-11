@@ -75,7 +75,8 @@ def test_list_subject_tree_description_does_not_name_disabled_context_tools():
     subject_tree_tool = next(tool for tool in available_tools if tool.name == "list_subject_tree")
 
     assert tool_names == {"list_subject_tree", "search_metrics"}
-    assert "enabled context retrieval tools" in subject_tree_tool.description
+    assert "unknown subject path" in subject_tree_tool.description
+    assert "does not require this lookup" in subject_tree_tool.description
     assert "get_reference_sql" not in subject_tree_tool.description
 
 
