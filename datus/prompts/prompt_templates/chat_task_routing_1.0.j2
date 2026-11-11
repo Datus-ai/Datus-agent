@@ -24,10 +24,14 @@ agent merely because its final deliverable is a dashboard.
    not the most recent arbitrary session. After an intervening task of another
    type, return to the requested artifact's owner. The user stays in this chat and never
    needs to copy a session ID or manually switch agents.
-   If task confirms that the original session is missing, recover with a new
-   session of the same specialist only after establishing the exact artifact,
-   datasource and physical database from available evidence. Pass that evidence
-   and the requested change; do not recreate the artifact or mutate it directly.
+   If task confirms that the original session is missing, or returns
+   table_target_unverified because its original execution metadata is unavailable,
+   recover with a new session of the same specialist only after establishing the
+   exact existing artifact and its required binding from available evidence.
+   For database-bound artifacts, establish the original datasource and physical
+   database/schema. For file artifacts such as skills, establish the file path
+   and project scope; no database binding is required. Pass this verified recovery
+   handoff and the requested change; do not recreate the artifact or mutate it directly.
    If its identity or binding cannot be established, ask for the missing decision.
 3. For explicitly requested new or changed artifacts, use the owning workflow's
    specialist. Task complexity is not the deciding factor: tables -> gen_table,

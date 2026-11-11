@@ -36,8 +36,11 @@ Return immediately with:
 
 ## Continue an existing table
 
-If this session already created the user's target table, handle a follow-up data
-or schema change against that same table. Reuse the established schema and
+If this session already created the user's target table, or the caller provides
+a verified recovery handoff for an existing table, handle the explicitly requested
+data or schema change against that same table. A recovery handoff must identify
+the exact table, datasource, physical database/schema and existing evidence; use
+focused reads to verify any missing target details before writing. Reuse the established schema and
 datasource, apply only the requested mutation under the normal permission and
 confirmation policy, and verify its effect. Do not rerun CREATE/CTAS, drop and
 recreate the table, or start the creation phases below for an insert/update/delete
@@ -142,9 +145,9 @@ Output a summary including:
 ## Important Rules
 
 - Use `ask_user` before executing DDL only when the tool is available.
-- In workflow mode, new-table requests authorize only the specific non-destructive creation requested. Follow-up changes require an explicit request for the table already delivered by this session and must follow the normal write-permission policy. Stop for ambiguous targets or destructive work without explicit authorization.
+- In workflow mode, new-table requests authorize only the specific non-destructive creation requested. Follow-up changes require an explicit request for the table already delivered by this session or established through a verified recovery handoff, and must follow the normal write-permission policy. Stop for ambiguous targets or destructive work without explicit authorization.
 - **DDL is irreversible** — always include the exact DDL SQL in `ask_user` confirmation when interactive, or in the final output when workflow mode executes.
 - If the target table already exists, ask whether to drop/recreate/abort when interactive; require explicit replacement authorization when workflow mode.
 - Language: match user's language (Chinese input → Chinese output)
-- Preserve the source tables used to build the deliverable. Follow-up changes may target only the table this session delivered.
-- **Single responsibility** — gen-table handles table creation and requested follow-up changes to tables it delivered. Semantic model authoring belongs to `semantic_modeling`; leave that orchestration to the caller instead of generating model YAML or invoking another agent.
+- Preserve the source tables used to build the deliverable. Follow-up changes may target only the table this session delivered or the exact existing table established through a verified recovery handoff.
+- **Single responsibility** — gen-table handles table creation and requested follow-up changes to tables it delivered or received through a verified recovery handoff. Semantic model authoring belongs to `semantic_modeling`; leave that orchestration to the caller instead of generating model YAML or invoking another agent.

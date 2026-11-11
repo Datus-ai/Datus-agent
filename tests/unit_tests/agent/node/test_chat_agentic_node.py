@@ -42,6 +42,72 @@ METRIC_TOOL_NAMES = {"list_metrics", "get_metric", "get_dataset", "query_metrics
 
 
 class TestChatMetricTools:
+    @pytest.mark.asyncio
+    async def test_metric_scope_uses_runtime_datasource(self, real_agent_config, mock_llm_create, tmp_path):
+        import duckdb
+
+        from datus.configuration.agent_config import DbConfig
+        from datus.storage.metric.store import MetricRAG
+        from datus.utils.query_result_text import parse_query_result_text
+
+        fixtures = Path(__file__).resolve().parents[3] / "data/semantic_models/attribution"
+        for datasource, factor, subject in (("scope_a", 1, "Allowed"), ("scope_b", 2, "Hidden")):
+            database = tmp_path / f"{datasource}.duckdb"
+            with duckdb.connect(str(database)) as connection:
+                connection.execute((fixtures / "seed.sql").read_text())
+                connection.execute(f"UPDATE ledger SET x = x * {factor}, y = y * {factor}")
+            real_agent_config.services.datasources[datasource] = DbConfig(type="duckdb", uri=str(database))
+            models = real_agent_config.path_manager.semantic_model_path(datasource)
+            models.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(fixtures / "model.yaml", models / "model.yaml")
+            MetricRAG(real_agent_config, datasource_id=datasource).store_batch(
+                [
+                    {
+                        "name": "net",
+                        "semantic_model_name": "attribution_model",
+                        "subject_path": ["Finance", subject],
+                        "description": "Net amount in the configured business subject",
+                    }
+                ]
+            )
+        real_agent_config.current_datasource = "scope_a"
+        real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "Finance.Allowed"}
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        real_agent_config.set_runtime_db_context({"datasource": "scope_b"})
+        tools = {tool.name: tool for tool in node.tools}
+
+        catalog = await tools["list_metrics"].on_invoke_tool(None, "{}")
+        assert catalog["success"] == 1
+        assert "net" not in catalog["result"]
+        for name, arguments in (
+            ("get_metric", {"name": "net"}),
+            ("query_metrics", {"metrics": ["net"]}),
+            (
+                "attribution_analyze",
+                {
+                    "metric_name": "net",
+                    "candidate_dimensions": ["ledger.cat"],
+                    "baseline_start": "2024-01-01",
+                    "baseline_end": "2024-02-01",
+                    "current_start": "2024-02-01",
+                    "current_end": "2024-03-01",
+                },
+            ),
+        ):
+            result = await tools[name].on_invoke_tool(None, json.dumps(arguments))
+            assert result["success"] == 0
+            assert "outside this agent's configured metric scope" in result["error"]
+        assert node.semantic_tools.metric_rag.datasource_id == "scope_b"
+        assert real_agent_config.current_datasource == "scope_a"
+
+        real_agent_config.agentic_nodes["chat"].pop("scoped_context")
+        result = await tools["query_metrics"].on_invoke_tool(
+            None, json.dumps({"metrics": ["net"], "time_start": "2024-01-01", "time_end": "2024-02-01"})
+        )
+        assert result["success"] == 1
+        parsed = parse_query_result_text(result["result"])
+        assert float(parsed.csv.splitlines()[1]) == 240.0
+
     def test_session_snapshot_tracks_tools_and_replays_when_unchanged(self, real_agent_config, mock_llm_create):
         node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
         node.session_id = "chat_session_metric_tools_snapshot"
@@ -984,6 +1050,9 @@ class TestChatAgenticNodeSystemPrompt:
         task_description = node.sub_agent_task_tool.available_tools()[0].description
 
         assert "Chat routing priority" in prompt
+        assert "table_target_unverified" in prompt
+        assert "For file artifacts such as skills" in prompt
+        assert "no database binding is required" in prompt
         assert "using this chat's available tools" in prompt
         assert "Missing metrics alone" in prompt
         assert "only when the user explicitly requests that work" in prompt

@@ -699,15 +699,16 @@ class SemanticTools:
         raw = self.agent_config.sub_agent_config(self.sub_agent_name)
         config = SubAgentConfig.model_validate(raw) if raw else None
         metrics = config.scoped_context.metrics if config and config.scoped_context else None
-        key = (self.agent_config.current_datasource, metrics, config.scoped_kb_path) if metrics else None
+        datasource = self._runtime_db_context().get("datasource") or self.agent_config.current_datasource
+        key = (datasource, metrics, config.scoped_kb_path if config else None)
         if getattr(self, "_metric_scope_key", None) != key:
             # RAG filters are constructed once; do not reuse a formerly unscoped
             # projection after a host narrows the agent's scope.
-            self.metric_rag = MetricRAG(self.agent_config, self.sub_agent_name)
+            self.metric_rag = MetricRAG(self.agent_config, self.sub_agent_name, datasource_id=datasource)
             self._metric_scope_key = key
-        if key is not None and not self.metric_rag.refresh_metric_scope():
+        if metrics and not self.metric_rag.refresh_metric_scope():
             raise ValueError("Configured metric scope does not resolve to an existing subject.")
-        return key is not None
+        return bool(metrics)
 
     def _check_metric_scope(self, names: List[str]) -> Optional[FuncToolResult]:
         try:
