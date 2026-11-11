@@ -19,12 +19,14 @@ pytestmark = pytest.mark.ci
 
 
 def sse(events):
+    """Encode provider events as an in-memory server-sent event response."""
     return "".join(
         (f"event: {event['type']}\n" if "type" in event else "") + f"data: {json.dumps(event)}\n\n" for event in events
     )
 
 
 def anthropic_events(text, reason):
+    """Build an Anthropic stream with input and output usage in separate events."""
     return [
         {
             "type": "message_start",
@@ -51,11 +53,13 @@ def anthropic_events(text, reason):
 
 @pytest.fixture
 def provider_http(monkeypatch):
+    """Replace network I/O while exercising the real SDK and LiteLLM serialization."""
     requests, clients, tls = [], [], []
     behavior = {"reason": "stop", "status": 200}
     monkeypatch.setattr(openai_compatible, "_load_model_specs", lambda: {})
 
     def handle(request):
+        """Return a provider-shaped stream or the requested HTTP failure."""
         body = json.loads(request.content)
         requests.append((request, body))
         if behavior["status"] != 200:
@@ -146,6 +150,7 @@ def provider_http(monkeypatch):
         return httpx.Response(200, headers={"content-type": "text/event-stream"}, text=sse(events))
 
     def create_client(self, **kwargs):
+        """Record each client's TLS setting and route its requests to the fake provider."""
         tls.append(kwargs["ssl_verify"])
         client = httpx.AsyncClient(
             transport=httpx.MockTransport(handle), headers={"x-test-transport": str(len(clients))}
@@ -187,6 +192,7 @@ def provider_http(monkeypatch):
 async def test_single_text_call_uses_chat_routing_without_transport_fields_in_json(
     provider_http, kind, name, base_url, route
 ):
+    """Exercise every provider's route, output cap, usage and transport isolation."""
     requests, clients, tls, _ = provider_http
     before = dict(os.environ)
     model = LLMBaseModel.from_config(
@@ -208,7 +214,7 @@ async def test_single_text_call_uses_chat_routing_without_transport_fields_in_js
     assert requests[0][0].headers["x-test-transport"] == "0"
     for client in clients[1:]:
         await client.aclose()
-    assert tls[0] is True
+    assert tls[0] is None
     assert dict(os.environ) == before
     assert body.get("stream") is (None if kind == "gemini" else True)
     token_settings = body.get("generationConfig", body)
@@ -219,6 +225,7 @@ async def test_single_text_call_uses_chat_routing_without_transport_fields_in_js
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reason,status", [("length", 200), ("stop", 400), ("stop", 500)])
 async def test_failure_keeps_usage_and_never_retries(provider_http, reason, status):
+    """Preserve truncation usage and avoid retrying truncation or provider HTTP errors."""
     requests, clients, _, behavior = provider_http
     behavior.update(reason=reason, status=status)
     model = LLMBaseModel.from_config(
@@ -240,6 +247,7 @@ async def test_failure_keeps_usage_and_never_retries(provider_http, reason, stat
 
 @pytest.mark.asyncio
 async def test_anthropic_sampling_and_tls_are_request_local(provider_http):
+    """Keep simultaneous Anthropic requests' TLS and sampling settings independent."""
     import asyncio
 
     requests, clients, tls, _ = provider_http
@@ -269,7 +277,59 @@ async def test_anthropic_sampling_and_tls_are_request_local(provider_http):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "request_verify,environment_verify,expected_verify",
+    [(None, "false", False), (None, "true", True), (True, "false", True), (False, "true", False)],
+)
+async def test_connection_retry_preserves_tls_configuration(
+    monkeypatch, request_verify, environment_verify, expected_verify
+):
+    """Keep explicit TLS settings on connection retries and inherit env only when unset."""
+    import ssl
+
+    attempts = []
+    monkeypatch.setenv("SSL_VERIFY", environment_verify)
+    monkeypatch.setattr(openai_compatible, "_load_model_specs", lambda: {})
+    before = dict(os.environ)
+
+    def create_transport(**kwargs):
+        """Observe the real resolved TLS policy while replacing only network I/O."""
+        context = kwargs["ssl_context"]
+        verify = context.verify_mode != ssl.CERT_NONE if context is not None else kwargs["ssl_verify"]
+
+        def handle(request):
+            """Fail the first connection so LiteLLM must recreate its HTTP client."""
+            attempts.append(verify)
+            if len(attempts) == 1:
+                raise httpx.ConnectError("connection failed", request=request)
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text=sse(anthropic_events('{"summary":"ok"}', "stop")),
+            )
+
+        return httpx.MockTransport(handle)
+
+    monkeypatch.setattr(AsyncHTTPHandler, "_create_async_transport", staticmethod(create_transport))
+    model = LLMBaseModel.from_config(
+        ModelConfig(
+            type="claude",
+            model="claude-opus-4-7",
+            api_key="dummy",
+            base_url="https://api.anthropic.com",
+            ssl_verify=request_verify,
+        ),
+        configure_ssl_env=False,
+    )
+    result = await model.complete_text("facts", max_tokens=4000, timeout=5)
+    assert result["content"] == '{"summary":"ok"}'
+    assert attempts == [expected_verify, expected_verify]
+    assert dict(os.environ) == before
+
+
+@pytest.mark.asyncio
 async def test_inline_ca_is_trusted_without_changing_environment(provider_http):
+    """Trust a configured PEM certificate without changing process-wide TLS settings."""
     import datetime
     import ssl
 
@@ -313,6 +373,7 @@ async def test_inline_ca_is_trusted_without_changing_environment(provider_http):
 
 @pytest.mark.asyncio
 async def test_missing_provider_usage_is_not_replaced_with_estimated_tokens(provider_http):
+    """Reject SDK estimates when the provider does not report actual token usage."""
     requests, clients, _, behavior = provider_http
     behavior["omit_usage"] = True
     model = LLMBaseModel.from_config(

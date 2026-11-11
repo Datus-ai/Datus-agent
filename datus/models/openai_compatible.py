@@ -284,6 +284,7 @@ class OpenAICompatibleModel(LLMBaseModel):
     """
 
     def __init__(self, model_config: ModelConfig, **kwargs):
+        """Initialize provider settings, request capacity and optional process-level TLS configuration."""
         super().__init__(model_config, **kwargs)
 
         self.model_config = model_config

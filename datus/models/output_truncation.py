@@ -48,6 +48,7 @@ def check_chat_completion(response: Any) -> None:
 
 
 def _received_chat_stream_usage(stream: Any, fallback: Any) -> Any:
+    """Merge cumulative provider usage retained across stream chunks without estimating it."""
     # LiteLLM 1.100.1 strips usage from provider chunks and may synthesize an
     # estimate that omits reasoning tokens. Its retained chunks still contain
     # the reported usage, including usage embedded in the finish chunk (GLM).

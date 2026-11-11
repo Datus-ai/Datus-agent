@@ -7,6 +7,7 @@ import asyncio
 from contextlib import aclosing
 from typing import Any
 
+import httpx
 from agents.models.interface import ModelTracing
 from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
 from openai import AsyncOpenAI
@@ -15,16 +16,26 @@ from datus.models.observed_model import ObservedResponsesModel
 from datus.utils.ssl_utils import resolve_ssl_verify_for_httpx
 
 
+class _RequestLocalHTTPHandler(AsyncHTTPHandler):
+    """Retain request-local TLS settings when LiteLLM recreates a connection."""
+
+    def create_client(self, **kwargs: Any) -> httpx.AsyncClient:
+        """Use the original verification setting for initial and retry clients."""
+        kwargs["ssl_verify"] = self.ssl_verify
+        return super().create_client(**kwargs)
+
+
 async def complete_text(
     model: Any, prompt: str, *, instruction: str, max_tokens: int | None, timeout: float
 ) -> dict[str, Any]:
+    """Generate tool-less text with chat's model routing and provider-reported usage."""
     # Reuse chat's provider routing, sampling/reasoning rules, headers and capacity
     # checks. No Runner, sessions, tools, hooks, tracing or application retries.
     agent = model._build_agent(instruction, str, True, {}, [], max_tokens=max_tokens)
     sdk_model = agent.model
     verify = model.model_config.ssl_verify
-    verify = resolve_ssl_verify_for_httpx(verify) if verify is not None else True
-    transport = AsyncHTTPHandler(timeout=timeout, ssl_verify=verify)
+    verify = resolve_ssl_verify_for_httpx(verify) if verify is not None else None
+    transport = _RequestLocalHTTPHandler(timeout=timeout, ssl_verify=verify)
     try:
         settings = agent.model_settings
         if isinstance(sdk_model, ObservedResponsesModel):
