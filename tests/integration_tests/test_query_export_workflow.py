@@ -18,7 +18,8 @@ from datus.tools.func_tool.database import DBFuncTool
 pytestmark = pytest.mark.integration
 
 
-def test_excel_batches_export_and_reconcile_114444_ids(tmp_path):
+@pytest.mark.parametrize("streaming", [False, True])
+def test_excel_batches_export_and_reconcile_114444_ids(tmp_path, streaming):
     count = 114444
     ids = [f"{i:019d}" for i in range(count)]
     input_path = tmp_path / "orders.xlsx"
@@ -46,6 +47,7 @@ def test_excel_batches_export_and_reconcile_114444_ids(tmp_path):
     assert len(manifest) == 23
 
     connector = DuckdbConnector(DuckDBConfig(db_path=str(tmp_path / "warehouse.duckdb")))
+    connector.supports_streaming_read = streaming
     try:
         created = connector.execute_ddl(
             "CREATE TABLE order_log AS "
@@ -64,6 +66,7 @@ def test_excel_batches_export_and_reconcile_114444_ids(tmp_path):
         for batch in manifest:
             result = tool.export_query(batch["sql"], output_file=batch["file"])
             assert result.success == 1, result.error
+            assert result.result["read_mode"] == ("streaming" if streaming else "buffered")
             wire_bytes.append(len(json.dumps(result.model_dump()).encode()))
             assert wire_bytes[-1] <= 16384
 

@@ -61,6 +61,7 @@ def bound_data_tool_result(result):
             "deliverable_target",
             "scope",
             "query_rewritten",
+            "read_mode",
             "executed_sql_sha256",
             "diagnostic_ref",
             "diagnostic_encoding",

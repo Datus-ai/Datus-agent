@@ -28,6 +28,10 @@ The adjacent `<filename>.meta.json` contains the same completion metadata.
 `complete=true` means the authorized query was fully consumed, not that a larger
 multi-query task is complete. Policy changes to row limits are refused rather
 than silently publishing a truncated result as complete.
+`read_mode` reports `streaming` or `buffered`. Streaming is preferred when both
+the adapter and result-policy hooks support it. Otherwise the tool fetches the
+complete query result into Agent memory, applies whole-result policies, and
+writes bounded batches. Neither mode returns query rows to the model.
 
 ## Excel matching workflow
 
@@ -63,13 +67,16 @@ agent:
 ```
 
 These limits apply to file exports during source consumption and staging,
-before output publication. Failed/cancelled exports do not publish a successful
+before output publication. For buffered reads, source row/byte limits can only
+be checked after the full result arrives; they do not cap the driver's peak
+memory allocation. Failed/cancelled exports do not publish a successful
 file. SDK export calls wait asynchronously before entering a worker thread,
 with at most two operations per event loop and two readers per connector.
 Export tool waits are bounded at 300 seconds. A timed-out export keeps its slot until its
 worker exits, so repeated attempts cannot fill the thread pool. A driver
 operation may outlive the wait; cancellation prevents late file publication
-without claiming the database was killed. `batch_rows` bounds source/Arrow batches.
+without claiming the database was killed. `batch_rows` bounds source batches in
+streaming mode and file-staging batches in both modes.
 
 SQL-file reads, Arrow staging, export publication, compressed diagnostics and
 cleanup all use pinned project directory descriptors. File opens refuse
@@ -80,16 +87,25 @@ completion reference. Project-local file links remain supported. This secure
 IO path requires POSIX directory descriptors (Linux/macOS); other platforms
 fail closed instead of falling back to path-only checks.
 
-Adapters must implement `supports_streaming_read` and `iter_query_batches`.
+Adapters can implement `supports_streaming_read` and `iter_query_batches` to
+enable streaming. Without this capability, exports use the existing
+`execute_query(..., result_format="arrow")` API and buffer the full result.
 SQLAlchemy-backed adapters require an unbuffered driver (or a native cursor such
 as SQLite/Oracle); DuckDB uses Arrow batches. Abandoned SQLAlchemy streams
 invalidate their connection before cursor cleanup so MySQL cannot drain unread rows.
 Staging reconciles null-only batch schemas on disk without a full-result DataFrame.
-Plugins with post-read result hooks must declare `supports_batch_results=True`
-or implement `after_read_batch`. Unknown whole-result policies fail closed.
-Roll out the updated Agent, streaming adapters and policy plugin together;
-SQLAlchemy streaming uses `datus-db-core>=0.1.11` and
-`datus-sqlalchemy>=0.1.13`. Existing Backend/SaaS download behavior and limits
+Plugins with post-read result hooks can declare `supports_batch_results=True`
+or implement `after_read_batch` to enable streaming. Whole-result-only policies
+select buffered mode and run once over the complete result before file staging.
+Batch-only hooks are also enforced on the buffered result, preserving plugin
+order. Policy denials, result limits and query rewrites are never bypassed.
+The execution mode is selected before querying; a failed stream is not replayed
+using a buffered read.
+
+Adapter and SQL-policy upgrades are optional streaming improvements rather than
+requirements for exporting files. SQLAlchemy streaming uses
+`datus-db-core>=0.1.11` and `datus-sqlalchemy>=0.1.13`.
+Existing Backend/SaaS download behavior and limits
 are preserved. This change does not alter deployment pins.
 
 ## Existing transfer protections

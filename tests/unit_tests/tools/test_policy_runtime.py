@@ -10,6 +10,37 @@ from datus.tools.policy_runtime import PolicyRuntime
 from datus.utils.exceptions import DatusException, ErrorCode
 
 
+@pytest.mark.parametrize("include_batch_hooks", [False, True])
+def test_complete_result_hooks_preserve_order_and_only_opt_in_to_batch_hooks(include_batch_hooks):
+    runtime = PolicyRuntime(None)
+    calls = []
+
+    def batch_hook(result, **kwargs):
+        calls.append("batch")
+        return SimpleNamespace(allowed=True, result=[*result, "masked"], applied_policies=["mask"])
+
+    def whole_hook(result, **kwargs):
+        calls.append("whole")
+        return SimpleNamespace(allowed=True, result=[*result, "authorized"], applied_policies=["scope"])
+
+    runtime._runtimes = [
+        ("batch-only", SimpleNamespace(after_read_batch=batch_hook)),
+        ("whole", SimpleNamespace(after_read_result=whole_hook)),
+    ]
+    assert runtime.supports_streaming_results is False
+    result = runtime.after_read_result(
+        [],
+        sql="SELECT 1",
+        datasource="warehouse",
+        dialect="duckdb",
+        policy_context={},
+        include_batch_hooks=include_batch_hooks,
+    )
+    assert calls == (["batch", "whole"] if include_batch_hooks else ["whole"])
+    assert result.result == (["masked", "authorized"] if include_batch_hooks else ["authorized"])
+    assert result.applied_policies == (["mask", "scope"] if include_batch_hooks else ["scope"])
+
+
 class FakeRuntime:
     def __init__(
         self,

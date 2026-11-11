@@ -13,6 +13,7 @@ import pytest
 from datus.tools.db_tools.config import DuckDBConfig
 from datus.tools.db_tools.db_manager import DBManager
 from datus.tools.db_tools.duckdb_connector import DuckdbConnector
+from datus.tools.db_tools.query_spool import QuerySpool
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.policy_runtime import PolicyRuntime
 from datus.tools.read_observer import observe_reads
@@ -85,6 +86,7 @@ def test_complete_export_preserves_ids_and_outgrows_display_compression(environm
     assert result.success == 1, result.error
     assert result.result["row_count"] == 31
     assert result.result["complete"] is True
+    assert result.result["read_mode"] == "streaming"
     path = root / result.result["file"]
     frame = pd.read_csv(path, dtype={"id": str}) if suffix == "csv" else pd.read_parquet(path)
     assert frame["id"].tolist() == ["0012345678901234567"] * 31
@@ -120,6 +122,144 @@ def test_inline_sql_ending_in_sql_table_name_is_exported(environment, sql):
     assert result.result["complete"] is True
     assert result.result["row_count"] == 1
     assert pq.read_table(root / result.result["file"]).to_pylist() == [{"id": "0012345678901234567"}]
+
+
+@pytest.mark.parametrize("suffix", ["csv", "parquet"])
+@pytest.mark.parametrize("empty", [False, True])
+def test_non_streaming_sqlite_exports_complete_results_in_batches(tmp_path, monkeypatch, suffix, empty):
+    from datus.tools.db_tools.config import SQLiteConfig
+    from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+
+    source = SQLiteConnector(SQLiteConfig(db_path=str(tmp_path / "source.sqlite")))
+    try:
+        tool = DBFuncTool(source, filesystem_root=str(tmp_path))
+        tool.agent_config = SimpleNamespace(bulk_query={"batch_rows": 2}, policy_context={}, sql_read_only=True)
+        query = "SELECT '0012345678901234567' AS id, 1 AS n UNION ALL SELECT '1721599112147287481', 2"
+        query += " UNION ALL SELECT '0000000000000000003', 3"
+        if empty:
+            query = f"SELECT * FROM ({query}) WHERE 0"
+        read = Mock(wraps=source.execute_query)
+        monkeypatch.setattr(source, "execute_query", read)
+        batches = []
+        original_add = QuerySpool.add
+
+        def stage(spool, table):
+            batches.append(table.num_rows)
+            return original_add(spool, table)
+
+        monkeypatch.setattr(QuerySpool, "add", stage)
+        result = tool.export_query(query, f"exports/result.{suffix}")
+        assert result.success == 1, result.error
+        assert result.result["read_mode"] == "buffered"
+        assert result.result["row_count"] == (0 if empty else 3)
+        assert result.result["complete"] is True
+        assert batches == ([0] if empty else [2, 1])
+        read.assert_called_once_with(query, result_format="arrow")
+        path = tmp_path / result.result["file"]
+        frame = pd.read_parquet(path) if suffix == "parquet" else pd.read_csv(path, dtype={"id": str})
+        assert frame.columns.tolist() == ["id", "n"]
+        assert frame["id"].tolist() == (
+            [] if empty else ["0012345678901234567", "1721599112147287481", "0000000000000000003"]
+        )
+        assert json.loads(path.with_name(path.name + ".meta.json").read_text()) == result.result
+        assert len(json.dumps(result.model_dump()).encode()) <= MAX_RESULT_BYTES
+    finally:
+        source.close()
+
+
+@pytest.mark.parametrize("limit", ["max_rows", "max_bytes", "max_batch_bytes"])
+def test_buffered_export_preserves_limits_and_never_publishes_partial_files(environment, monkeypatch, limit):
+    tool, source, _, root = environment
+    monkeypatch.setattr(source, "supports_streaming_read", False)
+    tool.agent_config.bulk_query[limit] = 1
+    read = Mock(wraps=source.execute_query)
+    stream = Mock(side_effect=AssertionError("Non-streaming adapter must not use the stream"))
+    monkeypatch.setattr(source, "execute_query", read)
+    monkeypatch.setattr(source, "iter_query_batches", stream)
+
+    result = tool.export_query("SELECT i AS id FROM range(3) t(i)", "exports/limited.parquet")
+
+    assert result.success == 0
+    assert limit in result.error
+    assert read.call_count == 1
+    stream.assert_not_called()
+    assert not (root / "exports/limited.parquet").exists()
+    assert not (root / "exports/limited.parquet.meta.json").exists()
+    assert not list((root / "exports").glob(".query-*"))
+
+
+def test_streaming_failure_never_replays_the_query_with_buffered_reads(environment, monkeypatch):
+    tool, source, _, root = environment
+    read = Mock(side_effect=AssertionError("A failed stream must not be replayed"))
+    monkeypatch.setattr(source, "execute_query", read)
+
+    def failing_stream(*args, **kwargs):
+        yield pa.table({"id": [1]})
+        raise NotImplementedError("Driver stream failed after execution began")
+
+    monkeypatch.setattr(source, "iter_query_batches", failing_stream)
+    result = tool.export_query("SELECT 1 AS id", "exports/failed.parquet")
+    assert result.success == 0
+    assert "Driver stream failed" in result.error
+    read.assert_not_called()
+    assert not (root / "exports/failed.parquet").exists()
+
+
+def test_buffered_source_failure_is_bounded_and_not_retried(environment, monkeypatch):
+    from datus.schemas.node_models import ExecuteSQLResult
+
+    tool, source, _, root = environment
+    monkeypatch.setattr(source, "supports_streaming_read", False)
+    read = Mock(return_value=ExecuteSQLResult(success=False, error="driver failed [SQL: " + "data" * 100_000))
+    monkeypatch.setattr(source, "execute_query", read)
+    result = tool.export_query("SELECT 1 AS id", "exports/failed.parquet")
+    assert result.success == 0
+    assert result.error == "driver failed"
+    assert read.call_count == 1
+    assert len(json.dumps(result.model_dump()).encode()) <= MAX_RESULT_BYTES
+    assert not (root / "exports/failed.parquet").exists()
+
+
+@pytest.mark.parametrize("phase", ["before_sql_read", "after_read_result"])
+def test_buffered_export_keeps_policy_denials_authoritative(environment, monkeypatch, phase):
+    tool, source, _, root = environment
+    monkeypatch.setattr(source, "supports_streaming_read", False)
+    runtime = PolicyRuntime(None)
+    denied = Mock(return_value=SimpleNamespace(allowed=False, reason="Policy denied export"))
+    runtime._runtimes = [("deny", SimpleNamespace(**{phase: denied}))]
+    monkeypatch.setattr("datus.tools.func_tool.bulk_query_tools.PolicyRuntime", lambda config: runtime)
+    read = Mock(wraps=source.execute_query)
+    monkeypatch.setattr(source, "execute_query", read)
+
+    result = tool.export_query("SELECT 1 AS id", "exports/denied.parquet")
+
+    assert result.success == 0
+    assert "Policy denied export" in result.error
+    assert denied.call_count == 1
+    assert read.call_count == (0 if phase == "before_sql_read" else 1)
+    assert not (root / "exports/denied.parquet").exists()
+
+
+def test_buffered_policy_result_cannot_exceed_export_limits(environment, monkeypatch):
+    tool, source, _, root = environment
+    monkeypatch.setattr(source, "supports_streaming_read", False)
+    tool.agent_config.bulk_query["max_rows"] = 3
+    runtime = PolicyRuntime(None)
+    runtime._runtimes = [
+        (
+            "expand",
+            SimpleNamespace(
+                after_read_result=lambda table, **kwargs: SimpleNamespace(
+                    allowed=True, result=pa.concat_tables([table] * 4)
+                )
+            ),
+        )
+    ]
+    monkeypatch.setattr("datus.tools.func_tool.bulk_query_tools.PolicyRuntime", lambda config: runtime)
+    result = tool.export_query("SELECT 1 AS id", "exports/expanded.parquet")
+    assert result.success == 0
+    assert "max_rows/max_bytes" in result.error
+    assert not (root / "exports/expanded.parquet").exists()
 
 
 def test_source_failure_and_limits_never_publish_partial_files(environment, monkeypatch):
@@ -367,8 +507,10 @@ def test_read_only_agent_can_export_but_cannot_transfer(environment):
     assert tool.transfer_query_result("SELECT 1 AS id", "source", "orders", "target").success == 0
 
 
-def test_result_policy_masking_and_observation_apply_to_export(environment, monkeypatch):
-    tool, _, _, root = environment
+@pytest.mark.parametrize("streaming", [False, True])
+def test_result_policy_masking_and_observation_apply_to_export(environment, monkeypatch, streaming):
+    tool, source, _, root = environment
+    monkeypatch.setattr(source, "supports_streaming_read", streaming)
     runtime = PolicyRuntime(None)
 
     class Mask:
@@ -387,15 +529,28 @@ def test_result_policy_masking_and_observation_apply_to_export(environment, monk
     assert [item.phase for item in observations] == ["before_sql", "after_sql"]
 
 
-def test_unknown_whole_result_policy_is_rejected_before_read(environment, monkeypatch):
-    tool, source, _, _ = environment
+@pytest.mark.parametrize("streaming", [False, True])
+def test_whole_result_policy_selects_buffered_reads_and_runs_once(environment, monkeypatch, streaming):
+    tool, source, _, root = environment
+    monkeypatch.setattr(source, "supports_streaming_read", streaming)
     runtime = PolicyRuntime(None)
-    runtime._runtimes = [("whole", SimpleNamespace(after_read_result=lambda *a, **k: None))]
+    sizes = []
+
+    def whole_result(table, **kwargs):
+        sizes.append(table.num_rows)
+        return SimpleNamespace(allowed=True, result=table.slice(2, 1), applied_policies=["whole-result"])
+
+    runtime._runtimes = [("whole", SimpleNamespace(after_read_result=whole_result))]
     monkeypatch.setattr("datus.tools.func_tool.bulk_query_tools.PolicyRuntime", lambda config: runtime)
-    result = tool.export_query("SELECT 1 AS id")
-    assert result.success == 0
-    assert "does not support streaming" in result.error
-    assert source.connection is None
+    stream = Mock(side_effect=AssertionError("Whole-result policies cannot be run on a stream"))
+    monkeypatch.setattr(source, "iter_query_batches", stream)
+    result = tool.export_query("SELECT i AS id FROM range(5) t(i)", "whole.parquet")
+    assert result.success == 1, result.error
+    assert result.result["read_mode"] == "buffered"
+    assert result.result["applied_policies"] == ["whole-result"]
+    assert sizes == [5]
+    stream.assert_not_called()
+    assert pq.read_table(root / "whole.parquet").to_pylist() == [{"id": 2}]
 
 
 def test_budget_preserves_valid_json_for_multibyte_driver_errors():
@@ -501,12 +656,14 @@ def test_export_uploads_guard_uses_the_selected_database(routed_environment):
 
 
 @pytest.mark.parametrize("sql_file", [False, True])
+@pytest.mark.parametrize("streaming", [False, True])
 @pytest.mark.parametrize(
     ("reader", "error"),
     [("function", "cannot be called directly"), ("replacement_scan", "not a table registered")],
 )
-def test_export_reuses_uploads_guard_for_project_external_files(environment, sql_file, reader, error):
-    tool, _, _, root = environment
+def test_export_reuses_uploads_guard_for_project_external_files(environment, sql_file, streaming, reader, error):
+    tool, source, _, root = environment
+    source.supports_streaming_read = streaming
     tool._default_datasource = "local_files"
     foreign = root.parent / (root.name + "-foreign.csv")
     foreign.write_text("id,marker\n1,FOREIGN_PROJECT_FIXTURE\n")
@@ -536,8 +693,10 @@ def test_export_keeps_registered_upload_views_readable(environment):
     assert pq.read_table(root / "registered.parquet").to_pylist() == [{"id": "0012345678901234567"}]
 
 
-def test_export_checks_uploads_guard_after_policy_rewrite(environment, monkeypatch):
+@pytest.mark.parametrize("streaming", [False, True])
+def test_export_checks_uploads_guard_after_policy_rewrite(environment, monkeypatch, streaming):
     tool, source, _, root = environment
+    monkeypatch.setattr(source, "supports_streaming_read", streaming)
     tool._default_datasource = "local_files"
     assert source.execute_ddl("CREATE TABLE registered_upload AS SELECT 1 AS id").success is True
     foreign = root.parent / (root.name + "-rewrite.csv")
@@ -624,7 +783,8 @@ def test_cancellation_does_not_publish_export(environment):
 
 
 @pytest.mark.asyncio
-async def test_tool_timeout_prevents_late_file_publication(environment, monkeypatch):
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_tool_timeout_prevents_late_file_publication(environment, monkeypatch, streaming):
     import asyncio
     import threading
 
@@ -634,12 +794,20 @@ async def test_tool_timeout_prevents_late_file_publication(environment, monkeypa
     release = threading.Event()
     completed = threading.Event()
     original_failure = tool._bulk_failure
+    original_query = source.execute_query
 
-    def slow_stream(*args, **kwargs):
+    def wait_for_release():
         entered.set()
         if not release.wait(timeout=2):
             raise TimeoutError("Test did not release the blocked query")
+
+    def slow_stream(*args, **kwargs):
+        wait_for_release()
         yield pa.table({"id": [1]})
+
+    def slow_query(*args, **kwargs):
+        wait_for_release()
+        return original_query(*args, **kwargs)
 
     def failed_export(*args, **kwargs):
         try:
@@ -648,6 +816,8 @@ async def test_tool_timeout_prevents_late_file_publication(environment, monkeypa
             completed.set()
 
     monkeypatch.setattr(source, "iter_query_batches", slow_stream)
+    monkeypatch.setattr(source, "execute_query", slow_query)
+    monkeypatch.setattr(source, "supports_streaming_read", streaming)
     monkeypatch.setattr(tool, "_bulk_failure", failed_export)
     monkeypatch.setattr("datus.tools.func_tool.base.DATA_TOOL_TIMEOUT_SECONDS", 0.1)
     export = tool.to_function_tool(tool.export_query)
@@ -689,8 +859,10 @@ def test_null_only_first_batch_promotes_without_losing_later_values(environment,
     ]
 
 
-def test_policy_row_limit_does_not_silently_publish_a_complete_export(environment, monkeypatch):
+@pytest.mark.parametrize("streaming", [False, True])
+def test_policy_row_limit_does_not_silently_publish_a_complete_export(environment, monkeypatch, streaming):
     tool, source, _, root = environment
+    monkeypatch.setattr(source, "supports_streaming_read", streaming)
     runtime = PolicyRuntime(None)
     runtime._runtimes = [
         (
@@ -718,6 +890,7 @@ def test_large_policy_metadata_keeps_delivery_and_reconciliation_fields():
             "file": "exports/orders.parquet",
             "row_count": 123,
             "complete": True,
+            "read_mode": "buffered",
             "applied_policies": ["policy"] * 100000,
         },
     }
@@ -726,6 +899,7 @@ def test_large_policy_metadata_keeps_delivery_and_reconciliation_fields():
     assert result["result"]["file"] == "exports/orders.parquet"
     assert result["result"]["row_count"] == 123
     assert result["result"]["complete"] is True
+    assert result["result"]["read_mode"] == "buffered"
     assert result["result"]["applied_policy_count"] == 100000
     assert len(json.dumps(result).encode()) <= MAX_RESULT_BYTES
 

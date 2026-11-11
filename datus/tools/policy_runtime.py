@@ -344,15 +344,22 @@ class PolicyRuntime:
         )
         return SqlReadDecision(allowed=True, sql=current_sql, applied_policies=applied, verify_context=verifier)
 
-    def validate_streaming_results(self) -> None:
-        """Require explicit batch semantics for plugins with result hooks."""
-        for name, runtime in self._runtimes:
-            if (
+    @property
+    def supports_streaming_results(self) -> bool:
+        """Whether every result hook explicitly supports batch semantics."""
+        return all(
+            not (
                 callable(getattr(runtime, "after_read_result", None))
                 and not callable(getattr(runtime, "after_read_batch", None))
                 and getattr(runtime, "supports_batch_results", False) is not True
-            ):
-                raise ValueError(f"Policy runtime {name} does not support streaming result enforcement")
+            )
+            for _, runtime in self._runtimes
+        )
+
+    def validate_streaming_results(self) -> None:
+        """Require explicit batch semantics for plugins with result hooks."""
+        if not self.supports_streaming_results:
+            raise ValueError("Policy runtime does not support streaming result enforcement")
 
     def after_read_batch(self, result: Any, **context) -> ReadResultDecision:
         """Apply only result hooks whose batch behavior was explicitly declared."""
@@ -383,17 +390,23 @@ class PolicyRuntime:
         datasource: str,
         dialect: str,
         policy_context: Optional[Dict[str, Any]],
+        include_batch_hooks: bool = False,
     ) -> ReadResultDecision:
+        """Apply complete-result policies, optionally including batch-only export hooks."""
         context = self._normalize_context(policy_context)
         current_result = result
         applied: list[str] = []
         for plugin_name, runtime in self._runtimes:
             hook = getattr(runtime, "after_read_result", None)
+            hook_name = "after_read_result"
+            if not callable(hook) and include_batch_hooks:
+                hook = getattr(runtime, "after_read_batch", None)
+                hook_name = "after_read_batch"
             if not callable(hook):
                 continue
             raw = self._invoke(
                 plugin_name,
-                "after_read_result",
+                hook_name,
                 hook,
                 current_result,
                 sql=sql,
