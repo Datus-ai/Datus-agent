@@ -1965,6 +1965,71 @@ class TestTransferQueryResult:
         target.execute_ddl.assert_not_called()
         insert.assert_not_called()
 
+    def test_native_transfer_checks_oversized_identifiers_before_replace(self):
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame({"a" * (1024 * 1024 + 1): [1]}))
+        target, insert = self._make_target_connector()
+        operations = Mock()
+        operations.quote_identifier.side_effect = lambda name: '"' + name.upper().replace('"', '""') + '"'
+        tool = self._make_multi_tool(source, target)
+        with patch(
+            "datus.tools.func_tool.database.get_dialect_operations",
+            side_effect=lambda **kwargs: operations if kwargs.get("connector") is target else None,
+        ):
+            result = tool.transfer_query_result("SELECT value FROM users", "source_db", "orders", "target_db")
+        assert result.success == 0
+        assert "SQL limit" in result.error
+        source.execute_pandas.assert_called_once()
+        target.execute_ddl.assert_not_called()
+        operations.write_dataframe.assert_not_called()
+        insert.assert_not_called()
+
+    def test_native_empty_replace_keeps_existing_clear_behavior_without_an_insert(self):
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame(columns=["a" * (1024 * 1024 + 1)]))
+        target, _ = self._make_target_connector()
+        operations = Mock()
+        tool = self._make_multi_tool(source, target)
+        with patch(
+            "datus.tools.func_tool.database.get_dialect_operations",
+            side_effect=lambda **kwargs: operations if kwargs.get("connector") is target else None,
+        ):
+            result = tool.transfer_query_result("SELECT value FROM users", "source_db", "orders", "target_db")
+        assert result.success == 1, result.error
+        assert result.result["rows_transferred"] == 0
+        target.execute_ddl.assert_called_once_with("TRUNCATE TABLE orders")
+        operations.write_dataframe.assert_not_called()
+
+    @pytest.mark.parametrize("sql_limit,allowed", [(54, True), (53, False)])
+    def test_native_transfer_checks_bind_sql_size_without_counting_bound_values(self, sql_limit, allowed):
+        import pandas as pd
+
+        payload = "x" * (1024 * 1024 + 1)
+        source = self._make_source_connector(pd.DataFrame({"id": [1], "payload": [payload]}))
+        target, _ = self._make_target_connector()
+        operations = Mock()
+        operations.quote_identifier.side_effect = lambda name: f'"{name.upper()}"'
+        operations.write_dataframe.return_value = 1
+        tool = self._make_multi_tool(source, target)
+        tool._TRANSFER_MAX_SQL_BYTES = sql_limit
+        with patch(
+            "datus.tools.func_tool.database.get_dialect_operations",
+            side_effect=lambda **kwargs: operations if kwargs.get("connector") is target else None,
+        ):
+            result = tool.transfer_query_result("SELECT id, payload FROM users", "source_db", "orders", "target_db")
+        if allowed:
+            assert result.success == 1, result.error
+            target.execute_ddl.assert_called_once_with("TRUNCATE TABLE orders")
+            operations.write_dataframe.assert_called_once()
+            assert operations.write_dataframe.call_args.args[2]["payload"].tolist() == [payload]
+        else:
+            assert result.success == 0
+            assert "SQL limit" in result.error
+            target.execute_ddl.assert_not_called()
+            operations.write_dataframe.assert_not_called()
+
     def test_transfer_never_echoes_large_source_sql(self):
         import hashlib
         import json

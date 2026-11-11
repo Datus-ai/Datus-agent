@@ -11,6 +11,7 @@ the meaning of ``policy_context`` and the concrete read transformations.
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, Optional
 
@@ -20,6 +21,19 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+def _same_row_value(left: Any, right: Any) -> bool:
+    """An Arrow bridge must not silently coerce unrelated ordinary-read values."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, float) and math.isnan(left) and math.isnan(right):
+        return True
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(_same_row_value(value, right[key]) for key, value in left.items())
+    if isinstance(left, (list, tuple)):
+        return len(left) == len(right) and all(_same_row_value(a, b) for a, b in zip(left, right))
+    return left == right
 
 
 def _plain_metadata_read(sql: str, dialect: str) -> bool:
@@ -404,19 +418,45 @@ class PolicyRuntime:
                 hook_name = "after_read_batch"
             if not callable(hook):
                 continue
+            # Batch-only hooks receive Arrow in exports and ordinary reads.
+            # Restore list rows before the next whole-result policy runs.
+            list_result = hook_name == "after_read_batch" and isinstance(current_result, list)
+            hook_result = current_result
+            if list_result:
+                import pyarrow as pa
+
+                try:
+                    columns = set(current_result[0]) if current_result else set()
+                    if any(not isinstance(row, dict) or set(row) != columns for row in current_result):
+                        raise ValueError("Batch policies require rows with consistent column names")
+                    hook_result = pa.Table.from_pylist(current_result)
+                    if not _same_row_value(current_result, hook_result.to_pylist()):
+                        raise ValueError("Arrow conversion would change query values")
+                except (pa.ArrowException, TypeError, ValueError) as exc:
+                    raise DatusException(
+                        ErrorCode.TOOL_INVALID_INPUT,
+                        message=f"Policy runtime {plugin_name!r} cannot convert query rows to an Arrow batch",
+                    ) from exc
             raw = self._invoke(
                 plugin_name,
                 hook_name,
                 hook,
-                current_result,
+                hook_result,
                 sql=sql,
                 datasource=datasource,
                 dialect=dialect,
                 policy_context=context,
             )
-            decision = self._result_decision(plugin_name, raw, current_result)
+            decision = self._result_decision(plugin_name, raw, hook_result)
             if not decision.allowed:
                 return replace(decision, reason=_explain(context, decision.reason))
+            if list_result:
+                if not isinstance(decision.result, pa.Table):
+                    raise DatusException(
+                        ErrorCode.TOOL_INVALID_INPUT,
+                        message=f"Policy runtime {plugin_name!r} after_read_batch must return an Arrow table",
+                    )
+                decision = replace(decision, result=decision.result.to_pylist())
             current_result = decision.result
             applied.extend(decision.applied_policies)
         return ReadResultDecision(allowed=True, result=current_result, applied_policies=applied)

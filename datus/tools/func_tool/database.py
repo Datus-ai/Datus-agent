@@ -4133,12 +4133,23 @@ class DBFuncTool(BulkQueryTools):
         normalized_df = df.where(df.notna(), other=None)
         normalized_df = normalized_df.astype(object).where(normalized_df.notna(), other=None)
         dialect = str(getattr(target_conn, "dialect", "") or "").lower()
-        if target_operations is None:
-            try:
+        try:
+            if target_operations is None:
                 for _ in self._transfer_insert_batches(normalized_df, target_table, dialect, batch_size):
                     pass
-            except Exception as exc:
-                return FuncToolResult(success=0, error=str(exc))
+            elif row_count:
+                # The registered bound writer uses this quoted-column/named-bind
+                # template. Row values are parameters, not part of the SQL text.
+                columns = ", ".join(target_operations.quote_identifier(column) for column in normalized_df.columns)
+                binds = ", ".join(f":p{index}" for index in range(len(normalized_df.columns)))
+                insert_sql = f"INSERT INTO {target_table} ({columns}) VALUES ({binds})"
+                if len(insert_sql.encode("utf-8")) > self._TRANSFER_MAX_SQL_BYTES:
+                    raise ValueError(
+                        f"Transfer INSERT exceeds the {self._TRANSFER_MAX_SQL_BYTES:,}-byte SQL limit. "
+                        "Use fewer or shorter source column aliases."
+                    )
+        except Exception as exc:
+            return FuncToolResult(success=0, error=str(exc))
 
         # TRUNCATE for replace mode BEFORE empty check - mode="replace" must clear old data.
         # If the target table does not exist yet, create it from the source result schema so

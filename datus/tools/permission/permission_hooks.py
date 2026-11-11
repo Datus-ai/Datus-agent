@@ -303,6 +303,7 @@ class PermissionHooks(AgentHooks):
         proxied_tool_names: Optional[Set[str]] = None,
         project_root: Optional[str] = None,
         export_workspace_root: Optional[str] = None,
+        client_only_workspace: bool = False,
         config_mutable: bool = True,
         bash_classifier: Optional["BashCommandClassifier"] = None,
         auto_reviewer: Optional["AutoReviewer"] = None,
@@ -355,6 +356,8 @@ class PermissionHooks(AgentHooks):
                 ``AgentConfig`` still apply.
             export_workspace_root: Effective DB tool filesystem root for export
                 SQL files. Does not change project-level permission grants.
+            client_only_workspace: Files live on the client rather than the
+                server, so export permissions must not inspect server files.
             bash_classifier: Optional LLM classifier for bash commands (reserved
                 seam, see ``bash_classifier.py``). Consulted only when the
                 static bash rules yield ASK with ``safety_forced=False``; a
@@ -380,6 +383,7 @@ class PermissionHooks(AgentHooks):
         self.auto_reviewer = auto_reviewer
         self.review_context_provider = review_context_provider
         self.export_workspace_root = export_workspace_root
+        self.client_only_workspace = client_only_workspace
 
     def _auto_review_config(self, action_type: str, effective: Any, bash_rules: Any = None) -> Any:
         """Resolve the current profile's reviewer config plus legacy bash overrides."""
@@ -1017,6 +1021,13 @@ class PermissionHooks(AgentHooks):
         the standardized non-interactive raise).
         """
         from datus.utils.sql_utils import looks_like_sql_file_ref, parse_sql_statement_kind, read_workspace_sql_file
+
+        if tool_name == "export_query" and self.client_only_workspace:
+            raise PermissionDeniedException(
+                "export_query requires server-side project files; this workspace lives on the client.",
+                tool_category="db_tools",
+                tool_name=tool_name,
+            )
 
         raw_args = getattr(context, "tool_arguments", "{}")
         if isinstance(raw_args, str):

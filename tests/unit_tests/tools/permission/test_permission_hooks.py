@@ -1662,7 +1662,7 @@ class TestVisualArtifactAutoAllow:
 
 
 class TestExportQueryPermission:
-    def _hooks(self, broker, config, *, non_interactive=False, project_root=None):
+    def _hooks(self, broker, config, *, non_interactive=False, project_root=None, client_only_workspace=False):
         return PermissionHooks(
             broker=broker,
             permission_manager=PermissionManager(global_config=config),
@@ -1670,7 +1670,32 @@ class TestExportQueryPermission:
             tool_registry=ToolRegistry({"execute_sql": "db_tools", "export_query": "db_tools"}),
             non_interactive=non_interactive,
             project_root=project_root,
+            client_only_workspace=client_only_workspace,
         )
+
+    @pytest.mark.asyncio
+    async def test_client_only_export_refuses_before_reading_server_files(self, mock_broker, monkeypatch):
+        project_files = MagicMock(side_effect=AssertionError("Server files must not be inspected"))
+        monkeypatch.setattr("datus.utils.project_files.ProjectFiles", project_files)
+        config = get_profile("normal").model_copy(deep=True)
+        config.sql_statements.read = PermissionLevel.ASK
+        hooks = self._hooks(mock_broker, config, project_root=".", client_only_workspace=True)
+        with pytest.raises(PermissionDeniedException, match="workspace lives on the client"):
+            await hooks.on_tool_start(self._context("query.sql"), None, SimpleNamespace(name="export_query"))
+        project_files.assert_not_called()
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_server_workspace_dot_can_still_read_sql_files(self, mock_broker, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "query.sql").write_text("SELECT 'local workspace'")
+        config = get_profile("normal").model_copy(deep=True)
+        config.sql_statements.read = PermissionLevel.ASK
+        mock_broker.request.return_value = [["y"]]
+        hooks = self._hooks(mock_broker, config, project_root=".")
+        await hooks.on_tool_start(self._context("query.sql"), None, SimpleNamespace(name="export_query"))
+        assert mock_broker.request.await_count == 1
+        assert "local workspace" in mock_broker.request.call_args.args[0][0].content
 
     @staticmethod
     def _context(sql="SELECT 1"):

@@ -2160,6 +2160,14 @@ class TestEnsurePermissionHooksProxyWiring:
         assert ph_cls.call_args.kwargs["export_workspace_root"] == "/node-workspace"
         assert ph_cls.call_args.kwargs["project_root"] == "/project"
 
+    @pytest.mark.parametrize("client_source,expected", [("vscode", True), ("web", False), (None, False)])
+    def test_export_gate_knows_when_files_live_on_the_client(self, client_source, expected):
+        node = self._prepare_node(set())
+        node.agent_config = SimpleNamespace(_client_source=client_source)
+        with patch("datus.tools.permission.permission_hooks.PermissionHooks") as ph_cls:
+            node._ensure_permission_hooks()
+        assert ph_cls.call_args.kwargs["client_only_workspace"] is expected
+
     @pytest.mark.parametrize("restricted", [True, False])
     def test_restricted_hosts_enforce_method_denials_at_invocation(self, restricted):
         node = self._prepare_node(set())
