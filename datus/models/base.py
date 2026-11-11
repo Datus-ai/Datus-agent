@@ -91,7 +91,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
 
         model_type = target_config.type
 
-        if (model_class_name := cls.MODEL_TYPE_MAP.get(model_type)) is None:
+        if model_type not in cls.MODEL_TYPE_MAP:
             raise KeyError(f"Unsupported model type: {model_type}")
 
         scope = kwargs.get("scope")
@@ -123,10 +123,8 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
                 cls._MODEL_CACHE.move_to_end(cache_key)
                 return cached
 
-        module = __import__(f"datus.models.{model_type}_model", fromlist=[model_class_name])
-        model_class = getattr(module, model_class_name)
-        instance = model_class(
-            model_config=target_config,
+        instance = cls.from_config(
+            target_config,
             session_dir=agent_config.session_dir,
             session_scope=scope,
         )
@@ -137,6 +135,16 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
             while len(cls._MODEL_CACHE) > cls._MODEL_CACHE_MAXSIZE:
                 cls._MODEL_CACHE.popitem(last=False)
         return instance
+
+    @classmethod
+    def from_config(cls, model_config: ModelConfig, **kwargs) -> "LLMBaseModel":
+        """Use the chat provider registry without requiring tools or project services."""
+        model_type = model_config.type
+        model_class_name = cls.MODEL_TYPE_MAP.get(model_type)
+        if model_class_name is None:
+            raise KeyError(f"Unsupported model type: {model_type}")
+        module = __import__(f"datus.models.{model_type}_model", fromlist=[model_class_name])
+        return getattr(module, model_class_name)(model_config=model_config, **kwargs)
 
     def request_capacity(self):
         """Resolve immutable capacity metadata without changing a cached model."""
