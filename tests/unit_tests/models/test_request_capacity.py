@@ -875,6 +875,36 @@ def test_failed_tokenizer_does_not_block_other_references(monkeypatch):
     assert not available.estimate({"input": "hello"}).estimated
 
 
+@pytest.mark.parametrize("name", ["gpt-4o", "private-deployment"])
+def test_empty_tokenizer_encoding_uses_estimates_and_preserves_endpoint_policy(monkeypatch, name):
+    tokenizer = Mock()
+    tokenizer.encode.return_value = []
+    monkeypatch.setattr("datus.models.request_capacity._tokenizer", Mock(return_value=tokenizer))
+    model = OpenAIModel(
+        ModelConfig(
+            type="openai",
+            model=name,
+            api_key="test",
+            context_length=8192,
+            max_tokens=1024,
+            tokenizer_ref="tests/empty-tokenizer-encoding",
+        )
+    )
+    payload = {"input": "word " * 20000}
+    capacity = model.request_capacity()
+    estimate = capacity.estimate(payload)
+    assert estimate.estimated
+    assert estimate.trusted_tokens == 0
+    assert estimate.tokens > capacity.input_limit()
+    if name == "gpt-4o":
+        assert estimate.source == "litellm_serialized_request"
+        with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+            model.check_request(payload)
+    else:
+        assert estimate.source == "utf8_byte_upper_bound"
+        assert model.check_request(payload)["max_tokens"] == 1024
+
+
 def test_failed_image_counter_keeps_successful_text_count(monkeypatch, image_url):
     def counter(*, text=None, **kwargs):
         if text is not None:

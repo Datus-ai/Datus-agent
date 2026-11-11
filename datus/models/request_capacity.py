@@ -200,8 +200,11 @@ class RequestCapacity:
                         else tokenizer.encode(text)
                     )
                     count = len(encoded.ids) if hasattr(encoded, "ids") else len(encoded)
+                    if count <= 0:
+                        raise ValueError("invalid tokenizer count")
                     source, estimated = self.tokenizer_ref, False
             except Exception as exc:
+                count = None
                 reasons.append(f"tokenizer unavailable ({type(exc).__name__})")
         if count is None and counter_model in litellm.open_ai_chat_completion_models:
             try:
