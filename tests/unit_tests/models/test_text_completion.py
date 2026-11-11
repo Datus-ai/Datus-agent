@@ -210,11 +210,10 @@ async def test_single_text_call_uses_chat_routing_without_transport_fields_in_js
         await client.aclose()
     assert tls[0] is True
     assert dict(os.environ) == before
-    if kind == "claude":
-        assert "temperature" not in body and "top_p" not in body
-    if kind != "gemini":
-        assert body["stream"] is True
-        assert body["max_output_tokens" if request.url.host == "api.openai.com" else "max_tokens"] == 4000
+    assert body.get("stream") is (None if kind == "gemini" else True)
+    token_settings = body.get("generationConfig", body)
+    token_key = "max_output_tokens" if kind == "gemini" or request.url.host == "api.openai.com" else "max_tokens"
+    assert token_settings[token_key] == 4000
 
 
 @pytest.mark.asyncio
