@@ -212,7 +212,7 @@ class SkillCreatorAgenticNode(AgenticNode):
         try:
             from datus.tools.func_tool.skill_validate_tool import SkillValidateTool
 
-            self.skill_validate_tool = SkillValidateTool()
+            self.skill_validate_tool = SkillValidateTool(filesystem_tool=self.filesystem_func_tool)
             self.tools.extend(self.skill_validate_tool.available_tools())
             logger.debug("Setup skill validate tool")
         except Exception as e:

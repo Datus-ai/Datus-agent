@@ -11,7 +11,7 @@ and directory structure.
 
 import re
 from pathlib import Path
-from typing import List
+from typing import TYPE_CHECKING, List, Optional
 
 import yaml
 
@@ -20,6 +20,9 @@ from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+if TYPE_CHECKING:
+    from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 
 FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 REQUIRED_FIELDS = ["name", "description"]
@@ -37,6 +40,10 @@ class SkillValidateTool:
 
     permission_category: str = "tools"
 
+    def __init__(self, filesystem_tool: Optional["FilesystemFuncTool"] = None):
+        """Reuse the owning node's filesystem boundaries when hosted by an agent."""
+        self._filesystem_tool = filesystem_tool
+
     @tool_contract(access="read", direct_call=False)
     def validate_skill(self, skill_path: str) -> FuncToolResult:
         """Validate a SKILL.md file and report any issues.
@@ -49,6 +56,13 @@ class SkillValidateTool:
         """
         issues: List[str] = []
         path = Path(skill_path)
+        scoped_content = None
+        if self._filesystem_tool is not None:
+            read = self._filesystem_tool.read_file(skill_path)
+            if not read.success:
+                return read
+            path = self._filesystem_tool._classify(skill_path).resolved
+            scoped_content = read.result
 
         # Check file exists
         if not path.exists():
@@ -58,7 +72,7 @@ class SkillValidateTool:
             issues.append(f"WARNING: Expected filename 'SKILL.md', got '{path.name}'")
 
         try:
-            content = path.read_text(encoding="utf-8")
+            content = scoped_content if scoped_content is not None else path.read_text(encoding="utf-8")
         except Exception as e:
             return FuncToolResult(success=0, error=f"Cannot read file: {e}")
 

@@ -16,6 +16,26 @@ def tool():
     return SkillValidateTool()
 
 
+def test_validation_uses_the_nodes_filesystem_scope(tmp_path):
+    """A declared reader must not bypass the node's hidden/external path policy."""
+    from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+    root = tmp_path / "project"
+    root.mkdir()
+    content = "---\nname: scoped-skill\ndescription: A sufficiently descriptive skill for scope verification\n---\n"
+    (root / "SKILL.md").write_text(content)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "SKILL.md").write_text(content)
+    hidden = root / ".datus" / "private"
+    hidden.mkdir(parents=True)
+    (hidden / "SKILL.md").write_text(content)
+    validator = SkillValidateTool(filesystem_tool=FilesystemFuncTool(root_path=str(root), strict=True))
+    assert validator.validate_skill("SKILL.md").success == 1
+    assert validator.validate_skill(str(outside / "SKILL.md")).success == 0
+    assert validator.validate_skill(str(hidden / "SKILL.md")).success == 0
+
+
 class TestSkillValidateTool:
     """Tests for validate_skill function."""
 

@@ -307,3 +307,58 @@ def test_web_fetch_rejects_oversized_content_length():
         res = tool.web_fetch("http://e.com/huge")
     assert res.success == 0
     assert "too large" in res.error.lower()
+
+
+@pytest.mark.parametrize("target", ["http://127.0.0.1/secret", "http://169.254.169.254/", "file:///etc/passwd"])
+def test_web_reader_checks_redirect_targets_before_requesting_them(target):
+    """A public starting URL must not turn a read grant into an internal request."""
+    visited = []
+
+    def respond(request):
+        """Record actual HTTP hops without a network connection."""
+        visited.append(str(request.url))
+        if len(visited) == 1:
+            return httpx.Response(302, headers={"location": target})
+        return httpx.Response(200, headers={"content-type": "text/plain"}, text="private data")
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        with patch("datus.tools.func_tool.web_tool.httpx.get", side_effect=client.get):
+            result = WebTool(_cfg()).web_fetch("https://example.com/start")
+    assert result.success == 0
+    assert visited == ["https://example.com/start"]
+
+
+def test_web_reader_follows_a_public_relative_redirect():
+    """Valid redirects continue to return the destination's actual content."""
+    visited = []
+
+    def respond(request):
+        """Serve a bounded public redirect chain in memory."""
+        visited.append(str(request.url))
+        if len(visited) == 1:
+            return httpx.Response(302, headers={"location": "/destination"})
+        return httpx.Response(200, headers={"content-type": "text/plain"}, text="public destination")
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        with patch("datus.tools.func_tool.web_tool.httpx.get", side_effect=client.get):
+            result = WebTool(_cfg()).web_fetch("https://example.com/start")
+    assert result.success == 1
+    assert result.result["content"] == "public destination"
+    assert visited == ["https://example.com/start", "https://example.com/destination"]
+
+
+def test_web_reader_bounds_redirect_loops():
+    """An endlessly redirecting public page cannot keep a read running forever."""
+    visited = []
+
+    def respond(request):
+        """Redirect every request without making a real network connection."""
+        visited.append(str(request.url))
+        return httpx.Response(302, headers={"location": "/again"})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        with patch("datus.tools.func_tool.web_tool.httpx.get", side_effect=client.get):
+            result = WebTool(_cfg()).web_fetch("https://example.com/start")
+    assert result.success == 0
+    assert "redirect" in result.error.lower()
+    assert 0 < len(visited) < 20

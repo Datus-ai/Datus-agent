@@ -22,7 +22,7 @@ backends and exposes whichever ones the node asks for.
 import ipaddress
 import os
 from typing import List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from agents import Tool
@@ -265,13 +265,23 @@ class WebTool:
             )
 
         try:
-            response = httpx.get(
-                url,
-                follow_redirects=True,
-                timeout=30,
-                headers={"User-Agent": _DEFAULT_USER_AGENT},
-            )
-            response.raise_for_status()
+            current_url = url
+            for _ in range(10):
+                response = httpx.get(
+                    current_url,
+                    follow_redirects=False,
+                    timeout=30,
+                    headers={"User-Agent": _DEFAULT_USER_AGENT},
+                )
+                if response.status_code in {301, 302, 303, 307, 308} and response.headers.get("location"):
+                    current_url = urljoin(current_url, response.headers["location"])
+                    if not _is_public_web_target(current_url):
+                        return FuncToolResult(success=0, error="Refusing to fetch non-public redirect target")
+                    continue
+                response.raise_for_status()
+                break
+            else:
+                return FuncToolResult(success=0, error="Too many redirects while fetching URL")
         except httpx.HTTPStatusError as e:
             return FuncToolResult(success=0, error=f"HTTP {e.response.status_code} fetching {url}")
         except httpx.HTTPError as e:
