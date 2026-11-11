@@ -371,8 +371,9 @@ class TestRewriteSdkInput:
             )
             assert recovered == wire
             assert "use read_file to continue" in updated
-            if shape != "string":
-                assert content[1] is image
+            media = content[1:] if isinstance(content, list) else []
+            assert media == ([image] if shape != "string" else [])
+            assert all(block is image for block in media)
             assert await rewrite(raw) == restored
         finally:
             ACTIVE_RESULT_STORE.reset(token)
