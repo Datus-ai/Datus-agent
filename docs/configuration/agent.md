@@ -150,8 +150,14 @@ existing configurations do not need new fields:
 | Setting | When omitted |
 | --- | --- |
 | `context_length` | Use existing model specifications or the provider catalogue; fall back to a `1048576` (1M) token budget if unknown |
-| `max_tokens` | Retain the known output default, or use `128000` (128K) if unknown, constrained by the discovered output ceiling. Transports with an output cap also leave room for input and the safety margin, so small windows may get a lower default |
+| `max_tokens` | Retain the known output default, or use `384000` if unknown, matching the bundled DeepSeek V4 Flash budget. Defaults leave room for input and the safety margin, so small windows may get a lower output budget |
 | `tokenizer_ref` | Use LiteLLM counting for known OpenAI models; otherwise reserve UTF-8 bytes, including for private aliases, without downloading a tokenizer |
+
+For an unknown model on a custom OpenAI endpoint, `384000` remains a local
+reservation. When no output limit is configured or known, Datus omits the output
+limit from requests and lets the server choose its default. Explicit per-model
+or per-call limits and known output defaults are still sent. Native protocols
+that require an output limit retain it.
 
 Model selection and runtime capacity checks share an automatically refreshed
 OpenRouter catalog. On first use, Datus reads the cache under the current Agent
@@ -165,9 +171,9 @@ Explicit settings take priority over catalog metadata, with
 versions do not inherit an older version's limits through prefix matching.
 An advertised output ceiling does not automatically increase the default output
 budget: known defaults are retained, and newly discovered models keep the
-`128000` default, lowered when the catalog or remaining context requires it.
-Public catalog limits describe the catalog's serving provider; private or native
-endpoints may require explicit limits matching their deployment.
+`384000` default, lowered when the catalog or remaining context requires it.
+Public catalog limits describe the catalog's serving provider. On custom endpoints,
+these limits are planning hints and cannot reject explicitly configured output limits.
 
 The fallback window is a local budget assumption, not automatic detection of
 server capacity. Private deployments can override any of these settings. Set
@@ -190,15 +196,25 @@ agent:
 limit overrides the configured default. `tokenizer_ref` accepts a local Hugging
 Face tokenizer JSON, a Hugging Face tokenizer reference, or `tiktoken:<encoding>`
 when that encoding matches the deployment. Local files must be readable by the
-Datus process. Omitted settings use defaults; explicitly invalid values or a
-tokenizer that cannot be loaded still produce an error.
+Datus process. Omitted settings use defaults; explicitly invalid numeric settings
+still produce an error. An unavailable tokenizer falls back to an available model
+counter or UTF-8 byte estimation, recording the fallback reason in logs.
+Failed tokenizer initialization is remembered for up to five minutes across
+capacity checks, then retried, so repeated planning checks do not repeat the same download failure.
 Local counting includes serialized messages, instructions, tools and output
 schemas, plus framing allowance; a deployment with different templates or
 routing limits can still reject a request and should be configured accordingly.
 UTF-8 byte estimates can trigger compaction earlier and are not measured provider
-token usage. Output caps above a known maximum are rejected explicitly.
-Remote image URLs and opaque file inputs require extracted content or a provider
-token count; counting only their URL or file ID cannot establish request capacity.
+token usage. Custom endpoints and models without catalog metadata can send requests
+above an estimated planning budget. Trusted counts are retained separately: if the
+trusted portion alone exceeds an explicit deployment limit, adding unmeasurable
+media does not disable that limit. Known standard provider endpoints retain their
+existing context checks and catalog output ceilings.
+Images use an available image counter, or a 4096-token estimate per image. Remote
+image references and opaque files also receive a 4096-token estimate per item when
+their content cannot be counted. Binary data is excluded from text estimation, and
+the original request content and references are preserved. These estimates do not
+require model registration and are not assertions about the server's actual limits.
 
 In the OpenAI-compatible and native OpenAI Responses paths, an explicit output-limit
 termination is reported as a failure. Tool runs retain received assistant text

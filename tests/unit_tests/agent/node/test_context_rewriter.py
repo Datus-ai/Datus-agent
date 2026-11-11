@@ -607,3 +607,19 @@ class TestRewriteNativeMessages:
         first = [_anth_user("now")]
         await compactor.rewrite_native_messages(first)
         assert await compactor.rewrite_native_messages(first + [_anth_tool_result("t1")]) is None
+
+
+@pytest.mark.asyncio
+async def test_estimated_pressure_reaches_existing_context_preparation():
+    from datus.configuration.agent_config import ModelConfig
+    from datus.models.openai_model import OpenAIModel
+
+    node = _FakeNode()
+    node.model = OpenAIModel(
+        ModelConfig(type="openai", model="private-deployment", api_key="test", context_length=8192, max_tokens=1024)
+    )
+    raw = [{"role": "user", "content": "\N{CJK UNIFIED IDEOGRAPH-8868}" * 5000}]
+    compactor = MidTurnCompactor(node)
+    assert await compactor.rewrite_sdk_input(raw) == raw
+    prepared = node.compact_mid_turn.await_args.kwargs
+    assert prepared["base_tokens"] > node.model.request_capacity().input_limit()
