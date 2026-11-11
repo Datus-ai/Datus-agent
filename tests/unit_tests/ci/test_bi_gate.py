@@ -110,8 +110,6 @@ def test_final_required_context_checks_bi_result(required, result, expected):
         env={
             **os.environ,
             "DETERMINISTIC_RESULT": "success",
-            "POLICY_REQUIRED": "false",
-            "POLICY_RESULT": "skipped",
             "BI_REQUIRED": required,
             "BI_RESULT": result,
         },
