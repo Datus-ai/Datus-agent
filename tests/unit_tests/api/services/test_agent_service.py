@@ -189,9 +189,9 @@ class TestValidateToolsForAgentType:
         assert _validate_tools(tools) == []
         assert _validate_tools_for_agent_type(tools, "ask_metrics") == []
 
-    @pytest.mark.parametrize("agent_type", ["ask_report", "ask_dashboard", "ask_metrics"])
-    def test_ask_default_tools_all_resolve(self, agent_type):
-        """Every entry in ``default_tools`` for ask_* must be recognised by
+    @pytest.mark.parametrize("agent_type", list(SUBAGENT_TOOL_REFERENCE))
+    def test_default_tools_all_resolve(self, agent_type):
+        """Every entry in ``default_tools`` must be recognised by
         ``_validate_tools``.
 
         Anchors the regression where ``db_tools.execute_sql`` was kept in
@@ -204,8 +204,8 @@ class TestValidateToolsForAgentType:
         invalid = _validate_tools(defaults)
         assert invalid == [], f"{agent_type} default_tools has unrecognised entries: {invalid}"
 
-    @pytest.mark.parametrize("agent_type", ["ask_report", "ask_dashboard", "ask_metrics"])
-    def test_ask_default_tools_pass_agent_type_gate(self, agent_type):
+    @pytest.mark.parametrize("agent_type", list(SUBAGENT_TOOL_REFERENCE))
+    def test_default_tools_pass_agent_type_gate(self, agent_type):
         """``default_tools`` must also satisfy the per-agent-type allowlist
         — preselected tools should never include anything the saas editor
         would later reject (e.g. ``filesystem_tools.write_file``)."""
@@ -294,6 +294,9 @@ class TestConstants:
             "semantic_tools.query_metrics",
             "semantic_tools.attribution_analyze",
             "context_search_tools.list_subject_tree",
+            "filesystem_tools.read_file",
+            "filesystem_tools.glob",
+            "filesystem_tools.grep",
         ]
         assert set(entry["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES)
         for category, payload in entry["tool_types"].items():
@@ -314,9 +317,15 @@ class TestConstants:
         assert SUBAGENT_TOOL_REFERENCE["ask_metrics"]["default_tools"] == list(AskMetricsAgenticNode.DEFAULT_TOOLS)
 
     def test_tool_reference_chat_has_full_default_set(self):
-        """chat default_tools enumerates every non-semantic category as wildcard."""
+        """Chat's editor defaults include metric reads and cached rows, without authoring tools."""
         entry = SUBAGENT_TOOL_REFERENCE["chat"]
         assert entry["default_tools"] == [
+            "semantic_tools.list_metrics",
+            "semantic_tools.get_metric",
+            "semantic_tools.get_dataset",
+            "semantic_tools.query_metrics",
+            "semantic_tools.get_query_metrics_result",
+            "semantic_tools.attribution_analyze",
             "db_tools.*",
             "context_search_tools.*",
             "reference_template_tools.*",
@@ -345,6 +354,13 @@ class TestConstants:
     def test_valid_tool_methods_db_tools_has_methods(self):
         """db_tools category exposes core query methods."""
         assert "describe_table" in VALID_TOOL_METHODS["db_tools"]
+
+    @pytest.mark.parametrize("agent_type", list(SUBAGENT_TOOL_REFERENCE))
+    def test_cached_metric_reader_is_configurable_only_for_chat(self, agent_type):
+        reader = "semantic_tools.get_query_metrics_result"
+        expected = [] if agent_type == "chat" else [reader]
+        assert _validate_tools([reader]) == []
+        assert _validate_tools_for_agent_type([reader], agent_type) == expected
 
     def test_valid_tool_methods_filesystem_tools_contains_read_file(self):
         """filesystem_tools contains read_file."""
@@ -505,9 +521,14 @@ class TestPerAgentTypeCategoryWhitelist:
                     # must be absent and the read trio must be present.
                     assert set(payload["tools"]) == set(_ASK_AGENT_FILESYSTEM_READ_ONLY)
                 else:
-                    assert payload["tools"] == sorted(
-                        SemanticTools.all_tools_name() if category == "semantic_tools" else VALID_TOOL_METHODS[category]
+                    expected = (
+                        set(SemanticTools.all_tools_name())
+                        if category == "semantic_tools"
+                        else VALID_TOOL_METHODS[category]
                     )
+                    if category == "semantic_tools" and agent_type == "chat":
+                        expected = expected | {"get_query_metrics_result"}
+                    assert payload["tools"] == sorted(expected)
 
     def test_payload_no_longer_wraps_in_tools_key(self):
         """Old shape {"tools": [...]} is gone — data is now {default_tools, tool_types}."""

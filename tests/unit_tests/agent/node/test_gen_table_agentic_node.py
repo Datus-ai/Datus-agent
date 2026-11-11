@@ -43,6 +43,20 @@ class TestGenTableAgenticNodeInit:
         assert node.NODE_NAME == "gen_table"
         assert node.get_node_name() == "gen_table"
 
+    @pytest.mark.asyncio
+    async def test_continuation_keeps_matching_target(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+        from datus.schemas.database_context import EXECUTION_CONTEXT_META_KEY, execution_context_for_node
+
+        node = GenTableAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Continue the delivered table")
+        session = node.session_manager.get_session(node.session_id)
+        await session.add_items([{"role": "user", "content": "Create the requested table"}])
+        target = execution_context_for_node(real_agent_config, node.input)
+        node.session_manager.save_session_meta(node.session_id, EXECUTION_CONTEXT_META_KEY, target.identity)
+
+        assert node.continuation_target_error() is None
+
     def test_inherits_agentic_node(self, real_agent_config, mock_llm_create):
         from datus.agent.node.agentic_node import AgenticNode
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
@@ -363,6 +377,10 @@ class TestPrepareTemplateContextGenTable:
         assert "Workflow Mode Has No ask_user" in prompt
         assert "Call `ask_user` with the COMPLETE DDL SQL" not in prompt
         assert "Proceed only for explicit non-destructive CREATE TABLE / CTAS requests" in prompt
+        assert "For new tables, treat the request as authorization only" in prompt
+        assert "For a follow-up to a table this session already delivered" in prompt
+        assert "or an existing table received through a verified recovery handoff" in prompt
+        assert "normal write-permission policy" in prompt
 
     def test_interactive_prompt_keeps_ddl_confirmation(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
@@ -372,6 +390,7 @@ class TestPrepareTemplateContextGenTable:
         prompt = node._get_system_prompt(context)
 
         assert "DDL Must Be Inside ask_user" in prompt
+        assert "verified recovery handoff for an existing table" in prompt
         assert "Call `ask_user` with the COMPLETE DDL SQL" in prompt
 
 

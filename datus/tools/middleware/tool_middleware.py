@@ -55,6 +55,39 @@ logger = get_logger(__name__)
 ToolTransformer = Callable[[str, Dict[str, Any], Dict[str, Any]], Any]
 ContextProvider = Callable[[], Dict[str, Any]]
 
+
+class _TransformerContext(dict):
+    """Resolve the metric catalog on first access, once per tool invocation."""
+
+    def __init__(self, values: dict, metric_provider: Callable):
+        super().__init__(values, metric_datasets=None)
+        self._metric_provider = metric_provider
+
+    def __getitem__(self, key):
+        if key == "metric_datasets" and self._metric_provider is not None:
+            self[key] = self._metric_provider()
+            self._metric_provider = None
+        return super().__getitem__(key)
+
+    def get(self, key, default=None):
+        return self[key] if key in self else default
+
+    def __iter__(self):
+        # Dict consumers must use __getitem__ rather than copy the placeholder.
+        return super().__iter__()
+
+    def items(self):
+        self["metric_datasets"]
+        return super().items()
+
+    def values(self):
+        self["metric_datasets"]
+        return super().values()
+
+    def copy(self):
+        return dict(self)
+
+
 # Marker set on a rebuilt tool's ``on_invoke_tool`` so :func:`apply_tool_transformers`
 # can recognise already-wrapped tools and skip them. Makes wrapping idempotent
 # per tool: callers may reset their "transformers applied" flag and re-run after
@@ -140,7 +173,8 @@ def wrap_tool_with_transformers(
             return await original.on_invoke_tool(tool_ctx, args_str)
 
         try:
-            context = dict(await asyncio.to_thread(context_provider)) if context_provider is not None else {}
+            supplied = await asyncio.to_thread(context_provider) if context_provider is not None else {}
+            context = supplied if isinstance(supplied, _TransformerContext) else dict(supplied)
         except Exception as e:
             logger.warning("Tool middleware context provider failed for '%s': %s", original.name, e)
             context = {}
@@ -393,18 +427,20 @@ def apply_tool_transformers(node: Any, transformers_by_pattern: Dict[str, List[T
         # therefore never build a DBFuncTool at all (``ask_metrics`` is one).
         agent_config = getattr(node, "agent_config", None)
         policy_context = getattr(agent_config, "policy_context", None)
-        return {
-            "node_name": node_name,
-            "policy_context": dict(policy_context) if isinstance(policy_context, dict) else {},
-            "project_root": getattr(agent_config, "project_root", None),
-            # Live AgentConfig reference so transformers can read their own
-            # plugin profile (``get_plugin_profile``) and datasource metadata.
-            # Duck-typed access only — transformers must not import datus.*.
-            "agent_config": agent_config,
-            # Metric name -> datasets it reads, so transformers enforcing read
-            # policies over metric queries know which physical data is touched.
-            "metric_datasets": _metric_datasets(node),
-        }
+        return _TransformerContext(
+            {
+                "node_name": node_name,
+                "policy_context": dict(policy_context) if isinstance(policy_context, dict) else {},
+                "project_root": getattr(agent_config, "project_root", None),
+                # Live AgentConfig reference so transformers can read their own
+                # plugin profile (``get_plugin_profile``) and datasource metadata.
+                # Duck-typed access only — transformers must not import datus.*.
+                "agent_config": agent_config,
+                # Metric name -> datasets it reads, so transformers enforcing read
+                # policies over metric queries know which physical data is touched.
+            },
+            lambda: _metric_datasets(node),
+        )
 
     parsed_by_pattern = {pattern: parse_tool_patterns([pattern]) for pattern in transformers_by_pattern}
 

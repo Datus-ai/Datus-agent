@@ -57,6 +57,9 @@ class AskMetricsAgenticNode(AgenticNode):
         "semantic_tools.query_metrics",
         "semantic_tools.attribution_analyze",
         "context_search_tools.list_subject_tree",
+        "filesystem_tools.read_file",
+        "filesystem_tools.glob",
+        "filesystem_tools.grep",
     )
 
     def __init__(

@@ -234,6 +234,35 @@ class TestCreateProxyTool:
 class TestApplyProxyToolsWithExplicitChannel:
     """Tests for apply_proxy_tools with the optional channel parameter."""
 
+    @pytest.mark.asyncio
+    async def test_partial_refresh_preserves_existing_tools_and_proxy_membership(self):
+        async def local_invoke(ctx, args):
+            raise AssertionError("Newly proxied tools must run on the client")
+
+        read_file, execute_sql, search_metrics = [
+            registered_test_tool(
+                name=name,
+                description=name,
+                params_json_schema={"type": "object"},
+                on_invoke_tool=local_invoke,
+            )
+            for name in ("read_file", "execute_sql", "search_metrics")
+        ]
+        channel = ToolResultChannel()
+        node = SimpleNamespace(tools=[read_file, execute_sql], tool_channel=channel, tool_registry=ToolRegistry())
+        apply_proxy_tools(node, ["read_file"])
+        existing_read = node.tools[0]
+        node.tools.append(search_metrics)
+        apply_proxy_tools(node, ["*"], only_tool_names={"search_metrics"})
+
+        assert node.tools[0] is existing_read
+        assert node.tools[1] is execute_sql
+        assert node.proxied_tool_names == {"read_file", "search_metrics"}
+        client_result = {"success": 1, "result": ["net"]}
+        await channel.publish("new-context", client_result)
+        result = await node.tools[2].on_invoke_tool(SimpleNamespace(tool_call_id="new-context"), "{}")
+        assert result == client_result
+
     def test_uses_explicit_channel(self):
         """When channel is passed, proxy tools use that channel instead of node.tool_channel."""
         original_invoke = MagicMock()

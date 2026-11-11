@@ -21,6 +21,10 @@ Tests verify:
 NO MOCK EXCEPT LLM: The only mock is LLMBaseModel.create_model -> MockLLMModel.
 """
 
+import csv
+import io
+import json
+import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -32,10 +36,608 @@ from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from tests.unit_tests.mock_llm_model import MockToolCall, build_simple_response, build_tool_then_response
 
 LINEAGE_TOOL_NAMES = {"upsert_lineage", "delete_lineage", "query_lineage"}
+METRIC_TOOL_NAMES = {
+    "list_metrics",
+    "get_metric",
+    "get_dataset",
+    "query_metrics",
+    "get_query_metrics_result",
+    "attribution_analyze",
+}
 
 # ===========================================================================
 # ChatAgenticNode Inheritance Tests
 # ===========================================================================
+
+
+class TestChatMetricTools:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("source", ["web", "vscode"])
+    async def test_reused_chat_restores_metric_search_after_scope_repair(
+        self, real_agent_config, mock_llm_create, tmp_path, source
+    ):
+        import asyncio
+        from types import SimpleNamespace
+
+        from datus.storage.metric.store import MetricRAG
+        from datus.tools.proxy.proxy_tool import apply_proxy_tools
+        from datus.tools.proxy.tool_result_channel import ToolResultChannel
+
+        writer = MetricRAG(real_agent_config)
+        writer.store_batch(
+            [
+                {
+                    "name": "net",
+                    "semantic_model_name": "ledger",
+                    "subject_path": ["Finance", "Allowed"],
+                    "description": "Net amount in the allowed subject",
+                }
+            ]
+        )
+        tree = writer.storage.subject_tree
+        assert tree.rename(["Finance"], ["ArchivedFinance"]) is True
+        real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "Finance.Allowed"}
+        real_agent_config._client_source = source
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        context = node.context_search_tools
+        channel = ToolResultChannel()
+        apply_proxy_tools(node, ["filesystem_tools.*"], channel=channel)
+        node._get_session_system_prompt()
+        assert "search_metrics" not in {tool.name for tool in node.tools}
+        preserved_names = node.proxied_tool_names | {"execute_sql", "query_metrics"}
+        existing_tools = {tool.name: tool for tool in node.tools if tool.name in preserved_names}
+
+        assert tree.rename(["ArchivedFinance"], ["Finance"]) is True
+        node._get_session_system_prompt()
+        assert node.context_search_tools is context
+        assert "search_metrics" in {tool.name for tool in node.tools}
+        assert context.has_metrics is True
+        assert [row["name"] for row in context.search_metrics("net").result] == ["net"]
+        tools = {tool.name: tool for tool in node.tools}
+        for name, original in existing_tools.items():
+            assert tools[name] is original
+        server_path = tmp_path / "client-owned.md"
+        client_result = {"success": 1, "result": "Written on client"}
+        await channel.publish("refresh-write", client_result)
+        result = await asyncio.wait_for(
+            tools["write_file"].on_invoke_tool(
+                SimpleNamespace(tool_call_id="refresh-write"),
+                json.dumps({"path": str(server_path), "content": "Client-only content"}),
+            ),
+            timeout=2,
+        )
+        assert result == client_result
+        assert "write_file" in node.proxied_tool_names
+        assert server_path.exists() is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("page_size", [None, 10])
+    @pytest.mark.parametrize("change_at", ["query", "cache"])
+    async def test_inflight_metric_scope_change_does_not_publish_rows(
+        self, real_agent_config, mock_llm_create, tmp_path, monkeypatch, page_size, change_at
+    ):
+        import duckdb
+
+        from datus.configuration.agent_config import DbConfig
+        from datus.storage.metric.store import MetricRAG
+
+        fixtures = Path(__file__).resolve().parents[3] / "data/semantic_models/attribution"
+        database = tmp_path / "inflight.duckdb"
+        with duckdb.connect(str(database)) as connection:
+            connection.execute((fixtures / "seed.sql").read_text())
+        real_agent_config.services.datasources["inflight"] = DbConfig(type="duckdb", uri=str(database))
+        real_agent_config.current_datasource = "inflight"
+        models = real_agent_config.path_manager.semantic_model_path("inflight")
+        models.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(fixtures / "model.yaml", models / "model.yaml")
+        MetricRAG(real_agent_config).store_batch(
+            [
+                {
+                    "name": name,
+                    "semantic_model_name": "attribution_model",
+                    "subject_path": ["Finance", subject],
+                    "description": f"{name} in the {subject} subject",
+                }
+                for name, subject in (("net", "Allowed"), ("x_total", "Hidden"))
+            ]
+        )
+        real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "Finance.Allowed"}
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        semantic = node.semantic_tools
+
+        def narrow_scope():
+            real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "Finance.Hidden"}
+
+        if change_at == "query":
+            original = semantic.runtime.query_metrics
+
+            async def changed_query(**kwargs):
+                result = await original(**kwargs)
+                narrow_scope()
+                return result
+
+            monkeypatch.setattr(semantic.runtime, "query_metrics", changed_query)
+        else:
+            original = semantic._query_data_to_csv
+
+            def changed_csv(columns, data):
+                text = original(columns, data)
+                narrow_scope()
+                return text
+
+            monkeypatch.setattr(semantic, "_query_data_to_csv", changed_csv)
+
+        result = semantic.query_metrics(["net"], time_start="2024-01-01", time_end="2024-02-01", page_size=page_size)
+        assert result.success == 0
+        assert result.result is None
+        assert "scope changed" in result.error
+        assert len(semantic._query_metrics_result_cache) == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("reader", ["query_metrics", "get_query_metrics_result"])
+    async def test_registered_cache_reader_recovers_omitted_rows_without_requery(
+        self, real_agent_config, mock_llm_create, tmp_path, monkeypatch, reader
+    ):
+        import duckdb
+
+        from datus.configuration.agent_config import DbConfig
+        from datus.utils.query_result_text import parse_query_result_text
+
+        database = tmp_path / "metric_pages.duckdb"
+        with duckdb.connect(str(database)) as connection:
+            connection.execute("CREATE TABLE ledger(d DATE, cat VARCHAR, x DOUBLE, y DOUBLE)")
+            connection.execute(
+                "INSERT INTO ledger SELECT DATE '2024-01-01' + CAST(i AS INTEGER), 'a', i + 1, 0 FROM range(30) t(i)"
+            )
+        real_agent_config.services.datasources["metric_pages"] = DbConfig(type="duckdb", uri=str(database))
+        real_agent_config.current_datasource = "metric_pages"
+        fixtures = Path(__file__).resolve().parents[3] / "data/semantic_models/attribution"
+        models = real_agent_config.path_manager.semantic_model_path("metric_pages")
+        models.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(fixtures / "model.yaml", models / "model.yaml")
+        from datus.storage.metric.store import MetricRAG
+
+        MetricRAG(real_agent_config).store_batch(
+            [
+                {
+                    "name": name,
+                    "semantic_model_name": "attribution_model",
+                    "subject_path": ["Finance", subject],
+                    "description": f"{name} in the {subject} subject",
+                }
+                for name, subject in (("net", "Allowed"), ("x_total", "Allowed"), ("y_total", "Hidden"))
+            ]
+        )
+        real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "Finance.Allowed"}
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        node.semantic_tools.MAX_QUERY_METRICS_RESULT_CACHE_SIZE = 1
+        tools = {tool.name: tool for tool in node.tools}
+        calls = []
+        runtime = node.semantic_tools.runtime
+        original = runtime.query_metrics
+
+        async def observed(*args, **kwargs):
+            calls.append(True)
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(runtime, "query_metrics", observed)
+        query = await tools["query_metrics"].on_invoke_tool(
+            None,
+            json.dumps(
+                {
+                    "metrics": ["net"],
+                    "dimensions": ["metric_time"],
+                    "time_granularity": "day",
+                    "time_start": "2024-01-01",
+                    "time_end": "2024-01-31",
+                    "order_by": ["metric_time:day"],
+                    "page_size": 10,
+                }
+            ),
+        )
+        assert query["success"] == 1, query
+        parsed = parse_query_result_text(query["result"])
+        assert parsed.row_count == 30
+        assert parsed.shown_rows == 10
+        values = []
+        for offset, expected_more in ((0, True), (15, False)):
+            size_argument = "page_size" if reader == "query_metrics" else "limit"
+            page = await tools[reader].on_invoke_tool(
+                None, json.dumps({"result_id": parsed.result_id, "offset": offset, size_argument: 15})
+            )
+            assert page["success"] == 1, page
+            if reader == "query_metrics":
+                result = parse_query_result_text(page["result"])
+                assert result.row_count == 30
+                info = json.loads(
+                    next(line.removeprefix("page: ") for line in result.lines if line.startswith("page: "))
+                )
+                csv_data = result.csv
+            else:
+                info = page["result"]
+                assert info["row_count"] == 30
+                csv_data = info["csv"]
+            assert info["returned"] == 15
+            assert info["has_more"] is expected_more
+            values.extend(float(row["net"]) for row in csv.DictReader(io.StringIO(csv_data)))
+        assert values == list(range(1, 31))
+        assert len(calls) == 1
+
+        semantic = node.semantic_tools
+        storage = semantic.metric_rag.storage
+        before = semantic._query_cache_scope(semantic._policy_cache_scope())
+        assert storage.rename(["Finance", "Allowed", "net"], ["Finance", "Hidden", "net"]) is True
+        assert semantic._query_cache_scope(semantic._policy_cache_scope()) == before
+        moved = await tools[reader].on_invoke_tool(None, json.dumps({"result_id": parsed.result_id}))
+        assert moved["success"] == 0
+        assert moved["result"] is None
+        assert len(calls) == 1
+        assert storage.rename(["Finance", "Hidden", "net"], ["Finance", "Allowed", "net"]) is True
+        assert semantic.get_cached_query_metrics_result(parsed.result_id)["row_count"] == 30
+
+        second = semantic.query_metrics(["net"], time_start="2024-01-01", time_end="2024-01-31")
+        assert second.success == 1, second
+        second_id = parse_query_result_text(second.result).result_id
+        assert semantic.can_use_query_metrics_preview(parsed.result_id) is True
+        assert storage.rename(["Finance", "Allowed", "net"], ["Finance", "Hidden", "net"]) is True
+        assert semantic.can_use_query_metrics_preview(parsed.result_id) is False
+        assert semantic.get_cached_query_metrics_result(second_id) is None
+        assert storage.rename(["Finance", "Hidden", "net"], ["Finance", "Allowed", "net"]) is True
+        assert float(semantic.get_cached_query_metrics_result(second_id)["csv"].splitlines()[1]) == 465.0
+
+        real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "UnavailableSubject"}
+        denied = await tools[reader].on_invoke_tool(None, json.dumps({"result_id": second_id}))
+        assert denied["success"] == 0
+        assert denied["result"] is None
+        assert len(calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_metric_scope_uses_runtime_datasource(self, real_agent_config, mock_llm_create, tmp_path):
+        import duckdb
+
+        from datus.configuration.agent_config import DbConfig
+        from datus.storage.metric.store import MetricRAG
+        from datus.utils.query_result_text import parse_query_result_text
+
+        fixtures = Path(__file__).resolve().parents[3] / "data/semantic_models/attribution"
+        for datasource, factor, subject in (("scope_a", 1, "Allowed"), ("scope_b", 2, "Hidden")):
+            database = tmp_path / f"{datasource}.duckdb"
+            with duckdb.connect(str(database)) as connection:
+                connection.execute((fixtures / "seed.sql").read_text())
+                connection.execute(f"UPDATE ledger SET x = x * {factor}, y = y * {factor}")
+            real_agent_config.services.datasources[datasource] = DbConfig(type="duckdb", uri=str(database))
+            models = real_agent_config.path_manager.semantic_model_path(datasource)
+            models.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(fixtures / "model.yaml", models / "model.yaml")
+            MetricRAG(real_agent_config, datasource_id=datasource).store_batch(
+                [
+                    {
+                        "name": "net",
+                        "semantic_model_name": "attribution_model",
+                        "subject_path": ["Finance", subject],
+                        "description": "Net amount in the configured business subject",
+                    }
+                ]
+            )
+        real_agent_config.current_datasource = "scope_a"
+        real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "Finance.Allowed"}
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        real_agent_config.set_runtime_db_context({"datasource": "scope_b"})
+        tools = {tool.name: tool for tool in node.tools}
+
+        catalog = await tools["list_metrics"].on_invoke_tool(None, "{}")
+        assert catalog["success"] == 1
+        assert "net" not in catalog["result"]
+        for name, arguments in (
+            ("get_metric", {"name": "net"}),
+            ("query_metrics", {"metrics": ["net"]}),
+            (
+                "attribution_analyze",
+                {
+                    "metric_name": "net",
+                    "candidate_dimensions": ["ledger.cat"],
+                    "baseline_start": "2024-01-01",
+                    "baseline_end": "2024-02-01",
+                    "current_start": "2024-02-01",
+                    "current_end": "2024-03-01",
+                },
+            ),
+        ):
+            result = await tools[name].on_invoke_tool(None, json.dumps(arguments))
+            assert result["success"] == 0
+            assert "outside this agent's configured metric scope" in result["error"]
+        assert node.semantic_tools.metric_rag.datasource_id == "scope_b"
+        assert real_agent_config.current_datasource == "scope_a"
+
+        real_agent_config.agentic_nodes["chat"].pop("scoped_context")
+        result = await tools["query_metrics"].on_invoke_tool(
+            None, json.dumps({"metrics": ["net"], "time_start": "2024-01-01", "time_end": "2024-02-01"})
+        )
+        assert result["success"] == 1
+        parsed = parse_query_result_text(result["result"])
+        assert float(parsed.csv.splitlines()[1]) == 240.0
+
+    def test_session_snapshot_tracks_tools_and_replays_when_unchanged(self, real_agent_config, mock_llm_create):
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        node.session_id = "chat_session_metric_tools_snapshot"
+        prompt = node._get_session_system_prompt()
+        meta = node._system_prompt_snapshot_meta(None)
+        assert "## Attribution Playbook" in prompt
+        assert node._get_session_system_prompt() == prompt
+        assert node._system_prompt_snapshot_meta(None) == meta
+
+        resumed = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        resumed.session_id = node.session_id
+        assert resumed._system_prompt_snapshot_meta(None) == meta
+        assert resumed._get_session_system_prompt() == prompt
+
+        node.node_config["tools"] = "db_tools.*"
+        node._rebuild_tools()
+        restricted = node._get_session_system_prompt()
+        assert "## Attribution Playbook" not in restricted
+        assert "## Metric Queries" not in restricted
+        assert node._system_prompt_snapshot_meta(None) != meta
+
+        node.node_config["tools"] = "semantic_tools.attribution_analyze"
+        node._rebuild_tools()
+        metric_only = node._get_session_system_prompt()
+        assert "## Attribution Playbook" in metric_only
+        assert "generate and execute read-only SQL here" not in metric_only
+        assert node._get_session_system_prompt() == metric_only
+
+    @pytest.mark.asyncio
+    async def test_chat_defers_native_initialization_but_authoring_retains_it(
+        self, real_agent_config, mock_llm_create, monkeypatch
+    ):
+        from datus.tools.func_tool.semantic_tools import SemanticTools
+        from datus.tools.semantic_tools.dosi.runtime import DosiRuntime
+
+        calls = []
+        initialize = DosiRuntime.initialize
+
+        def observed(runtime):
+            calls.append(runtime.datasource)
+            return initialize(runtime)
+
+        monkeypatch.setattr(DosiRuntime, "initialize", observed)
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        node._get_session_system_prompt()
+        assert node.semantic_tools._runtime is None
+        assert calls == []
+        from datus.tools.middleware.tool_middleware import apply_tool_transformers
+
+        apply_tool_transformers(node, {"execute_sql": [lambda name, args, context: args]})
+        sql_tool = next(tool for tool in node.tools if tool.name == "execute_sql")
+        result = await sql_tool.on_invoke_tool(None, json.dumps({"sql": "SELECT 1 AS n"}))
+        assert result["success"] == 1
+        assert calls == []
+        SemanticTools(real_agent_config)
+        assert calls == [real_agent_config.current_datasource]
+
+    def test_defaults_and_rebuild_keep_metric_reads_without_authoring(self, real_agent_config, mock_llm_create):
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        from datus.tools.func_tool.semantic_tools import SemanticTools
+
+        assert isinstance(node.semantic_tools, SemanticTools)
+        assert node.semantic_tools.sub_agent_name == "chat"
+        for _ in range(2):
+            names = [tool.name for tool in node.tools]
+            assert METRIC_TOOL_NAMES <= set(names)
+            assert not {"validate_semantic", "describe_concept", "find_concept_paths", "select_records"} & set(names)
+            assert all(names.count(name) == 1 for name in METRIC_TOOL_NAMES)
+            assert all(node.tool_registry.get(name) == "semantic_tools" for name in METRIC_TOOL_NAMES)
+            node._rebuild_tools()
+
+    @pytest.mark.parametrize(
+        "patterns, expected",
+        [
+            ("semantic_tools.query_metrics", {"query_metrics"}),
+            ("semantic_tools.get_query_metrics_result", {"get_query_metrics_result"}),
+            (
+                ["semantic_tools.query_metrics", "semantic_tools.attribution_analyze"],
+                {"query_metrics", "attribution_analyze"},
+            ),
+            ("semantic_tools.*", METRIC_TOOL_NAMES | {"validate_semantic"}),
+            ("db_tools.*", set()),
+        ],
+    )
+    def test_explicit_semantic_allowlist_is_exact(self, real_agent_config, mock_llm_create, patterns, expected):
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config, tools=patterns)
+        for _ in range(2):
+            names = {tool.name for tool in node.tools}
+            assert names & (METRIC_TOOL_NAMES | {"validate_semantic"}) == expected
+            prompt = node._get_system_prompt()
+            assert ("Use `attribution_analyze` directly" in prompt) == ("attribution_analyze" in expected)
+            assert ("Read each metric with `get_metric`" in prompt) == ("get_metric" in expected)
+            assert ("## Period-Over-Period Metric Queries" in prompt) == ("query_metrics" in expected)
+            assert ("generate and execute read-only SQL here" in prompt) == ("execute_sql" in names)
+            node._rebuild_tools()
+
+    def test_metric_setup_failure_preserves_sql_and_files(self, real_agent_config, mock_llm_create, monkeypatch):
+        def fail_setup(*args, **kwargs):
+            raise OSError("metric storage unavailable")
+
+        monkeypatch.setattr("datus.agent.node.chat_agentic_node.SemanticTools", fail_setup)
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        names = {tool.name for tool in node.tools}
+        assert node.semantic_tools is None
+        assert {"execute_sql", "read_file"} <= names
+        assert not METRIC_TOOL_NAMES & names
+        assert "## Attribution Playbook" not in node._get_system_prompt()
+
+    def test_rebuild_does_not_restore_excluded_metric_tools(self, real_agent_config, mock_llm_create):
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        node.node_config["tools"] = "db_tools.*"
+        node._rebuild_tools()
+        assert not METRIC_TOOL_NAMES & {tool.name for tool in node.tools}
+        assert "## Attribution Playbook" not in node._get_system_prompt()
+
+    @pytest.mark.parametrize(
+        "patterns",
+        [
+            "semantic_tools.query_metrics,semantic_tools.get_metric,sub_agent_tools.*",
+            "semantic_tools.attribution_analyze,sub_agent_tools.*",
+            "semantic_tools.query_metrics,semantic_tools.get_metric,db_tools.*,sub_agent_tools.*",
+        ],
+    )
+    def test_task_routing_sql_fallback_matches_exposed_tools(self, real_agent_config, mock_llm_create, patterns):
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config, tools=patterns)
+        names = {tool.name for tool in node.tools}
+        assert "task" in names
+        prompt = " ".join(node._get_session_system_prompt().split())
+        routing = prompt.split("Chat routing priority:", 1)[1].split("## Data Questions and Attribution", 1)[0]
+        assert ("If no suitable metric exists, generate and execute read-only SQL here" in routing) == (
+            "execute_sql" in names
+        )
+        assert ("no SQL tool is available, explain the actual missing capability" in routing) == (
+            "execute_sql" not in names
+        )
+
+    @pytest.mark.asyncio
+    async def test_registered_tools_query_attribute_and_refresh_models(
+        self, real_agent_config, mock_llm_create, tmp_path, monkeypatch
+    ):
+        import duckdb
+
+        from datus.configuration.agent_config import DbConfig
+        from datus.tools.semantic_tools.dosi.runtime import DosiRuntime
+        from datus.utils.query_result_text import parse_query_result_text
+
+        initialized = []
+        initialize = DosiRuntime.initialize
+
+        def observed(runtime):
+            initialized.append(runtime.datasource)
+            return initialize(runtime)
+
+        monkeypatch.setattr(DosiRuntime, "initialize", observed)
+
+        fixtures = Path(__file__).resolve().parents[3] / "data/semantic_models/attribution"
+        database = tmp_path / "attribution.duckdb"
+        with duckdb.connect(str(database)) as connection:
+            connection.execute((fixtures / "seed.sql").read_text())
+        real_agent_config.services.datasources["attribution"] = DbConfig(type="duckdb", uri=str(database))
+        real_agent_config.current_datasource = "attribution"
+        model_dir = real_agent_config.path_manager.semantic_model_path("attribution")
+        model_dir.mkdir(parents=True, exist_ok=True)
+        model_path = model_dir / "model.yaml"
+        shutil.copy2(fixtures / "model.yaml", model_path)
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        tools = {tool.name: tool for tool in node.tools}
+        assert initialized == []
+
+        async def invoke(name, arguments):
+            result = await tools[name].on_invoke_tool(None, json.dumps(arguments))
+            assert result["success"] == 1, result
+            return result["result"]
+
+        definition = await invoke("get_metric", {"name": "net"})
+        assert initialized == ["attribution"]
+        assert "expr:" in definition
+        assert "cat" in await invoke("get_dataset", {"name": "ledger"})
+        query = await invoke(
+            "query_metrics", {"metrics": ["net"], "time_start": "2024-01-01", "time_end": "2024-02-01"}
+        )
+        parsed = parse_query_result_text(query)
+        assert parsed is not None and float(parsed.csv.splitlines()[1]) == 120.0
+        cached = node.semantic_tools.get_cached_query_metrics_result(parsed.result_id)
+        assert cached["columns"] == ["net"]
+        assert cached["row_count"] == 1
+        assert float(cached["csv"].splitlines()[1]) == 120.0
+        attribution = await invoke(
+            "attribution_analyze",
+            {
+                "metric_name": "net",
+                "candidate_dimensions": ["ledger.cat"],
+                "baseline_start": "2024-01-01",
+                "baseline_end": "2024-02-01",
+                "current_start": "2024-02-01",
+                "current_end": "2024-03-01",
+            },
+        )
+        assert attribution["total_change"]["delta"] == 20.0
+        assert attribution["per_dimension"]["ledger.cat"]["reconciliation"]["passed"]
+        node.semantic_tools.metric_rag.store_batch(
+            [
+                {
+                    "name": "net",
+                    "semantic_model_name": "attribution_model",
+                    "subject_path": ["Finance", "Allowed"],
+                    "description": "Allowed net metric",
+                },
+                {
+                    "name": "x_total",
+                    "semantic_model_name": "attribution_model",
+                    "subject_path": ["Finance", "Hidden"],
+                    "description": "Metric outside the selected subject",
+                },
+            ]
+        )
+        real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "Finance.Allowed"}
+        catalog = await invoke("list_metrics", {})
+        assert "net" in catalog
+        assert "x_total" not in catalog
+        assert "expr:" in await invoke("get_metric", {"name": "net"})
+        for tool_name, arguments in (
+            ("get_metric", {"name": "x_total"}),
+            ("query_metrics", {"metrics": ["net", "x_total"]}),
+            (
+                "attribution_analyze",
+                {
+                    "metric_name": "x_total",
+                    "candidate_dimensions": ["ledger.cat"],
+                    "baseline_start": "2024-01-01",
+                    "baseline_end": "2024-02-01",
+                    "current_start": "2024-02-01",
+                    "current_end": "2024-03-01",
+                },
+            ),
+        ):
+            denied = await tools[tool_name].on_invoke_tool(None, json.dumps(arguments))
+            assert denied["success"] == 0
+            assert "outside this agent's configured metric scope" in denied["error"]
+        tree = node.semantic_tools.metric_rag.storage.subject_tree
+        assert tree.rename(["Finance"], ["ArchivedFinance"]) is True
+        for tool_name, arguments in (
+            ("list_metrics", {}),
+            ("get_metric", {"name": "net"}),
+            ("query_metrics", {"metrics": ["net"]}),
+            (
+                "attribution_analyze",
+                {
+                    "metric_name": "net",
+                    "candidate_dimensions": ["ledger.cat"],
+                    "baseline_start": "2024-01-01",
+                    "baseline_end": "2024-02-01",
+                    "current_start": "2024-02-01",
+                    "current_end": "2024-03-01",
+                },
+            ),
+        ):
+            denied = await tools[tool_name].on_invoke_tool(None, json.dumps(arguments))
+            assert denied["success"] == 0
+            assert "scope" in denied["error"]
+        assert tree.rename(["ArchivedFinance"], ["Finance"]) is True
+        assert "expr:" in await invoke("get_metric", {"name": "net"})
+        real_agent_config.agentic_nodes["chat"].pop("scoped_context")
+        assert "expr:" in await invoke("get_metric", {"name": "x_total"})
+        model_path.write_text(model_path.read_text().replace("name: net\n", "name: net_updated\n"))
+        assert "net_updated" in await invoke("list_metrics", {})
+        assert "expr:" in await invoke("get_metric", {"name": "net_updated"})
+        next_database = tmp_path / "next.duckdb"
+        with duckdb.connect(str(next_database)) as connection:
+            connection.execute((fixtures / "seed.sql").read_text())
+            connection.execute("UPDATE ledger SET x = x * 2, y = y * 2")
+        real_agent_config.services.datasources["next"] = DbConfig(type="duckdb", uri=str(next_database))
+        real_agent_config.current_datasource = "next"
+        next_models = real_agent_config.path_manager.semantic_model_path("next")
+        next_models.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(model_path, next_models / "model.yaml")
+        query = await invoke(
+            "query_metrics", {"metrics": ["net_updated"], "time_start": "2024-01-01", "time_end": "2024-02-01"}
+        )
+        assert float(parse_query_result_text(query).csv.splitlines()[1]) == 240.0
+        assert initialized == ["attribution", "next"]
 
 
 class TestChatAgenticNodeInheritance:
@@ -685,6 +1287,31 @@ class TestChatAgenticNodeMCPSetup:
 class TestChatAgenticNodeSystemPrompt:
     """Verify system prompt generation and error handling."""
 
+    def test_chat_routing_is_in_system_prompt_only(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = ChatAgenticNode(
+            node_id="chat_routing_owner",
+            description="Chat owns specialist routing",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+        prompt = node._get_system_prompt()
+        task_description = node.sub_agent_task_tool.available_tools()[0].description
+
+        assert "Chat routing priority" in prompt
+        assert "table_target_unverified" in prompt
+        assert "For file artifacts such as skills" in prompt
+        assert "no database binding is required" in prompt
+        assert "using this chat's available tools" in prompt
+        assert "Missing metrics alone" in prompt
+        assert "only when the user explicitly requests that work" in prompt
+        assert "Scheduling and external BI operations use installed plugins directly" in prompt
+        assert "only to types listed as available" in prompt
+        assert "External BI-to-Datus conversion is a main-agent orchestration workflow" in prompt
+        assert 'load_skill(skill_name="dashboard-bootstrap")' in prompt
+        assert "Chat routing priority" not in task_description
+
     def test_get_system_prompt_returns_string(self, real_agent_config, mock_llm_create):
         """_get_system_prompt returns a non-empty string for valid template."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -755,7 +1382,8 @@ class TestChatAgenticNodeSystemPrompt:
         prompt = node._get_system_prompt()
 
         assert "Ask user tool (`ask_user`)" in prompt
-        assert "call `ask_user` FIRST" in prompt
+        assert "call `ask_user` before dependent writes" in prompt
+        assert "Tool-discoverable metadata is not a" in prompt
 
     def test_get_system_prompt_fallback_on_missing_template(self, real_agent_config, mock_llm_create):
         """_get_system_prompt falls back to chat_system when configured template is missing."""
