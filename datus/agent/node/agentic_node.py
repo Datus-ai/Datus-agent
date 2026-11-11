@@ -423,6 +423,22 @@ class AgenticNode(Node):
         self._session_manager = None
         self._session = None
         self._archive = None
+        # Constructors may mount tools before task() nests the subagent session.
+        # Move their read-only anchor too, revoking access to the old directory.
+        from dataclasses import replace
+
+        from datus.tools.func_tool import FilesystemFuncTool
+        from datus.tools.permission.permission_hooks import FilesystemPolicy
+
+        data_dir = self._resolve_session_data_dir()
+        data_path = Path(data_dir).expanduser().resolve(strict=False) if data_dir else None
+        for group in self._iter_tool_groups():
+            if isinstance(group, FilesystemFuncTool):
+                group._session_data_dir = data_path
+        hooks = getattr(self, "permission_hooks", None)
+        policy = getattr(hooks, "fs_policy", None)
+        if isinstance(policy, FilesystemPolicy):
+            hooks.fs_policy = replace(policy, session_data_dir=data_path)
         try:
             self.restore_plan_mode_state()
         except Exception as exc:  # noqa: BLE001 — same contract as ``__init__``
@@ -3337,22 +3353,14 @@ class AgenticNode(Node):
     def _bash_output_dir(self) -> Optional[Path]:
         """Session data dir for bash output offload, or None if unavailable.
 
-        Reused directory convention as the compact archive
-        (``path_manager.session_data_dir(session_id)``). Returns None before a
-        session id is allocated, when there is no ``agent_config`` (mirrors
-        ``_resolve_session_data_dir`` — otherwise ``get_path_manager`` would fall
-        back to a process-wide default rooted at ``~/.datus``), or when the path
-        manager can't be built, so the bash tool degrades to in-memory truncation.
+        Share the filesystem policy's resolved session archive directory,
+        including custom roots, tenant scope and subagent nesting. Without a
+        configured session directory, bash keeps its in-memory fallback.
         """
         if not self.agent_config or not self.session_id:
             return None
-        try:
-            from datus.utils.path_manager import get_path_manager
-
-            return get_path_manager(agent_config=self.agent_config).session_data_dir(self.session_id)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("Failed to resolve bash output dir: %s", exc)
-            return None
+        data_dir = self._resolve_session_data_dir()
+        return Path(data_dir) if data_dir else None
 
     def _ensure_bash_tool_in_tools(self) -> None:
         """Ensure the BashTool's ``bash`` is in ``self.tools``.

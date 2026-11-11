@@ -12,9 +12,11 @@ Two producers write the same ``[DATUS_ARCHIVED]`` marker so a single parser
 2. The bash tool (``datus/tools/func_tool/bash_tool.py``) offloads a command's
    output at execution time when it crosses the tool's threshold.
 
-Both write under ``path_manager.session_data_dir(session_id)`` and replace the
-in-context payload with a single-line marker carrying the absolute file path and
-a short preview, so the LLM can ``read_file(<path>)`` to recover the original.
+Agent archives use the SessionManager's resolved session data directory, including
+custom roots and subagent nesting; standalone archives default to the path
+manager's session directory. Producers replace the in-context payload with a
+single-line marker carrying the absolute file path and a short preview, so the
+LLM can ``read_file(<path>)`` to recover the original.
 
 This module lives under ``datus/utils`` (its only dependencies are
 ``path_manager`` and ``exceptions``) so ``datus/tools`` can import it without an

@@ -17,6 +17,7 @@ from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.tools.func_tool.semantic_model_editing_tools import SemanticModelEditingTools
 from datus.tools.func_tool.semantic_model_filesystem_tools import SemanticModelFilesystemTools
 from datus.tools.func_tool.semantic_model_workspace import SemanticModelWorkspace
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -194,7 +195,10 @@ class SemanticAuthoringAgenticNode(AgenticNode):
 
         reference_dir = None
         if skill_name == "dosi-semantic-authoring":
-            cache_dir = Path(self.agent_config.path_manager.session_data_dir(self.session_id)) / "semantic_authoring"
+            data_dir = self._resolve_session_data_dir()
+            if not data_dir:
+                raise DatusException(ErrorCode.STORAGE_FAILED, message="Session data directory is unavailable")
+            cache_dir = Path(data_dir) / "semantic_authoring"
             reference_dir = prepare_authoring_references(cache_dir)
 
         return render_required_authoring_skill(
