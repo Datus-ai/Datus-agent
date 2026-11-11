@@ -52,8 +52,9 @@ METRIC_TOOL_NAMES = {
 
 class TestChatMetricTools:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("reader", ["query_metrics", "get_query_metrics_result"])
     async def test_registered_cache_reader_recovers_omitted_rows_without_requery(
-        self, real_agent_config, mock_llm_create, tmp_path, monkeypatch
+        self, real_agent_config, mock_llm_create, tmp_path, monkeypatch, reader
     ):
         import duckdb
 
@@ -93,29 +94,40 @@ class TestChatMetricTools:
                     "time_start": "2024-01-01",
                     "time_end": "2024-01-31",
                     "order_by": ["metric_time:day"],
+                    "page_size": 10,
                 }
             ),
         )
         assert query["success"] == 1, query
-        assert "10 rows omitted" in query["result"]
         parsed = parse_query_result_text(query["result"])
+        assert parsed.row_count == 30
+        assert parsed.shown_rows == 10
         values = []
         for offset, expected_more in ((0, True), (15, False)):
-            page = await tools["get_query_metrics_result"].on_invoke_tool(
-                None, json.dumps({"result_id": parsed.result_id, "offset": offset, "limit": 15})
+            size_argument = "page_size" if reader == "query_metrics" else "limit"
+            page = await tools[reader].on_invoke_tool(
+                None, json.dumps({"result_id": parsed.result_id, "offset": offset, size_argument: 15})
             )
             assert page["success"] == 1, page
-            assert page["result"]["row_count"] == 30
-            assert page["result"]["returned"] == 15
-            assert page["result"]["has_more"] is expected_more
-            values.extend(float(row["net"]) for row in csv.DictReader(io.StringIO(page["result"]["csv"])))
+            if reader == "query_metrics":
+                result = parse_query_result_text(page["result"])
+                assert result.row_count == 30
+                info = json.loads(
+                    next(line.removeprefix("page: ") for line in result.lines if line.startswith("page: "))
+                )
+                csv_data = result.csv
+            else:
+                info = page["result"]
+                assert info["row_count"] == 30
+                csv_data = info["csv"]
+            assert info["returned"] == 15
+            assert info["has_more"] is expected_more
+            values.extend(float(row["net"]) for row in csv.DictReader(io.StringIO(csv_data)))
         assert values == list(range(1, 31))
         assert len(calls) == 1
 
         real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "UnavailableSubject"}
-        denied = await tools["get_query_metrics_result"].on_invoke_tool(
-            None, json.dumps({"result_id": parsed.result_id})
-        )
+        denied = await tools[reader].on_invoke_tool(None, json.dumps({"result_id": parsed.result_id}))
         assert denied["success"] == 0
         assert denied["result"] is None
         assert len(calls) == 1
