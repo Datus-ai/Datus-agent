@@ -77,11 +77,8 @@ def test_bi_receipt_requires_all_p0_tests_and_same_sources(tmp_path):
         verify(tmp_path, sources)
 
 
-def test_merge_queue_aggregates_bi_gate_and_real_p0_has_regression():
+def test_bi_gate_keeps_real_p0_regression():
     root = Path(__file__).resolve().parents[3]
-    workflow = yaml.safe_load((root / ".github/workflows/merge-queue.yml").read_text())
-    assert "bi" in workflow["jobs"]["merge-queue-gate"]["needs"]
-    assert workflow["jobs"]["bi"]["uses"] == "./.github/workflows/bi-gate.yml"
     gate = (root / ".github/workflows/bi-gate.yml").read_text()
     assert "ci/bi_gate.py run" in gate
     assert "ci/bi_gate.py verify" in gate
@@ -89,15 +86,15 @@ def test_merge_queue_aggregates_bi_gate_and_real_p0_has_regression():
 
 
 @pytest.mark.parametrize(
-    "required,result,expected",
+    "result,expected",
     [
-        ("true", "success", 0),
-        ("true", "failure", 1),
-        ("true", "skipped", 1),
-        ("false", "skipped", 0),
+        ("success", 0),
+        ("failure", 1),
+        ("cancelled", 1),
+        ("skipped", 1),
     ],
 )
-def test_final_required_context_checks_bi_result(required, result, expected):
+def test_final_required_context_checks_deterministic_result(result, expected):
     import os
     import subprocess
 
@@ -109,9 +106,7 @@ def test_final_required_context_checks_bi_result(required, result, expected):
         capture_output=True,
         env={
             **os.environ,
-            "DETERMINISTIC_RESULT": "success",
-            "BI_REQUIRED": required,
-            "BI_RESULT": result,
+            "DETERMINISTIC_RESULT": result,
         },
     )
     assert completed.returncode == expected

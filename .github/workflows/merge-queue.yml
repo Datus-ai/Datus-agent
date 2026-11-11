@@ -15,8 +15,6 @@ jobs:
   deterministic:
     name: Deterministic merge queue suites
     runs-on: ubuntu-latest
-    outputs:
-      bi_required: ${{ steps.bi.outputs.required }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -40,14 +38,6 @@ jobs:
       - name: Select merge queue profile
         id: profile
         run: uv run --no-project --with pyyaml python ci/select_gate_profile.py --github-output "$GITHUB_OUTPUT"
-
-      - name: Plan required BI acceptance
-        id: bi
-        if: ${{ steps.profile.outputs.profile == 'code' }}
-        run: |
-          args=()
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then args+=(--force); fi
-          uv run --no-project --with pyyaml python ci/bi_gate.py plan --github-output "$GITHUB_OUTPUT" "${args[@]}"
 
       - name: Validate generated tool contracts
         run: python3 datus/tools/registry/catalog_builder.py --check
@@ -145,30 +135,13 @@ jobs:
             ci/test-results-*.execution.json
             ci/test-results-merge-*.xml
 
-  bi:
-    needs: deterministic
-    if: ${{ needs.deterministic.outputs.bi_required == 'true' }}
-    uses: ./.github/workflows/bi-gate.yml
-    with:
-      agent_ref: ${{ github.sha }}
-    secrets:
-      RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
-
   merge-queue-gate:
     name: Merge Queue Gate
-    needs: [deterministic, bi]
+    needs: deterministic
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Require every selected gate to succeed
         env:
           DETERMINISTIC_RESULT: ${{ needs.deterministic.result }}
-          BI_REQUIRED: ${{ needs.deterministic.outputs.bi_required }}
-          BI_RESULT: ${{ needs.bi.result }}
-        run: |
-          test "$DETERMINISTIC_RESULT" = success
-          if [ "$BI_REQUIRED" = true ]; then
-            test "$BI_RESULT" = success
-          else
-            test "$BI_RESULT" = skipped
-          fi
+        run: test "$DETERMINISTIC_RESULT" = success

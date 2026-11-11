@@ -102,17 +102,19 @@ acceptance and fixture preparation. The profile and the checks actually executed
 are recorded in `ci/gate-coverage.json`; code profiles retain mandatory core-test
 evidence checks.
 
-## SQL policy merge acceptance
+## SQL policy host acceptance
 
 Code changes affecting plugin installation, policy execution, datasource reads,
 Dosi, or shared integration fixtures select `P0 SQL Policy Plugin Contracts`.
 The product plan includes this deterministic group even without live-model targets.
-The existing required `Merge Queue Gate` waits for both the deterministic suites
-and the selected real SQL policy acceptance. A skipped, cancelled or failed
-selected gate cannot satisfy that required context. Documentation profiles keep
-their existing smaller gate.
+SQL policy host acceptance runs in scheduled Nightly. The required `Merge Queue
+Gate` checks the deterministic suites; SQL policy and BI host acceptance are not
+merge-queue dependencies. Documentation profiles keep their existing smaller gate.
 
-`sql-policy-gate.yml` runs on ephemeral GitHub-hosted runners. It resolves the
+`sql-policy-gate.yml` runs on the shared Linux x64 `osi-engine` self-hosted runners.
+The runner must have a C compiler, `patchelf`, and the ODBC development package
+preinstalled; the job verifies these prerequisites without installing system
+packages during each run. It resolves the
 reviewed policy pin from `sql-policy-host.json` and the engine commit from the
 policy's Cargo dependencies, freezes all three checkout SHAs, then builds Agent,
 engine and policy wheels from those sources. External repositories are read-only
@@ -134,11 +136,11 @@ and unrestricted contexts, and HTTP Chat enforcement without an external LLM.
 cache mode and separate build/install/execution stages. Execution evidence carries
 the source identity and must include successful outcomes for every required P0
 nodeid. Different sources, modified artifacts, missing reports, skips and xfails
-fail validation. The required merge-group result applies to its own synthesized
-commit; evidence is not reused from an earlier PR head.
+fail validation. Each run verifies its own frozen source combination; evidence is
+not reused from an earlier source revision.
 
-Normal runs reuse the runner's available build caches. Build/dependency/host-pin
-changes also select a cold run with new empty uv, Cargo and target directories.
+Warm runs reuse the runner's available build caches. Cold runs use new empty uv,
+Cargo and target directories.
 Scheduled Nightly runs both modes against policy main, resolved once to immutable
 SHAs before the matrix starts. The compiled private payloads and caches remain on
 the runner; artifacts contain only receipts and logs. Source-read tokens are used
@@ -223,13 +225,13 @@ Live core defaults to `deepseek/deepseek-v4-flash` with `DEEPSEEK_API_KEY`.
   entry were replaced by the production-loop HTTP acceptance test. Other plan
   interaction tests remain.
 
-### BI repair gate
+### BI repair acceptance
 
 Changes to BI tools, validation, Superset authoring/validation skills, their tests,
-dependencies, or CI select `P0 BI Product E2E`. The required Merge Queue Gate
-waits for the isolated `bi-gate.yml` job on `merge_group`. The separate
+dependencies, or CI select `P0 BI Product E2E` in the product test plan. Scheduled
+Nightly and release P0 run this group; it is not a merge-queue dependency. The separate
 `merge-queue-pr.yml` workflow publishes the lightweight PR context without a
-checkout or reusable workflow call. The job uses pinned BI and plugin fixtures from `p0.yml`, the existing
+checkout or reusable workflow call. The standalone BI gate uses pinned BI and plugin fixtures from `p0.yml`, the existing
 self-hosted CI credential template, and dynamically allocated loopback Docker ports.
 It runs the deterministic chart repair/delete contract, managed plugin installation,
 and real-model dashboard creation. Missing, skipped, or failed P0 receipts fail the gate.
