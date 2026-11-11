@@ -121,7 +121,7 @@ not add another provider to a query node.
 
 The four former `filesystem_tools.upsert/delete_osi_*` identities are invalid.
 There are no compatibility aliases or wildcard transfers to the semantic family.
-The retired `create_file` and `write_query` aliases are removed; `write_file`,
+The retired `create_file`, `write_query` and `get_dimensions` tool aliases are removed; `write_file`,
 `edit_file`, `delete_file` and `execute_ddl` remain actual Agent tools. Native
 writers without a REST/MCP export declare `direct_call=False`; registering an
 Agent SDK tool alone does not expose a transport endpoint.

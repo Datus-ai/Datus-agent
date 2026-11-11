@@ -233,3 +233,28 @@ def test_mcp_alias_requires_a_declared_compatibility_name():
 
     with pytest.raises(ToolDefinitionError, match="MCP alias"):
         get_mcp_tools(Tool)
+
+
+@pytest.mark.parametrize(
+    "provider,method,retired",
+    [
+        ("filesystem_tools", "write_file", "create_file"),
+        ("database", "execute_ddl", "write_query"),
+        ("semantic_tools", "get_dataset", "get_dimensions"),
+    ],
+)
+def test_native_registration_rejects_retired_tool_aliases(provider, method, retired):
+    """Retired names cannot be used to register a live tool under another identity."""
+    from types import SimpleNamespace
+
+    from datus.tools.func_tool.database import DBFuncTool
+    from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+    from datus.tools.func_tool.semantic_tools import SemanticTools
+    from datus.tools.registry.capabilities import tool_capability
+    from datus.tools.registry.contracts import register_tool_definition
+
+    owner = {"filesystem_tools": FilesystemFuncTool, "database": DBFuncTool, "semantic_tools": SemanticTools}[provider]
+    definition = definition_from_callable(getattr(owner, method), owner=owner)
+    assert tool_capability(f"{definition.category}.{retired}") is None
+    with pytest.raises(ToolDefinitionError):
+        register_tool_definition(SimpleNamespace(name=retired), definition)
