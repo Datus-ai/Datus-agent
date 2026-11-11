@@ -59,6 +59,48 @@ def test_custom_delegation_preserves_parent_execution_and_profile(real_agent_con
     assert sum(t.name == "ask_user" for t in node.tools) == int(mode == "interactive")
 
 
+@pytest.mark.asyncio
+async def test_late_custom_question_reaches_the_already_listening_parent(real_agent_config, mock_llm_create):
+    """Mounting a child question channel must retain the parent's active collector queue."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from datus.cli.execution_state import InteractionBroker
+    from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
+    from datus.tools.permission.permission_manager import PermissionManager
+
+    real_agent_config.agentic_nodes["custom_reader"] = {"node_class": "ask_metrics", "tools": "semantic_tools.*"}
+    task = SubAgentTaskTool(agent_config=real_agent_config)
+    task._parent_node = SimpleNamespace(
+        execution_mode="interactive", permission_manager=PermissionManager(active_profile="auto")
+    )
+    node = task._create_node("custom_reader")
+    broker = InteractionBroker()
+    task._inject_broker(node, broker)
+    stream = broker.fetch()
+    received = asyncio.create_task(anext(stream))
+    question = None
+    await asyncio.sleep(0)
+    try:
+        node._compose_hooks()
+        question = asyncio.create_task(
+            node.ask_user_tool.ask_user([{"question": "Continue reading?", "options": ["Proceed", "Cancel"]}])
+        )
+        action = await asyncio.wait_for(received, timeout=1)
+        assert await broker.submit(action.action_id, [["1"]])
+        result = await asyncio.wait_for(question, timeout=1)
+        assert result.success == 1
+        assert json.loads(result.result)[0]["answer"] == "Proceed"
+    finally:
+        broker.close()
+        await asyncio.sleep(0)
+        pending = [received, *([question] if question is not None else [])]
+        for future in pending:
+            future.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        await stream.aclose()
+
+
 def _query_action(text, *, action_type="query_metrics", **extra):
     """A successful query action whose result is the text an executed query returns."""
     return {

@@ -3138,7 +3138,9 @@ class AgenticNode(Node):
         try:
             from datus.tools.func_tool.ask_user_tools import AskUserTool
 
-            broker = self._get_or_create_broker()
+            # The owning run already binds the queue. A delegated child must
+            # retain it while the parent collector is listening.
+            broker = self.interaction_broker
             self.ask_user_tool = AskUserTool(broker=broker)
             if self.tools is not None:
                 self.tools.extend(self.ask_user_tool.available_tools())
