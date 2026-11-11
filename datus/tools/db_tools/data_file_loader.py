@@ -319,7 +319,7 @@ def find_file_reading_functions(sql: str) -> List[str]:
         return found
     if tree is not None:
         for function in tree.find_all(exp.Func):
-            name = function.name.lower()
+            name = (function.name if isinstance(function, exp.Anonymous) else function.sql_name()).lower()
             if name in FILE_READING_FUNCTIONS and name not in found:
                 found.append(name)
     return found

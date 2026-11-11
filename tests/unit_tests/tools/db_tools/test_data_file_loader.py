@@ -172,6 +172,8 @@ class TestFindFileReadingFunctions:
             "SELECT count(*) FROM t",
             "SELECT date_trunc('month', d) FROM t",
             "SELECT * FROM my_read_csv_helper",
+            "SELECT MAX('read_blob')",
+            "SELECT COALESCE('read_text', '')",
         ],
     )
     def test_leaves_ordinary_sql_alone(self, sql):
