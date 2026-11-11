@@ -658,6 +658,7 @@ class ChatAgenticNode(AgenticNode):
         context["has_task_tool"] = bool(self.sub_agent_task_tool)
         context["has_ask_user_tool"] = "ask_user" in exposed
         context["tool_names"] = sorted(exposed)
+        context["has_export_query"] = "export_query" in exposed
         # Web tools (web_search / web_fetch) are NOT advertised in the system
         # prompt: their own tool-schema descriptions document usage, and prompt
         # advertisement can't track per-tool availability (builtin-only vs

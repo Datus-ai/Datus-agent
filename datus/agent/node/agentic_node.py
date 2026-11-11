@@ -4663,6 +4663,8 @@ class AgenticNode(Node):
                 non_interactive=non_interactive,
                 proxied_tool_names=self.proxied_tool_names,
                 project_root=getattr(self.agent_config, "project_root", None),
+                export_workspace_root=self._resolve_workspace_root(),
+                client_only_workspace=getattr(self.agent_config, "_client_source", None) == "vscode",
                 config_mutable=self._resolve_config_mutable(),
                 auto_reviewer=create_auto_reviewer(self.agent_config),
                 review_context_provider=self._build_permission_review_context,

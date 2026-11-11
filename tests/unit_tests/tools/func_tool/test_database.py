@@ -1407,6 +1407,10 @@ class TestGetConnectorRouting:
 class TestTransferQueryResult:
     """Tests for DBFuncTool.transfer_query_result method."""
 
+    @pytest.fixture(autouse=True)
+    def diagnostic_root(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(DBFuncTool, "_bulk_root", lambda self: tmp_path)
+
     def _make_multi_tool(self, source_connector, target_connector, default_db="source_db"):
         """Create a DBFuncTool with mocked _get_connector for multi-db routing."""
         with (
@@ -1660,7 +1664,8 @@ class TestTransferQueryResult:
         assert result.success == 1
         assert result.result["rows_transferred"] == 0
         assert result.result["target_table_created"] is True
-        assert result.result["target_table_create_sql"].startswith("CREATE TABLE tgt.users")
+        assert "target_table_create_sql" not in result.result
+        assert target.execute_ddl.call_args.args[0].startswith("CREATE TABLE tgt.users")
         target.execute_insert.assert_not_called()
 
     def test_transfer_append_mode_no_truncate(self):
@@ -1927,6 +1932,155 @@ class TestTransferQueryResult:
 
         assert result.success == 0
         assert "target" in result.error.lower()
+
+    @pytest.mark.parametrize("batch_size", [True, 1.5, 10_001])
+    def test_transfer_rejects_oversized_or_noninteger_batches_before_execution(self, batch_size):
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame({"id": [1]}))
+        target, insert = self._make_target_connector()
+        tool = self._make_multi_tool(source, target)
+        result = tool.transfer_query_result(
+            "SELECT id FROM users", "source_db", "orders", "target_db", batch_size=batch_size
+        )
+        assert result.success == 0
+        assert "batch_size" in result.error
+        source.execute_pandas.assert_not_called()
+        target.execute_ddl.assert_not_called()
+        insert.assert_not_called()
+
+    def test_transfer_checks_all_insert_byte_limits_before_replace(self):
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame({"payload": ["ok", "数据'" * 10]}))
+        target, insert = self._make_target_connector()
+        tool = self._make_multi_tool(source, target)
+        tool._TRANSFER_MAX_SQL_BYTES = 100
+        result = tool.transfer_query_result(
+            "SELECT payload FROM users", "source_db", "orders", "target_db", batch_size=1
+        )
+        assert result.success == 0
+        assert "SQL limit" in result.error
+        source.execute_pandas.assert_called_once()
+        target.execute_ddl.assert_not_called()
+        insert.assert_not_called()
+
+    def test_native_transfer_checks_oversized_identifiers_before_replace(self):
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame({"a" * (1024 * 1024 + 1): [1]}))
+        target, insert = self._make_target_connector()
+        operations = Mock()
+        operations.quote_identifier.side_effect = lambda name: '"' + name.upper().replace('"', '""') + '"'
+        tool = self._make_multi_tool(source, target)
+        with patch(
+            "datus.tools.func_tool.database.get_dialect_operations",
+            side_effect=lambda **kwargs: operations if kwargs.get("connector") is target else None,
+        ):
+            result = tool.transfer_query_result("SELECT value FROM users", "source_db", "orders", "target_db")
+        assert result.success == 0
+        assert "SQL limit" in result.error
+        source.execute_pandas.assert_called_once()
+        target.execute_ddl.assert_not_called()
+        operations.write_dataframe.assert_not_called()
+        insert.assert_not_called()
+
+    def test_native_empty_replace_keeps_existing_clear_behavior_without_an_insert(self):
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame(columns=["a" * (1024 * 1024 + 1)]))
+        target, _ = self._make_target_connector()
+        operations = Mock()
+        tool = self._make_multi_tool(source, target)
+        with patch(
+            "datus.tools.func_tool.database.get_dialect_operations",
+            side_effect=lambda **kwargs: operations if kwargs.get("connector") is target else None,
+        ):
+            result = tool.transfer_query_result("SELECT value FROM users", "source_db", "orders", "target_db")
+        assert result.success == 1, result.error
+        assert result.result["rows_transferred"] == 0
+        target.execute_ddl.assert_called_once_with("TRUNCATE TABLE orders")
+        operations.write_dataframe.assert_not_called()
+
+    @pytest.mark.parametrize("sql_limit,allowed", [(54, True), (53, False)])
+    def test_native_transfer_checks_bind_sql_size_without_counting_bound_values(self, sql_limit, allowed):
+        import pandas as pd
+
+        payload = "x" * (1024 * 1024 + 1)
+        source = self._make_source_connector(pd.DataFrame({"id": [1], "payload": [payload]}))
+        target, _ = self._make_target_connector()
+        operations = Mock()
+        operations.quote_identifier.side_effect = lambda name: f'"{name.upper()}"'
+        operations.write_dataframe.return_value = 1
+        tool = self._make_multi_tool(source, target)
+        tool._TRANSFER_MAX_SQL_BYTES = sql_limit
+        with patch(
+            "datus.tools.func_tool.database.get_dialect_operations",
+            side_effect=lambda **kwargs: operations if kwargs.get("connector") is target else None,
+        ):
+            result = tool.transfer_query_result("SELECT id, payload FROM users", "source_db", "orders", "target_db")
+        if allowed:
+            assert result.success == 1, result.error
+            target.execute_ddl.assert_called_once_with("TRUNCATE TABLE orders")
+            operations.write_dataframe.assert_called_once()
+            assert operations.write_dataframe.call_args.args[2]["payload"].tolist() == [payload]
+        else:
+            assert result.success == 0
+            assert "SQL limit" in result.error
+            target.execute_ddl.assert_not_called()
+            operations.write_dataframe.assert_not_called()
+
+    def test_transfer_never_echoes_large_source_sql(self):
+        import hashlib
+        import json
+
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame({"id": [1]}))
+        target, _ = self._make_target_connector()
+        tool = self._make_multi_tool(source, target)
+        sql = "SELECT id FROM users /*" + "sensitive query data " * 10_000 + "*/"
+        result = tool.transfer_query_result(sql, "source_db", "orders", "target_db")
+        assert result.success == 1, result.error
+        assert result.result["rows_transferred"] == 1
+        assert result.result["source_sql_sha256"] == hashlib.sha256(sql.encode()).hexdigest()
+        assert "source_sql" not in result.result
+        assert "target_table_create_sql" not in result.result
+        assert len(json.dumps(result.model_dump()).encode()) <= 16_384
+        source.execute_pandas.assert_called_once_with(sql)
+
+    @pytest.mark.parametrize("phase", ["source", "insert_result", "insert_exception"])
+    def test_transfer_large_database_errors_stay_out_of_tool_results(self, tmp_path, phase):
+        import gzip
+        import json
+
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame({"id": range(4)}))
+        target, insert = self._make_target_connector()
+        tool = self._make_multi_tool(source, target)
+        payload = "private row 数据" * 300_000
+        error = "database failure [SQL: INSERT INTO orders VALUES ('" + payload + "')]"
+        if phase == "source":
+            source.execute_pandas.return_value = Mock(success=False, error=error)
+        else:
+            failure = RuntimeError(error) if phase == "insert_exception" else Mock(success=False, error=error)
+            insert.side_effect = [Mock(success=True), failure]
+        result = tool.transfer_query_result("SELECT id FROM users", "source_db", "orders", "target_db", batch_size=2)
+        assert result.success == 0
+        assert "database failure" in result.error
+        wire = json.dumps(result.model_dump(), ensure_ascii=False).encode()
+        assert len(result.error.encode()) <= 2048
+        assert len(wire) <= 16_384
+        assert b"private row" not in wire
+        with gzip.open(tmp_path / result.result["diagnostic_ref"], "rt") as diagnostic:
+            assert payload in diagnostic.read()
+        if phase == "source":
+            target.execute_ddl.assert_not_called()
+            insert.assert_not_called()
+        else:
+            assert "after writing 2 rows" in result.error
+            assert insert.call_count == 2
 
 
 class TestPathTraversalGuard:
