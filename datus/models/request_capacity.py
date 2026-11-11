@@ -227,7 +227,7 @@ class RequestCapacity:
         trusted_over_budget = estimate.trusted_tokens > 0 and estimate.trusted_tokens > available
         enforce = (
             self.context_source == "config" or (self.enforce_catalog_limits and self.context_source == "catalog")
-        ) and (not estimate.estimated or not allow_estimated_overflow or trusted_over_budget)
+        ) and (available <= 0 or not estimate.estimated or not allow_estimated_overflow or trusted_over_budget)
         budget = {
             "model": self.model,
             "input_tokens": count,

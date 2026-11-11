@@ -64,6 +64,38 @@ def test_unknown_model_keeps_estimation_fallback_with_explicit_window():
     assert model.request_capacity().check(payload) > model.request_capacity().input_limit()
 
 
+@pytest.mark.parametrize(
+    "setting,output",
+    [("config", 16384), ("max_tokens", 16384), ("max_completion_tokens", 8192), ("max_output_tokens", 6144)],
+)
+def test_explicit_output_reservation_must_fit_configured_window(setting, output):
+    model = OpenAIModel(
+        ModelConfig(
+            type="openai",
+            model="private-deployment",
+            api_key="test",
+            base_url="https://private.example/v1",
+            context_length=8192,
+            max_tokens=output if setting == "config" else 1024,
+        )
+    )
+    payload = {"messages": [{"role": "user", "content": "hello"}]}
+    if setting != "config":
+        payload[setting] = output
+    with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+        model.check_request(payload)
+
+
+@pytest.mark.parametrize("name", ["gpt-4o", "private-deployment"])
+def test_inferred_custom_window_does_not_reject_explicit_output_reservation(name):
+    model = OpenAIModel(
+        ModelConfig(
+            type="openai", model=name, api_key="test", base_url="https://private.example/v1", max_tokens=2000000
+        )
+    )
+    assert model.check_request({"input": "hello"})["max_tokens"] == 2000000
+
+
 @pytest.fixture
 def image_url():
     output = io.BytesIO()

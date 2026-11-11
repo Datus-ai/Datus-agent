@@ -156,6 +156,23 @@ def test_direct_generation_sends_large_estimated_request(endpoint):
     assert requests[0][1]["max_tokens"] == 1024
 
 
+def test_impossible_explicit_output_reservation_stops_before_http(endpoint):
+    url, requests = endpoint
+    model = OpenAIModel(
+        ModelConfig(
+            type="openai",
+            model="private-text",
+            api_key="local-test",
+            base_url=url,
+            context_length=8192,
+            max_tokens=16384,
+        )
+    )
+    with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+        model.generate("hello")
+    assert requests == []
+
+
 @pytest.mark.asyncio
 async def test_trusted_oversized_text_with_image_stops_before_http(endpoint, tmp_path):
     url, requests = endpoint
