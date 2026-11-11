@@ -824,6 +824,57 @@ def test_tokenizer_failure_uses_available_counter_then_byte_estimate(monkeypatch
     assert RequestCapacity("gpt-4o", 8192, 1024).check(payload) > 0
 
 
+def test_failed_tokenizer_load_is_reused_across_capacity_instances(monkeypatch):
+    from datus.models import request_capacity
+
+    loader = Mock(side_effect=OSError("Hub unavailable"))
+    monkeypatch.setattr(request_capacity, "_tokenizer", loader)
+    monkeypatch.setattr(request_capacity, "monotonic", lambda: 1000.0, raising=False)
+    model = OpenAIModel(
+        ModelConfig(
+            type="openai",
+            model="private-deployment",
+            api_key="test",
+            tokenizer_ref="tests/unavailable-tokenizer-reuse",
+        )
+    )
+    for _ in range(10):
+        assert model.check_request({"input": "hello"})["max_tokens"] > 0
+    loader.assert_called_once()
+
+
+def test_failed_tokenizer_can_recover_after_failure_cache_expires(monkeypatch):
+    from datus.models import request_capacity
+
+    tokenizer = Mock()
+    tokenizer.encode.return_value = [1, 2, 3]
+    loader = Mock(side_effect=[OSError("Hub unavailable"), tokenizer])
+    now = [1000.0]
+    monkeypatch.setattr(request_capacity, "_tokenizer", loader)
+    monkeypatch.setattr(request_capacity, "monotonic", lambda: now[0], raising=False)
+    capacity = RequestCapacity("private-deployment", 8192, 1024, tokenizer_ref="tests/unavailable-tokenizer-recover")
+    assert capacity.estimate({"input": "hello"}).estimated
+    assert capacity.estimate({"input": "hello"}).estimated
+    loader.assert_called_once()
+    now[0] += 3600
+    estimate = capacity.estimate({"input": "hello"})
+    assert not estimate.estimated
+    assert estimate.source == capacity.tokenizer_ref
+    assert loader.call_count == 2
+
+
+def test_failed_tokenizer_does_not_block_other_references(monkeypatch):
+    from datus.models import request_capacity
+
+    tokenizer = Mock()
+    tokenizer.encode.return_value = [1, 2, 3]
+    monkeypatch.setattr(request_capacity, "_tokenizer", Mock(side_effect=[OSError("Hub unavailable"), tokenizer]))
+    failed = RequestCapacity("private-deployment", 8192, 1024, tokenizer_ref="tests/unavailable-tokenizer-isolated")
+    available = RequestCapacity("private-deployment", 8192, 1024, tokenizer_ref="tests/available-tokenizer")
+    assert failed.estimate({"input": "hello"}).estimated
+    assert not available.estimate({"input": "hello"}).estimated
+
+
 def test_failed_image_counter_keeps_successful_text_count(monkeypatch, image_url):
     def counter(*, text=None, **kwargs):
         if text is not None:
@@ -899,7 +950,7 @@ def test_metadata_lookup_failure_uses_defaults(monkeypatch):
     assert model.context_length() == 1048576
 
 
-@pytest.mark.parametrize("result", [None, -1, True, "unknown"])
+@pytest.mark.parametrize("result", [None, 0, -1, True, "unknown"])
 def test_invalid_counter_result_falls_back_without_invalidating_request(monkeypatch, result):
     monkeypatch.setattr(litellm, "token_counter", lambda **kwargs: result)
     capacity = RequestCapacity("gpt-4o", 8192, 1024)
@@ -907,6 +958,17 @@ def test_invalid_counter_result_falls_back_without_invalidating_request(monkeypa
     assert estimate.tokens > 0
     assert estimate.estimated
     assert estimate.source == "utf8_byte_upper_bound"
+
+
+def test_disabled_litellm_counter_estimates_text_and_images(monkeypatch, image_url):
+    monkeypatch.setattr(litellm, "disable_token_counter", True)
+    capacity = RequestCapacity("gpt-4o", 8192, 1024)
+    payload = {"input": [{"role": "user", "content": [{"type": "input_image", "image_url": image_url}]}]}
+    estimate = capacity.estimate(payload)
+    assert estimate.estimated
+    assert estimate.source == "utf8_byte_upper_bound"
+    assert estimate.tokens >= 4096
+    assert estimate.trusted_tokens == 0
 
 
 def test_file_estimation_preserves_tool_schemas_and_business_data():

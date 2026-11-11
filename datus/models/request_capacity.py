@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import json
 import math
+from collections import OrderedDict
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from threading import Lock
+from time import monotonic
 from typing import Any
 
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -23,6 +26,10 @@ logger = get_logger(__name__)
 DEFAULT_CONTEXT_LENGTH = 1048576
 DEFAULT_MAX_TOKENS = 384000
 DEFAULT_MEDIA_TOKENS = 4096
+_TOKENIZER_CACHE_SIZE = 16
+_TOKENIZER_FAILURE_TTL_SECONDS = 300
+_tokenizer_failures: OrderedDict[str, tuple[float, str]] = OrderedDict()
+_tokenizer_failure_lock = Lock()
 
 
 class ContextCapacityError(DatusException):
@@ -34,7 +41,7 @@ class ContextCapacityError(DatusException):
         super().__init__(ErrorCode.MODEL_REQUEST_FAILED, message_args={"error_detail": f"{reason}: {detail}"})
 
 
-@lru_cache(maxsize=16)
+@lru_cache(maxsize=_TOKENIZER_CACHE_SIZE)
 def _tokenizer(reference: str):
     if reference.startswith("tiktoken:"):
         import tiktoken
@@ -44,6 +51,26 @@ def _tokenizer(reference: str):
 
     path = Path(reference)
     return Tokenizer.from_file(str(path)) if path.is_file() else Tokenizer.from_pretrained(reference)
+
+
+def _optional_tokenizer(reference: str) -> tuple[Any, str | None]:
+    """Bound repeated initialization failures while allowing recovery after five minutes."""
+    with _tokenizer_failure_lock:
+        failure = _tokenizer_failures.get(reference)
+        if failure is not None and monotonic() < failure[0]:
+            _tokenizer_failures.move_to_end(reference)
+            return None, failure[1]
+        _tokenizer_failures.pop(reference, None)
+    try:
+        return _tokenizer(reference), None
+    except Exception as exc:
+        reason = type(exc).__name__
+        with _tokenizer_failure_lock:
+            _tokenizer_failures[reference] = (monotonic() + _TOKENIZER_FAILURE_TTL_SECONDS, reason)
+            _tokenizer_failures.move_to_end(reference)
+            if len(_tokenizer_failures) > _TOKENIZER_CACHE_SIZE:
+                _tokenizer_failures.popitem(last=False)
+        return None, reason
 
 
 def _json(value: Any) -> str:
@@ -163,20 +190,23 @@ class RequestCapacity:
         reasons = []
         if self.tokenizer_ref:
             try:
-                tokenizer = _tokenizer(self.tokenizer_ref)
-                encoded = (
-                    tokenizer.encode(text, disallowed_special=())
-                    if self.tokenizer_ref.startswith("tiktoken:")
-                    else tokenizer.encode(text)
-                )
-                count = len(encoded.ids) if hasattr(encoded, "ids") else len(encoded)
-                source, estimated = self.tokenizer_ref, False
+                tokenizer, failure = _optional_tokenizer(self.tokenizer_ref)
+                if failure is not None:
+                    reasons.append(f"tokenizer unavailable ({failure})")
+                else:
+                    encoded = (
+                        tokenizer.encode(text, disallowed_special=())
+                        if self.tokenizer_ref.startswith("tiktoken:")
+                        else tokenizer.encode(text)
+                    )
+                    count = len(encoded.ids) if hasattr(encoded, "ids") else len(encoded)
+                    source, estimated = self.tokenizer_ref, False
             except Exception as exc:
                 reasons.append(f"tokenizer unavailable ({type(exc).__name__})")
         if count is None and counter_model in litellm.open_ai_chat_completion_models:
             try:
                 count = litellm.token_counter(model=counter_model, text=text)
-                if type(count) is not int or count < 0:
+                if type(count) is not int or count <= 0:
                     raise ValueError("invalid token count")
                 source = "litellm_serialized_request"
                 estimated = not self.enforce_catalog_limits or bool(reasons)
@@ -200,7 +230,7 @@ class RequestCapacity:
                 image_tokens = litellm.token_counter(
                     model=counter_model, messages=_image_messages(block), use_default_image_token_count=False
                 )
-                if type(image_tokens) is not int or image_tokens < 0:
+                if type(image_tokens) is not int or image_tokens <= 0:
                     raise ValueError("invalid image token count")
                 count += image_tokens
                 if self.enforce_catalog_limits:

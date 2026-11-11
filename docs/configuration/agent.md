@@ -193,6 +193,8 @@ when that encoding matches the deployment. Local files must be readable by the
 Datus process. Omitted settings use defaults; explicitly invalid numeric settings
 still produce an error. An unavailable tokenizer falls back to an available model
 counter or UTF-8 byte estimation, recording the fallback reason in logs.
+Failed tokenizer initialization is remembered for up to five minutes across
+capacity checks, then retried, so repeated planning checks do not repeat the same download failure.
 Local counting includes serialized messages, instructions, tools and output
 schemas, plus framing allowance; a deployment with different templates or
 routing limits can still reject a request and should be configured accordingly.
