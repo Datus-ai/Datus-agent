@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/dev/cli/chat_command/">
       
       
         <link rel="prev" href="../introduction/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/dev/cli/chat_command/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/cli/chat_command/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/cli/chat_command/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/cli/chat_command/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -916,6 +910,17 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
+        指标问数与归因
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
         上下文注入
       
     </span>
@@ -925,7 +930,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
+  <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
         浏览模式
@@ -936,7 +941,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
+  <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
         模糊搜索模式
@@ -952,7 +957,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
+  <a href="#_6" class="md-nav__link">
     <span class="md-ellipsis">
       
         打断执行
@@ -974,7 +979,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
+  <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
         切换权限模式
@@ -985,7 +990,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
+  <a href="#_8" class="md-nav__link">
     <span class="md-ellipsis">
       
         运行中插入消息
@@ -5111,6 +5116,17 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
+        指标问数与归因
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
         上下文注入
       
     </span>
@@ -5120,7 +5136,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
+  <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
         浏览模式
@@ -5131,7 +5147,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
+  <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
         模糊搜索模式
@@ -5147,7 +5163,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
+  <a href="#_6" class="md-nav__link">
     <span class="md-ellipsis">
       
         打断执行
@@ -5169,7 +5185,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
+  <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
         切换权限模式
@@ -5180,7 +5196,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
+  <a href="#_8" class="md-nav__link">
     <span class="md-ellipsis">
       
         运行中插入消息
@@ -5254,23 +5270,28 @@
 <p><img alt="Details of function calling" src="../../assets/function_calling_details.png" /></p>
 <hr />
 <h2 id="3">3. 高级能力<a class="headerlink" href="#3" title="Permanent link">&para;</a></h2>
-<h3 id="_2">上下文注入<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h3>
+<h3 id="_2">指标问数与归因<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h3>
+<p>Chat 可以直接使用 <code>list_metrics</code>、<code>get_metric</code>、<code>get_dataset</code>、<code>query_metrics</code> 和 <code>attribution_analyze</code> 发现、查询已有语义指标并进行归因。连续追问和较长分析留在当前 chat，不要求委派给 AskMetrics。</p>
+<p>需要完整表格时，chat 使用同一个 <code>result_id</code>、下一页的 <code>offset</code> 和 <code>page_size</code> 继续调用 <code>query_metrics</code>，也可以使用 <code>get_query_metrics_result</code> 读取有上限的缓存分页。两种方式都无需重新查询，缓存读取继续受当前策略、数据源和指标范围约束。</p>
+<p>没有合适指标时，chat 可以根据可用表结构和业务知识生成、执行只读 SQL。缺少指标不要求先创建指标；只有你明确要求创建或修改指标定义时才进入建模流程。</p>
+<p>需要特定业务上下文或发布入口时，可以选择 AskMetrics 或其他限定范围的业务 agent，其工具和数据权限继续生效。非空的 chat <code>tools</code> 白名单会替换默认工具；已有白名单需要按需加入 <code>semantic_tools.&lt;method&gt;</code> 才能使用对应指标能力。未配置 <code>tools</code> 或设置 <code>tools: []</code> 时使用默认工具。</p>
+<h3 id="_3">上下文注入<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h3>
 <p>上下文注入可以把已有的数据表、指标或文件直接拉入对话。有两种方式：</p>
-<h4 id="_3">浏览模式<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h4>
+<h4 id="_4">浏览模式<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h4>
 <p>输入 <code>@</code> 后按 Tab，逐级浏览上下文树。按类别（数据表 / 文件 / 指标）导航，像目录一样深入，选择需要的条目。</p>
-<h4 id="_4">模糊搜索模式<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h4>
+<h4 id="_5">模糊搜索模式<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h4>
 <p>输入 <code>@</code> 加关键词，再按 Tab 触发模糊搜索。Datus 会按文本相似度推荐上下文项，让你在不知道精确路径时也能快速定位。</p>
 <p>这是为提示语注入精确上下文最快的方式。</p>
 <p><img alt="Context injection browse mode" src="../../assets/context_browse.png" /></p>
 <p><img alt="Context injection fuzzy search" src="../../assets/context_fuzzy.png" /></p>
-<h3 id="_5">打断执行<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h3>
+<h3 id="_6">打断执行<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
 <p>在智能体运行过程中，按 <strong>ESC</strong> 或 <strong>Ctrl+C</strong> 可以优雅地中断当前执行。智能体会在完成当前步骤后停止，并将控制权交还给你。</p>
 <p>中断后会话保持不变——你可以继续输入新指令、修改问题或补充上下文，不会丢失任何内容。</p>
 <h3 id="trace">切换 Trace 显示模式<a class="headerlink" href="#trace" title="Permanent link">&para;</a></h3>
 <p>在智能体运行过程中，按 <strong>Ctrl+O</strong> 可以在 <strong>compact</strong>（仅显示进度）和 <strong>verbose</strong>（显示完整步骤详情）之间切换 trace 显示模式。这让你在不中断执行的情况下控制输出的详细程度。</p>
-<h3 id="_6">切换权限模式<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
+<h3 id="_7">切换权限模式<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
 <p>按 <strong>Ctrl+P</strong> 可按 <strong>normal → auto → dangerous → normal</strong> 的顺序循环切换权限模式。智能体运行过程中该快捷键仍然有效，新模式会应用于当前对话后续的工具权限检查。</p>
-<h3 id="_7">运行中插入消息<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
+<h3 id="_8">运行中插入消息<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
 <p>智能体运行过程中，你不必等它结束才能补充上下文。在输入框中输入文本并按 <strong>Enter</strong>，文本会被排入待发送队列，并在下一次 LLM turn 之前发送给模型——它会影响当前这一轮运行，而不是开启一段新对话。</p>
 <p>工作机制：</p>
 <ul>
