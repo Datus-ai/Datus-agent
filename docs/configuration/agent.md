@@ -212,7 +212,9 @@ page; `query_lineage` defaults to 100. `page_size` is caller-controlled with no
 hard maximum. Continue directory/lineage results with the original tool,
 `snapshot_id`, `offset` and (for lineage) `section`. Continue metric/record
 results with the original tool, `result_id` and `offset`; this reads the cached
-rows without rerunning SQL. Business `limit` remains independent of page size.
+rows without rerunning SQL. For catalog/lineage pages with `has_more=true`, use
+`offset=extra.next_offset`; `extra.offset` identifies the current page. Business
+`limit` remains independent of page size.
 Direct Python/MCP calls without pagination arguments retain their existing
 complete catalog/graph or compressed query preview. `execute_sql` and
 `execute_reference_template` keep their existing compression.
@@ -222,6 +224,8 @@ archive references are recovered into files readable through `read_file` in
 line ranges. Source truncation and analysis completeness are independent of
 pagination. Disabling `agent.compact` does not disable the final capacity check;
 an input that still cannot fit is stopped before sending it to the provider.
+Page sizes count whole records, not tokens or bytes, and are not automatically
+reduced. A page of very wide records can therefore still hit the capacity check.
 
 The Codex subscription transport has no output-limit field in its wire protocol.
 It retains that protocol and reserves the known model output ceiling, including

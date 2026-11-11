@@ -170,6 +170,70 @@ class TestExecuteAgenticNode:
 # ---------------------------------------------------------------------------
 
 
+class TestSessionArchiveFilesystem:
+    @pytest.mark.parametrize("session_id", ["..", "../other", "/other", r"..\other"])
+    def test_invalid_session_does_not_grant_an_archive_anchor(self, real_agent_config, session_id):
+        """Changing the archive root must preserve validation of session segments."""
+        node = _make_node(real_agent_config, session_id=session_id)
+        assert node._resolve_session_data_dir() is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("strict", [False, True])
+    @pytest.mark.parametrize("scope, parent", [(None, None), ("tenant", "parent_session")])
+    async def test_custom_session_archive_is_readable_without_prompt(
+        self, real_agent_config, tmp_path, strict, scope, parent
+    ):
+        """Tool and permission hook must grant only this session's archive reads."""
+        import json
+
+        from datus.configuration.agent_config import CompactConfig
+        from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel
+        from datus.tools.permission.permission_hooks import PermissionHooks
+        from datus.tools.permission.permission_manager import PermissionManager
+        from datus.tools.registry.tool_registry import ToolRegistry
+        from datus.utils.tool_result_store import ToolResultStore
+
+        real_agent_config.session_dir = str(tmp_path / "custom_sessions")
+        node = _make_node(
+            real_agent_config,
+            session_id="current",
+            scope=scope,
+            session_subdir=parent,
+            _archive=None,
+            _compact_cfg=CompactConfig(),
+        )
+        archive = node._get_archive()
+        store = ToolResultStore(archive)
+        reference = store.archive_context("clarifications", {"instructions": "clarification " * 10_000})["result"]
+        path = reference["archive_path"]
+        filesystem = node._make_filesystem_tool(strict=strict)
+        read = filesystem.read_file(path)
+        assert read.success, read.error
+        assert filesystem._classify(path).read_only
+        assert not filesystem.write_file(path, "changed").success
+        policy = node._make_filesystem_policy()
+        assert policy.session_data_dir == archive.dir
+        registry = ToolRegistry()
+        registry.register_tools("filesystem_tools", filesystem.available_tools())
+        broker = MagicMock()
+        broker.request = AsyncMock(side_effect=AssertionError("Archive reads must not prompt"))
+        hooks = PermissionHooks(
+            broker=broker,
+            permission_manager=PermissionManager(
+                global_config=PermissionConfig(default_permission=PermissionLevel.ASK)
+            ),
+            node_name=node.get_node_name(),
+            tool_registry=registry,
+            fs_policy=policy,
+            non_interactive=True,
+        )
+        read_tool = next(tool for tool in filesystem.available_tools() if tool.name == "read_file")
+        await hooks.on_tool_start(SimpleNamespace(tool_arguments=json.dumps({"path": path})), None, read_tool)
+        broker.request.assert_not_awaited()
+        other = _make_node(real_agent_config, session_id="other", scope=scope, session_subdir=parent)
+        assert not other._make_filesystem_tool(strict=True).read_file(path).success
+
+
 class TestGetNodeName:
     def test_concrete_node_name_derived_from_class(self):
         """get_node_name strips 'AgenticNode' suffix and lowercases."""

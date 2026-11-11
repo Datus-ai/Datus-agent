@@ -125,9 +125,9 @@ OpenAI 兼容接口及原生 OpenAI Responses 路径收到明确的输出上限�
 工具调用执行会在失败结果和会话中保留已收到的回答正文与用量；reasoning 不会作为回答返回，
 未完成的工具调用不会执行。Datus 不会自动重试这类执行；需要继续输出时可沿用原会话。
 
-工具自行管理结果量。Agent 调用 `list_tables`、`list_databases`、`list_schemas`、`query_metrics` 和 `select_records` 默认每页 200 条，`query_lineage` 默认每页 100 条；`page_size` 可调整，没有硬上限。目录和血缘用原工具及 `snapshot_id`、`offset`（血缘还可指定 `section`）续读快照；指标和记录用原工具及 `result_id`、`offset` 续读缓存，不重复执行 SQL。业务 `limit` 与分页大小相互独立。直接 Python/MCP 调用不传分页参数时，保留完整目录/图或压缩查询预览的既有行为。`execute_sql` 和 `execute_reference_template` 保留现有压缩。
+工具自行管理结果量。Agent 调用 `list_tables`、`list_databases`、`list_schemas`、`query_metrics` 和 `select_records` 默认每页 200 条，`query_lineage` 默认每页 100 条；`page_size` 可调整，没有硬上限。目录和血缘用原工具及 `snapshot_id`、`offset`（血缘还可指定 `section`）续读快照；指标和记录用原工具及 `result_id`、`offset` 续读缓存，不重复执行 SQL。目录/血缘页的 `has_more=true` 时，续读使用 `offset=extra.next_offset`；`extra.offset` 表示当前页的位置。业务 `limit` 与分页大小相互独立。直接 Python/MCP 调用不传分页参数时，保留完整目录/图或压缩查询预览的既有行为。`execute_sql` 和 `execute_reference_template` 保留现有压缩。
 
-不再提供 `read_tool_result` 或通用结果裁剪。旧归档引用会恢复为可通过 `read_file` 按行读取的文件。源结果截断、分析完整性与分页分别表示。关闭 `agent.compact` 不会关闭最终容量检查；压缩后仍无法容纳的输入会在发送到模型前停止。
+不再提供 `read_tool_result` 或通用结果裁剪。旧归档引用会恢复为可通过 `read_file` 按行读取的文件。源结果截断、分析完整性与分页分别表示。关闭 `agent.compact` 不会关闭最终容量检查；压缩后仍无法容纳的输入会在发送到模型前停止。分页大小按完整记录数计算，不按 token 或字节自动缩小，因此很宽的记录页仍可能触发容量检查。
 
 Codex 订阅接口的请求协议没有输出上限字段。该路径保留现有协议，按已知的模型最大输出
 （包含供应商目录中的上界）预留容量，不把较小的请求值当作已经生效的限制。

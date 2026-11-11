@@ -81,6 +81,32 @@ def test_current_large_output_is_never_generically_projected(store):
     assert not store.root.exists()
 
 
+@pytest.mark.parametrize(
+    "references",
+    ["{bad json", '{"result_id":"old"}', '[{"tool":"query_metrics","result_id":"native:123","offset":200}]'],
+)
+def test_summary_without_legacy_references_is_unchanged(store, references):
+    """Native and unparseable summaries retain their original text and identity."""
+    text = "Summary\n<tool_result_references>" + references + "</tool_result_references>"
+    items = [{"role": "assistant", "content": text}]
+    assert restore_legacy_tool_results(items, store) is items
+
+
+def test_expired_saved_summary_reference_requests_original_tool_retry(store):
+    """An expired old reference reports recovery failure during ordinary resume."""
+    items = [
+        {
+            "role": "assistant",
+            "content": '<tool_result_references>[{"result_id":"../outside"}]</tool_result_references>',
+        }
+    ]
+    restored = restore_legacy_tool_results(items, store)
+    text = restored[0]["content"]
+    refs = json.loads(text.split("<tool_result_references>")[1].split("</tool_result_references>")[0])
+    assert "rerun the original tool" in refs[0]["error"]
+    assert not store.root.exists()
+
+
 def test_unavailable_or_corrupt_legacy_result_is_reported(store):
     page = legacy_result(store, {"result": [1, 2]})
     rid = page["result"]["extra"]["result_id"]

@@ -4469,20 +4469,18 @@ class AgenticNode(Node):
     def _resolve_session_data_dir(self) -> Optional[str]:
         """Resolve the compact-archive data dir for this node's current session.
 
-        Returns ``None`` when the node has no agent_config / path_manager (used
-        by lightweight bootstrap tests), no session_id yet, or when the
-        path manager rejects the segment (e.g. missing project_name). The
-        caller falls back to leaving the FS policy without a session anchor,
-        which keeps archived paths EXTERNAL — safe but the LLM will be
-        prompted before it can ``read_file`` them.
+        Use the same resolved SessionManager directory as ``_get_archive`` so
+        custom session roots, tenant scope and subagent nesting remain aligned.
+        Without a session or a resolvable manager, leave the FS policy without
+        an archive anchor; unrelated session directories remain EXTERNAL.
         """
-        if not self.agent_config:
-            return None
-        path_manager = getattr(self.agent_config, "path_manager", None)
-        if path_manager is None or not getattr(self, "session_id", ""):
+        if not getattr(self, "session_id", ""):
             return None
         try:
-            return str(path_manager.session_data_dir(self.session_id))
+            from datus.utils.path_manager import DatusPathManager
+
+            DatusPathManager._validate_session_id(self.session_id)
+            return str(Path(self.session_manager.session_dir) / self.session_id / "data")
         except Exception as exc:
             logger.debug("Failed to resolve session_data_dir for fs policy: %s", exc)
             return None
