@@ -456,10 +456,13 @@ class ChatAgenticNode(AgenticNode):
             return self._family_enabled(selected, family)
 
         self.tools = []
+        self._context_search_tool_names = set()
         if self.db_func_tool and enabled("db_tools"):
             self.tools.extend(self.db_func_tool.available_tools())
         if self.context_search_tools and enabled("context_search_tools"):
-            self.tools.extend(self.context_search_tools.available_tools())
+            context_tools = self.context_search_tools.available_tools()
+            self._context_search_tool_names = {tool.name for tool in context_tools}
+            self.tools.extend(context_tools)
         if self.semantic_tools and enabled("semantic_tools"):
             self.tools.extend(self._available_semantic_tools())
         if self.reference_template_tools and enabled("reference_template_tools"):
@@ -585,6 +588,12 @@ class ChatAgenticNode(AgenticNode):
             return False
 
     def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
+        context_tools = getattr(self, "context_search_tools", None)
+        if context_tools is not None and self._family_enabled(self._selected_tool_families(), "context_search_tools"):
+            available = {tool.name for tool in context_tools.available_tools()}
+            if available != getattr(self, "_context_search_tool_names", set()):
+                self._rebuild_tools()
+                self._populate_tool_registry()
         # Stabilize lazy mounting and invocation-local restrictions before
         # fingerprinting the tool surface that controls template rendering.
         self._ensure_lazy_tools_mounted()

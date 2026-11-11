@@ -969,6 +969,9 @@ class TestMetricRAGScopeReads:
 
         assert tree.rename(["ArchivedFinance"], ["Finance"]) is True
         assert [row["name"] for row in rag.search_all_metrics()] == ["test_metric_1"]
+        assert fresh.has_metrics is True
+        assert "search_metrics" in {tool.name for tool in fresh.available_tools()}
+        assert [row["name"] for row in fresh.search_metrics("test_metric_1").result] == ["test_metric_1"]
 
     def test_concurrent_invalid_scope_never_broadens_a_filtered_read(
         self, real_agent_config, mock_llm_create, monkeypatch

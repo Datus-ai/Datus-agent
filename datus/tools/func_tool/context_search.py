@@ -89,14 +89,24 @@ class ContextSearchTools:
             self.sub_agent_config = SubAgentConfig.model_validate(raw_sub_agent_config)
         else:
             self.sub_agent_config = None
-        try:
-            self.has_metrics = self.metric_rag.get_metrics_size() > 0
-        except ValueError as exc:
-            logger.warning("Metric context is unavailable for the configured scope: %s", exc)
-            self.has_metrics = False
-        self.has_reference_sql = self.reference_sql_store.get_reference_sql_size() > 0
         self.has_semantic_objects = self.semantic_rag.get_size() > 0
         self.has_reference_templates = self.reference_template_store.get_reference_template_size() > 0
+
+    @property
+    def has_metrics(self) -> bool:
+        try:
+            return self.metric_rag.get_metrics_size() > 0
+        except ValueError as exc:
+            logger.warning("Metric context is unavailable for the configured scope: %s", exc)
+            return False
+
+    @property
+    def has_reference_sql(self) -> bool:
+        try:
+            return self.reference_sql_store.get_reference_sql_size() > 0
+        except ValueError as exc:
+            logger.warning("SQL context is unavailable for the configured scope: %s", exc)
+            return False
 
     def _has_tool_permission(self, tool_namespace: str, *tool_names: str) -> bool:
         if not self.sub_agent_config:

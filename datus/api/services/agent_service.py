@@ -34,10 +34,12 @@ logger = get_logger(__name__)
 # Valid tool categories and their methods, derived from tool classes in datus-agent.
 # Matches GenSQLAgenticNode._setup_tool_pattern() categories.
 
+_CHAT_SEMANTIC_TOOL_METHODS = set(SemanticTools.all_tools_name()) | {"get_query_metrics_result"}
+
 VALID_TOOL_METHODS: dict[str, set[str]] = {
     "db_tools": set(DBFuncTool.all_tools_name()),
     "context_search_tools": set(ContextSearchTools.all_tools_name()),
-    "semantic_tools": set(SemanticTools.all_tools_name()) | set(SemanticModelEditingTools.all_tools_name()),
+    "semantic_tools": _CHAT_SEMANTIC_TOOL_METHODS | set(SemanticModelEditingTools.all_tools_name()),
     "reference_template_tools": set(ReferenceTemplateTools.all_tools_name()),
     "date_parsing_tools": {"parse_temporal_expressions"},
     "filesystem_tools": set(FilesystemFuncTool.all_tools_name()),
@@ -126,7 +128,8 @@ def _build_tool_types(agent_type: str) -> dict[str, dict[str, list[str]]]:
         elif category == "semantic_tools":
             # These configurable nodes instantiate the query provider, not the
             # authoring provider that requires a selected-model context.
-            tool_types[category] = {"tools": sorted(SemanticTools.all_tools_name())}
+            methods = _CHAT_SEMANTIC_TOOL_METHODS if agent_type == "chat" else SemanticTools.all_tools_name()
+            tool_types[category] = {"tools": sorted(methods)}
         else:
             tool_types[category] = {"tools": sorted(VALID_TOOL_METHODS[category])}
     return tool_types

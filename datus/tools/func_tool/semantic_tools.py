@@ -797,7 +797,12 @@ class SemanticTools:
         return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
     def _cache_query_metrics_result(
-        self, columns: List[str], data: Any, metadata: Optional[Mapping[str, Any]] = None
+        self,
+        columns: List[str],
+        data: Any,
+        metadata: Optional[Mapping[str, Any]] = None,
+        *,
+        authorized_scope: Optional[str] = None,
     ) -> Optional[str]:
         if data is None:
             return None
@@ -805,14 +810,18 @@ class SemanticTools:
         if not full_csv:
             return None
 
+        scope = self._query_cache_scope(
+            metadata["_policy_scope"] if metadata and "_policy_scope" in metadata else self._policy_cache_scope()
+        )
+        if authorized_scope is not None and scope != authorized_scope:
+            raise ValueError("Configured metric scope changed while the query was running; retry in the current scope.")
+
         # Random, not a counter: ``get_query_metrics_result`` hands a cached result
         # to whoever names its key, and on the agent's dynamic MCP server one
         # instance serves every client of a datasource.
         cache_key = f"query_metrics:{secrets.token_urlsafe(12)}"
         self._query_metrics_result_cache[cache_key] = {
-            "policy_scope": self._query_cache_scope(
-                metadata["_policy_scope"] if metadata and "_policy_scope" in metadata else self._policy_cache_scope()
-            ),
+            "policy_scope": authorized_scope if authorized_scope is not None else scope,
             "columns": list(columns),
             "csv": full_csv,
             "row_count": self._query_data_row_count(data),
@@ -2128,6 +2137,13 @@ class SemanticTools:
                 validate_page(page_size, offset)
         except (ValueError, TypeError) as exc:
             return FuncToolResult(success=0, error=str(exc))
+        authorized_scope = None
+        if self._enforce_metric_scope:
+            try:
+                authorized_scope = self._query_cache_scope(self._policy_cache_scope())
+            except Exception as exc:
+                logger.warning("Could not capture configured metric scope: %s", exc)
+                return FuncToolResult(success=0, error="Configured metric scope could not be verified.")
         scope_error = self._check_metric_scope(_normalize_name_list(metrics))
         if scope_error is not None:
             return scope_error
@@ -2143,6 +2159,7 @@ class SemanticTools:
             params=params,
             dry_run=dry_run,
             result_page_size=page_size,
+            authorized_scope=authorized_scope,
             context_filter=context_filter,
         )
 
@@ -2168,6 +2185,7 @@ class SemanticTools:
         *,
         external_sql_execution: bool = False,
         result_page_size: Optional[int] = None,
+        authorized_scope: Optional[str] = None,
     ) -> FuncToolResult:
         metrics = _normalize_name_list(metrics)
         dimensions = _normalize_name_list(dimensions)
@@ -2226,17 +2244,26 @@ class SemanticTools:
             execution_context = self._query_execution_context(runtime)
             compile_or_query = runtime.compile_for_sql_execution if external_sql_execution else runtime.query_metrics
             result = _run_async(compile_or_query(**runtime_query_kwargs))
+            if authorized_scope is not None and self._query_cache_scope(self._policy_cache_scope()) != authorized_scope:
+                return FuncToolResult(
+                    success=0,
+                    error="Configured metric scope changed while the query was running; retry in the current scope.",
+                )
             if not dry_run:
                 metadata = dict(result.metadata or {})
                 if result_page_size is not None:
                     metadata["page_notes"] = self._query_hints(runtime, runtime_query_kwargs, result)
                     metadata["execution_context"] = execution_context
-                    cached_id = self._cache_query_metrics_result(result.columns, result.data, metadata)
+                    cached_id = self._cache_query_metrics_result(
+                        result.columns, result.data, metadata, authorized_scope=authorized_scope
+                    )
                     return self._query_result_page(cached_id, 0, result_page_size)
                 return FuncToolResult(
                     execution_context=execution_context,
                     result=self._render_query_result(
-                        self._cache_query_metrics_result(result.columns, result.data, metadata),
+                        self._cache_query_metrics_result(
+                            result.columns, result.data, metadata, authorized_scope=authorized_scope
+                        ),
                         list(result.columns),
                         result.data,
                         warnings=metadata.get("warnings"),

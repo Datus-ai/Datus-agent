@@ -51,6 +51,98 @@ METRIC_TOOL_NAMES = {
 
 
 class TestChatMetricTools:
+    def test_reused_chat_restores_metric_search_after_scope_repair(self, real_agent_config, mock_llm_create):
+        from datus.storage.metric.store import MetricRAG
+
+        writer = MetricRAG(real_agent_config)
+        writer.store_batch(
+            [
+                {
+                    "name": "net",
+                    "semantic_model_name": "ledger",
+                    "subject_path": ["Finance", "Allowed"],
+                    "description": "Net amount in the allowed subject",
+                }
+            ]
+        )
+        tree = writer.storage.subject_tree
+        assert tree.rename(["Finance"], ["ArchivedFinance"]) is True
+        real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "Finance.Allowed"}
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        context = node.context_search_tools
+        node._get_session_system_prompt()
+        assert "search_metrics" not in {tool.name for tool in node.tools}
+
+        assert tree.rename(["ArchivedFinance"], ["Finance"]) is True
+        node._get_session_system_prompt()
+        assert node.context_search_tools is context
+        assert "search_metrics" in {tool.name for tool in node.tools}
+        assert context.has_metrics is True
+        assert [row["name"] for row in context.search_metrics("net").result] == ["net"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("page_size", [None, 10])
+    @pytest.mark.parametrize("change_at", ["query", "cache"])
+    async def test_inflight_metric_scope_change_does_not_publish_rows(
+        self, real_agent_config, mock_llm_create, tmp_path, monkeypatch, page_size, change_at
+    ):
+        import duckdb
+
+        from datus.configuration.agent_config import DbConfig
+        from datus.storage.metric.store import MetricRAG
+
+        fixtures = Path(__file__).resolve().parents[3] / "data/semantic_models/attribution"
+        database = tmp_path / "inflight.duckdb"
+        with duckdb.connect(str(database)) as connection:
+            connection.execute((fixtures / "seed.sql").read_text())
+        real_agent_config.services.datasources["inflight"] = DbConfig(type="duckdb", uri=str(database))
+        real_agent_config.current_datasource = "inflight"
+        models = real_agent_config.path_manager.semantic_model_path("inflight")
+        models.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(fixtures / "model.yaml", models / "model.yaml")
+        MetricRAG(real_agent_config).store_batch(
+            [
+                {
+                    "name": name,
+                    "semantic_model_name": "attribution_model",
+                    "subject_path": ["Finance", subject],
+                    "description": f"{name} in the {subject} subject",
+                }
+                for name, subject in (("net", "Allowed"), ("x_total", "Hidden"))
+            ]
+        )
+        real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "Finance.Allowed"}
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        semantic = node.semantic_tools
+
+        def narrow_scope():
+            real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "Finance.Hidden"}
+
+        if change_at == "query":
+            original = semantic.runtime.query_metrics
+
+            async def changed_query(**kwargs):
+                result = await original(**kwargs)
+                narrow_scope()
+                return result
+
+            monkeypatch.setattr(semantic.runtime, "query_metrics", changed_query)
+        else:
+            original = semantic._query_data_to_csv
+
+            def changed_csv(columns, data):
+                text = original(columns, data)
+                narrow_scope()
+                return text
+
+            monkeypatch.setattr(semantic, "_query_data_to_csv", changed_csv)
+
+        result = semantic.query_metrics(["net"], time_start="2024-01-01", time_end="2024-02-01", page_size=page_size)
+        assert result.success == 0
+        assert result.result is None
+        assert "scope changed" in result.error
+        assert len(semantic._query_metrics_result_cache) == 0
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize("reader", ["query_metrics", "get_query_metrics_result"])
     async def test_registered_cache_reader_recovers_omitted_rows_without_requery(
