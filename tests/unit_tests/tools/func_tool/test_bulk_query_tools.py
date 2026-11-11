@@ -52,8 +52,11 @@ def routed_environment(environment):
         for database in {default, "two"}:
             connector = DuckdbConnector(DuckDBConfig(db_path=str(directory / (database + ".duckdb"))))
             try:
-                assert connector.execute_ddl(f"CREATE TABLE marker AS SELECT '{datasource}/{database}' AS id").success
-                assert connector.execute_ddl(f"CREATE TABLE only_in_{database} AS SELECT 1 AS id").success
+                assert (
+                    connector.execute_ddl(f"CREATE TABLE marker AS SELECT '{datasource}/{database}' AS id").success
+                    is True
+                )
+                assert connector.execute_ddl(f"CREATE TABLE only_in_{database} AS SELECT 1 AS id").success is True
             finally:
                 connector.close()
         configs[datasource] = DbConfig(type="duckdb", path_pattern=str(directory / "*.duckdb"), database=default)
@@ -108,8 +111,8 @@ def test_sql_file_and_empty_result(environment, sql_ref):
 @pytest.mark.parametrize("sql", ["SELECT * FROM staging.sql", "SELECT *\nFROM staging.sql"])
 def test_inline_sql_ending_in_sql_table_name_is_exported(environment, sql):
     tool, source, _, root = environment
-    assert source.execute_ddl("CREATE SCHEMA staging").success
-    assert source.execute_ddl("CREATE TABLE staging.sql AS SELECT '0012345678901234567' AS id").success
+    assert source.execute_ddl("CREATE SCHEMA staging").success is True
+    assert source.execute_ddl("CREATE TABLE staging.sql AS SELECT '0012345678901234567' AS id").success is True
 
     result = tool.export_query(sql, "exports/matched.parquet")
 
@@ -498,8 +501,11 @@ def test_export_uploads_guard_uses_the_selected_database(routed_environment):
 
 
 @pytest.mark.parametrize("sql_file", [False, True])
-@pytest.mark.parametrize("reader", ["function", "replacement_scan"])
-def test_export_reuses_uploads_guard_for_project_external_files(environment, sql_file, reader):
+@pytest.mark.parametrize(
+    ("reader", "error"),
+    [("function", "cannot be called directly"), ("replacement_scan", "not a table registered")],
+)
+def test_export_reuses_uploads_guard_for_project_external_files(environment, sql_file, reader, error):
     tool, _, _, root = environment
     tool._default_datasource = "local_files"
     foreign = root.parent / (root.name + "-foreign.csv")
@@ -511,7 +517,7 @@ def test_export_reuses_uploads_guard_for_project_external_files(environment, sql
         sql = "external.sql"
     result = tool.export_query(sql, "external.csv")
     assert result.success == 0
-    assert "cannot be called directly" in result.error or "not a table registered" in result.error
+    assert error in result.error
     assert not (root / "external.csv").exists()
     assert not (root / "external.csv.meta.json").exists()
 
@@ -524,7 +530,7 @@ def test_export_keeps_registered_upload_views_readable(environment):
     created = source.execute_ddl(
         f"CREATE VIEW registered_upload AS SELECT * FROM read_csv('{source_file}', all_varchar=true)"
     )
-    assert created.success, created.error
+    assert created.success is True, created.error
     result = tool.export_query("SELECT * FROM registered_upload", "registered.parquet")
     assert result.success == 1, result.error
     assert pq.read_table(root / "registered.parquet").to_pylist() == [{"id": "0012345678901234567"}]
@@ -533,7 +539,7 @@ def test_export_keeps_registered_upload_views_readable(environment):
 def test_export_checks_uploads_guard_after_policy_rewrite(environment, monkeypatch):
     tool, source, _, root = environment
     tool._default_datasource = "local_files"
-    assert source.execute_ddl("CREATE TABLE registered_upload AS SELECT 1 AS id").success
+    assert source.execute_ddl("CREATE TABLE registered_upload AS SELECT 1 AS id").success is True
     foreign = root.parent / (root.name + "-rewrite.csv")
     foreign.write_text("id\n99\n")
     runtime = PolicyRuntime(None)
@@ -577,8 +583,8 @@ def test_export_preserves_regular_duckdb_file_read_behavior(environment):
 )
 def test_invalid_transfer_request_preserves_destination(environment, kwargs, message):
     tool, _, target, _ = environment
-    assert target.execute_ddl("CREATE TABLE orders(id BIGINT)").success
-    assert target.execute_insert("INSERT INTO orders VALUES (99)").success
+    assert target.execute_ddl("CREATE TABLE orders(id BIGINT)").success is True
+    assert target.execute_insert("INSERT INTO orders VALUES (99)").success is True
     request = dict(
         source_sql="SELECT 1 AS id", source_datasource="source", target_table="orders", target_datasource="target"
     )
@@ -603,8 +609,8 @@ def test_cancellation_does_not_publish_export(environment):
     from datus.tools.db_tools.query_spool import ACTIVE_BULK_CANCEL
 
     tool, _, target, root = environment
-    assert target.execute_ddl("CREATE TABLE orders(id BIGINT)").success
-    assert target.execute_insert("INSERT INTO orders VALUES (99)").success
+    assert target.execute_ddl("CREATE TABLE orders(id BIGINT)").success is True
+    assert target.execute_insert("INSERT INTO orders VALUES (99)").success is True
     event = threading.Event()
     event.set()
     token = ACTIVE_BULK_CANCEL.set(event)
@@ -620,21 +626,40 @@ def test_cancellation_does_not_publish_export(environment):
 @pytest.mark.asyncio
 async def test_tool_timeout_prevents_late_file_publication(environment, monkeypatch):
     import asyncio
-    import time
+    import threading
 
     tool, source, _, root = environment
+    assert tool.export_query("SELECT 1 AS id", "warmup.csv").success == 1
+    entered = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+    original_failure = tool._bulk_failure
 
     def slow_stream(*args, **kwargs):
-        time.sleep(0.1)
+        entered.set()
+        if not release.wait(timeout=2):
+            raise TimeoutError("Test did not release the blocked query")
         yield pa.table({"id": [1]})
 
+    def failed_export(*args, **kwargs):
+        try:
+            return original_failure(*args, **kwargs)
+        finally:
+            completed.set()
+
     monkeypatch.setattr(source, "iter_query_batches", slow_stream)
-    monkeypatch.setattr("datus.tools.func_tool.base.DATA_TOOL_TIMEOUT_SECONDS", 0.02)
+    monkeypatch.setattr(tool, "_bulk_failure", failed_export)
+    monkeypatch.setattr("datus.tools.func_tool.base.DATA_TOOL_TIMEOUT_SECONDS", 0.1)
     export = tool.to_function_tool(tool.export_query)
-    result = await export.on_invoke_tool(None, json.dumps({"sql": "SELECT 1 AS id", "output_file": "late.csv"}))
-    assert result["success"] == 0
-    assert result["result"]["complete"] is False
-    await asyncio.sleep(0.15)
+    try:
+        result = await export.on_invoke_tool(None, json.dumps({"sql": "SELECT 1 AS id", "output_file": "late.csv"}))
+        assert entered.is_set() is True
+        assert result["success"] == 0
+        assert result["result"]["complete"] is False
+        assert result["result"]["write_outcome"] == "unknown"
+    finally:
+        release.set()
+        assert await asyncio.to_thread(completed.wait, 2) is True
     assert not (root / "late.csv").exists()
     assert not list(root.glob(".query-*"))
 
