@@ -19,10 +19,11 @@ def test_every_declared_reader_is_allowed_by_default(profile):
     from datus.tools.registry.capabilities import TOOL_CAPABILITIES
 
     manager = PermissionManager(get_profile(profile), active_profile=profile)
-    for identity, capability in TOOL_CAPABILITIES.items():
-        if capability.access == "read":
-            family, method = identity.split(".")
-            assert manager.check_permission(family, method, "child") == PermissionLevel.ALLOW, identity
+    readers = [identity for identity, capability in TOOL_CAPABILITIES.items() if capability.access == "read"]
+    assert readers
+    for identity in readers:
+        family, method = identity.split(".")
+        assert manager.check_permission(family, method, "child") == PermissionLevel.ALLOW, identity
 
 
 @pytest.mark.parametrize(

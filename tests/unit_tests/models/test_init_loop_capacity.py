@@ -88,7 +88,7 @@ async def test_same_sdk_run_compacts_repeatedly_and_preserves_task(
             run.record_user_updates([correction])
         return FuncToolResult(result={"content": (tmp_path / path).read_text()})
 
-    @tool_contract(access="restricted", direct_call=False, category="tools")
+    @tool_contract(access="session", direct_call=False, category="tools")
     def ask_user(questions: list[str]) -> FuncToolResult:
         """Clarify the current task with the user."""
         return FuncToolResult(result=[{"question": "Customer scope?", "answer": "Keep customer guidance separate"}])

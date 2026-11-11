@@ -21,15 +21,15 @@ class _Tool:
     def __init__(self, advertised):
         self._advertised = advertised
 
-    @tool_contract(access="restricted", direct_call=False, category="bi_tools")
+    @tool_contract(access="read", direct_call=False, category="bi_tools")
     def list_dashboards(self):
         """List all dashboards."""
 
-    @tool_contract(access="restricted", direct_call=False, category="bi_tools")
+    @tool_contract(access="read", direct_call=False, category="bi_tools")
     def get_dashboard(self):
         """Get one dashboard."""
 
-    @tool_contract(access="restricted", direct_call=False, category="bi_tools")
+    @tool_contract(access="read", direct_call=False, category="bi_tools")
     def get_chart_data(self):
         """Get chart data (capability-gated)."""
 
