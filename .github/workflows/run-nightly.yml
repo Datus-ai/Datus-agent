@@ -234,14 +234,26 @@ jobs:
           persist-credentials: false
           token: ${{ secrets.RELEASE_BOT_TOKEN }}
 
+      - name: Checkout Nightly toolchain configuration
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .nightly-workflow
+          sparse-checkout: ci/harness/sql-policy-host.json
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: Resolve SQL policy Rust toolchain
         id: policy_rust
+        working-directory: .nightly-workflow
         run: |
-          uv run --no-project --with pyyaml python - <<'PY'
+          python - <<'PY'
+          import json
           import os
-          from ci.sql_policy_gate import load_config
+          from pathlib import Path
+          config = json.loads(Path('ci/harness/sql-policy-host.json').read_text())
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write('rust_toolchain=' + load_config()['rust_toolchain'] + '\n')
+              output.write('rust_toolchain=' + config['rust_toolchain'] + '\n')
           PY
 
       # Jobs do not inherit the toolchain installed by the policy gate.
