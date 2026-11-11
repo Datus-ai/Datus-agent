@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/dev/configuration/agent/">
       
       
         <link rel="prev" href="../introduction/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/dev/configuration/agent/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/configuration/agent/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/configuration/agent/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/configuration/agent/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -5555,9 +5549,8 @@ UTF-8 字节估算可能提前触发压缩，不等同于供应商返回的实�
 <p>OpenAI 兼容接口及原生 OpenAI Responses 路径收到明确的输出上限终止状态时，会报告失败。
 工具调用执行会在失败结果和会话中保留已收到的回答正文与用量；reasoning 不会作为回答返回，
 未完成的工具调用不会执行。Datus 不会自动重试这类执行；需要继续输出时可沿用原会话。</p>
-<p>大工具结果完整保存在会话归档中，模型收到有限内容，并可通过 <code>read_tool_result</code> 续读。
-原始 Python 工具返回和 Action、前端结果保持原有格式。来源截断、分析完整性和归档分页
-分别标记；关闭 <code>agent.compact</code> 仍会限制大结果并执行最终发送检查。</p>
+<p>工具自行管理结果量。Agent 调用 <code>list_tables</code>、<code>list_databases</code>、<code>list_schemas</code>、<code>query_metrics</code> 和 <code>select_records</code> 默认每页 200 条，<code>query_lineage</code> 默认每页 100 条；<code>page_size</code> 可调整，没有硬上限。目录和血缘用原工具及 <code>snapshot_id</code>、<code>offset</code>（血缘还可指定 <code>section</code>）续读快照；指标和记录用原工具及 <code>result_id</code>、<code>offset</code> 续读缓存，不重复执行 SQL。目录/血缘页的 <code>has_more=true</code> 时，续读使用 <code>offset=extra.next_offset</code>；<code>extra.offset</code> 表示当前页的位置。业务 <code>limit</code> 与分页大小相互独立。直接 Python/MCP 调用不传分页参数时，保留完整目录/图或压缩查询预览的既有行为。<code>execute_sql</code> 和 <code>execute_reference_template</code> 保留现有压缩。</p>
+<p>不再提供 <code>read_tool_result</code> 或通用结果裁剪。旧归档引用会恢复为可通过 <code>read_file</code> 按行读取的文件。源结果截断、分析完整性与分页分别表示。关闭 <code>agent.compact</code> 不会关闭最终容量检查；压缩后仍无法容纳的输入会在发送到模型前停止。分页大小按完整记录数计算，不按 token 或字节自动缩小，因此很宽的记录页仍可能触发容量检查。</p>
 <p>Codex 订阅接口的请求协议没有输出上限字段。该路径保留现有协议，按已知的模型最大输出
 （包含供应商目录中的上界）预留容量，不把较小的请求值当作已经生效的限制。
 标准 API 路径会显式发送解析后的输出上限。</p>
