@@ -936,3 +936,16 @@ def test_a_cte_name_cannot_authorize_a_table_function():
     """CTE names identify relations, never invocations of similarly named readers."""
     sql = "WITH read_csv_auto AS (SELECT 1) SELECT * FROM \"read_csv_auto\"('/outside/private.csv')"
     assert unresolved_table_references(sql, []) == ["read_csv_auto()"]
+
+
+@pytest.mark.parametrize(
+    "sql,readers",
+    [
+        ("SELECT * FROM read_csv_auto(", ["read_csv_auto"]),
+        ('SELECT * FROM "read_csv_auto"(', []),
+    ],
+)
+def test_malformed_file_sql_still_fails_the_catalog_boundary(sql, readers):
+    """Parser failure preserves known offenders and never authorizes an unresolved statement."""
+    assert find_file_reading_functions(sql) == readers
+    assert unresolved_table_references(sql, []) == ["<unparseable>"]
