@@ -17,6 +17,7 @@ from datus.tools.registry.contracts import definition_from_callable, registered_
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+DATA_TOOL_TIMEOUT_SECONDS = 300.0
 
 
 class _DuplicateJSONKeyError(ValueError):
@@ -426,11 +427,90 @@ def trans_to_function_tool(
                 result = await asyncio.to_thread(method_to_call, *positional, **kwargs)
             if isinstance(result, FuncToolResult):
                 result = result.model_dump(mode="json")
+            from datus.utils.bounded_tool_output import DATA_TOOLS, bound_data_tool_result
+
+            if method_to_call.__name__ in DATA_TOOLS:
+                result = bound_data_tool_result(result)
             return result
 
         return final_invoker
 
     async_invoker = create_async_invoker(bound_method)
+    from datus.utils.bounded_tool_output import DATA_TOOLS, bound_data_tool_result
+
+    if bound_method.__name__ in DATA_TOOLS:
+        result_invoker = async_invoker
+
+        async def bounded_result_invoker(context, arguments):
+            # Include argument-validation returns and unexpected exceptions,
+            # which never reach the successful-execution result boundary above.
+            try:
+                result = await result_invoker(context, arguments)
+            except Exception as exc:
+                result = {"success": 0, "error": str(exc), "result": None}
+            return bound_data_tool_result(result)
+
+        async_invoker = bounded_result_invoker
+
+    if bound_method.__name__ == "export_query":
+        import threading
+
+        from datus.tools.db_tools.query_spool import ACTIVE_BULK_CANCEL, data_tool_slot
+
+        raw_invoker = async_invoker
+        pending = set()
+
+        def completed(task):
+            pending.discard(task)
+            if not task.cancelled():
+                task.exception()
+
+        async def bounded_invoker(context, arguments):
+            cancelled = threading.Event()
+            token = ACTIVE_BULK_CANCEL.set(cancelled)
+            started = False
+
+            async def run_in_slot():
+                nonlocal started
+                async with data_tool_slot():
+                    started = True
+                    return await raw_invoker(context, arguments)
+
+            task = asyncio.create_task(run_in_slot())
+            pending.add(task)
+            task.add_done_callback(completed)
+            try:
+                async with asyncio.timeout(DATA_TOOL_TIMEOUT_SECONDS):
+                    # Keep the slot until the actual worker exits. Cancelling
+                    # to_thread only stops waiting; releasing here would let
+                    # repeated timeouts accumulate blocked worker threads.
+                    return bound_data_tool_result(await asyncio.shield(task))
+            except TimeoutError:
+                cancelled.set()
+                if context is not None:
+                    context._datus_tool_status = "timeout"
+                return {
+                    "success": 0,
+                    "error": (
+                        "Operation timed out. Database execution may still be running; reconcile before retrying."
+                        if started
+                        else "Timed out waiting for a bulk operation slot; the operation was not executed."
+                    ),
+                    "result": {
+                        "complete": False,
+                        "write_outcome": "unknown" if started else "not_started",
+                        "retryable": not started,
+                    },
+                }
+            except Exception as exc:
+                return bound_data_tool_result({"success": 0, "error": str(exc), "result": None})
+            finally:
+                cancelled.set()
+                if not started:
+                    task.cancel()
+                ACTIVE_BULK_CANCEL.reset(token)
+
+        async_invoker = bounded_invoker
 
     final_tool = registered_function_tool(
         definition=definition,

@@ -751,6 +751,46 @@ class TestTransToFunctionTool:
         assert result["result"] == "done"
 
 
+class TestDataToolOutputBounds:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["export_query", "transfer_query_result"])
+    @pytest.mark.parametrize("failure", ["unknown_parameter", "duplicate_parameter", "schema", "method"])
+    async def test_all_data_tool_failure_exits_are_bounded(self, name, failure):
+        from datus.utils.bounded_tool_output import MAX_ERROR_BYTES, MAX_RESULT_BYTES
+
+        class DataTools:
+            calls = 0
+
+            @tool_contract(access="write", direct_call=False, category="db_tools")
+            def export_query(self, sql: str, output_file: str = "") -> FuncToolResult:
+                self.calls += 1
+                raise RuntimeError("driver failed [SQL: INSERT INTO orders VALUES " + "private 数据" * 200_000)
+
+            @tool_contract(access="write", direct_call=False, category="db_tools")
+            def transfer_query_result(self, source_sql: str) -> FuncToolResult:
+                self.calls += 1
+                raise RuntimeError("driver failed [SQL: INSERT INTO orders VALUES " + "private 数据" * 200_000)
+
+        instance = DataTools()
+        tool = trans_to_function_tool(getattr(instance, name))
+        sql_key = "sql" if name == "export_query" else "source_sql"
+        huge_key = "unexpected_" + "数据" * 200_000
+        arguments = {sql_key: "SELECT 1"}
+        if failure == "unknown_parameter":
+            arguments[huge_key] = "ignored"
+        elif failure == "schema":
+            arguments[sql_key] = None
+        raw = json.dumps(arguments, ensure_ascii=False)
+        if failure == "duplicate_parameter":
+            key = json.dumps(huge_key, ensure_ascii=False)
+            raw = "{" + f'{json.dumps(sql_key)}: "SELECT 1", {key}: 1, {key}: 2' + "}"
+        result = await tool.on_invoke_tool(None, raw)
+        assert result["success"] == 0
+        assert len(result["error"].encode()) <= MAX_ERROR_BYTES
+        assert len(json.dumps(result, ensure_ascii=False).encode()) <= MAX_RESULT_BYTES
+        assert instance.calls == (1 if failure == "method" else 0)
+
+
 class TestFuncToolListResult:
     """Tests for the canonical list-shaped envelope."""
 

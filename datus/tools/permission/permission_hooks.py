@@ -594,7 +594,7 @@ class PermissionHooks(AgentHooks):
             if handled:
                 return
 
-        # db_tools.execute_sql: statement-class gating overrides rules.
+        # SQL execution and file export share the SQL permission boundary.
         #   The statement is classified into a fine-grained kind (insert/
         #   create/drop/...) whose class (read/write/destructive/unknown) is
         #   resolved against the profile's ``sql_statements`` ruleset: read
@@ -603,7 +603,7 @@ class PermissionHooks(AgentHooks):
         #   via ``.datus/config.yml`` sql_allow), dangerous bypass,
         #   non-interactive raise. A ``.sql`` file is resolved first; an
         #   unreadable file or unparseable text falls to unknown → ASK.
-        if category == "db_tools" and tool_name == "execute_sql":
+        if category == "db_tools" and tool_name in {"execute_sql", "export_query"}:
             handled = await self._handle_sql_permission(context, tool_name, pattern_name)
             if handled:
                 return
@@ -973,7 +973,7 @@ class PermissionHooks(AgentHooks):
     }
 
     async def _handle_sql_permission(self, context: Any, tool_name: str, pattern_name: str) -> bool:
-        """Statement-class gating for ``db_tools.execute_sql`` calls.
+        """Shared SQL permission gating for execution and read-only file exports.
 
         ``execute_sql`` is the unified SQL entry point, so a single static rule
         cannot express "reads auto-allow, writes ask, destructive statements
@@ -1045,9 +1045,29 @@ class PermissionHooks(AgentHooks):
         kind = parse_sql_statement_kind(sql, "") if isinstance(sql, str) else SQLType.UNKNOWN.value
         sql_class = classify_sql_kind(kind)
 
+        if tool_name == "export_query":
+            # An export always consumes read permission, even if a SQL file
+            # changes after this check. The tool itself rejects non-read SQL.
+            if sql_class != "read":
+                kind, sql_class = SQLType.SELECT.value, "read"
+            if (
+                self.permission_manager.check_permission("db_tools", pattern_name, self.node_name)
+                == PermissionLevel.DENY
+            ):
+                return False
+            # An explicit execute_sql deny also covers this alternate read
+            # entry point. Keep existing SQL grants and ASK behavior shared.
+            pattern_name = "execute_sql"
+
         # Honour explicit coarse rules first — they are the escape hatches.
         permission = self.permission_manager.check_permission("db_tools", pattern_name, self.node_name)
         if permission == PermissionLevel.DENY:
+            if tool_name == "export_query":
+                raise PermissionDeniedException(
+                    "PERMISSION_DENIED: SQL execution is denied; exporting query results is also denied.",
+                    tool_category="db_tools",
+                    tool_name=tool_name,
+                )
             # Surface the standardized DENY raise via the main flow.
             return False
         if permission == PermissionLevel.ALLOW:
@@ -1076,7 +1096,7 @@ class PermissionHooks(AgentHooks):
                     f"`permissions.sql_statements` in agent.yml."
                 ),
                 tool_category="db_tools",
-                tool_name="execute_sql",
+                tool_name=tool_name,
             )
 
         # ASK. A project-scope grant (``.datus/config.yml`` sql_allow or an
@@ -1139,7 +1159,7 @@ class PermissionHooks(AgentHooks):
                     "STOP retrying — surface the failure to the caller."
                 ),
                 tool_category="db_tools",
-                tool_name="execute_sql",
+                tool_name=tool_name,
             )
 
         async with _get_permission_prompt_lock(self.broker):
@@ -1180,9 +1200,9 @@ class PermissionHooks(AgentHooks):
                 return True
             logger.info("User rejected execute_sql (%s)", kind)
             raise PermissionDeniedException(
-                "User rejected execution of 'execute_sql'",
+                f"User rejected execution of '{tool_name}'",
                 tool_category="db_tools",
-                tool_name="execute_sql",
+                tool_name=tool_name,
             )
 
     async def _handle_sql_permission_legacy(self, context: Any, kind: str) -> bool:

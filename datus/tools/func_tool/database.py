@@ -4,6 +4,7 @@
 # -*- coding: utf-8 -*-
 import asyncio
 import csv
+import hashlib
 import io
 import ipaddress
 import json
@@ -51,6 +52,7 @@ from datus.tools.db_tools.datasource_plan import DatasourcePlanError, plan_from_
 from datus.tools.db_tools.datasource_quality import QualityChecker, summarize
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.bulk_query_tools import BulkQueryTools
 from datus.tools.registry.contracts import tool_contract
 from datus.utils.compress_utils import DataCompressor
 from datus.utils.config_utils import coerce_bool
@@ -140,7 +142,7 @@ def _pattern_matches(pattern: str, value: str) -> bool:
     name="db_tool",
     availability_property="has_db_tools",
 )
-class DBFuncTool:
+class DBFuncTool(BulkQueryTools):
     """
     Database function tool that supports dynamic connector switching.
 
@@ -1469,6 +1471,7 @@ class DBFuncTool:
             methods_to_convert.append(self.search_table)
 
         methods_to_convert.append(self.execute_sql)
+        methods_to_convert.append(self.export_query)
         if self.agent_config is not None:
             methods_to_convert.append(self.get_datasource_identity)
 
@@ -2147,7 +2150,9 @@ class DBFuncTool:
 
     # ------------------------------------------------- uploaded data files
 
-    def _reject_unsafe_uploads_sql(self, sql: str, datasource: Optional[str]) -> Optional[FuncToolResult]:
+    def _reject_unsafe_uploads_sql(
+        self, sql: str, datasource: Optional[str], *, connector: Optional[BaseSqlConnector] = None
+    ) -> Optional[FuncToolResult]:
         """Confine model-authored SQL on the uploads catalog to reads of its own tables.
 
         The catalog is a DuckDB datasource with external file access enabled —
@@ -2216,7 +2221,7 @@ class DBFuncTool:
             )
 
         try:
-            registered = list(self._registered_uploads())
+            registered = list(self._registered_uploads() if connector is None else self._registered_uploads(connector))
         except Exception as exc:
             # No catalog reading means no way to authorise a reference, and this
             # gate is the boundary — so refuse rather than skip it.
@@ -2234,7 +2239,7 @@ class DBFuncTool:
             )
         return None
 
-    def _registered_uploads(self) -> Dict[str, Optional[str]]:
+    def _registered_uploads(self, connector: Optional[BaseSqlConnector] = None) -> Dict[str, Optional[str]]:
         """Names the uploads catalog holds, read while holding the connector lock.
 
         The read has to happen *inside* ``exclusive_connection``. Handing the
@@ -2246,7 +2251,8 @@ class DBFuncTool:
         a short read looks like an empty catalog, which this gate then reports
         as "table is not registered" about a table that is registered.
         """
-        connector = self._get_connector(LOCAL_FILES_DATASOURCE, "")
+        if connector is None:
+            connector = self._get_connector(LOCAL_FILES_DATASOURCE, "")
         exclusive = getattr(connector, "exclusive_connection", None)
         if exclusive is None:
             raise DatusException(
@@ -3764,8 +3770,38 @@ class DBFuncTool:
         except Exception as e:
             return FuncToolResult(success=0, error=f"Write execution failed: {str(e)}")
 
-    # Maximum rows allowed in a single transfer (v1 memory constraint)
     _TRANSFER_MAX_ROWS = 1_000_000
+    _TRANSFER_MAX_BATCH_ROWS = 10_000
+    _TRANSFER_MAX_SQL_BYTES = 1024 * 1024
+
+    def _transfer_insert_batches(self, df, target_table: str, dialect: str, batch_size: int):
+        """Render the existing INSERT format, refusing oversized statements."""
+        columns = ", ".join(self._quote_column_identifier(column, dialect) for column in df.columns)
+        prefix = f"INSERT INTO {target_table} ({columns}) VALUES "
+        for start in range(0, len(df), batch_size):
+            rows = []
+            size = len(prefix.encode("utf-8"))
+            for _, row in df.iloc[start : start + batch_size].iterrows():
+                values = []
+                for value in row:
+                    if value is None:
+                        values.append("NULL")
+                    elif isinstance(value, bool):
+                        values.append("TRUE" if value else "FALSE")
+                    elif isinstance(value, (int, float)):
+                        values.append(str(value))
+                    else:
+                        escaped = str(value).replace("'", "''")
+                        values.append(f"'{escaped}'")
+                literal = f"({', '.join(values)})"
+                size += len(literal.encode("utf-8")) + (2 if rows else 0)
+                if size > self._TRANSFER_MAX_SQL_BYTES:
+                    raise ValueError(
+                        f"Transfer INSERT exceeds the {self._TRANSFER_MAX_SQL_BYTES:,}-byte SQL limit. "
+                        "Reduce batch_size or transfer smaller values."
+                    )
+                rows.append(literal)
+            yield prefix + ", ".join(rows), len(rows)
 
     @staticmethod
     def _identifier_quote_char(dialect: str) -> str:
@@ -3908,6 +3944,42 @@ class DBFuncTool:
         mode: str = "replace",
         batch_size: int = 5000,
     ) -> FuncToolResult:
+        """Transfer query results using the existing datasource write paths.
+
+        Keeps replace/append behavior and the existing one-million-row limit.
+        batch_size must be 1..10000; generated INSERTs must fit within 1 MiB.
+        Returns bounded metadata without echoing SQL or database row values.
+        For a file deliverable, use export_query instead.
+        """
+        from datus.utils.bounded_tool_output import bound_data_tool_result
+
+        try:
+            result = self._transfer_query_result(
+                source_sql, source_datasource, target_table, target_datasource, mode, batch_size
+            )
+        except Exception as exc:
+            result = self._bulk_failure(exc)
+        else:
+            if not result.success:
+                result = self._bulk_failure(
+                    RuntimeError(result.error or "Transfer failed"),
+                    **(result.result if isinstance(result.result, dict) else {}),
+                )
+            elif isinstance(result.result, dict):
+                result.result.pop("source_sql", None)
+                result.result.pop("target_table_create_sql", None)
+                result.result["source_sql_sha256"] = hashlib.sha256(source_sql.encode("utf-8")).hexdigest()
+        return FuncToolResult.model_validate(bound_data_tool_result(result.model_dump(mode="json")))
+
+    def _transfer_query_result(
+        self,
+        source_sql: str,
+        source_datasource: Optional[str] = "",
+        target_table: str = "",
+        target_datasource: Optional[str] = "",
+        mode: str = "replace",
+        batch_size: int = 5000,
+    ) -> FuncToolResult:
         """
         Transfer query results from a source datasource to a target table in another datasource.
 
@@ -3936,8 +4008,14 @@ class DBFuncTool:
             return refusal
 
         # Validate batch_size
-        if batch_size <= 0:
-            return FuncToolResult(success=0, error="batch_size must be a positive integer.")
+        if (
+            isinstance(batch_size, bool)
+            or not isinstance(batch_size, int)
+            or not 1 <= batch_size <= self._TRANSFER_MAX_BATCH_ROWS
+        ):
+            return FuncToolResult(
+                success=0, error=f"batch_size must be a positive integer between 1 and {self._TRANSFER_MAX_BATCH_ROWS}."
+            )
 
         # Validate target_table identifier
         if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$", target_table):
@@ -4049,6 +4127,18 @@ class DBFuncTool:
                 "Please add WHERE conditions to transfer in smaller batches.",
             )
 
+        # Keep the existing conversion and writer selection. Validate generated
+        # INSERT sizes before replace can clear any existing target rows.
+        normalized_df = df.where(df.notna(), other=None)
+        normalized_df = normalized_df.astype(object).where(normalized_df.notna(), other=None)
+        dialect = str(getattr(target_conn, "dialect", "") or "").lower()
+        if target_operations is None:
+            try:
+                for _ in self._transfer_insert_batches(normalized_df, target_table, dialect, batch_size):
+                    pass
+            except Exception as exc:
+                return FuncToolResult(success=0, error=str(exc))
+
         # TRUNCATE for replace mode BEFORE empty check - mode="replace" must clear old data.
         # If the target table does not exist yet, create it from the source result schema so
         # first-time transfers do not require a separate hand-written DDL step.
@@ -4116,11 +4206,7 @@ class DBFuncTool:
                 }
             )
 
-        # Convert pandas NaT/NaN to Python None for DBAPI2 compatibility
-        df = df.where(df.notna(), other=None)
-        # Also convert numpy types to native Python types
-        df = df.astype(object).where(df.notna(), other=None)
-
+        df = normalized_df
         rows_written = 0
         try:
             if target_operations is not None:
@@ -4133,37 +4219,14 @@ class DBFuncTool:
                     )
                 )
             else:
-                # Legacy adapters keep the existing inline multi-row INSERT path.
-                columns = list(df.columns)
-                dialect = str(getattr(target_conn, "dialect", "") or "").lower()
-                col_names = ", ".join(self._quote_column_identifier(c, dialect) for c in columns)
-                for batch_start in range(0, row_count, batch_size):
-                    batch_end = min(batch_start + batch_size, row_count)
-                    batch_df = df.iloc[batch_start:batch_end]
-
-                    value_rows = []
-                    for _, row in batch_df.iterrows():
-                        values = []
-                        for val in row:
-                            if val is None:
-                                values.append("NULL")
-                            elif isinstance(val, bool):
-                                values.append("TRUE" if val else "FALSE")
-                            elif isinstance(val, (int, float)):
-                                values.append(str(val))
-                            else:
-                                escaped = str(val).replace("'", "''")
-                                values.append(f"'{escaped}'")
-                        value_rows.append(f"({', '.join(values)})")
-
-                    insert_sql = f"INSERT INTO {target_table} ({col_names}) VALUES {', '.join(value_rows)}"
+                for insert_sql, batch_rows in self._transfer_insert_batches(df, target_table, dialect, batch_size):
                     result = target_conn.execute_insert(insert_sql)
                     if not result.success:
                         return FuncToolResult(
                             success=0,
                             error=f"Transfer failed after writing {rows_written} rows: {result.error}",
                         )
-                    rows_written += len(batch_df)
+                    rows_written += batch_rows
 
                 # Commit the transaction to release locks (critical for SQLAlchemy-based connectors)
                 if hasattr(target_conn, "connection") and hasattr(target_conn.connection, "commit"):

@@ -1661,6 +1661,94 @@ class TestVisualArtifactAutoAllow:
         mock_broker.request.assert_not_called()
 
 
+class TestExportQueryPermission:
+    def _hooks(self, broker, config, *, non_interactive=False, project_root=None):
+        return PermissionHooks(
+            broker=broker,
+            permission_manager=PermissionManager(global_config=config),
+            node_name="chat",
+            tool_registry=ToolRegistry({"execute_sql": "db_tools", "export_query": "db_tools"}),
+            non_interactive=non_interactive,
+            project_root=project_root,
+        )
+
+    @staticmethod
+    def _context(sql="SELECT 1"):
+        return SimpleNamespace(tool_arguments=json.dumps({"sql": sql, "output_file": "exports/result.csv"}))
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("profile", ["normal", "auto"])
+    async def test_export_read_uses_existing_profile_defaults(self, mock_broker, profile):
+        hooks = self._hooks(mock_broker, get_profile(profile))
+        await hooks.on_tool_start(self._context(), MagicMock(), SimpleNamespace(name="export_query"))
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("sql_file", [False, True])
+    @pytest.mark.parametrize("export_allow", [False, True])
+    async def test_sql_read_deny_applies_to_exports(self, mock_broker, tmp_path, sql_file, export_allow):
+        config = get_profile("normal").model_copy(deep=True)
+        config.sql_statements.read = PermissionLevel.DENY
+        if export_allow:
+            config.rules.append(
+                PermissionRule(tool="db_tools", pattern="export_query", permission=PermissionLevel.ALLOW)
+            )
+        sql = "SELECT 1"
+        if sql_file:
+            (tmp_path / "query.sql").write_text(sql)
+            sql = "query.sql"
+        hooks = self._hooks(mock_broker, config, project_root=str(tmp_path))
+        with pytest.raises(PermissionDeniedException) as denied:
+            await hooks.on_tool_start(self._context(sql), MagicMock(), SimpleNamespace(name="export_query"))
+        assert denied.value.tool_name == "export_query"
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("non_interactive", [False, True])
+    async def test_sql_read_ask_applies_to_exports(self, mock_broker, non_interactive):
+        config = get_profile("normal").model_copy(deep=True)
+        config.sql_statements.read = PermissionLevel.ASK
+        hooks = self._hooks(mock_broker, config, non_interactive=non_interactive)
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+        if non_interactive:
+            with pytest.raises(PermissionDeniedException):
+                await hooks.on_tool_start(self._context(), MagicMock(), SimpleNamespace(name="export_query"))
+            mock_broker.request.assert_not_called()
+        else:
+            await hooks.on_tool_start(self._context(), MagicMock(), SimpleNamespace(name="export_query"))
+            assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("denied_tool", ["execute_sql", "export_query"])
+    async def test_explicit_tool_denials_cover_export_entry_point(self, mock_broker, denied_tool):
+        config = get_profile("normal").model_copy(deep=True)
+        config.rules.append(PermissionRule(tool="db_tools", pattern=denied_tool, permission=PermissionLevel.DENY))
+        hooks = self._hooks(mock_broker, config)
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._context(), MagicMock(), SimpleNamespace(name="export_query"))
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_export_cannot_select_write_permissions_by_sql_file_contents(self, mock_broker, tmp_path):
+        config = get_profile("normal").model_copy(deep=True)
+        config.sql_statements.read = PermissionLevel.DENY
+        config.sql_statements.destructive = PermissionLevel.ALLOW
+        (tmp_path / "changing.sql").write_text("DELETE FROM orders")
+        hooks = self._hooks(mock_broker, config, project_root=str(tmp_path))
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._context("changing.sql"), MagicMock(), SimpleNamespace(name="export_query"))
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_export_reuses_an_existing_sql_read_session_grant(self, mock_broker):
+        config = get_profile("normal").model_copy(deep=True)
+        config.sql_statements.read = PermissionLevel.ASK
+        hooks = self._hooks(mock_broker, config)
+        hooks.permission_manager.approve_for_session("db_tools", "execute_sql.select")
+        await hooks.on_tool_start(self._context(), MagicMock(), SimpleNamespace(name="export_query"))
+        mock_broker.request.assert_not_called()
+
+
 class TestExecuteSqlPermission:
     """Statement-type gating for ``db_tools.execute_sql`` via _handle_sql_permission."""
 

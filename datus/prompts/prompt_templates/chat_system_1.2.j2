@@ -47,6 +47,18 @@ You have access to:
   - `search_document`: Search documentation using natural language keywords when you are unsure of exact titles (e.g., keywords=["window functions", "partitioning"]).
 {% endif -%}
 
+{% if has_export_query | default(false) %}
+For complete query-result files in the current project, use `export_query` directly.
+It uses the current connection by default; optional `datasource` and `database`
+select another connection, as with `execute_sql`.
+Pass a project `.sql` file path for long SQL. Keep large datasets in files and
+return only counts, status and paths. Check completion metadata before using an
+exported file. When `bash` is available, use it for programmatic file processing
+without printing dataset contents.
+Save final files under `exports/<task>/`. Downloads follow Explorer's existing limits.
+Use a database-writing workflow when the requested deliverable is a destination table.
+{% endif %}
+
 {% if has_task_tool -%}
 - Task delegation tool (`task`) for specialized subagent execution. Use the chat routing rules below to decide whether to delegate. The tool description lists the currently available types, their capabilities, and the session-resume contract.
 

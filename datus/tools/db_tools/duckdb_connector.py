@@ -79,6 +79,26 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
     Connector for DuckDB databases with schema support using native DuckDB SDK.
     """
 
+    supports_streaming_read = True
+
+    def iter_query_batches(self, sql: str, batch_size: int = 5000):
+        """Yield Arrow tables while holding this connector's cursor lock."""
+        import pyarrow as pa
+
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
+            raise ValueError("batch_size must be a positive integer")
+        with self.exclusive_connection() as connection:
+            reader = connection.execute(sql).fetch_record_batch(rows_per_batch=batch_size)
+            try:
+                emitted = False
+                for batch in reader:
+                    emitted = True
+                    yield pa.Table.from_batches([batch])
+                if not emitted:
+                    yield pa.Table.from_batches([], schema=reader.schema)
+            finally:
+                reader.close()
+
     def __init__(self, config: DuckDBConfig):
         super().__init__(config, dialect=DBType.DUCKDB)
         self.db_path = config.db_path.replace("duckdb:///", "")

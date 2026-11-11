@@ -10,10 +10,12 @@ the meaning of ``policy_context`` and the concrete read transformations.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, Optional
 
 from datus.plugins.registry import collect_plugin_policy_runtime_factories
+from datus.utils.bounded_tool_output import bounded_text
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -331,14 +333,47 @@ class PolicyRuntime:
             "sql.policy.rewrite",
             datasource=datasource,
             dialect=dialect,
-            original_sql=sql,
-            rewritten_sql=current_sql,
+            original_sql_sha256=hashlib.sha256(sql.encode("utf-8")).hexdigest(),
+            rewritten_sql_sha256=hashlib.sha256(current_sql.encode("utf-8")).hexdigest(),
+            original_sql=bounded_text(sql, 1024),
+            rewritten_sql=bounded_text(current_sql, 1024),
             rewritten=current_sql != sql,
             policy_runtimes=self.runtime_names,
             masking_profile=context.get("masking_profile"),
             policy_revision=context.get("policy_revision"),
         )
         return SqlReadDecision(allowed=True, sql=current_sql, applied_policies=applied, verify_context=verifier)
+
+    def validate_streaming_results(self) -> None:
+        """Require explicit batch semantics for plugins with result hooks."""
+        for name, runtime in self._runtimes:
+            if (
+                callable(getattr(runtime, "after_read_result", None))
+                and not callable(getattr(runtime, "after_read_batch", None))
+                and getattr(runtime, "supports_batch_results", False) is not True
+            ):
+                raise ValueError(f"Policy runtime {name} does not support streaming result enforcement")
+
+    def after_read_batch(self, result: Any, **context) -> ReadResultDecision:
+        """Apply only result hooks whose batch behavior was explicitly declared."""
+        self.validate_streaming_results()
+        context["policy_context"] = self._normalize_context(context.get("policy_context"))
+        current = result
+        applied = []
+        for name, runtime in self._runtimes:
+            hook = getattr(runtime, "after_read_batch", None)
+            hook_name = "after_read_batch"
+            if not callable(hook):
+                hook = getattr(runtime, "after_read_result", None)
+                hook_name = "after_read_result"
+            if not callable(hook):
+                continue
+            decision = self._result_decision(name, self._invoke(name, hook_name, hook, current, **context), current)
+            if not decision.allowed:
+                return decision
+            current = decision.result
+            applied.extend(decision.applied_policies)
+        return ReadResultDecision(allowed=True, result=current, applied_policies=applied)
 
     def after_read_result(
         self,
