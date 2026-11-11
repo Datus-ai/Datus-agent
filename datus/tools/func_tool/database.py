@@ -3948,7 +3948,8 @@ class DBFuncTool(BulkQueryTools):
 
         Keeps replace/append behavior and the existing one-million-row limit.
         batch_size must be 1..10000; generated INSERTs must fit within 1 MiB.
-        Returns bounded metadata without echoing SQL or database row values.
+        Returns bounded metadata and short error summaries without echoing
+        full SQL or query result sets.
         For a file deliverable, use export_query instead.
         """
         from datus.utils.bounded_tool_output import bound_data_tool_result

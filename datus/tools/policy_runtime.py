@@ -124,6 +124,7 @@ class PolicyRuntime:
                         "before_sql_read",
                         "before_metric_read",
                         "after_read_result",
+                        "after_read_batch",
                     )
                 ):
                     raise TypeError("factory returned an object without policy lifecycle hooks")
@@ -390,16 +391,15 @@ class PolicyRuntime:
         datasource: str,
         dialect: str,
         policy_context: Optional[Dict[str, Any]],
-        include_batch_hooks: bool = False,
     ) -> ReadResultDecision:
-        """Apply complete-result policies, optionally including batch-only export hooks."""
+        """Apply complete-result policies, including plugins with only a batch hook."""
         context = self._normalize_context(policy_context)
         current_result = result
         applied: list[str] = []
         for plugin_name, runtime in self._runtimes:
             hook = getattr(runtime, "after_read_result", None)
             hook_name = "after_read_result"
-            if not callable(hook) and include_batch_hooks:
+            if not callable(hook):
                 hook = getattr(runtime, "after_read_batch", None)
                 hook_name = "after_read_batch"
             if not callable(hook):

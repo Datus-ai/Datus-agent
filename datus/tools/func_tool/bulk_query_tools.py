@@ -134,7 +134,6 @@ class BulkQueryTools:
                     datasource=datasource,
                     dialect=connector.dialect,
                     policy_context=self.policy_context,
-                    include_batch_hooks=True,
                 )
                 if not result.allowed:
                     raise PermissionError(result.reason or "Policy denied the query result")

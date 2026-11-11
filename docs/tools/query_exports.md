@@ -102,7 +102,9 @@ Plugins with post-read result hooks can declare `supports_batch_results=True`
 or implement `after_read_batch` to enable streaming. Whole-result-only policies
 select buffered mode and run once over the complete result before file staging.
 Batch-only hooks are also enforced on the buffered result, preserving plugin
-order. Policy denials, result limits and query rewrites are never bypassed.
+order. Ordinary complete-result reads also enforce batch-only plugins rather
+than silently skipping their hooks. Policy denials, result limits and query
+rewrites are never bypassed.
 The execution mode is selected before querying; a failed stream is not replayed
 using a buffered read.
 

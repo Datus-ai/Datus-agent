@@ -10,8 +10,7 @@ from datus.tools.policy_runtime import PolicyRuntime
 from datus.utils.exceptions import DatusException, ErrorCode
 
 
-@pytest.mark.parametrize("include_batch_hooks", [False, True])
-def test_complete_result_hooks_preserve_order_and_only_opt_in_to_batch_hooks(include_batch_hooks):
+def test_complete_result_hooks_preserve_order_and_apply_batch_only_hooks():
     runtime = PolicyRuntime(None)
     calls = []
 
@@ -34,11 +33,10 @@ def test_complete_result_hooks_preserve_order_and_only_opt_in_to_batch_hooks(inc
         datasource="warehouse",
         dialect="duckdb",
         policy_context={},
-        include_batch_hooks=include_batch_hooks,
     )
-    assert calls == (["batch", "whole"] if include_batch_hooks else ["whole"])
-    assert result.result == (["masked", "authorized"] if include_batch_hooks else ["authorized"])
-    assert result.applied_policies == (["mask", "scope"] if include_batch_hooks else ["scope"])
+    assert calls == ["batch", "whole"]
+    assert result.result == ["masked", "authorized"]
+    assert result.applied_policies == ["mask", "scope"]
 
 
 class FakeRuntime:
@@ -111,6 +109,32 @@ def runtime_with(fake: Any, monkeypatch: pytest.MonkeyPatch) -> PolicyRuntime:
         lambda active: {"sql-policy": lambda profile: fake},
     )
     return PolicyRuntime(config())
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_batch_only_plugin_factory_initializes_and_enforces_results(monkeypatch, streaming):
+    import pyarrow as pa
+
+    calls = []
+
+    def mask(table, **kwargs):
+        calls.append(table.num_rows)
+        return SimpleNamespace(
+            allowed=True,
+            result=table.set_column(0, "secret", pa.array(["masked"] * table.num_rows)),
+            applied_policies=["mask"],
+        )
+
+    runtime = runtime_with(SimpleNamespace(after_read_batch=mask), monkeypatch)
+    assert runtime.runtime_names == ("sql-policy",)
+    assert runtime.supports_streaming_results is True
+    table = pa.table({"secret": ["private", "private"]})
+    kwargs = dict(sql="SELECT secret FROM orders", datasource="warehouse", dialect="duckdb", policy_context={})
+    result = runtime.after_read_batch(table, **kwargs) if streaming else runtime.after_read_result(table, **kwargs)
+    assert result.allowed is True
+    assert calls == [2]
+    assert result.result.to_pylist() == [{"secret": "masked"}, {"secret": "masked"}]
+    assert result.applied_policies == ["mask"]
 
 
 def test_no_policy_runtime_is_pass_through(monkeypatch):
@@ -291,6 +315,29 @@ def connector():
         error=None,
     )
     return value
+
+
+@pytest.mark.parametrize("allowed", [False, True])
+def test_db_read_cannot_skip_a_batch_only_policy(monkeypatch, allowed):
+    hook = Mock(
+        return_value=SimpleNamespace(
+            allowed=allowed, result=[{"email": "masked"}], reason="Batch policy denied read", applied_policies=["mask"]
+        )
+    )
+    monkeypatch.setattr(
+        "datus.tools.policy_runtime.collect_plugin_policy_runtime_factories",
+        lambda active: {"sql-policy": lambda profile: SimpleNamespace(after_read_batch=hook)},
+    )
+    db = connector()
+    result = make_db_tool(db, config()).execute_read_enforced("SELECT * FROM orders", db)
+    assert hook.call_count == 1
+    if allowed:
+        assert result.success is True
+        assert result.sql_return == [{"email": "masked"}]
+    else:
+        assert result.success is False
+        assert result.error == "Batch policy denied read"
+        assert result.sql_return is None
 
 
 def test_db_read_applies_before_and_after_hooks(monkeypatch):
