@@ -38,6 +38,14 @@ Datus streams the output as it thinks — showing each action's execution result
 
 ## 3. Advanced Features
 
+### Metric Queries and Attribution
+
+Chat can directly discover and query existing semantic metrics and run attribution with `list_metrics`, `get_metric`, `get_dataset`, `query_metrics`, and `attribution_analyze`. Follow-up questions and longer analysis stay in the same chat; these capabilities do not require an AskMetrics handoff.
+
+When no suitable metric exists, chat can generate and execute read-only SQL using available schema and business knowledge. A missing metric does not require creating one. Metric authoring starts only when you explicitly request creating or changing definitions.
+
+Use AskMetrics or another scoped business agent when you select its particular context or published interface. Its configured tool and data permissions continue to apply. An explicit chat `tools` allowlist replaces the defaults; add the desired `semantic_tools.<method>` entries to enable metric capabilities in an existing allowlist.
+
 ### Context Injection
 
 Context Injection allows you to pull existing tables, metrics or files into your conversation. There are two ways to do this:

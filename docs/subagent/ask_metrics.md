@@ -2,7 +2,7 @@
 
 ## Overview
 
-`ask_metrics` is a built-in metric question-answering subagent. It answers questions from existing semantic metrics instead of exploring raw tables or asking the model to write ad hoc SQL; Dosi compiles and executes the query.
+`ask_metrics` is a built-in metric question-answering subagent that can package a specific business context and tool surface for selected users. It answers questions from existing semantic metrics; Dosi compiles and executes the query. The main chat also provides metric queries and attribution directly. Choose AskMetrics when you want its scoped context or explicitly selected agent interface.
 
 Use AskMetrics when the user asks for:
 
@@ -29,7 +29,7 @@ Continue from the DuckDB example in [Semantic Modeling](semantic_modeling.md#qui
 datus --datasource duckdb_demo
 ```
 
-After creating the `bank_failures` model, ask the question directly in the main chat. The main agent delegates it to AskMetrics automatically:
+After creating the `bank_failures` model, ask directly in the main chat, which can query the metrics itself:
 
 ```text
 Show bank failure count and failed assets by year.

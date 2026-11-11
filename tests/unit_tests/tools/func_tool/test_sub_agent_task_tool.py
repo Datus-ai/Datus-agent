@@ -2141,10 +2141,8 @@ class TestBuildTaskDescriptionBuiltIn:
         desc = task_tool._build_task_description()
         for name in HIDDEN_SYS_SUB_AGENTS:
             assert name not in desc
-        for name in SYS_SUB_AGENTS:
-            if name in HIDDEN_SYS_SUB_AGENTS:
-                continue
-            assert name in desc, f"{name} not found in task description"
+        for name in task_tool._get_available_types():
+            assert f"- {name}:" in desc, f"{name} not found in task description"
 
     def test_contains_builtin_descriptions(self, task_tool):
         desc = task_tool._build_task_description()

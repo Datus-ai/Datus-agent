@@ -190,8 +190,8 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         # template resolution + node_config lookup land on the right entry.
         self._configured_subagent_name = node_name or self.NODE_NAME
 
-        # ChatAgenticNode never builds semantic tools, but an ask_* ``tools``
-        # whitelist may request them (metric/dimension/attribution analysis).
+        # Artifact ask nodes build semantic tools only when their own ``tools``
+        # whitelist requests them (metric/dimension/attribution analysis).
         # Declare the slot before super().__init__() (which triggers
         # ``setup_tools``) so the whitelist pass can build it on demand and
         # ``_populate_tool_registry`` can pick it up safely.
@@ -319,10 +319,10 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
     def _ensure_whitelisted_groups_present(self, patterns: List[str]) -> None:
         """Build + surface whitelisted capability groups the chat base omits.
 
-        Only ``semantic_tools`` falls in this bucket today — ChatAgenticNode
-        builds every other gated group. Built once, then re-surfaced into
+        ``semantic_tools`` is opt-in for artifact ask nodes, independently of
+        the main chat defaults. Built once, then re-surfaced into
         ``self.tools`` on every call so a post-rebuild whitelist pass does not
-        lose it (``_rebuild_tools`` never re-adds semantic tools itself).
+        lose it before the exact whitelist is applied.
         """
         wants_semantic = any(p == "semantic_tools" or p.startswith("semantic_tools.") for p in patterns)
         if not wants_semantic:

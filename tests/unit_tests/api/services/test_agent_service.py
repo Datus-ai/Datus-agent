@@ -294,6 +294,9 @@ class TestConstants:
             "semantic_tools.query_metrics",
             "semantic_tools.attribution_analyze",
             "context_search_tools.list_subject_tree",
+            "filesystem_tools.read_file",
+            "filesystem_tools.glob",
+            "filesystem_tools.grep",
         ]
         assert set(entry["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES)
         for category, payload in entry["tool_types"].items():
@@ -314,9 +317,14 @@ class TestConstants:
         assert SUBAGENT_TOOL_REFERENCE["ask_metrics"]["default_tools"] == list(AskMetricsAgenticNode.DEFAULT_TOOLS)
 
     def test_tool_reference_chat_has_full_default_set(self):
-        """chat default_tools enumerates every non-semantic category as wildcard."""
+        """Chat's editor defaults include the five metric reads, without authoring tools."""
         entry = SUBAGENT_TOOL_REFERENCE["chat"]
         assert entry["default_tools"] == [
+            "semantic_tools.list_metrics",
+            "semantic_tools.get_metric",
+            "semantic_tools.get_dataset",
+            "semantic_tools.query_metrics",
+            "semantic_tools.attribution_analyze",
             "db_tools.*",
             "context_search_tools.*",
             "reference_template_tools.*",

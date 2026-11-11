@@ -139,6 +139,11 @@ def _build_tool_types(agent_type: str) -> dict[str, dict[str, list[str]]]:
 SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
     "chat": {
         "default_tools": [
+            "semantic_tools.list_metrics",
+            "semantic_tools.get_metric",
+            "semantic_tools.get_dataset",
+            "semantic_tools.query_metrics",
+            "semantic_tools.attribution_analyze",
             "db_tools.*",
             "context_search_tools.*",
             "reference_template_tools.*",
@@ -174,6 +179,9 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
             "semantic_tools.query_metrics",
             "semantic_tools.attribution_analyze",
             "context_search_tools.list_subject_tree",
+            "filesystem_tools.read_file",
+            "filesystem_tools.glob",
+            "filesystem_tools.grep",
         ],
         "tool_types": _build_tool_types("ask_metrics"),
     },

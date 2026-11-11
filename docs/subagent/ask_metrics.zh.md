@@ -2,7 +2,7 @@
 
 ## 概览
 
-`ask_metrics` 是内置的指标问答 subagent。它基于已有语义指标回答问题，不直接探索原始表，也不让模型临时编写 SQL；实际查询由 Dosi 编译并执行。
+`ask_metrics` 是内置的指标问答 subagent，可封装特定业务上下文和工具范围，供限定用户使用。它基于已有语义指标回答问题，实际查询由 Dosi 编译并执行。主 chat 也能直接查询指标和进行归因；需要其特定上下文或明确选择该 agent 时使用 AskMetrics。
 
 适合使用 AskMetrics 的问题包括：
 
@@ -29,7 +29,7 @@ AskMetrics 需要当前 datasource 上存在可执行的语义指标。Dosi 已�
 datus --datasource duckdb_demo
 ```
 
-完成 `bank_failures` 建模后，在主 chat 中直接提问即可，主 agent 会自动派发给 AskMetrics：
+完成 `bank_failures` 建模后，在主 chat 中直接提问即可，主 agent 可以直接查询指标：
 
 ```text
 按年份查询倒闭银行数量和倒闭银行资产总额。

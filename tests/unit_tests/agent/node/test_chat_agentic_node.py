@@ -21,6 +21,8 @@ Tests verify:
 NO MOCK EXCEPT LLM: The only mock is LLMBaseModel.create_model -> MockLLMModel.
 """
 
+import json
+import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -32,10 +34,135 @@ from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from tests.unit_tests.mock_llm_model import MockToolCall, build_simple_response, build_tool_then_response
 
 LINEAGE_TOOL_NAMES = {"upsert_lineage", "delete_lineage", "query_lineage"}
+METRIC_TOOL_NAMES = {"list_metrics", "get_metric", "get_dataset", "query_metrics", "attribution_analyze"}
 
 # ===========================================================================
 # ChatAgenticNode Inheritance Tests
 # ===========================================================================
+
+
+class TestChatMetricTools:
+    def test_defaults_and_rebuild_keep_metric_reads_without_authoring(self, real_agent_config, mock_llm_create):
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        from datus.tools.func_tool.semantic_tools import SemanticTools
+
+        assert isinstance(node.semantic_tools, SemanticTools)
+        assert node.semantic_tools.sub_agent_name == "chat"
+        for _ in range(2):
+            names = [tool.name for tool in node.tools]
+            assert METRIC_TOOL_NAMES <= set(names)
+            assert not {"validate_semantic", "describe_concept", "find_concept_paths", "select_records"} & set(names)
+            assert all(names.count(name) == 1 for name in METRIC_TOOL_NAMES)
+            assert all(node.tool_registry.get(name) == "semantic_tools" for name in METRIC_TOOL_NAMES)
+            node._rebuild_tools()
+
+    @pytest.mark.parametrize(
+        "patterns, expected",
+        [
+            ("semantic_tools.query_metrics", {"query_metrics"}),
+            (
+                ["semantic_tools.query_metrics", "semantic_tools.attribution_analyze"],
+                {"query_metrics", "attribution_analyze"},
+            ),
+            ("semantic_tools.*", METRIC_TOOL_NAMES | {"validate_semantic"}),
+            ("db_tools.*", set()),
+        ],
+    )
+    def test_explicit_semantic_allowlist_is_exact(self, real_agent_config, mock_llm_create, patterns, expected):
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config, tools=patterns)
+        for _ in range(2):
+            names = {tool.name for tool in node.tools}
+            assert names & (METRIC_TOOL_NAMES | {"validate_semantic"}) == expected
+            prompt = node._get_system_prompt()
+            assert ("Use `attribution_analyze` directly" in prompt) == ("attribution_analyze" in expected)
+            assert ("Read each metric with `get_metric`" in prompt) == ("get_metric" in expected)
+            assert ("generate and execute read-only SQL here" in prompt) == ("execute_sql" in names)
+            node._rebuild_tools()
+
+    def test_metric_setup_failure_preserves_sql_and_files(self, real_agent_config, mock_llm_create, monkeypatch):
+        def fail_setup(*args, **kwargs):
+            raise OSError("metric storage unavailable")
+
+        monkeypatch.setattr("datus.agent.node.chat_agentic_node.SemanticTools", fail_setup)
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        names = {tool.name for tool in node.tools}
+        assert node.semantic_tools is None
+        assert {"execute_sql", "read_file"} <= names
+        assert not METRIC_TOOL_NAMES & names
+        assert "## Attribution Playbook" not in node._get_system_prompt()
+
+    def test_rebuild_does_not_restore_excluded_metric_tools(self, real_agent_config, mock_llm_create):
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        node.node_config["tools"] = "db_tools.*"
+        node._rebuild_tools()
+        assert not METRIC_TOOL_NAMES & {tool.name for tool in node.tools}
+        assert "## Attribution Playbook" not in node._get_system_prompt()
+
+    @pytest.mark.asyncio
+    async def test_registered_tools_query_attribute_and_refresh_models(
+        self, real_agent_config, mock_llm_create, tmp_path
+    ):
+        import duckdb
+
+        from datus.configuration.agent_config import DbConfig
+        from datus.utils.query_result_text import parse_query_result_text
+
+        fixtures = Path(__file__).resolve().parents[3] / "data/semantic_models/attribution"
+        database = tmp_path / "attribution.duckdb"
+        with duckdb.connect(str(database)) as connection:
+            connection.execute((fixtures / "seed.sql").read_text())
+        real_agent_config.services.datasources["attribution"] = DbConfig(type="duckdb", uri=str(database))
+        real_agent_config.current_datasource = "attribution"
+        model_dir = real_agent_config.path_manager.semantic_model_path("attribution")
+        model_dir.mkdir(parents=True, exist_ok=True)
+        model_path = model_dir / "model.yaml"
+        shutil.copy2(fixtures / "model.yaml", model_path)
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        tools = {tool.name: tool for tool in node.tools}
+
+        async def invoke(name, arguments):
+            result = await tools[name].on_invoke_tool(None, json.dumps(arguments))
+            assert result["success"] == 1, result
+            return result["result"]
+
+        definition = await invoke("get_metric", {"name": "net"})
+        assert "expr:" in definition
+        assert "cat" in await invoke("get_dataset", {"name": "ledger"})
+        query = await invoke(
+            "query_metrics", {"metrics": ["net"], "time_start": "2024-01-01", "time_end": "2024-02-01"}
+        )
+        parsed = parse_query_result_text(query)
+        assert parsed is not None and float(parsed.csv.splitlines()[1]) == 120.0
+        assert node.semantic_tools.get_cached_query_metrics_result(parsed.result_id) is not None
+        attribution = await invoke(
+            "attribution_analyze",
+            {
+                "metric_name": "net",
+                "candidate_dimensions": ["ledger.cat"],
+                "baseline_start": "2024-01-01",
+                "baseline_end": "2024-02-01",
+                "current_start": "2024-02-01",
+                "current_end": "2024-03-01",
+            },
+        )
+        assert attribution["total_change"]["delta"] == 20.0
+        assert attribution["per_dimension"]["ledger.cat"]["reconciliation"]["passed"]
+        model_path.write_text(model_path.read_text().replace("name: net\n", "name: net_updated\n"))
+        assert "net_updated" in await invoke("list_metrics", {})
+        assert "expr:" in await invoke("get_metric", {"name": "net_updated"})
+        next_database = tmp_path / "next.duckdb"
+        with duckdb.connect(str(next_database)) as connection:
+            connection.execute((fixtures / "seed.sql").read_text())
+            connection.execute("UPDATE ledger SET x = x * 2, y = y * 2")
+        real_agent_config.services.datasources["next"] = DbConfig(type="duckdb", uri=str(next_database))
+        real_agent_config.current_datasource = "next"
+        next_models = real_agent_config.path_manager.semantic_model_path("next")
+        next_models.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(model_path, next_models / "model.yaml")
+        query = await invoke(
+            "query_metrics", {"metrics": ["net_updated"], "time_start": "2024-01-01", "time_end": "2024-02-01"}
+        )
+        assert float(parse_query_result_text(query).csv.splitlines()[1]) == 240.0
 
 
 class TestChatAgenticNodeInheritance:

@@ -93,18 +93,20 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "  Returns JSON with {response, tokens_used}."
     ),
     "ask_metrics": (
-        "Answer metric-based questions quickly using existing semantic metrics. "
+        "Metric question-answering agent that can be scoped to a business context or published audience. "
+        "Use when the user selects this agent or its specific scoped context is needed; "
+        "ordinary chat can query metrics and analyze contributions directly. "
         "Use for KPI values, trends, grouped metric results, and metric attribution "
         "when the question can be answered by the semantic layer. Does not fall back "
-        "to raw SQL. If ontology_analyst is offered, prefer it for this datasource. "
+        "to raw SQL. "
         "Returns JSON with {response, markdown_report, tokens_used}."
     ),
     "ontology_analyst": (
         "Answer data questions over the current datasource's Apache Ossie ontology "
         "(business concepts, their role-named links and closed value sets) through the "
         "semantic layer: metric values, trends and attribution like ask_metrics, plus "
-        "record-level answers (list ids, names, statuses of matching records). Prefer it "
-        "over ask_metrics whenever it is offered, especially when the question depends on "
+        "record-level answers (list ids, names, statuses of matching records). Use when "
+        "this scoped agent is selected or ontology relationship capabilities are needed, such as "
         "which relationship is meant (the airport a flight arrives at vs departs from), "
         "filters on coded status values, or asks for individual records. Does not fall "
         "back to raw SQL. Prompt: provide the question directly. "
