@@ -678,7 +678,7 @@ class SemanticTools:
         # The token budget of an executed result's preview, and of a dry run's data.
         self._compressor: Optional[DataCompressor] = None
         self._query_metrics_result_cache: OrderedDict[str, dict] = OrderedDict()
-        self._evicted_query_metrics_scopes: OrderedDict[str, str] = OrderedDict()
+        self._evicted_query_metrics_scopes: OrderedDict[str, dict] = OrderedDict()
 
         # Lazy load runtime and attribution tool
         self._runtime: Optional[DosiRuntime] = None
@@ -803,6 +803,7 @@ class SemanticTools:
         metadata: Optional[Mapping[str, Any]] = None,
         *,
         authorized_scope: Optional[str] = None,
+        metric_names: Optional[List[str]] = None,
     ) -> Optional[str]:
         if data is None:
             return None
@@ -822,6 +823,7 @@ class SemanticTools:
         cache_key = f"query_metrics:{secrets.token_urlsafe(12)}"
         self._query_metrics_result_cache[cache_key] = {
             "policy_scope": authorized_scope if authorized_scope is not None else scope,
+            "metric_names": tuple(metric_names or ()),
             "columns": list(columns),
             "csv": full_csv,
             "row_count": self._query_data_row_count(data),
@@ -836,30 +838,35 @@ class SemanticTools:
         }
         while len(self._query_metrics_result_cache) > self.MAX_QUERY_METRICS_RESULT_CACHE_SIZE:
             evicted_id, evicted = self._query_metrics_result_cache.popitem(last=False)
-            self._evicted_query_metrics_scopes[evicted_id] = evicted["policy_scope"]
+            self._evicted_query_metrics_scopes[evicted_id] = {
+                "policy_scope": evicted["policy_scope"],
+                "metric_names": evicted["metric_names"],
+            }
         while len(self._evicted_query_metrics_scopes) > self.MAX_QUERY_METRICS_RESULT_CACHE_SIZE:
             self._evicted_query_metrics_scopes.popitem(last=False)
         return cache_key
 
-    def can_use_query_metrics_preview(self, cache_key: str) -> bool:
-        """Permit an evicted preview only while its original scope is verified."""
-        scope = self._evicted_query_metrics_scopes.get(cache_key)
-        if scope is None:
-            return False
+    def _cached_query_scope_is_current(self, cached: Mapping[str, Any]) -> bool:
         try:
-            return scope == self._query_cache_scope(self._policy_cache_scope())
+            if cached.get("policy_scope", "unprotected") != self._query_cache_scope(self._policy_cache_scope()):
+                return False
+            if self._has_metric_scope():
+                names = list(cached.get("metric_names") or ())
+                return bool(names) and self._check_metric_scope(names) is None
+            return True
         except (DatusException, ValueError):
             return False
+
+    def can_use_query_metrics_preview(self, cache_key: str) -> bool:
+        """Permit an evicted preview only while its original metrics remain allowed."""
+        scope = self._evicted_query_metrics_scopes.get(cache_key)
+        return scope is not None and self._cached_query_scope_is_current(scope)
 
     def get_cached_query_metrics_result(self, cache_key: str) -> Optional[dict]:
         cached = self._query_metrics_result_cache.get(cache_key)
         if cached is None:
             return None
-        try:
-            scope = self._query_cache_scope(self._policy_cache_scope())
-        except (DatusException, ValueError):
-            return None
-        if cached.get("policy_scope", "unprotected") != scope:
+        if not self._cached_query_scope_is_current(cached):
             return None
         return cached
 
@@ -2249,20 +2256,27 @@ class SemanticTools:
                     success=0,
                     error="Configured metric scope changed while the query was running; retry in the current scope.",
                 )
+            scope_error = self._check_metric_scope(metrics)
+            if scope_error is not None:
+                return scope_error
             if not dry_run:
                 metadata = dict(result.metadata or {})
                 if result_page_size is not None:
                     metadata["page_notes"] = self._query_hints(runtime, runtime_query_kwargs, result)
                     metadata["execution_context"] = execution_context
                     cached_id = self._cache_query_metrics_result(
-                        result.columns, result.data, metadata, authorized_scope=authorized_scope
+                        result.columns, result.data, metadata, authorized_scope=authorized_scope, metric_names=metrics
                     )
                     return self._query_result_page(cached_id, 0, result_page_size)
                 return FuncToolResult(
                     execution_context=execution_context,
                     result=self._render_query_result(
                         self._cache_query_metrics_result(
-                            result.columns, result.data, metadata, authorized_scope=authorized_scope
+                            result.columns,
+                            result.data,
+                            metadata,
+                            authorized_scope=authorized_scope,
+                            metric_names=metrics,
                         ),
                         list(result.columns),
                         result.data,

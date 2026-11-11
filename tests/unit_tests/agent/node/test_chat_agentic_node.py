@@ -165,7 +165,22 @@ class TestChatMetricTools:
         models = real_agent_config.path_manager.semantic_model_path("metric_pages")
         models.mkdir(parents=True, exist_ok=True)
         shutil.copy2(fixtures / "model.yaml", models / "model.yaml")
+        from datus.storage.metric.store import MetricRAG
+
+        MetricRAG(real_agent_config).store_batch(
+            [
+                {
+                    "name": name,
+                    "semantic_model_name": "attribution_model",
+                    "subject_path": ["Finance", subject],
+                    "description": f"{name} in the {subject} subject",
+                }
+                for name, subject in (("net", "Allowed"), ("x_total", "Allowed"), ("y_total", "Hidden"))
+            ]
+        )
+        real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "Finance.Allowed"}
         node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        node.semantic_tools.MAX_QUERY_METRICS_RESULT_CACHE_SIZE = 1
         tools = {tool.name: tool for tool in node.tools}
         calls = []
         runtime = node.semantic_tools.runtime
@@ -218,11 +233,33 @@ class TestChatMetricTools:
         assert values == list(range(1, 31))
         assert len(calls) == 1
 
+        semantic = node.semantic_tools
+        storage = semantic.metric_rag.storage
+        before = semantic._query_cache_scope(semantic._policy_cache_scope())
+        assert storage.rename(["Finance", "Allowed", "net"], ["Finance", "Hidden", "net"]) is True
+        assert semantic._query_cache_scope(semantic._policy_cache_scope()) == before
+        moved = await tools[reader].on_invoke_tool(None, json.dumps({"result_id": parsed.result_id}))
+        assert moved["success"] == 0
+        assert moved["result"] is None
+        assert len(calls) == 1
+        assert storage.rename(["Finance", "Hidden", "net"], ["Finance", "Allowed", "net"]) is True
+        assert semantic.get_cached_query_metrics_result(parsed.result_id)["row_count"] == 30
+
+        second = semantic.query_metrics(["net"], time_start="2024-01-01", time_end="2024-01-31")
+        assert second.success == 1, second
+        second_id = parse_query_result_text(second.result).result_id
+        assert semantic.can_use_query_metrics_preview(parsed.result_id) is True
+        assert storage.rename(["Finance", "Allowed", "net"], ["Finance", "Hidden", "net"]) is True
+        assert semantic.can_use_query_metrics_preview(parsed.result_id) is False
+        assert semantic.get_cached_query_metrics_result(second_id) is None
+        assert storage.rename(["Finance", "Hidden", "net"], ["Finance", "Allowed", "net"]) is True
+        assert float(semantic.get_cached_query_metrics_result(second_id)["csv"].splitlines()[1]) == 465.0
+
         real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "UnavailableSubject"}
-        denied = await tools[reader].on_invoke_tool(None, json.dumps({"result_id": parsed.result_id}))
+        denied = await tools[reader].on_invoke_tool(None, json.dumps({"result_id": second_id}))
         assert denied["success"] == 0
         assert denied["result"] is None
-        assert len(calls) == 1
+        assert len(calls) == 2
 
     @pytest.mark.asyncio
     async def test_metric_scope_uses_runtime_datasource(self, real_agent_config, mock_llm_create, tmp_path):
