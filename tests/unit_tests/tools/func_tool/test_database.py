@@ -3839,6 +3839,16 @@ class TestDatasourceTableScopes:
             "pg": Mock(dialect="postgresql", catalog_name="", database_name="warehouse", schema_name="public"),
             "unrelated": Mock(dialect="mysql", catalog_name="", database_name="private", schema_name=""),
         }
+        # Mock connectors must declare their namespace contract without relying
+        # on optional adapters being installed in the test environment.
+        capabilities = {
+            "sr": {"catalog", "database"},
+            "mysql": {"database"},
+            "pg": {"database", "schema"},
+            "unrelated": {"database"},
+        }
+        for source, connector in connectors.items():
+            connector.get_effective_capabilities.return_value = capabilities[source]
         scopes = {"sr": "default_catalog.analytics.*", "mysql": "sales.*", "pg": "warehouse.reporting.*"}
         config = _mock_agent_config(current_datasource="unrelated", project_name="scope-test")
         config.current_db_configs.return_value = {
