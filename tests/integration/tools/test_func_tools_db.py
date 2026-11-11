@@ -44,6 +44,42 @@ class TestDBFuncToolIntegrationReal:
         finally:
             connector.close()
 
+    @pytest.mark.asyncio
+    async def test_large_catalog_pages_survive_connector_and_tool_recreation(self, tmp_path):
+        from types import SimpleNamespace
+
+        from datus.tools.db_tools.config import SQLiteConfig
+        from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+        from datus.utils.tool_result_store import ACTIVE_RESULT_STORE, ToolResultStore
+
+        path = tmp_path / "catalog.db"
+        with sqlite3.connect(path) as db:
+            db.executescript(";".join(f"CREATE TABLE table_{i:05d} (id INTEGER)" for i in range(2200)))
+        connector = SQLiteConnector(SQLiteConfig(db_path=str(path)))
+        store = ToolResultStore(SimpleNamespace(dir=tmp_path / "session"))
+        token = ACTIVE_RESULT_STORE.set(store)
+        try:
+            tool = DBFuncTool(connector)
+            first = await trans_to_function_tool(tool.list_tables).on_invoke_tool(None, "{}")
+            assert first["success"] == 1, first
+            page = first["result"]
+            assert page["total"] == 2200 and len(page["items"]) == 200
+            rid = page["extra"]["snapshot_id"]
+            # A newly constructed tool reads the same session's snapshot even
+            # after the source database has changed and its connector is closed.
+            with sqlite3.connect(path) as db:
+                db.execute("DROP TABLE table_02199")
+            restored_tool = DBFuncTool(connector)
+            connector.close()
+            tail = restored_tool.list_tables(snapshot_id=rid, offset=200, page_size=3000)
+            assert tail.success == 1, tail.error
+            assert tail.result["total"] == 2200 and not tail.result["has_more"]
+            names = [row["qualified_name"].split(".")[-1] for row in page["items"] + tail.result["items"]]
+            assert names == [f"table_{i:05d}" for i in range(2200)]
+        finally:
+            ACTIVE_RESULT_STORE.reset(token)
+            connector.close()
+
     @pytest.fixture
     def ssb_sqlite_config(self):
         """Load SSB SQLite datasource configuration."""

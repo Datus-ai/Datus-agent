@@ -423,6 +423,22 @@ class AgenticNode(Node):
         self._session_manager = None
         self._session = None
         self._archive = None
+        # Constructors may mount tools before task() nests the subagent session.
+        # Move their read-only anchor too, revoking access to the old directory.
+        from dataclasses import replace
+
+        from datus.tools.func_tool import FilesystemFuncTool
+        from datus.tools.permission.permission_hooks import FilesystemPolicy
+
+        data_dir = self._resolve_session_data_dir()
+        data_path = Path(data_dir).expanduser().resolve(strict=False) if data_dir else None
+        for group in self._iter_tool_groups():
+            if isinstance(group, FilesystemFuncTool):
+                group._session_data_dir = data_path
+        hooks = getattr(self, "permission_hooks", None)
+        policy = getattr(hooks, "fs_policy", None)
+        if isinstance(policy, FilesystemPolicy):
+            hooks.fs_policy = replace(policy, session_data_dir=data_path)
         try:
             self.restore_plan_mode_state()
         except Exception as exc:  # noqa: BLE001 — same contract as ``__init__``
@@ -2606,7 +2622,7 @@ class AgenticNode(Node):
         )
 
     def _get_tool_result_store(self):
-        """Reuse the resolved, writable session archive for indexed result pages."""
+        """Reuse the session directory for native snapshots and legacy recovery."""
         from datus.utils.tool_result_store import ToolResultStore
 
         archive = self._get_archive()
@@ -2631,14 +2647,6 @@ class AgenticNode(Node):
 
         store = self._get_tool_result_store()
         return store.recovery_references(items) if isinstance(store, ToolResultStore) else []
-
-    def _ensure_tool_result_reader(self) -> None:
-        from datus.tools.func_tool.tool_result_tools import ToolResultFuncTool
-
-        if not any(getattr(tool, "name", None) == "read_tool_result" for tool in self.tools or []):
-            self.tool_result_func_tool = ToolResultFuncTool(self._get_tool_result_store)
-            self.tools = [*(self.tools or []), *self.tool_result_func_tool.available_tools()]
-            self.tool_registry.register_tools("tool_result_tools", ["read_tool_result"])
 
     def _apply_init_tool_scope(self) -> None:
         """Reapply invocation-local restrictions after prompt/tool refreshes."""
@@ -3321,22 +3329,14 @@ class AgenticNode(Node):
     def _bash_output_dir(self) -> Optional[Path]:
         """Session data dir for bash output offload, or None if unavailable.
 
-        Reused directory convention as the compact archive
-        (``path_manager.session_data_dir(session_id)``). Returns None before a
-        session id is allocated, when there is no ``agent_config`` (mirrors
-        ``_resolve_session_data_dir`` — otherwise ``get_path_manager`` would fall
-        back to a process-wide default rooted at ``~/.datus``), or when the path
-        manager can't be built, so the bash tool degrades to in-memory truncation.
+        Share the filesystem policy's resolved session archive directory,
+        including custom roots, tenant scope and subagent nesting. Without a
+        configured session directory, bash keeps its in-memory fallback.
         """
         if not self.agent_config or not self.session_id:
             return None
-        try:
-            from datus.utils.path_manager import get_path_manager
-
-            return get_path_manager(agent_config=self.agent_config).session_data_dir(self.session_id)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("Failed to resolve bash output dir: %s", exc)
-            return None
+        data_dir = self._resolve_session_data_dir()
+        return Path(data_dir) if data_dir else None
 
     def _ensure_bash_tool_in_tools(self) -> None:
         """Ensure the BashTool's ``bash`` is in ``self.tools``.
@@ -3923,7 +3923,6 @@ class AgenticNode(Node):
         # captures ``self.tools``: call arguments evaluate left to right, so
         # deferring to ``hooks=self._compose_run_hooks(ctx)`` would be one
         # argument too late and the first run would execute unwrapped tools.
-        self._ensure_tool_result_reader()
         self._apply_init_tool_scope()
         self._ensure_interaction_channel()
         self._ensure_tool_transformers()
@@ -4455,20 +4454,18 @@ class AgenticNode(Node):
     def _resolve_session_data_dir(self) -> Optional[str]:
         """Resolve the compact-archive data dir for this node's current session.
 
-        Returns ``None`` when the node has no agent_config / path_manager (used
-        by lightweight bootstrap tests), no session_id yet, or when the
-        path manager rejects the segment (e.g. missing project_name). The
-        caller falls back to leaving the FS policy without a session anchor,
-        which keeps archived paths EXTERNAL — safe but the LLM will be
-        prompted before it can ``read_file`` them.
+        Use the same resolved SessionManager directory as ``_get_archive`` so
+        custom session roots, tenant scope and subagent nesting remain aligned.
+        Without a session or a resolvable manager, leave the FS policy without
+        an archive anchor; unrelated session directories remain EXTERNAL.
         """
-        if not self.agent_config:
-            return None
-        path_manager = getattr(self.agent_config, "path_manager", None)
-        if path_manager is None or not getattr(self, "session_id", ""):
+        if not getattr(self, "session_id", ""):
             return None
         try:
-            return str(path_manager.session_data_dir(self.session_id))
+            from datus.utils.path_manager import DatusPathManager
+
+            DatusPathManager._validate_session_id(self.session_id)
+            return str(Path(self.session_manager.session_dir) / self.session_id / "data")
         except Exception as exc:
             logger.debug("Failed to resolve session_data_dir for fs policy: %s", exc)
             return None

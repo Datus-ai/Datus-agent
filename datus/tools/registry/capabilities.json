@@ -561,11 +561,6 @@
       "companion_of": null,
       "direct_call": false
     },
-    "tool_result_tools.read_tool_result": {
-      "access": "read",
-      "companion_of": null,
-      "direct_call": false
-    },
     "tools.ask_user": {
       "access": "session",
       "companion_of": null,

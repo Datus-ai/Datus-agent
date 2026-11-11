@@ -107,12 +107,10 @@ def test_large_user_clarifications_are_bounded_and_recoverable(run, tmp_path):
     reminder = run.prompt_context(store)
     assert len(reminder.encode()) < 20000
     context = json.loads(reminder.split("<init_context>\n", 1)[1].split("\n</init_context>", 1)[0])
-    page = context["user_clarifications"]
-    restored = []
-    while True:
-        restored.extend(page["result"]["items"])
-        if not page["result"]["has_more"]:
-            break
-        extra = page["result"]["extra"]
-        page = store.read(extra["result_id"], extra["section"], extra["next_cursor"])
+    from pathlib import Path
+
+    archive = context["user_clarifications"]["result"]
+    assert archive["read_with"] == "read_file"
+    fragments = [json.loads(line)["text"] for line in Path(archive["archive_path"]).read_text().splitlines()]
+    restored = json.loads("".join(fragments))["result"]
     assert [item["text"] for item in restored] == list(reversed(updates))

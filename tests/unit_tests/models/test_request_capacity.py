@@ -578,9 +578,8 @@ async def test_final_guard_survives_soft_compaction_failure(model):
 
 
 @pytest.mark.asyncio
-async def test_real_sdk_receives_page_but_tool_event_retains_full_result(model, tmp_path, two_turn_agents_model):
-    """Page model-visible results while retaining complete results in tool events."""
-    import json
+async def test_real_sdk_receives_native_page_without_reader(model, tmp_path, two_turn_agents_model):
+    """The producer returns a page to both the model and tool events."""
     from types import SimpleNamespace
 
     from agents import Agent, Runner
@@ -588,16 +587,18 @@ async def test_real_sdk_receives_page_but_tool_event_retains_full_result(model, 
     from datus.agent.node.context_rewriter import MidTurnCompactor
     from datus.models.base import LLMBaseModel
     from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
-    from datus.tools.func_tool.tool_result_tools import ToolResultFuncTool
+    from datus.utils.result_pagination import SnapshotStore, list_page, native_pagination
     from datus.utils.tool_archive import ToolArchive
-    from datus.utils.tool_result_store import ToolResultStore
+    from datus.utils.tool_result_store import ToolResultStore, parse_result
 
     tables = [{"name": f"table_{i}"} for i in range(30000)]
 
     @tool_contract(access="read", direct_call=True, category="db_tools")
-    def list_tables():
-        """Return the complete table inventory."""
-        return FuncToolResult(result=tables)
+    @native_pagination()
+    def list_tables(page_size: int | None = None):
+        """Return a table inventory page, default 200, with no hard size cap."""
+        rid = SnapshotStore().save("list_tables", tables, {}, {})
+        return FuncToolResult(result=list_page(tables, rid, page_size, 0))
 
     store = ToolResultStore(ToolArchive("p", "s", base_dir=tmp_path), model.request_capacity().count)
     node = SimpleNamespace(
@@ -609,19 +610,18 @@ async def test_real_sdk_receives_page_but_tool_event_retains_full_result(model, 
     )
     rewriter = MidTurnCompactor(node)
     scripted = two_turn_agents_model(tool_name="list_tables")
-    reader = ToolResultFuncTool(lambda: store)
-    agent = Agent(name="paging", model=scripted, tools=[trans_to_function_tool(list_tables), *reader.available_tools()])
+    agent = Agent(name="paging", model=scripted, tools=[trans_to_function_tool(list_tables)])
     config = LLMBaseModel._build_run_config(model, context_rewriter=rewriter, agent_name="paging")
     config.tracing_disabled = True
     run = Runner.run_streamed(agent, input="inspect tables", run_config=config)
     events = [event async for event in run.stream_events()]
     assert scripted.turn == 2
     output = next(item for item in scripted.inputs[1] if item.get("type") == "function_call_output")
-    page = json.loads(output["output"])
+    page = parse_result(output["output"])
     assert page["result"]["has_more"] is True
-    assert len(page["result"]["items"]) <= 200
+    assert len(page["result"]["items"]) == 200
     raw_event = next(
         event.item for event in events if getattr(getattr(event, "item", None), "type", None) == "tool_call_output_item"
     )
-    assert raw_event.output["result"] == tables
+    assert raw_event.output == page
     assert len(tables) == 30000

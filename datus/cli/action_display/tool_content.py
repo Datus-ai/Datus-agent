@@ -1370,6 +1370,10 @@ def _build_list_tables(action: ActionHistory, verbose: bool) -> ToolCallContent:
         if action.output:
             tc.output_lines = _format_result_only_markup(action.output)
     else:
+        data = parse_output_data(action.output)
+        if data and isinstance(data.get("result"), dict) and "items" in data["result"]:
+            tc.compact_result = _summary_from_registry(action, "list_tables")
+            return tc
         items = _get_items_from_output(action.output)
         if isinstance(items, list):
             tc.compact_result = _fmt_count_with_preview(len(items), "table", "tables", items)
@@ -1653,6 +1657,9 @@ def _build_simple_list(action: ActionHistory, verbose: bool, unit: str) -> ToolC
         items = None
         if data:
             result = data.get("result")
+            if isinstance(result, dict) and "items" in result:
+                tc.compact_result = _summary_from_registry(action, tc.label)
+                return tc
             if isinstance(result, list):
                 items = result
         if items is None:

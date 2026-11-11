@@ -319,6 +319,16 @@ class TestBuildListTables:
         assert not any("success" in line.lower() for line in tc.output_lines)
         assert tc.output_preview == ""
 
+    def test_native_page(self):
+        a = _make(
+            input_data={"function_name": "list_tables"},
+            output_data={
+                "success": 1,
+                "result": {"items": [{"qualified_name": "orders"}], "total": 2000, "has_more": True},
+            },
+        )
+        assert _build_list_tables(a, verbose=False).compact_result == "1/2000 table+"
+
     def test_no_items(self):
         a = _make(input_data={"function_name": "list_tables"}, output_data={"some": "data"})
         tc = _build_list_tables(a, verbose=False)

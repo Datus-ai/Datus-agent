@@ -170,6 +170,111 @@ class TestExecuteAgenticNode:
 # ---------------------------------------------------------------------------
 
 
+class TestSessionArchiveFilesystem:
+    def test_relocation_refreshes_mounted_archive_read_permissions(self, real_agent_config, tmp_path):
+        """Moving a subagent revokes the old anchor and grants only its new archive."""
+        from pathlib import Path
+
+        real_agent_config.session_dir = str(tmp_path / "custom_sessions")
+        node = _make_node(real_agent_config, session_id="current", _archive=None)
+        node.filesystem_func_tool = node._make_filesystem_tool(strict=True)
+        node.permission_hooks = SimpleNamespace(fs_policy=node._make_filesystem_policy())
+        old_dir = Path(node._resolve_session_data_dir())
+        old_dir.mkdir(parents=True)
+        old_file = old_dir / "history.txt"
+        old_file.write_text("old history")
+        assert node.filesystem_func_tool.read_file(str(old_file)).result == "old history"
+
+        node.relocate_session(scope="tenant", session_subdir="parent")
+        new_dir = Path(node._resolve_session_data_dir())
+        new_dir.mkdir(parents=True)
+        new_file = new_dir / "history.txt"
+        new_file.write_text("new history")
+        assert node.filesystem_func_tool.read_file(str(new_file)).result == "new history"
+        assert node.filesystem_func_tool.read_file(str(old_file)).success == 0
+        assert node.permission_hooks.fs_policy.session_data_dir == new_dir
+
+    @pytest.mark.parametrize("session_id", ["..", "../other", "/other", r"..\other"])
+    def test_invalid_session_does_not_grant_an_archive_anchor(self, real_agent_config, session_id):
+        """Changing the archive root must preserve validation of session segments."""
+        node = _make_node(real_agent_config, session_id=session_id)
+        assert node._resolve_session_data_dir() is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("strict", [False, True])
+    @pytest.mark.parametrize("scope, parent", [(None, None), ("tenant", "parent_session")])
+    async def test_custom_session_archive_is_readable_without_prompt(
+        self, real_agent_config, tmp_path, monkeypatch, strict, scope, parent
+    ):
+        """Tool and permission hook must grant only this session's archive reads."""
+        import json
+
+        from datus.configuration.agent_config import CompactConfig
+        from datus.tools.func_tool import bash_tool as bash_tool_module
+        from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel
+        from datus.tools.permission.permission_hooks import PermissionHooks
+        from datus.tools.permission.permission_manager import PermissionManager
+        from datus.tools.registry.tool_registry import ToolRegistry
+        from datus.utils.tool_archive import parse_archived_marker
+        from datus.utils.tool_result_store import ToolResultStore
+
+        real_agent_config.session_dir = str(tmp_path / "custom_sessions")
+        node = _make_node(
+            real_agent_config,
+            session_id="current",
+            scope=scope,
+            session_subdir=parent,
+            _archive=None,
+            _compact_cfg=CompactConfig(),
+        )
+        archive = node._get_archive()
+        store = ToolResultStore(archive)
+        reference = store.archive_context("clarifications", {"instructions": "clarification " * 10_000})["result"]
+        path = reference["archive_path"]
+        filesystem = node._make_filesystem_tool(strict=strict)
+        read = filesystem.read_file(path)
+        assert read.success == 1, read.error
+        recovered = "".join(json.loads(line)["text"] for line in read.result.splitlines())
+        assert json.loads(recovered) == {"instructions": "clarification " * 10_000}
+        assert filesystem._classify(path).read_only
+        assert not filesystem.write_file(path, "changed").success
+        policy = node._make_filesystem_policy()
+        assert policy.session_data_dir == archive.dir
+        registry = ToolRegistry()
+        registry.register_tools("filesystem_tools", filesystem.available_tools())
+        broker = MagicMock()
+        broker.request = AsyncMock(side_effect=AssertionError("Archive reads must not prompt"))
+        hooks = PermissionHooks(
+            broker=broker,
+            permission_manager=PermissionManager(
+                global_config=PermissionConfig(default_permission=PermissionLevel.ASK)
+            ),
+            node_name=node.get_node_name(),
+            tool_registry=registry,
+            fs_policy=policy,
+            non_interactive=True,
+        )
+        read_tool = next(tool for tool in filesystem.available_tools() if tool.name == "read_file")
+        await hooks.on_tool_start(SimpleNamespace(tool_arguments=json.dumps({"path": path})), None, read_tool)
+        monkeypatch.setattr(bash_tool_module, "BASH_ARCHIVE_THRESHOLD", 100)
+        bash = bash_tool_module.BashTool(
+            workspace_root=node._resolve_workspace_root(),
+            allowed_patterns=["*"],
+            output_dir_provider=node._bash_output_dir,
+        )
+        output = bash.bash("python -c \"print('Y' * 5000)\"")
+        assert output.success == 1, output.error
+        bash_path = parse_archived_marker(output.result)["path"]
+        bash_read = filesystem.read_file(bash_path)
+        assert bash_read.success == 1, bash_read.error
+        assert bash_read.result == "Y" * 5000 + "\n"
+        assert filesystem._classify(bash_path).read_only
+        await hooks.on_tool_start(SimpleNamespace(tool_arguments=json.dumps({"path": bash_path})), None, read_tool)
+        broker.request.assert_not_awaited()
+        other = _make_node(real_agent_config, session_id="other", scope=scope, session_subdir=parent)
+        assert not other._make_filesystem_tool(strict=True).read_file(path).success
+
+
 class TestGetNodeName:
     def test_concrete_node_name_derived_from_class(self):
         """get_node_name strips 'AgenticNode' suffix and lowercases."""

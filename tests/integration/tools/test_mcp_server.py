@@ -216,6 +216,39 @@ class StaticModeTestBase:
             assert "lineorder" in tables_text
             assert "customer" in tables_text
 
+    async def test_catalog_pagination_preserves_legacy_calls_and_continuation(self):
+        """Exercise optional pagination through the actual MCP client/server stack."""
+        async with self._session() as session:
+            legacy = parse_tool_result(await session.call_tool("list_tables", {}))
+            assert legacy["success"] == 1, legacy
+            assert isinstance(legacy["result"], list)
+            assert len(legacy["result"]) > 2
+            first = parse_tool_result(await session.call_tool("list_tables", {"page_size": 2}))
+            assert first["success"] == 1, first
+            page = first["result"]
+            assert len(page["items"]) == 2
+            assert page["total"] == len(legacy["result"])
+            assert page["has_more"] is True
+            items = list(page["items"])
+            snapshot_id = page["extra"]["snapshot_id"]
+            while page["has_more"]:
+                assert page["extra"]["next_offset"] == len(items)
+                result = parse_tool_result(
+                    await session.call_tool(
+                        "list_tables",
+                        {"snapshot_id": snapshot_id, "offset": page["extra"]["next_offset"], "page_size": 2},
+                    )
+                )
+                assert result["success"] == 1, result
+                page = result["result"]
+                assert page["extra"]["snapshot_id"] == snapshot_id
+                assert 0 < len(page["items"]) <= 2
+                items.extend(page["items"])
+            assert sorted(items, key=lambda item: item["qualified_name"]) == sorted(
+                legacy["result"], key=lambda item: item["qualified_name"]
+            )
+            assert page["extra"]["next_offset"] is None
+
     async def test_describe_table(self):
         """Verify describe_table returns column information for the customer table."""
         async with self._session() as session:
