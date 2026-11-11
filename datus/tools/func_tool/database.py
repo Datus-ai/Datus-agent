@@ -2875,6 +2875,10 @@ class DBFuncTool:
                     # caller would see an opaque "Quality check failed" instead of the real cause.
                     offending.append(f"{name}: 'sql' must be a non-empty string")
                     continue
+                guard_error = self._reject_unsafe_uploads_sql(sql, datasource)
+                if guard_error is not None:
+                    offending.append(f"{name}: {guard_error.error}")
+                    continue
                 # The same validator the read path uses. Classifying the statement kind alone is
                 # not enough: it looks at the FIRST statement only, so `SELECT 1; DROP TABLE t`
                 # reads as a select and the driver then runs both. validate_read_only_sql carries

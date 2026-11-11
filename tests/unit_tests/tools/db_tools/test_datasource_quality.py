@@ -181,6 +181,60 @@ class TestQualityToolGate:
         path.write_text(json.dumps({"assertions": assertions}), encoding="utf-8")
         return name
 
+    @pytest.mark.parametrize("datasource", ["local_files", ""])
+    def test_uploads_quality_assertions_cannot_read_external_files(self, tool, tmp_path, tmp_path_factory, datasource):
+        """Read-only assertion SQL must not bypass the uploads catalog's filesystem boundary."""
+        private = tmp_path_factory.mktemp("outside_uploads") / "private.csv"
+        private.write_text("secret\nOUTSIDE_UPLOADS_SECRET\n")
+        tool._default_datasource = "local_files"
+        cfg = self._write(
+            tmp_path,
+            "external.json",
+            [
+                {
+                    "name": "outside",
+                    "expect": "nonzero",
+                    "sql": f"SELECT count(*) FROM read_csv_auto('{private.as_posix()}')",
+                }
+            ],
+        )
+        result = tool.check_datasource_quality(config_path=cfg, datasource=datasource)
+        assert result.success == 0
+        assert "read_csv_auto cannot be called directly" in result.error
+        assert "OUTSIDE_UPLOADS_SECRET" not in str(result)
+
+    def test_uploads_quality_keeps_registered_table_reads(self, tool, tmp_path):
+        """A read grant still permits quality assertions over existing catalog objects."""
+        tool._default_datasource = "local_files"
+        cfg = self._write(
+            tmp_path,
+            "registered.json",
+            [{"name": "registered", "expect": "nonzero", "sql": "SELECT count(*) FROM keepme"}],
+        )
+        result = tool.check_datasource_quality(config_path=cfg)
+        assert result.success == 1
+        assert next(x for x in result.result["checks"] if x["check"] == "registered")["status"] == "PASS"
+
+    def test_quality_retains_external_reads_on_user_configured_datasources(self, tool, tmp_path, tmp_path_factory):
+        """The uploads-only guard does not narrow existing independent DuckDB datasources."""
+        private = tmp_path_factory.mktemp("configured_source") / "input.csv"
+        private.write_text("id\n1\n")
+        tool._default_datasource = "demo"
+        cfg = self._write(
+            tmp_path,
+            "configured.json",
+            [
+                {
+                    "name": "configured",
+                    "expect": "nonzero",
+                    "sql": f"SELECT count(*) FROM read_csv_auto('{private.as_posix()}')",
+                }
+            ],
+        )
+        result = tool.check_datasource_quality(config_path=cfg, datasource="demo")
+        assert result.success == 1
+        assert next(x for x in result.result["checks"] if x["check"] == "configured")["status"] == "PASS"
+
     @pytest.mark.parametrize("context", [{"user_id": "restricted"}, {}])
     def test_bound_read_policy_blocks_raw_quality_queries(self, tool, monkeypatch, context):
         """Both request scope and configured read policies must prevent raw DuckDB reads."""
