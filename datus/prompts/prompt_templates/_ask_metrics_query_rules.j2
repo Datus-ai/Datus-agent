@@ -16,12 +16,13 @@
 - To drill into a top value, reuse its `drill_down.where_sql` as `where` and retain every parent filter from prior drill-down calls.
 - Always disclose attribution `warnings`:
   - With `non_additive_dimension`, do not interpret that dimension's percentages as an additive decomposition.
-  - With `no_data_*`, `null_total_*`, or `zero_or_no_data_*`, do not give an attribution conclusion; first confirm coverage with `query_metrics`.
+  - With `no_data_*`, `null_total_*`, or `zero_or_no_data_*`, do not give an attribution conclusion; {% if "query_metrics" in tools %}first confirm coverage with `query_metrics`{% else %}explain the missing coverage evidence{% endif %}.
   - With `zero_total_delta` or `zero_total_delta_with_component_changes`, explain structural movement using absolute component deltas, not contribution percentages.
   - With `high_cardinality_dimension`, attribute a coarser dimension first and use `where` to narrow the follow-up query.
   - With `dimension_analysis_failed`, disclose the affected dimension and continue with successful dimensions only.
 {% endif %}
 
+{% if "query_metrics" in tools %}
 ## Period-Over-Period Metric Queries
 
 - For period-over-period questions such as previous period, day-over-day, week-over-week, month-over-month, quarter-over-quarter, or year-over-year, first look for a dedicated catalog metric whose name, description, or metadata already matches the requested fixed comparison.
@@ -47,4 +48,5 @@
 - For rolling metrics, `periods` counts result buckets. Choose the bucket grain from the user's request or metric guidance and pass that grain separately.
 - Order time-axis window results by their grained time result when chronological output is useful. Order value-oriented window results by the requested business dimension or metric value.
 - Query the complete metric bundle when the catalog exposes the required base metric, helper row-count metric, or paired min/max metric. The query tool may also expand these dependencies automatically.
+{% endif %}
 

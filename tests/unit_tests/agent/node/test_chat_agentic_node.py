@@ -76,6 +76,7 @@ class TestChatMetricTools:
             prompt = node._get_system_prompt()
             assert ("Use `attribution_analyze` directly" in prompt) == ("attribution_analyze" in expected)
             assert ("Read each metric with `get_metric`" in prompt) == ("get_metric" in expected)
+            assert ("## Period-Over-Period Metric Queries" in prompt) == ("query_metrics" in expected)
             assert ("generate and execute read-only SQL here" in prompt) == ("execute_sql" in names)
             node._rebuild_tools()
 
