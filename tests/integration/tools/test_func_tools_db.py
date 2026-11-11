@@ -586,6 +586,8 @@ class TestAllToolsNameContract:
             "check_datasource_quality",
             # mounted when authoritative datasource configuration is available
             "get_datasource_identity",
+            # Agent-only file export
+            "export_query",
             # mounted directly by gen_job
             "transfer_query_result",
             "get_migration_capabilities",
