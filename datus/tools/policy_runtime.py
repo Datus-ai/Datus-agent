@@ -360,6 +360,14 @@ class PolicyRuntime:
         return SqlReadDecision(allowed=True, sql=current_sql, applied_policies=applied, verify_context=verifier)
 
     @property
+    def has_batch_only_result_hooks(self) -> bool:
+        return any(
+            callable(getattr(runtime, "after_read_batch", None))
+            and not callable(getattr(runtime, "after_read_result", None))
+            for _, runtime in self._runtimes
+        )
+
+    @property
     def supports_streaming_results(self) -> bool:
         """Whether every result hook explicitly supports batch semantics."""
         return all(

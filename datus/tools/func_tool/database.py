@@ -3255,7 +3255,14 @@ class DBFuncTool(BulkQueryTools):
             dialect=connector.dialect,
             sql=enforced_sql,
         )
-        result = connector.execute_query(enforced_sql, result_format=result_format)
+        # CSV has already discarded database types. Batch-only policies need
+        # typed rows, so apply policies before presentation serialization.
+        serialize_after_policy = (
+            result_format in {"csv", "pandas"} and getattr(runtime, "has_batch_only_result_hooks", False) is True
+        )
+        result = connector.execute_query(
+            enforced_sql, result_format="arrow" if serialize_after_policy else result_format
+        )
         if not result.success:
             return result
         try:
@@ -3280,6 +3287,19 @@ class DBFuncTool(BulkQueryTools):
                     sql_query=enforced_sql,
                 )
             result.sql_return = result_decision.result
+            if serialize_after_policy:
+                import pandas as pd
+                import pyarrow as pa
+
+                if not isinstance(result.sql_return, pa.Table):
+                    raise DatusException(
+                        ErrorCode.TOOL_INVALID_INPUT,
+                        message="Batch-only result policies must return an Arrow table before serialization",
+                    )
+                # Nullable integer IDs must not pass through pandas float64.
+                frame = result.sql_return.to_pandas(types_mapper=pd.ArrowDtype)
+                result.sql_return = frame.to_csv(index=False) if result_format == "csv" else frame
+                result.result_format = result_format
             if result_decision.applied_policies:
                 logger.info(
                     "Applied result policies",

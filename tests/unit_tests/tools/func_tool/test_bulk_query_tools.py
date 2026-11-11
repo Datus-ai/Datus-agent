@@ -646,6 +646,60 @@ def test_result_policy_masking_and_observation_apply_to_export(environment, monk
     assert [item.phase for item in observations] == ["before_sql", "after_sql"]
 
 
+@pytest.mark.parametrize("result_format", ["csv", "pandas"])
+@pytest.mark.parametrize("allowed", [False, True])
+def test_batch_only_policies_run_before_csv_or_pandas_serialization(environment, monkeypatch, result_format, allowed):
+    import csv
+    import io
+
+    tool, source, _, _ = environment
+    runtime = PolicyRuntime(None)
+    calls = []
+
+    def whole(table, **kwargs):
+        calls.append("whole")
+        return SimpleNamespace(allowed=True, result=table)
+
+    def mask(table, **kwargs):
+        calls.append("batch")
+        assert table["big_id"].to_pylist() == [1721599112147287481, None]
+        return SimpleNamespace(
+            allowed=allowed,
+            reason="Batch policy denied read",
+            result=table.set_column(2, "secret", pa.array(["masked"] * table.num_rows)),
+        )
+
+    runtime._runtimes = [
+        ("whole", SimpleNamespace(after_read_result=whole)),
+        ("batch", SimpleNamespace(after_read_batch=mask)),
+    ]
+    monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda config: runtime)
+    result = tool.execute_read_enforced(
+        "SELECT '0012345678901234567' AS id, "
+        "CASE WHEN i = 0 THEN 1721599112147287481 ELSE NULL END::BIGINT AS big_id, "
+        "'private' AS secret FROM range(2) t(i) ORDER BY i",
+        source,
+        result_format=result_format,
+    )
+    assert calls == ["whole", "batch"]
+    if allowed:
+        assert result.success is True, result.error
+        assert result.result_format == result_format
+        frame = (
+            pd.DataFrame(csv.DictReader(io.StringIO(result.sql_return))).replace("", None)
+            if result_format == "csv"
+            else result.sql_return
+        )
+        assert frame["id"].tolist() == ["0012345678901234567"] * 2
+        assert frame["secret"].tolist() == ["masked"] * 2
+        assert str(frame["big_id"].iloc[0]) == "1721599112147287481"
+        assert pd.isna(frame["big_id"].iloc[1])
+    else:
+        assert result.success is False
+        assert result.error == "Batch policy denied read"
+        assert result.sql_return is None
+
+
 @pytest.mark.parametrize("streaming", [False, True])
 def test_whole_result_policy_selects_buffered_reads_and_runs_once(environment, monkeypatch, streaming):
     tool, source, _, root = environment
