@@ -155,28 +155,55 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         name = getattr(adapter, "litellm_model_name", None) or config.model
         import litellm
 
-        info = litellm.model_cost.get(name, litellm.model_cost.get(config.model, {}))
+        def optional_limit(field: str, resolve: Callable[[], Any]) -> Optional[int]:
+            try:
+                value = resolve()
+                return value if type(value) is int and value > 0 else None
+            except Exception as exc:
+                logger.warning(
+                    "Model metadata unavailable: model=%s field=%s error=%s", name, field, type(exc).__name__
+                )
+                return None
+
+        try:
+            info = litellm.model_cost.get(name, litellm.model_cost.get(config.model, {}))
+        except Exception:
+            info = {}
+        if not isinstance(info, dict):
+            info = {}
+        info_context = optional_limit("max_input_tokens", lambda: info.get("max_input_tokens"))
+        info_output = optional_limit("max_output_tokens", lambda: info.get("max_output_tokens"))
         supports_limit = getattr(self, "supports_output_limit", True)
         lookup_spec = getattr(self, "_lookup_spec", None)
-        spec_output = lookup_spec("max_tokens") if callable(lookup_spec) else None
-        output_ceiling = (
-            spec_output if isinstance(spec_output, int) and spec_output > 0 else info.get("max_output_tokens")
+        spec_output = optional_limit("max_tokens", lambda: lookup_spec("max_tokens")) if callable(lookup_spec) else None
+        spec_context = (
+            optional_limit("context_length", lambda: lookup_spec("context_length")) if callable(lookup_spec) else None
         )
+        output_ceiling = spec_output or info_output
         if not supports_limit:
-            output_ceiling = max(output_ceiling or 0, info.get("max_output_tokens") or 0) or None
+            output_ceiling = max(output_ceiling or 0, info_output or 0) or None
         context_length = (
-            config.context_length or self.context_length() or info.get("max_input_tokens") or DEFAULT_CONTEXT_LENGTH
+            config.context_length
+            or optional_limit("context_length", self.context_length)
+            or spec_context
+            or info_context
+            or DEFAULT_CONTEXT_LENGTH
         )
+        catalog_context = spec_context or info_context or context_length != DEFAULT_CONTEXT_LENGTH
+        catalog_output = spec_output or info_output
         return RequestCapacity(
             model=name,
             context_length=context_length,
             default_output=config.max_tokens
             or self._default_output_limit(
-                self.max_tokens() or info.get("max_output_tokens") or DEFAULT_MAX_TOKENS, context_length
+                optional_limit("max_tokens", self.max_tokens) or spec_output or DEFAULT_MAX_TOKENS, context_length
             ),
             tokenizer_ref=config.tokenizer_ref,
             supports_output_limit=supports_limit,
             output_ceiling=output_ceiling,
+            context_source="config" if config.context_length else "catalog" if catalog_context else "default",
+            output_source="config" if config.max_tokens else "catalog" if catalog_output else "default",
+            enforce_catalog_limits=getattr(adapter, "is_custom_endpoint", False) is not True,
         )
 
     def _default_output_limit(self, model_limit: Optional[int], context_length: Optional[int] = None) -> Optional[int]:

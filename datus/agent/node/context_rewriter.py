@@ -388,19 +388,24 @@ class MidTurnCompactor(AgentHooks):
         capacity = model.request_capacity() if isinstance(model, LLMBaseModel) else None
         return capacity if isinstance(capacity, RequestCapacity) else None
 
-    def _check(self, view: List[Any]) -> None:
+    def _check(self, view: List[Any]) -> Optional[int]:
         capacity = self._capacity()
         if capacity is not None:
-            capacity.check(
+            return capacity.check(
                 {"instructions": self._system_instruction, "input": view, "tools": self._request_tools},
                 self._output_tokens,
             )
+        return None
 
     async def _prepare(self, view: List[Any], item_format: ItemFormat) -> Optional[List[Any]]:
         projected = self._prepare_tool_results(view)
+        capacity = self._capacity()
+        available = capacity.input_limit(self._output_tokens) if capacity is not None else None
         self._capacity_pressure = None
         try:
-            self._check(projected)
+            measured = self._check(projected)
+            if measured is not None and available is not None and measured > available:
+                self._capacity_pressure = measured
         except ContextCapacityError as exc:
             if exc.reason != "CONTEXT_LIMIT_EXCEEDED":
                 raise

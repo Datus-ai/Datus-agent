@@ -1352,7 +1352,7 @@ class TestModelSpecsAndTokenLimits:
     def test_unknown_model_has_default_max_tokens(self):
         cfg = _make_model_config(model="unknown-model-xyz")
         model = _make_model(cfg)
-        assert model.max_tokens() == 128000
+        assert model.max_tokens() == 384000
 
     def test_unknown_model_has_default_context_length(self):
         cfg = _make_model_config(model="unknown-model-xyz")
@@ -1397,8 +1397,8 @@ class TestModelSpecsOpenRouterCacheMerge:
             cfg = _make_model_config(model="brand-new-model")
             model = _make_model(cfg)
             assert model.context_length() == 777000
-            # Cache entries have no output limit, so use the default budget.
-            assert model.max_tokens() == 128000
+            # Unknown output limits use the fallback while leaving input headroom.
+            assert model.max_tokens() == (777000 - model.request_capacity().margin) // 2
         assert "brand-new-model" in oc._MODEL_SPECS_CACHE
         assert oc._MODEL_SPECS_CACHE["brand-new-model"]["context_length"] == 777000
 

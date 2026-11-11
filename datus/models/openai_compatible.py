@@ -165,7 +165,10 @@ def _load_model_specs() -> Dict[str, Dict[str, int]]:
                                         slug, litellm.model_cost.get(f"openrouter/{slug}", {})
                                     ).get("max_output_tokens")
                                     baseline = known or lite or DEFAULT_MAX_TOKENS
-                                    specs.setdefault(slug, {})["default_max_tokens"] = min(value, baseline)
+                                    model_spec = specs.setdefault(slug, {})
+                                    model_spec["default_max_tokens"] = min(
+                                        model_spec.get("default_max_tokens", baseline), value, baseline
+                                    )
                                 specs.setdefault(slug, {})[field] = value
 
             _MODEL_SPECS_CACHE = specs
@@ -2021,12 +2024,23 @@ class OpenAICompatibleModel(LLMBaseModel):
         """Configured output limit or a model default that leaves input headroom."""
         if self.model_config.max_tokens:
             return self.model_config.max_tokens
-        default = self.model_specs.get(self.model_name, {}).get("default_max_tokens")
-        return self._default_output_limit(default or self._lookup_spec("max_tokens") or DEFAULT_MAX_TOKENS)
+        try:
+            default = self.model_specs.get(self.model_name, {}).get("default_max_tokens")
+            limit = default or self._lookup_spec("max_tokens")
+        except Exception as exc:
+            logger.debug("Output metadata unavailable for %s: %s", self.model_name, type(exc).__name__)
+            limit = None
+        return self._default_output_limit(limit or DEFAULT_MAX_TOKENS)
 
     def context_length(self) -> Optional[int]:
         """Configured window, known model specification, or the default budget."""
-        return self.model_config.context_length or self._lookup_spec("context_length") or DEFAULT_CONTEXT_LENGTH
+        if self.model_config.context_length:
+            return self.model_config.context_length
+        try:
+            return self._lookup_spec("context_length") or DEFAULT_CONTEXT_LENGTH
+        except Exception as exc:
+            logger.debug("Context metadata unavailable for %s: %s", self.model_name, type(exc).__name__)
+            return DEFAULT_CONTEXT_LENGTH
 
     def token_count(self, prompt: str) -> int:
         """

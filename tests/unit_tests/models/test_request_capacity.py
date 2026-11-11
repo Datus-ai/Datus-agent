@@ -34,9 +34,8 @@ def test_budget_uses_actual_output_and_complete_request():
     assert error.value.budget["max_output_tokens"] == 1024
 
 
-def test_unresolved_capacity_is_invalid_but_unknown_tokenizers_have_a_default():
-    with pytest.raises(ContextCapacityError, match="CONTEXT_SPEC_MISSING"):
-        RequestCapacity("unknown", None, 100).check({"input": "hello"})
+def test_unresolved_capacity_and_unknown_tokenizers_have_defaults():
+    assert RequestCapacity("unknown", None, 100).check({"input": "hello"}) > 0
     assert RequestCapacity("unknown-proxy-name", 262144, 100).check({"input": "hello"}) > 0
     assert RequestCapacity("unknown-proxy-name", 262144, 100, "tiktoken:o200k_base").check({"input": "hello"}) > 0
 
@@ -121,20 +120,21 @@ def test_tool_schema_with_type_parameter_is_counted_as_text():
         ],
     }
     assert capacity.check(request) > capacity.check({"messages": request["messages"]})
-    with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
-        capacity.check({**request, "tools": request["tools"] * 10000})
+    assert capacity.check({**request, "tools": request["tools"] * 10000}) > capacity.input_limit()
 
 
-def test_explicit_broken_tokenizer_does_not_silently_fall_back():
+def test_explicit_broken_tokenizer_falls_back_with_provenance():
     capacity = RequestCapacity("private-deployment", 128000, 8192, "/missing/tokenizer.json")
     with patch("datus.models.request_capacity._tokenizer", side_effect=OSError("Cannot read tokenizer")):
-        with pytest.raises(ContextCapacityError, match="Cannot read tokenizer"):
-            capacity.check({"input": "hello"})
+        estimate = capacity.estimate({"input": "hello"})
+        assert estimate.tokens > 0
+        assert estimate.estimated
+        assert estimate.fallback_reasons == ("tokenizer unavailable (OSError)",)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model_name", ["private-deployment", "z-ai/yumcode-pro"])
-async def test_custom_model_without_new_settings_reaches_transport_and_retains_capacity_guard(model_name):
+async def test_custom_model_without_new_settings_reaches_transport_despite_estimated_overflow(model_name):
     import litellm
 
     model = OpenAIModel(
@@ -150,11 +150,11 @@ async def test_custom_model_without_new_settings_reaches_transport_and_retains_c
         prompt = "Inspect the schema.\n" + "column_name " * 25000
         result = await model.generate_with_tools(prompt, max_turns=1)
         assert result["content"] == "done"
-        assert send.await_args.kwargs["max_tokens"] == 128000
+        assert send.await_args.kwargs["max_tokens"] == DEFAULT_MAX_TOKENS
         send.reset_mock()
-        with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
-            await model.generate_with_tools("\N{EURO SIGN}" * DEFAULT_CONTEXT_LENGTH, max_turns=1)
-        send.assert_not_awaited()
+        result = await model.generate_with_tools("\N{EURO SIGN}" * DEFAULT_CONTEXT_LENGTH, max_turns=1)
+        assert result["content"] == "done"
+        send.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -206,7 +206,7 @@ def test_inline_image_budget_depends_on_pixels_not_base64_size(model, field, kin
 
     from datus.utils.image_content import IMAGE_OMITTED
 
-    capacity = RequestCapacity(model, 8192, 1024)
+    capacity = RequestCapacity(model, 8192, 1024, "tiktoken:o200k_base" if model.startswith("claude") else None)
     screenshot = Image.new("RGB", (512, 512), "blue")
 
     def request(compression):
@@ -316,8 +316,7 @@ def test_known_output_ceiling_is_not_silently_clamped():
     ],
 )
 def test_opaque_media_is_not_counted_as_a_short_identifier(block):
-    with pytest.raises(ContextCapacityError, match="CONTEXT_COUNT_UNAVAILABLE"):
-        RequestCapacity("gpt-4o", 8192, 1024).check({"input": [{"role": "user", "content": [block]}]})
+    assert RequestCapacity("gpt-4o", 8192, 1024).check({"input": [{"role": "user", "content": [block]}]}) >= 4096
 
 
 def test_extra_body_effective_output_is_counted():
@@ -358,6 +357,7 @@ def model():
             base_url="https://proxy.example/v1",
             context_length=8192,
             max_tokens=1024,
+            tokenizer_ref="tiktoken:o200k_base",
         )
     )
 
@@ -435,6 +435,7 @@ def test_native_transport_blocks_before_create():
         use_native_api=True,
         context_length=8192,
         max_tokens=1024,
+        tokenizer_ref="tiktoken:o200k_base",
     )
     native = ClaudeModel(cfg)
     with patch.object(native, "_raw_anthropic_messages_create") as send:
