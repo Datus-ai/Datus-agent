@@ -173,6 +173,26 @@ def test_impossible_explicit_output_reservation_stops_before_http(endpoint):
     assert requests == []
 
 
+@pytest.mark.parametrize("output", [None, 512])
+def test_direct_generation_keeps_surviving_metadata_in_http_request(endpoint, monkeypatch, output):
+    import litellm
+
+    from datus.models.openai_compatible import OpenAICompatibleModel
+
+    url, requests = endpoint
+    model = OpenAIModel(ModelConfig(type="openai", model="gpt-4o", api_key="local-test", base_url=url))
+
+    def unavailable(_model):
+        raise OSError("catalog unavailable")
+
+    monkeypatch.setattr(OpenAICompatibleModel, "model_specs", property(unavailable))
+    monkeypatch.setattr(litellm, "model_cost", {"gpt-4o": {"max_input_tokens": 128000, "max_output_tokens": 16384}})
+    kwargs = {} if output is None else {"max_tokens": output}
+    assert model.generate("hello", **kwargs) == "image reached endpoint"
+    assert len(requests) == 1
+    assert requests[0][1]["max_tokens"] == (16384 if output is None else output)
+
+
 @pytest.mark.asyncio
 async def test_trusted_oversized_text_with_image_stops_before_http(endpoint, tmp_path):
     url, requests = endpoint

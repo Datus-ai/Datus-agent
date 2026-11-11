@@ -126,6 +126,27 @@ def test_catalog_failure_keeps_automatic_output_within_known_ceiling(catalog_una
     assert 0 < request["max_tokens"] <= model.request_capacity().output_ceiling
 
 
+def test_catalog_failure_getters_use_surviving_capacity_metadata(catalog_unavailable_model):
+    assert catalog_unavailable_model.context_length() == 128000
+    assert catalog_unavailable_model.max_tokens() == 16384
+
+
+@pytest.mark.parametrize("output", [None, 512])
+def test_direct_generation_uses_surviving_capacity_metadata(catalog_unavailable_model, monkeypatch, output):
+    import litellm
+
+    response = litellm.ModelResponse(
+        model="gpt-4o",
+        choices=[{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+    )
+    completion = MagicMock(return_value=response)
+    monkeypatch.setattr(litellm, "completion", completion)
+    kwargs = {} if output is None else {"max_tokens": output}
+    assert catalog_unavailable_model.generate("hello", **kwargs) == "ok"
+    assert completion.call_args.kwargs["max_tokens"] == (16384 if output is None else output)
+    completion.assert_called_once()
+
+
 def test_catalog_failure_preserves_smaller_output_default(catalog_unavailable_model, monkeypatch):
     model = catalog_unavailable_model
     monkeypatch.setattr(model, "max_tokens", lambda: 512)
@@ -522,7 +543,7 @@ class TestGenerate:
         assert call_kwargs["max_tokens"] == 512
 
     def test_max_tokens_fallback_from_model_specs(self):
-        """When kwargs lacks max_tokens, fall back to model_specs."""
+        """A model-spec output default still leaves input headroom."""
         model = _make_model()
         mock_resp = self._mock_litellm_response("ok")
         with (
@@ -531,7 +552,7 @@ class TestGenerate:
         ):
             model.generate("prompt")
         call_kwargs = mock_lit.call_args[1]
-        assert call_kwargs["max_tokens"] == 4096
+        assert call_kwargs["max_tokens"] == 3072
         assert "max_completion_tokens" not in call_kwargs
 
     def test_max_tokens_falls_back_to_registered_provider_limit(self):
