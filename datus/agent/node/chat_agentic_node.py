@@ -590,10 +590,28 @@ class ChatAgenticNode(AgenticNode):
     def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
         context_tools = getattr(self, "context_search_tools", None)
         if context_tools is not None and self._family_enabled(self._selected_tool_families(), "context_search_tools"):
-            available = {tool.name for tool in context_tools.available_tools()}
-            if available != getattr(self, "_context_search_tool_names", set()):
-                self._rebuild_tools()
+            candidates = context_tools.available_tools()
+            available = {tool.name for tool in candidates}
+            previous = getattr(self, "_context_search_tool_names", set())
+            if available != previous:
+                removed = previous - available
+                self.tools = [tool for tool in self.tools if tool.name not in removed]
+                mounted = {tool.name for tool in self.tools}
+                added = [tool for tool in candidates if tool.name not in previous and tool.name not in mounted]
+                self.tools.extend(added)
+                self._context_search_tool_names = available
+                self._tool_transformers_applied = False
                 self._populate_tool_registry()
+                patterns = getattr(self, "proxy_tool_patterns", None)
+                if patterns:
+                    from datus.tools.proxy.proxy_tool import apply_proxy_tools
+
+                    apply_proxy_tools(
+                        self,
+                        patterns,
+                        channel=getattr(self, "_proxy_tool_channel", None),
+                        only_tool_names={tool.name for tool in added},
+                    )
         # Stabilize lazy mounting and invocation-local restrictions before
         # fingerprinting the tool surface that controls template rendering.
         self._ensure_lazy_tools_mounted()

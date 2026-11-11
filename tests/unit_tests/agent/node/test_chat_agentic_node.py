@@ -51,8 +51,17 @@ METRIC_TOOL_NAMES = {
 
 
 class TestChatMetricTools:
-    def test_reused_chat_restores_metric_search_after_scope_repair(self, real_agent_config, mock_llm_create):
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("source", ["web", "vscode"])
+    async def test_reused_chat_restores_metric_search_after_scope_repair(
+        self, real_agent_config, mock_llm_create, tmp_path, source
+    ):
+        import asyncio
+        from types import SimpleNamespace
+
         from datus.storage.metric.store import MetricRAG
+        from datus.tools.proxy.proxy_tool import apply_proxy_tools
+        from datus.tools.proxy.tool_result_channel import ToolResultChannel
 
         writer = MetricRAG(real_agent_config)
         writer.store_batch(
@@ -68,10 +77,15 @@ class TestChatMetricTools:
         tree = writer.storage.subject_tree
         assert tree.rename(["Finance"], ["ArchivedFinance"]) is True
         real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "Finance.Allowed"}
+        real_agent_config._client_source = source
         node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
         context = node.context_search_tools
+        channel = ToolResultChannel()
+        apply_proxy_tools(node, ["filesystem_tools.*"], channel=channel)
         node._get_session_system_prompt()
         assert "search_metrics" not in {tool.name for tool in node.tools}
+        preserved_names = node.proxied_tool_names | {"execute_sql", "query_metrics"}
+        existing_tools = {tool.name: tool for tool in node.tools if tool.name in preserved_names}
 
         assert tree.rename(["ArchivedFinance"], ["Finance"]) is True
         node._get_session_system_prompt()
@@ -79,6 +93,22 @@ class TestChatMetricTools:
         assert "search_metrics" in {tool.name for tool in node.tools}
         assert context.has_metrics is True
         assert [row["name"] for row in context.search_metrics("net").result] == ["net"]
+        tools = {tool.name: tool for tool in node.tools}
+        for name, original in existing_tools.items():
+            assert tools[name] is original
+        server_path = tmp_path / "client-owned.md"
+        client_result = {"success": 1, "result": "Written on client"}
+        await channel.publish("refresh-write", client_result)
+        result = await asyncio.wait_for(
+            tools["write_file"].on_invoke_tool(
+                SimpleNamespace(tool_call_id="refresh-write"),
+                json.dumps({"path": str(server_path), "content": "Client-only content"}),
+            ),
+            timeout=2,
+        )
+        assert result == client_result
+        assert "write_file" in node.proxied_tool_names
+        assert server_path.exists() is False
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("page_size", [None, 10])
