@@ -841,11 +841,12 @@ async def test_native_lineage_sections_are_lossless_and_snapshot_is_stable(tmp_p
     response = await trans_to_function_tool(tool.query_lineage).on_invoke_tool(None, "{}")
     assert response["success"] == 1, response
     page = response["result"]
-    assert len(page["items"]) == 50 and page["total"] == 120
+    assert len(page["items"]) == 100 and page["total"] == 120
     assert page["complete"] == legacy["complete"]
     rid = page["extra"]["snapshot_id"]
     monkeypatch.setattr(tool.store, "load", lambda: pytest.fail("Snapshot continuation must not load the graph"))
-    tail = query(tool, snapshot_id=rid, offset=50, page_size=1500)
+    assert len(query(tool, snapshot_id=rid)["items"]) == 100
+    tail = query(tool, snapshot_id=rid, offset=100, page_size=1500)
     assert page["items"] + tail["items"] == legacy["lineage"]
     assert tail["has_more"] is False
     nodes = query(tool, snapshot_id=rid, section="nodes", page_size=1500)

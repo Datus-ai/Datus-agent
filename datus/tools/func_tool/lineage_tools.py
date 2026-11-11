@@ -265,7 +265,7 @@ class LineageTools:
     # -- read -------------------------------------------------------------------------------
 
     @tool_contract(access="read", direct_call=True)
-    @native_pagination(50)
+    @native_pagination(100)
     def query_lineage(
         self,
         tables: Optional[List[str]] = None,
@@ -280,7 +280,7 @@ class LineageTools:
         """Read table lineage from the project graph saved by upsert_lineage.
 
         With tables, returns the subgraph around them; without, the whole table graph. Results are
-        paginated for model calls (50 records by default); direct calls retain the full graph. The graph may contain cycles
+        paginated for model calls (100 records by default); direct calls retain the full graph. The graph may contain cycles
         and only covers analyzed sources: a table without upstream here is a root of this corpus,
         not proof of external ownership.
 
@@ -397,7 +397,7 @@ class LineageTools:
     ) -> FuncToolResult:
         if page_size is None and snapshot_id is None and section == "lineage":
             return FuncToolResult(result=result)
-        size = 50 if page_size is None else page_size
+        size = 100 if page_size is None else page_size
         validate_page(size, offset)
         if "_lineage_pages" not in self.__dict__:
             self._lineage_pages = SnapshotStore()

@@ -1740,7 +1740,7 @@ class DBFuncTool:
     ) -> FuncToolResult:
         if page_size is None and snapshot_id is None and offset == 0:
             return FuncToolResult(result=items)
-        size = 100 if page_size is None else page_size
+        size = 200 if page_size is None else page_size
         validate_page(size, offset)
         store = self._catalog_snapshot_store()
         scope = self._catalog_snapshot_scope()
@@ -1780,7 +1780,7 @@ class DBFuncTool:
             include_sys: Set True to include system databases; defaults to False.
 
         Pagination:
-            Agent calls default to 100 records. Use page_size, offset and the returned
+            Agent calls default to 200 records. Use page_size, offset and the returned
             snapshot_id to continue without another catalog read. No page-size hard cap.
             Direct calls without pagination arguments retain the complete list.
 
@@ -1855,7 +1855,7 @@ class DBFuncTool:
             include_sys: Set True to include system schemas; defaults to False.
 
         Pagination:
-            Agent calls default to 100 records. Use page_size, offset and the returned
+            Agent calls default to 200 records. Use page_size, offset and the returned
             snapshot_id to continue without another catalog read. No page-size hard cap.
             Direct calls without pagination arguments retain the complete list.
 
@@ -1913,7 +1913,7 @@ class DBFuncTool:
             include_views: When True (default) also include views and materialized views.
 
         Pagination:
-            Agent calls default to 100 records. Use page_size, offset and the returned
+            Agent calls default to 200 records. Use page_size, offset and the returned
             snapshot_id to continue without another catalog read. No page-size hard cap.
             Direct calls without pagination arguments retain the complete list.
 

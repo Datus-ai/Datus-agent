@@ -596,7 +596,7 @@ async def test_real_sdk_receives_native_page_without_reader(model, tmp_path, two
     @tool_contract(access="read", direct_call=True, category="db_tools")
     @native_pagination()
     def list_tables(page_size: int | None = None):
-        """Return a table inventory page, default 100, with no hard size cap."""
+        """Return a table inventory page, default 200, with no hard size cap."""
         rid = SnapshotStore().save("list_tables", tables, {}, {})
         return FuncToolResult(result=list_page(tables, rid, page_size, 0))
 
@@ -619,7 +619,7 @@ async def test_real_sdk_receives_native_page_without_reader(model, tmp_path, two
     output = next(item for item in scripted.inputs[1] if item.get("type") == "function_call_output")
     page = parse_result(output["output"])
     assert page["result"]["has_more"] is True
-    assert len(page["result"]["items"]) == 100
+    assert len(page["result"]["items"]) == 200
     raw_event = next(
         event.item for event in events if getattr(getattr(event, "item", None), "type", None) == "tool_call_output_item"
     )

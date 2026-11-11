@@ -1507,7 +1507,7 @@ class SemanticTools:
             limit: Optional maximum number of rows (default 200).
 
         Pagination:
-            Agent calls show 100 continuous rows by default. Continue with result_id,
+            Agent calls show 200 continuous rows by default. Continue with result_id,
             offset and page_size; no SQL is repeated and page_size has no hard cap.
             The existing query limit defaults to 200 independently of the page size.
 
@@ -1521,7 +1521,7 @@ class SemanticTools:
             if result_id:
                 if any((from_concept, fields, where, order_by, limit is not None)):
                     raise ValueError("Use only result_id, offset and page_size when continuing a result")
-                return self._query_result_page(result_id, offset, 100 if page_size is None else page_size)
+                return self._query_result_page(result_id, offset, 200 if page_size is None else page_size)
             if offset:
                 raise ValueError("Read the first page before supplying offset; continue with result_id")
             if page_size is not None:
@@ -2035,7 +2035,7 @@ class SemanticTools:
                 not its SQL, so a dry run before executing only repeats the query.
 
         Pagination:
-            Agent calls default to 100 continuous rows. page_size has no hard cap.
+            Agent calls default to 200 continuous rows. page_size has no hard cap.
             Continue with result_id, offset and page_size only; this reads the cached
             result and never executes the query again. limit still means business Top N.
             Direct calls without page_size keep the existing compressed preview.
@@ -2061,7 +2061,7 @@ class SemanticTools:
                     )
                 ):
                     raise ValueError("Use only result_id, offset and page_size when continuing a result")
-                return self._query_result_page(result_id, offset, 100 if page_size is None else page_size)
+                return self._query_result_page(result_id, offset, 200 if page_size is None else page_size)
             if offset:
                 raise ValueError("Read the first page before supplying offset; continue with result_id")
             if page_size is not None:

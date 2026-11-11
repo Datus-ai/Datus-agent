@@ -196,7 +196,7 @@ async def test_large_tool_result_is_bounded_and_archived(product):
     node, _ = await run_chat(config, "Inspect the catalog.")
     messages = [m for m in server.requests[-1]["messages"] if m.get("role") == "tool"]
     page = ast.literal_eval(messages[-1]["content"])["result"]
-    assert len(page["items"]) == 100 and page["total"] >= 2000 and page["has_more"]
+    assert len(page["items"]) == 200 and page["total"] >= 2000 and page["has_more"]
     assert "read_tool_result" not in {t["function"]["name"] for t in server.requests[0]["tools"]}
     snapshots = node._get_tool_result_store().root.parent / "result_snapshots"
     assert any(len(json.loads(path.read_text())["payload"]) == page["total"] for path in snapshots.glob("*.json"))

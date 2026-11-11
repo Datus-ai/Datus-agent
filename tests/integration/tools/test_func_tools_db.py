@@ -63,7 +63,7 @@ class TestDBFuncToolIntegrationReal:
             first = await trans_to_function_tool(tool.list_tables).on_invoke_tool(None, "{}")
             assert first["success"] == 1, first
             page = first["result"]
-            assert page["total"] == 2200 and len(page["items"]) == 100
+            assert page["total"] == 2200 and len(page["items"]) == 200
             rid = page["extra"]["snapshot_id"]
             # A newly constructed tool reads the same session's snapshot even
             # after the source database has changed and its connector is closed.
@@ -71,7 +71,7 @@ class TestDBFuncToolIntegrationReal:
                 db.execute("DROP TABLE table_02199")
             restored_tool = DBFuncTool(connector)
             connector.close()
-            tail = restored_tool.list_tables(snapshot_id=rid, offset=100, page_size=3000)
+            tail = restored_tool.list_tables(snapshot_id=rid, offset=200, page_size=3000)
             assert tail.success == 1, tail.error
             assert tail.result["total"] == 2200 and not tail.result["has_more"]
             names = [row["qualified_name"].split(".")[-1] for row in page["items"] + tail.result["items"]]

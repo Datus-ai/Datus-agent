@@ -207,8 +207,8 @@ and incomplete tool calls are not executed. Datus does not automatically retry t
 runs. Continue with the existing session when more output is needed.
 
 Tools own their result sizes. Agent calls to `list_tables`, `list_databases`,
-`list_schemas`, `query_metrics` and `select_records` default to 100 items per
-page; `query_lineage` defaults to 50. `page_size` is caller-controlled with no
+`list_schemas`, `query_metrics` and `select_records` default to 200 items per
+page; `query_lineage` defaults to 100. `page_size` is caller-controlled with no
 hard maximum. Continue directory/lineage results with the original tool,
 `snapshot_id`, `offset` and (for lineage) `section`. Continue metric/record
 results with the original tool, `result_id` and `offset`; this reads the cached

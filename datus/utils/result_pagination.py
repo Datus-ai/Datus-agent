@@ -16,7 +16,7 @@ from datus.storage.semantic_model.artifact_file import atomic_write_text
 from datus.utils.tool_result_store import ACTIVE_RESULT_STORE, json_text
 
 
-def native_pagination(default_page_size: int = 100) -> Callable:
+def native_pagination(default_page_size: int = 200) -> Callable:
     """Default model invocations to pages, preserving direct Python/MCP calls."""
 
     def declare(method: Callable) -> Callable:

@@ -4078,18 +4078,20 @@ class TestNativeCatalogPagination:
         first = await trans_to_function_tool(method).on_invoke_tool(None, "{}")
         assert first["success"] == 1, first
         page = first["result"]
-        assert len(page["items"]) == 100 and page["has_more"]
+        assert len(page["items"]) == 200 and page["has_more"]
         rid = page["extra"]["snapshot_id"]
-        second = method(snapshot_id=rid, offset=100, page_size=1800)
+        second = method(snapshot_id=rid, offset=200, page_size=1800)
         assert second.success == 1, second.error
-        assert len(second.result["items"]) == page["total"] - 100
+        assert len(second.result["items"]) == page["total"] - 200
         assert not second.result["has_more"]
         assert getattr(connector, provider).call_count == 1
         expected = sorted(legacy.result, key=lambda x: (x["type"], x["qualified_name"]) if isinstance(x, dict) else x)
         combined = page["items"] + second.result["items"]
         assert combined == [{"name": v} if isinstance(v, str) else v for v in expected]
         flag = {"include_views": True} if name == "list_tables" else {"include_sys": False}
-        assert method(snapshot_id=rid, **flag).success == 1
+        continued = method(snapshot_id=rid, **flag)
+        assert continued.success == 1
+        assert len(continued.result["items"]) == 200
         flag = {key: not value for key, value in flag.items()}
         assert method(snapshot_id=rid, **flag).success == 0
 

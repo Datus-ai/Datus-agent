@@ -3226,13 +3226,16 @@ class TestNativeQueryPagination:
         assert first["success"] == 1, first
         text = parse_query_result_text(first["result"])
         page = json.loads(next(line[6:] for line in text.lines if line.startswith("page: ")))
-        assert text.row_count == 1600 and page["returned"] == 100 and page["next_offset"] == 100
+        assert text.row_count == 1600 and page["returned"] == 200 and page["next_offset"] == 200
         assert "rows omitted" not in text.csv
-        assert list(csv.DictReader(io.StringIO(text.csv))) == [{"id": str(i), "value": "x" * 250} for i in range(100)]
-        second = method(result_id=text.result_id, offset=100, page_size=2000)
+        assert list(csv.DictReader(io.StringIO(text.csv))) == [{"id": str(i), "value": "x" * 250} for i in range(200)]
+        continued = method(result_id=text.result_id, offset=200)
+        assert continued.success == 1, continued.error
+        assert _text(continued).shown_rows == 200
+        second = method(result_id=text.result_id, offset=400, page_size=2000)
         assert second.success == 1, second.error
         tail = _text(second)
-        assert len(list(csv.DictReader(io.StringIO(tail.csv)))) == 1500
+        assert len(list(csv.DictReader(io.StringIO(tail.csv)))) == 1200
         assert '"has_more": false' in second.result
         called = mock_runtime.query_metrics if name == "query_metrics" else mock_runtime.select
         called.assert_awaited_once()
