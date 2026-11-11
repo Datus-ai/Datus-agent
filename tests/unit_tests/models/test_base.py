@@ -70,6 +70,22 @@ def test_model_without_spec_lookup_or_capacity_settings_uses_default_budget():
     assert model.check_request({"messages": [{"role": "user", "content": "hello"}]})["max_tokens"] == 384000
 
 
+@pytest.mark.parametrize("getter_fails", [False, True])
+def test_catalog_output_is_used_when_model_has_no_output_default(monkeypatch, getter_fails):
+    import litellm
+
+    monkeypatch.setattr(
+        litellm, "model_cost", {"catalog-only": {"max_input_tokens": 128000, "max_output_tokens": 16384}}
+    )
+    model = _StubModel(lambda *_args, **_kwargs: "ok")
+    model.model_config.model = "catalog-only"
+    if getter_fails:
+        monkeypatch.setattr(model, "max_tokens", MagicMock(side_effect=OSError("unavailable")))
+    capacity = model.request_capacity()
+    assert capacity.default_output == capacity.output_ceiling
+    assert model.check_request({"input": "hello"})["max_tokens"] == capacity.output_ceiling
+
+
 class TestTestConnection:
     def test_returns_ok_on_successful_generate(self):
         model = _StubModel(lambda _p, **_k: "pong")

@@ -197,9 +197,11 @@ Local counting includes serialized messages, instructions, tools and output
 schemas, plus framing allowance; a deployment with different templates or
 routing limits can still reject a request and should be configured accordingly.
 UTF-8 byte estimates can trigger compaction earlier and are not measured provider
-token usage. Estimates above a planning budget do not prevent sending the request.
-Explicit deployment limits with a usable matching tokenizer still enforce capacity;
-standard provider endpoints also retain their catalog output ceilings.
+token usage. Custom endpoints and models without catalog metadata can send requests
+above an estimated planning budget. Trusted counts are retained separately: if the
+trusted portion alone exceeds an explicit deployment limit, adding unmeasurable
+media does not disable that limit. Known standard provider endpoints retain their
+existing context checks and catalog output ceilings.
 Images use an available image counter, or a 4096-token estimate per image. Remote
 image references and opaque files also receive a 4096-token estimate per item when
 their content cannot be counted. Binary data is excluded from text estimation, and

@@ -152,6 +152,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
 
         config = self.model_config
         adapter = getattr(self, "litellm_adapter", None)
+        custom_endpoint = getattr(adapter, "is_custom_endpoint", False) is True
         name = getattr(adapter, "litellm_model_name", None) or config.model
         import litellm
 
@@ -196,14 +197,17 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
             context_length=context_length,
             default_output=config.max_tokens
             or self._default_output_limit(
-                optional_limit("max_tokens", self.max_tokens) or spec_output or DEFAULT_MAX_TOKENS, context_length
+                optional_limit("max_tokens", self.max_tokens) or spec_output or info_output or DEFAULT_MAX_TOKENS,
+                context_length,
             ),
             tokenizer_ref=config.tokenizer_ref,
             supports_output_limit=supports_limit,
             output_ceiling=output_ceiling,
             context_source="config" if config.context_length else "catalog" if catalog_context else "default",
             output_source="config" if config.max_tokens else "catalog" if catalog_output else "default",
-            enforce_catalog_limits=getattr(adapter, "is_custom_endpoint", False) is not True,
+            enforce_catalog_limits=not custom_endpoint,
+            allow_estimated_overflow=custom_endpoint
+            or not bool(spec_context or info_context or spec_output or info_output),
         )
 
     def _default_output_limit(self, model_limit: Optional[int], context_length: Optional[int] = None) -> Optional[int]:

@@ -23,6 +23,59 @@ from datus.tools.registry.contracts import tool_contract
 pytestmark = pytest.mark.component
 
 
+@pytest.mark.parametrize(
+    "attachment",
+    [
+        {"type": "image_url", "image_url": {"url": "https://example.invalid/chart.png"}},
+        {"type": "input_image", "file_id": "file-image"},
+        {"type": "input_file", "file_id": "file-report"},
+    ],
+)
+def test_estimated_attachment_does_not_disable_trusted_text_limit(attachment):
+    model = OpenAIModel(
+        ModelConfig(
+            type="openai",
+            model="private-vision",
+            api_key="test",
+            base_url="https://private.example/v1",
+            context_length=8192,
+            max_tokens=1024,
+            tokenizer_ref="tiktoken:cl100k_base",
+        )
+    )
+    text = {"type": "input_text", "text": "word " * 12000}
+    payload = {"input": [{"role": "user", "content": [text, attachment]}]}
+    with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+        model.check_request(payload)
+
+
+def test_estimated_media_can_exceed_budget_when_trusted_text_fits():
+    model = OpenAIModel(
+        ModelConfig(
+            type="openai",
+            model="private-vision",
+            api_key="test",
+            base_url="https://private.example/v1",
+            context_length=4096,
+            max_tokens=1024,
+            tokenizer_ref="tiktoken:cl100k_base",
+        )
+    )
+    payload = {
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Read this image"},
+                    {"type": "input_image", "file_id": "file-image"},
+                ],
+            }
+        ]
+    }
+    capacity = model.request_capacity()
+    assert capacity.check(payload) > capacity.input_limit()
+
+
 def test_budget_uses_actual_output_and_complete_request():
     capacity = RequestCapacity("gpt-4o", 262144, 8192)
     assert capacity.input_limit() == 240844
@@ -120,7 +173,10 @@ def test_tool_schema_with_type_parameter_is_counted_as_text():
         ],
     }
     assert capacity.check(request) > capacity.check({"messages": request["messages"]})
-    assert capacity.check({**request, "tools": request["tools"] * 10000}) > capacity.input_limit()
+    with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+        RequestCapacity("deepseek/deepseek-v4-flash", 262144, 8192, allow_estimated_overflow=False).check(
+            {**request, "tools": request["tools"] * 10000}
+        )
 
 
 def test_explicit_broken_tokenizer_falls_back_with_provenance():
@@ -206,7 +262,7 @@ def test_inline_image_budget_depends_on_pixels_not_base64_size(model, field, kin
 
     from datus.utils.image_content import IMAGE_OMITTED
 
-    capacity = RequestCapacity(model, 8192, 1024, "tiktoken:o200k_base" if model.startswith("claude") else None)
+    capacity = RequestCapacity(model, 8192, 1024, allow_estimated_overflow=False)
     screenshot = Image.new("RGB", (512, 512), "blue")
 
     def request(compression):
@@ -435,7 +491,6 @@ def test_native_transport_blocks_before_create():
         use_native_api=True,
         context_length=8192,
         max_tokens=1024,
-        tokenizer_ref="tiktoken:o200k_base",
     )
     native = ClaudeModel(cfg)
     with patch.object(native, "_raw_anthropic_messages_create") as send:

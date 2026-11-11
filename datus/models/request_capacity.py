@@ -56,6 +56,7 @@ class TokenEstimate:
     source: str
     estimated: bool
     fallback_reasons: tuple[str, ...] = ()
+    trusted_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,7 @@ class RequestCapacity:
     context_source: str = "config"
     output_source: str = "config"
     enforce_catalog_limits: bool = True
+    allow_estimated_overflow: bool = True
 
     def __post_init__(self) -> None:
         if self.context_length is None:
@@ -184,6 +186,7 @@ class RequestCapacity:
         if count is None:
             count = len(text.encode("utf-8"))
             source, estimated = "utf8_byte_upper_bound", True
+        trusted_tokens = count + framing if not estimated else 0
 
         content = (
             [payload[key] for key in ("messages", "input") if key in payload]
@@ -200,6 +203,8 @@ class RequestCapacity:
                 if type(image_tokens) is not int or image_tokens < 0:
                     raise ValueError("invalid image token count")
                 count += image_tokens
+                if self.enforce_catalog_limits:
+                    trusted_tokens += image_tokens
                 estimated |= not self.enforce_catalog_limits
             except Exception as exc:
                 count += DEFAULT_MEDIA_TOKENS
@@ -212,15 +217,17 @@ class RequestCapacity:
         fallback_reasons = tuple(dict.fromkeys(reasons))
         if fallback_reasons:
             logger.debug("Using estimated context tokens: model=%s reasons=%s", self.model, fallback_reasons)
-        return TokenEstimate(count + framing, source, estimated, fallback_reasons)
+        return TokenEstimate(count + framing, source, estimated, fallback_reasons, trusted_tokens)
 
     def check(self, payload: Any, output: int | None = None) -> int:
         available = self.input_limit(output)
         estimate = self.estimate(payload)
         count = estimate.tokens
-        enforce = not estimate.estimated and (
+        allow_estimated_overflow = self.allow_estimated_overflow
+        trusted_over_budget = estimate.trusted_tokens > 0 and estimate.trusted_tokens > available
+        enforce = (
             self.context_source == "config" or (self.enforce_catalog_limits and self.context_source == "catalog")
-        )
+        ) and (not estimate.estimated or not allow_estimated_overflow or trusted_over_budget)
         budget = {
             "model": self.model,
             "input_tokens": count,
@@ -230,6 +237,8 @@ class RequestCapacity:
             "input_limit": available,
             "counter": estimate.source,
             "estimated": estimate.estimated,
+            "trusted_input_tokens": estimate.trusted_tokens,
+            "allow_estimated_overflow": allow_estimated_overflow,
             "context_source": self.context_source,
             "output_source": self.output_source,
             "fallback_reasons": estimate.fallback_reasons,

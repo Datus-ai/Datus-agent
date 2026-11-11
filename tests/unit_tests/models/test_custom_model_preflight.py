@@ -14,6 +14,56 @@ from datus.models.openai_model import OpenAIModel
 from datus.models.request_capacity import ContextCapacityError, RequestCapacity
 
 
+def _provider_model(provider, custom):
+    from datus.models.claude_model import ClaudeModel
+    from datus.models.deepseek_model import DeepSeekModel
+
+    model_class, model_name, official_url = (
+        (ClaudeModel, "claude-sonnet-4-5", "https://api.anthropic.com")
+        if provider == "claude"
+        else (DeepSeekModel, "deepseek-v4-flash", "https://api.deepseek.com")
+    )
+    return model_class(
+        ModelConfig(
+            type=provider,
+            model=model_name,
+            api_key="test",
+            context_length=8192,
+            max_tokens=1024,
+            base_url="https://private.example/v1" if custom else official_url,
+        )
+    )
+
+
+@pytest.mark.parametrize("provider", ["claude", "deepseek"])
+def test_known_provider_preserves_standard_context_guard(provider):
+    model = _provider_model(provider, custom=False)
+    payload = {"messages": [{"role": "user", "content": "word " * 20000}]}
+    with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+        model.check_request(payload)
+
+
+@pytest.mark.parametrize("provider", ["claude", "deepseek"])
+def test_known_provider_private_endpoint_allows_estimated_overflow(provider):
+    model = _provider_model(provider, custom=True)
+    payload = {"messages": [{"role": "user", "content": "word " * 20000}]}
+    assert model.request_capacity().check(payload) > model.request_capacity().input_limit()
+
+
+def test_unknown_model_keeps_estimation_fallback_with_explicit_window():
+    model = OpenAIModel(
+        ModelConfig(
+            type="openai",
+            model="unpublished-deployment",
+            api_key="test",
+            context_length=8192,
+            max_tokens=1024,
+        )
+    )
+    payload = {"messages": [{"role": "user", "content": "word " * 20000}]}
+    assert model.request_capacity().check(payload) > model.request_capacity().input_limit()
+
+
 @pytest.fixture
 def image_url():
     output = io.BytesIO()
