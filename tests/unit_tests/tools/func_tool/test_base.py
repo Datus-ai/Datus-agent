@@ -629,7 +629,7 @@ class TestTransToFunctionTool:
         """
 
         class FakeTool:
-            @tool_contract(access="write", direct_call=True, category="filesystem_tools")
+            @tool_contract(access="write", direct_call=False, category="filesystem_tools")
             def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:
                 return FuncToolResult(result="edited")
 
@@ -666,7 +666,7 @@ class TestTransToFunctionTool:
         """The guard must not block a well-formed call (no false positives)."""
 
         class FakeTool:
-            @tool_contract(access="write", direct_call=True, category="filesystem_tools")
+            @tool_contract(access="write", direct_call=False, category="filesystem_tools")
             def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:
                 return FuncToolResult(result={"path": path})
 

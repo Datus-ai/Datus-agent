@@ -374,7 +374,7 @@ class GenerationTools:
             raise ValueError(f"The planned OSI target is {planned_name!r}, but the file declares {model_names[0]!r}.")
         return semantic_model_file, resolved, model_names[0]
 
-    @tool_contract(access="write", direct_call=True)
+    @tool_contract(access="write", direct_call=False)
     def publish_semantic_model(self, semantic_model_files: List[str]) -> FuncToolResult:
         """Validate publication evidence and sync semantic artifacts to storage.
 
@@ -434,7 +434,7 @@ class GenerationTools:
             logger.error(f"Error completing semantic model generation: {e}")
             return FuncToolResult(success=0, error=f"Failed to complete generation: {str(e)}")
 
-    @tool_contract(access="write", direct_call=True)
+    @tool_contract(access="write", direct_call=False)
     def publish_metrics(self, metric_file: str) -> FuncToolResult:
         """Validate publication evidence and sync metric artifacts to storage.
 
@@ -1606,7 +1606,7 @@ class GenerationTools:
         existing = {normalize_metric_name(row["name"]): row.get("uid") for row in rows}
         return [name for name, uid in metric_uids.items() if existing.get(normalize_metric_name(name)) != uid]
 
-    @tool_contract(access="write", direct_call=True)
+    @tool_contract(access="write", direct_call=False)
     def sync_osi_to_db(
         self,
         osi_file_path: str,

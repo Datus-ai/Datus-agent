@@ -521,7 +521,7 @@ class OsiSemanticModelTargetTools:
         self.target_state.last_error_code = code
         return FuncToolResult(success=0, error=error, result={"code": code, **result})
 
-    @tool_contract(access="write", direct_call=True)
+    @tool_contract(access="write", direct_call=False)
     def bind_osi_semantic_model_target(
         self,
         semantic_model_file: str = "",

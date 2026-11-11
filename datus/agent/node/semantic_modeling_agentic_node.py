@@ -220,7 +220,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             dimension_tables=dimension_tables,
         )
 
-    @tool_contract(access="write", direct_call=True, category="semantic_tools")
+    @tool_contract(access="write", direct_call=False, category="semantic_tools")
     def bind_osi_semantic_model_target(
         self,
         semantic_model_file: str = "",
@@ -264,7 +264,10 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             )
             filesystem_tools = [
                 tool
-                for tool in self.filesystem_func_tool.available_tools()
+                for tool in [
+                    *self.filesystem_func_tool.available_tools(),
+                    *self.filesystem_func_tool.semantic_editor.available_tools(),
+                ]
                 if tool.name != "delete_file"
                 and not (
                     self.authoring_scope == "datasets" and tool.name in {"upsert_osi_metrics", "delete_osi_metrics"}

@@ -99,7 +99,7 @@ class LineageTools:
 
     # -- write ------------------------------------------------------------------------------
 
-    @tool_contract(access="write", direct_call=True)
+    @tool_contract(access="write", direct_call=False)
     def upsert_lineage(
         self,
         paths: Optional[List[str]] = None,
@@ -222,7 +222,7 @@ class LineageTools:
             logger.error(f"upsert_lineage failed: {e}")
             return FuncToolResult(success=0, error=_error_message(e))
 
-    @tool_contract(access="write", direct_call=True)
+    @tool_contract(access="write", direct_call=False)
     def delete_lineage(self, sources: List[str]) -> FuncToolResult:
         """Remove saved sources and every edge only they supported.
 

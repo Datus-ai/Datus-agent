@@ -717,3 +717,21 @@ class TestProxiedToolNames:
 
         assert node.proxied_tool_names is held_reference
         assert held_reference == {"read_file"}
+
+
+def test_semantic_editors_keep_server_state_when_proxy_patterns_match(tmp_path):
+    """Object edits share local target revisions and must not be sent to the client."""
+    from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
+
+    tools = MetricFilesystemFuncTool(root_path=str(tmp_path)).semantic_editor.available_tools()
+    registry = ToolRegistry()
+    registry.register_tools("semantic_tools", tools)
+    node = SimpleNamespace(
+        tools=list(tools),
+        tool_channel=ToolResultChannel(),
+        tool_registry=registry,
+        get_node_name=lambda: "semantic_modeling",
+    )
+    apply_proxy_tools(node, ["semantic_tools.*"])
+    assert node.proxied_tool_names == set()
+    assert all(before is after for before, after in zip(tools, node.tools))

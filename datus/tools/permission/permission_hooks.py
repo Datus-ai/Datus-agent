@@ -584,7 +584,12 @@ class PermissionHooks(AgentHooks):
         #   INTERNAL/WHITELIST → bypass, HIDDEN → bypass (tool returns not-found),
         #   EXTERNAL → force ASK with a path-keyed session cache so approving
         #   /Users/foo/secret does not cascade to /Users/foo/other.
-        if self.fs_policy is not None and category == "filesystem_tools":
+        semantic_file_tool = False
+        if category == "semantic_tools":
+            from datus.tools.func_tool.semantic_model_editing_tools import SemanticModelEditingTools
+
+            semantic_file_tool = tool_name in SemanticModelEditingTools.all_tools_name()
+        if self.fs_policy is not None and (category == "filesystem_tools" or semantic_file_tool):
             handled = await self._handle_filesystem_zone(context, tool_name, pattern_name)
             if handled:
                 return
@@ -693,24 +698,6 @@ class PermissionHooks(AgentHooks):
 
                 logger.info(f"User approved tool '{tool_name}'")
 
-    # Tool-name set used to distinguish destructive writes from reads.
-    # Keep in sync with ``FilesystemFuncTool.available_tools`` — adding a new
-    # write-capable filesystem tool (e.g. ``append_file``) requires extending
-    # this set so the profile-aware gate treats it as a write. ``delete_file``
-    # belongs here too — it mutates the filesystem just as much as a write
-    # and should hit the same INTERNAL × write × normal ASK gate.
-    _FILESYSTEM_WRITE_TOOLS = frozenset(
-        {
-            "write_file",
-            "edit_file",
-            "delete_file",
-            "upsert_osi_metrics",
-            "delete_osi_metrics",
-            "upsert_osi_datasets",
-            "delete_osi_datasets",
-        }
-    )
-
     # Subagents that author their own artifact tree (manifest.json,
     # queries/*, render/*.jsx, analysis/*) in one turn — usually 5-10 files
     # per run. Under ``normal`` profile the default ASK gate would prompt
@@ -732,7 +719,7 @@ class PermissionHooks(AgentHooks):
     _ARTIFACT_AUTOALLOW_PATH_RE = re.compile(r"^(?:reports|dashboards)/[^/]+/")
 
     async def _handle_filesystem_zone(self, context: Any, tool_name: str, pattern_name: str) -> bool:
-        """Zone × profile × read-vs-write gating for ``filesystem_tools.*`` calls.
+        """Zone × profile × capability gating for filesystem access and semantic file edits.
 
         Returns ``True`` when the call has been fully handled (either allowed
         through or rejected) and ``False`` to let the normal category-level
@@ -768,6 +755,7 @@ class PermissionHooks(AgentHooks):
         * WHITELIST writes are left to ``FilesystemFuncTool._read_only_reject``
           so the user doesn't waste an ASK click on a path the tool will refuse.
         """
+        category = self.tool_registry.get(tool_name, "filesystem_tools")
         policy = self.fs_policy
         assert policy is not None  # guarded by caller
         args = self._parse_tool_args(context)
@@ -796,7 +784,11 @@ class PermissionHooks(AgentHooks):
             logger.debug(f"classify_path failed for {tool_name} path={path_arg!r}: {e}")
             return False
 
-        is_write = tool_name in self._FILESYSTEM_WRITE_TOOLS
+        from datus.tools.registry.capabilities import tool_capability
+
+        capability = tool_capability(f"{category}.{tool_name}")
+        # Unknown operations must never inherit the internal-path read bypass.
+        is_write = capability is None or capability.access != "read"
         profile = getattr(self.permission_manager, "active_profile", None) or "normal"
 
         if resolved.zone in (PathZone.INTERNAL, PathZone.WHITELIST):
@@ -884,7 +876,7 @@ class PermissionHooks(AgentHooks):
                     f"non-interactively under the '{profile}' profile. STOP retrying — "
                     f"choose a path inside the project root or surface the failure."
                 ),
-                tool_category="filesystem_tools",
+                tool_category=category,
                 tool_name=pattern_name,
             )
 
@@ -900,7 +892,7 @@ class PermissionHooks(AgentHooks):
             )
             return True
 
-        cache_key = f"filesystem_tools.external::{resolved.resolved}"
+        cache_key = f"{category}.external::{resolved.resolved}"
         if self.permission_manager._session_approvals.get(cache_key):
             logger.debug("External path %s already approved for session", resolved.resolved)
             return True
@@ -914,7 +906,7 @@ class PermissionHooks(AgentHooks):
                 logger.info("User rejected external filesystem access to %s", resolved.resolved)
                 raise PermissionDeniedException(
                     f"User rejected external filesystem access to {resolved.resolved}",
-                    tool_category="filesystem_tools",
+                    tool_category=category,
                     tool_name=pattern_name,
                 )
             logger.info("User approved external filesystem access to %s", resolved.resolved)
@@ -931,9 +923,10 @@ class PermissionHooks(AgentHooks):
         Approval is narrow: the ``a`` (always-allow) choice caches this exact
         absolute path, not the whole tool or category.
         """
+        category = self.tool_registry.get(tool_name, "filesystem_tools")
         content = (
             "### External Filesystem Access\n\n"
-            f"**Tool:** `filesystem_tools.{pattern_name}`\n"
+            f"**Tool:** `{category}.{pattern_name}`\n"
             f"**Path:** `{abs_path}`  _(outside project root)_\n"
         )
         try:
@@ -951,7 +944,7 @@ class PermissionHooks(AgentHooks):
 
             if choice == "a":
                 cache_key = f"external::{abs_path}"
-                self.permission_manager.approve_for_session("filesystem_tools", cache_key)
+                self.permission_manager.approve_for_session(category, cache_key)
                 return True
             if choice == "y":
                 return True

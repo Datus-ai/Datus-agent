@@ -119,8 +119,10 @@ _NORMAL_RULES = [
     _rule("filesystem_tools", "grep", PermissionLevel.ALLOW),
     # Object-scoped deletes remain individually confirmable even in auto;
     # unlike a general file delete they are exposed directly to authoring LLMs.
-    _rule("filesystem_tools", "delete_osi_metrics", PermissionLevel.ASK),
-    _rule("filesystem_tools", "delete_osi_datasets", PermissionLevel.ASK),
+    _rule("semantic_tools", "upsert_osi_metrics", PermissionLevel.ASK),
+    _rule("semantic_tools", "upsert_osi_datasets", PermissionLevel.ASK),
+    _rule("semantic_tools", "delete_osi_metrics", PermissionLevel.ASK),
+    _rule("semantic_tools", "delete_osi_datasets", PermissionLevel.ASK),
     # persistent memory: ALLOW. add_memory/edit_memory only touch a single
     # hidden, 2000-byte-capped MEMORY.md with no external reach — gating
     # benign self-notes behind a prompt would fire on routine "remember this"
@@ -316,8 +318,8 @@ _AUTO_EXTRA_RULES = [
     _rule("filesystem_tools", "write_file", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "edit_file", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "delete_file", PermissionLevel.ALLOW),
-    _rule("filesystem_tools", "upsert_osi_metrics", PermissionLevel.ALLOW),
-    _rule("filesystem_tools", "upsert_osi_datasets", PermissionLevel.ALLOW),
+    _rule("semantic_tools", "upsert_osi_metrics", PermissionLevel.ALLOW),
+    _rule("semantic_tools", "upsert_osi_datasets", PermissionLevel.ALLOW),
     # lineage analysis is a workspace write that re-derives sources from files; removing saved
     # sources stays individually confirmable, like the object-scoped OSI deletes.
     _rule("lineage_tools", "upsert_lineage", PermissionLevel.ALLOW),

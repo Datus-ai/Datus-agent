@@ -21,7 +21,7 @@ def setup_gate(profile="normal", raw=None):
     manager = PermissionManager(global_config=get_profile(profile), active_profile=profile)
     live.register(manager)
     broker = InteractionBroker()
-    registry = ToolRegistry({"upsert_osi_metrics": "filesystem_tools"})
+    registry = ToolRegistry({"upsert_osi_metrics": "semantic_tools"})
     hooks = PermissionHooks(broker, manager, "chat", registry)
     ctx = SimpleNamespace(tool_arguments=json.dumps({"path": "subject/semantic_models/fitness.yml"}))
     return live, manager, broker, hooks, ctx
@@ -57,7 +57,7 @@ async def test_running_and_future_children_inherit_switch_but_other_runs_do_not(
     child = PermissionManager(global_config=get_profile("normal"))
     live.register(child)
     other, other_manager, _, _, _ = setup_gate()
-    parent.approve_for_session("filesystem_tools", "upsert_osi_metrics")
+    parent.approve_for_session("semantic_tools", "upsert_osi_metrics")
     live.switch("dangerous")
     assert parent.active_profile == child.active_profile == "dangerous"
     future = PermissionManager(global_config=get_profile("normal"))
@@ -87,7 +87,7 @@ async def test_downgrade_restores_write_confirmation_and_cancel_cleans_gate():
 
 @pytest.mark.asyncio
 async def test_explicit_ask_survives_switch_instead_of_blanket_approval():
-    raw = {"rules": [{"tool": "filesystem_tools", "pattern": "upsert_osi_metrics", "permission": "ask"}]}
+    raw = {"rules": [{"tool": "semantic_tools", "pattern": "upsert_osi_metrics", "permission": "ask"}]}
     live, _, broker, hooks, ctx = setup_gate(raw=raw)
     gate = asyncio.create_task(hooks.on_tool_start(ctx, None, SimpleNamespace(name="upsert_osi_metrics")))
     first = await asyncio.wait_for(broker._output_queue.get(), 1)
@@ -107,7 +107,7 @@ def test_failed_switch_restores_every_manager_and_existing_session_grants():
     child = PermissionManager(global_config=get_profile("normal"))
     live.register(child)
     for manager in (parent, child):
-        manager.approve_for_session("filesystem_tools", "upsert_osi_metrics")
+        manager.approve_for_session("semantic_tools", "upsert_osi_metrics")
     configs = {manager: manager.global_config for manager in (parent, child)}
     changed = live.changed
     original = child.switch_profile

@@ -110,7 +110,7 @@ async def test_write_tool_schema_and_invocation_accept_structured_arrays(
     identity_tool, name, parameter, objects, encoded
 ):
     tool, target, _, _ = identity_tool([])
-    exposed = next(t for t in tool.available_tools() if t.name == name)
+    exposed = next(t for t in tool.semantic_editor.available_tools() if t.name == name)
     variants = exposed.params_json_schema["properties"][parameter]["anyOf"]
     assert {v["type"] for v in variants} == {"array", "string"}
     payload = json.dumps(objects) if encoded else objects
@@ -146,10 +146,10 @@ async def test_encoded_upserts_reject_duplicate_keys_without_mutating(
     arguments = {"path": str(target), parameter: payload}
 
     if wrapped:
-        exposed = next(t for t in tool.available_tools() if t.name == name)
+        exposed = next(t for t in tool.semantic_editor.available_tools() if t.name == name)
         result = await exposed.on_invoke_tool(None, json.dumps(arguments))
     else:
-        result = getattr(tool, name)(**arguments).model_dump()
+        result = getattr(tool.semantic_editor, name)(**arguments).model_dump()
 
     assert result["success"] == 0
     assert f"Duplicate JSON key {duplicate_key!r}" in result["error"]
@@ -213,7 +213,7 @@ async def test_runner_replays_rejected_encoded_content_and_executes_corrected_re
 
     session = SQLiteSession("encoded-upsert-retry", ":memory:")
     try:
-        exposed = next(t for t in tool.available_tools() if t.name == name)
+        exposed = next(t for t in tool.semantic_editor.available_tools() if t.name == name)
         result = await Runner.run(
             Agent(name="test", model=SequenceModel(), tools=[exposed]),
             input="update the model",
@@ -238,17 +238,17 @@ def test_metric_upsert_assigns_and_preserves_host_uid(identity_tool):
 
     tool, target, state, _ = identity_tool([])
     metric = _osi_metric("revenue", "SUM(orders.amount)")
-    assert tool.upsert_osi_metrics(str(target), json.dumps([metric])).success == 1
+    assert tool.semantic_editor.upsert_osi_metrics(str(target), json.dumps([metric])).success == 1
     authored = yaml.safe_load(target.read_bytes())["metrics"][0]
     uid = metric_uid(authored)
     assert len(uid) == 24
     first_content = target.read_bytes()
-    repeated = tool.upsert_osi_metrics(str(target), json.dumps([metric]))
+    repeated = tool.semantic_editor.upsert_osi_metrics(str(target), json.dumps([metric]))
     assert repeated.result["unchanged"] == ["revenue"]
     assert target.read_bytes() == first_content
     metric["description"] = "Updated definition"
     metric["custom_extensions"] = [{"vendor_name": "DATUS", "data": '{"uid":"model-mistake","unit":"USD"}'}]
-    assert tool.upsert_osi_metrics(str(target), json.dumps([metric])).success == 1
+    assert tool.semantic_editor.upsert_osi_metrics(str(target), json.dumps([metric])).success == 1
     updated = yaml.safe_load(target.read_bytes())["metrics"][0]
     assert metric_uid(updated) == uid
     assert json.loads(updated["custom_extensions"][0]["data"])["unit"] == "USD"
@@ -328,7 +328,7 @@ def test_upsert_copied_metric_assigns_distinct_host_uid(identity_tool):
     ensure_metric_uid(metric)
     tool, target, state, _ = identity_tool([metric])
     copied = {**metric, "name": "other_revenue"}
-    result = tool.upsert_osi_metrics(str(target), json.dumps([copied]))
+    result = tool.semantic_editor.upsert_osi_metrics(str(target), json.dumps([copied]))
     assert result.success == 1
     assert result.result["created"] == ["other_revenue"]
     authored = yaml.safe_load(target.read_bytes())["metrics"]
@@ -415,14 +415,14 @@ def test_upsert_without_prior_uid_uses_host_identity(identity_tool, existing, in
     tool, target, state, _ = identity_tool([metric] if existing else [])
     metric["custom_extensions"] = [{"vendor_name": "DATUS", "data": json.dumps({"uid": incoming_uid, "unit": "USD"})}]
 
-    result = tool.upsert_osi_metrics(str(target), json.dumps([metric]))
+    result = tool.semantic_editor.upsert_osi_metrics(str(target), json.dumps([metric]))
 
     assert result.success == 1
     authored = yaml.safe_load(target.read_bytes())["metrics"][0]
     assert metric_uid(authored) != incoming_uid
     assert len(metric_uid(authored)) == 24
     assert json.loads(authored["custom_extensions"][0]["data"])["unit"] == "USD"
-    assert tool.upsert_osi_metrics(str(target), json.dumps([metric])).result["unchanged"] == ["revenue"]
+    assert tool.semantic_editor.upsert_osi_metrics(str(target), json.dumps([metric])).result["unchanged"] == ["revenue"]
     state.require_selected_revision(target)
 
 
@@ -438,7 +438,7 @@ def test_conflicting_metric_names_do_not_mutate_file(identity_tool, operation):
         result = tool.edit_file(str(target), original.decode("utf-8"), yaml.safe_dump(document, sort_keys=False))
     else:
         incoming = [existing, candidate] if operation == "upsert_batch" else [candidate]
-        result = tool.upsert_osi_metrics(str(target), json.dumps(incoming))
+        result = tool.semantic_editor.upsert_osi_metrics(str(target), json.dumps(incoming))
     assert result.success == 0
     assert "Metric name conflict" in result.error
     assert "revenue" in result.error and "REVENUE" in result.error
@@ -532,7 +532,7 @@ class TestMetricFilesystemFuncTool:
             current_node="semantic_modeling",
         )
 
-        tool_names = {tool.name for tool in tool.available_tools()}
+        tool_names = {tool.name for tool in [*tool.available_tools(), *tool.semantic_editor.available_tools()]}
 
         assert tool_names == {
             "read_file",
@@ -587,14 +587,16 @@ class TestMetricFilesystemFuncTool:
             },
         ]
 
-        dataset_result = tool.upsert_osi_datasets(str(target.relative_to(tmp_path)), json.dumps([repaired_dataset]))
-        delete_result = tool.delete_osi_datasets(
+        dataset_result = tool.semantic_editor.upsert_osi_datasets(
+            str(target.relative_to(tmp_path)), json.dumps([repaired_dataset])
+        )
+        delete_result = tool.semantic_editor.delete_osi_datasets(
             str(target.relative_to(tmp_path)),
             ["obsolete_orders_query"],
         )
         order_count = _osi_metric("order_count", "COUNT(DISTINCT orders.order_id)")
         order_count["datatype"] = "Integer"
-        metric_result = tool.upsert_osi_metrics(
+        metric_result = tool.semantic_editor.upsert_osi_metrics(
             str(target.relative_to(tmp_path)),
             json.dumps([order_count]),
         )
@@ -660,7 +662,7 @@ class TestMetricFilesystemFuncTool:
             "custom_extensions": [{"vendor_name": "DATUS", "data": '{"source_type":"query"}'}],
         }
 
-        result = tool.upsert_osi_datasets(
+        result = tool.semantic_editor.upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             [query_dataset] if structured else json.dumps([query_dataset]),
         )
@@ -682,8 +684,6 @@ class TestMetricFilesystemFuncTool:
             "read_file",
             "read_image",
             "edit_file",
-            "upsert_osi_datasets",
-            "delete_osi_datasets",
             "glob",
             "grep",
         }
@@ -714,7 +714,7 @@ class TestMetricFilesystemFuncTool:
             osi_target_state=state,
         )
 
-        result = tool.upsert_osi_datasets(
+        result = tool.semantic_editor.upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps([{"name": "orders", "source": "SELECT * FROM analytics.orders"}]),
         )
@@ -803,7 +803,7 @@ class TestMetricFilesystemFuncTool:
             osi_target_state=state,
         )
 
-        result = tool.delete_osi_datasets(
+        result = tool.semantic_editor.delete_osi_datasets(
             str(target.relative_to(tmp_path)),
             [" Customers ", "customers", "missing_dataset"],
         )
@@ -821,14 +821,14 @@ class TestMetricFilesystemFuncTool:
         assert state.target_mutated is True
 
         after_delete = target.read_bytes()
-        retry = tool.delete_osi_datasets(str(target.relative_to(tmp_path)), ["customers"])
+        retry = tool.semantic_editor.delete_osi_datasets(str(target.relative_to(tmp_path)), ["customers"])
 
         assert retry.success == 1
         assert retry.result["deleted"] == []
         assert retry.result["already_absent"] == ["customers"]
         assert target.read_bytes() == after_delete
 
-        restored = tool.upsert_osi_datasets(
+        restored = tool.semantic_editor.upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps([{"name": "Customers", "source": "analytics.customers"}]),
         )
@@ -866,7 +866,7 @@ class TestMetricFilesystemFuncTool:
             mutation_callback=state.record_planned_write,
         )
 
-        result = tool.delete_osi_datasets(str(target.relative_to(tmp_path)), ["orders"])
+        result = tool.semantic_editor.delete_osi_datasets(str(target.relative_to(tmp_path)), ["orders"])
 
         assert result.success == 0
         assert "should be non-empty" in result.error
@@ -888,7 +888,7 @@ class TestMetricFilesystemFuncTool:
             osi_target_state=state,
         )
 
-        result = tool.upsert_osi_datasets(
+        result = tool.semantic_editor.upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps([{"name": "orders", "source": "analytics.orders"}]),
         )
@@ -960,7 +960,7 @@ class TestMetricFilesystemFuncTool:
             "source": "SELECT user_id FROM newly_retained_users",
         }
 
-        result = tool.upsert_osi_datasets(
+        result = tool.semantic_editor.upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps([conflicting_dataset]),
         )
@@ -1000,7 +1000,7 @@ class TestMetricFilesystemFuncTool:
             "source": "SELECT user_id\nFROM retained_users",
         }
 
-        result = tool.upsert_osi_datasets(
+        result = tool.semantic_editor.upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps([incoming_dataset]),
         )
@@ -1046,7 +1046,7 @@ class TestMetricFilesystemFuncTool:
             generation_evidence=evidence,
         )
 
-        result = tool.upsert_osi_datasets(
+        result = tool.semantic_editor.upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps(
                 [
@@ -1091,7 +1091,7 @@ class TestMetricFilesystemFuncTool:
             generation_evidence=evidence,
         )
 
-        result = tool.upsert_osi_datasets(
+        result = tool.semantic_editor.upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps(
                 [
@@ -1142,7 +1142,7 @@ class TestMetricFilesystemFuncTool:
             generation_evidence=evidence,
         )
 
-        result = tool.upsert_osi_datasets(
+        result = tool.semantic_editor.upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps(
                 [
@@ -1200,7 +1200,7 @@ class TestMetricFilesystemFuncTool:
             current_node="semantic_modeling",
         )
 
-        result = tool.upsert_osi_datasets(
+        result = tool.semantic_editor.upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps(
                 [
@@ -1271,7 +1271,7 @@ metrics:
             _osi_metric("order_count", "COUNT(*)"),
         ]
         original_incoming = json.dumps(incoming)
-        result = tool.upsert_osi_metrics(
+        result = tool.semantic_editor.upsert_osi_metrics(
             "subject/semantic_models/warehouse/sales.yml", incoming if structured else json.dumps(incoming)
         )
 
@@ -1317,7 +1317,7 @@ metrics:
             mutation_callback=evidence.invalidate_artifact_evidence,
         )
 
-        result = tool.delete_osi_metrics(
+        result = tool.semantic_editor.delete_osi_metrics(
             str(target.relative_to(tmp_path)),
             ["revenue", "missing_metric", "revenue", ""],
         )
@@ -1361,13 +1361,13 @@ metrics:
         )
         path = str(target.relative_to(tmp_path))
 
-        assert tool.delete_osi_metrics(path, [" Revenue "]).success == 1
+        assert tool.semantic_editor.delete_osi_metrics(path, [" Revenue "]).success == 1
         assert state.touched_metric_names == ["Revenue"]
 
-        assert tool.upsert_osi_metrics(path, json.dumps([metric])).success == 1
+        assert tool.semantic_editor.upsert_osi_metrics(path, json.dumps([metric])).success == 1
         assert state.touched_metric_names == ["Revenue"]
 
-        assert tool.delete_osi_metrics(path, ["revenue"]).success == 1
+        assert tool.semantic_editor.delete_osi_metrics(path, ["revenue"]).success == 1
         assert state.touched_metric_names == ["Revenue"]
         assert tool.rollback_failed_authoring() is True
         assert target.read_bytes() == original
@@ -1390,7 +1390,7 @@ metrics:
             mutation_callback=mutation_callback,
         )
 
-        result = tool.delete_osi_metrics(str(target.relative_to(tmp_path)), ["stale_metric"])
+        result = tool.semantic_editor.delete_osi_metrics(str(target.relative_to(tmp_path)), ["stale_metric"])
 
         assert result.success == 1
         assert result.result["already_absent"] == ["stale_metric"]
@@ -1420,7 +1420,7 @@ metrics:
             mutation_callback=evidence.invalidate_artifact_evidence,
         )
 
-        result = tool.upsert_osi_metrics(
+        result = tool.semantic_editor.upsert_osi_metrics(
             str(target.relative_to(tmp_path)),
             json.dumps([_osi_metric("revenue", "SUM(amount)")]),
         )
@@ -1447,7 +1447,7 @@ metrics:
             osi_target_state=state,
         )
 
-        result = tool.upsert_osi_metrics(
+        result = tool.semantic_editor.upsert_osi_metrics(
             str(target.relative_to(tmp_path)),
             json.dumps([_osi_metric("revenue", "SUM(amount)")]),
         )
@@ -1496,7 +1496,7 @@ metrics:
         path = str(target.relative_to(tmp_path))
 
         assert (
-            tool.upsert_osi_datasets(
+            tool.semantic_editor.upsert_osi_datasets(
                 path,
                 json.dumps(
                     [
@@ -1516,7 +1516,12 @@ metrics:
             },
             mode="bound",
         )
-        assert tool.upsert_osi_metrics(path, json.dumps([_osi_metric("revenue", "SUM(orders.amount)")])).success == 1
+        assert (
+            tool.semantic_editor.upsert_osi_metrics(
+                path, json.dumps([_osi_metric("revenue", "SUM(orders.amount)")])
+            ).success
+            == 1
+        )
 
         assert tool.rollback_failed_authoring() is True
         assert target.read_bytes() == original
@@ -1535,7 +1540,7 @@ metrics:
             mutation_callback=lambda _path: state.record_planned_write(),
         )
 
-        result = tool.upsert_osi_datasets(
+        result = tool.semantic_editor.upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps([{"name": "orders", "source": "orders"}]),
         )
@@ -1617,7 +1622,7 @@ metrics:
             mutation_callback=mutation_callback,
         )
 
-        result = tool.upsert_osi_metrics(str(target.relative_to(tmp_path)), json.dumps([metric]))
+        result = tool.semantic_editor.upsert_osi_metrics(str(target.relative_to(tmp_path)), json.dumps([metric]))
 
         assert result.success == 1
         assert result.result["created"] == []
@@ -1642,7 +1647,7 @@ metrics:
             osi_target_state=_bound_state(target),
         )
 
-        result = tool.upsert_osi_metrics(
+        result = tool.semantic_editor.upsert_osi_metrics(
             str(target.relative_to(tmp_path)), json.dumps([_osi_metric("revenue", "SUM(amount)")])
         )
 
@@ -1662,7 +1667,7 @@ metrics:
         )
         osi_schema_validator.return_value = "metric expression is required"
 
-        result = tool.upsert_osi_metrics(
+        result = tool.semantic_editor.upsert_osi_metrics(
             str(target.relative_to(tmp_path)),
             json.dumps([{"name": "revenue"}]),
         )
@@ -1696,7 +1701,9 @@ metrics:
 
         def upsert_from_second_tool():
             second_started.set()
-            return tools[1].upsert_osi_metrics(relative_path, json.dumps([_osi_metric("order_count", "COUNT(*)")]))
+            return tools[1].semantic_editor.upsert_osi_metrics(
+                relative_path, json.dumps([_osi_metric("order_count", "COUNT(*)")])
+            )
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             with semantic_artifact_lock(target):
@@ -1705,7 +1712,9 @@ metrics:
                 assert not second_result.done()
             results = [
                 second_result.result(),
-                tools[0].upsert_osi_metrics(relative_path, json.dumps([_osi_metric("revenue", "SUM(amount)")])),
+                tools[0].semantic_editor.upsert_osi_metrics(
+                    relative_path, json.dumps([_osi_metric("revenue", "SUM(amount)")])
+                ),
             ]
 
         assert all(result.success == 1 for result in results)
@@ -1718,7 +1727,7 @@ metrics:
             current_node="semantic_modeling",
         )
 
-        result = tool.upsert_osi_metrics(
+        result = tool.semantic_editor.upsert_osi_metrics(
             "subject/semantic_models/warehouse/sales.yml",
             json.dumps([_osi_metric("revenue", "SUM(amount)")]),
         )
@@ -1739,7 +1748,7 @@ metrics:
             osi_target_state=_bound_state(selected, "selected"),
         )
 
-        result = tool.upsert_osi_metrics(
+        result = tool.semantic_editor.upsert_osi_metrics(
             str(other.relative_to(tmp_path)),
             json.dumps([_osi_metric("revenue", "SUM(amount)")]),
         )
@@ -1760,7 +1769,7 @@ metrics:
         )
         target.write_text(target.read_text(encoding="utf-8") + "# external edit\n", encoding="utf-8")
 
-        result = tool.upsert_osi_metrics(
+        result = tool.semantic_editor.upsert_osi_metrics(
             str(target.relative_to(tmp_path)),
             json.dumps([_osi_metric("revenue", "SUM(amount)")]),
         )

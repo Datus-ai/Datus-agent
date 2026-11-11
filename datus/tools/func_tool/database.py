@@ -3380,8 +3380,7 @@ class DBFuncTool:
             return FuncToolResult(success=0, error=str(e))
 
     # Regex matching allowed DDL statement prefixes
-    # Preserve the retired identity for frozen grants; no extra transport is mounted.
-    @tool_contract(access="write", direct_call=True, aliases=("write_query",))
+    @tool_contract(access="write", direct_call=False)
     def execute_ddl(self, sql: str, datasource: Optional[str] = "", database: Optional[str] = "") -> FuncToolResult:
         """
         Execute a single non-read, non-DML SQL statement (the generic write path).
@@ -3779,7 +3778,7 @@ class DBFuncTool:
 
         return FuncToolResult(result={"sql": create_sql})
 
-    @tool_contract(access="write", direct_call=True)
+    @tool_contract(access="write", direct_call=False)
     def transfer_query_result(
         self,
         source_sql: str,

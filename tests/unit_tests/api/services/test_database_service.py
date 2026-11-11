@@ -392,11 +392,11 @@ class TestSemanticLayerServiceBranches:
                 yield
 
         def mutate_from_agent():
-            return agent_tool.upsert_osi_metrics("orders.yml", '[{"name":"agent_metric"}]')
+            return agent_tool.semantic_editor.upsert_osi_metrics("orders.yml", '[{"name":"agent_metric"}]')
 
         with (
             patch(
-                "datus.tools.func_tool.metric_filesystem_tools.semantic_artifact_lock",
+                "datus.tools.func_tool.semantic_model_editing_tools.semantic_artifact_lock",
                 observed_agent_lock,
             ),
             patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls,

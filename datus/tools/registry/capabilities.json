@@ -199,7 +199,7 @@
     "db_tools.execute_ddl": {
       "access": "write",
       "companion_of": null,
-      "direct_call": true
+      "direct_call": false
     },
     "db_tools.execute_sql": {
       "access": "sql",
@@ -264,19 +264,9 @@
     "db_tools.transfer_query_result": {
       "access": "write",
       "companion_of": null,
-      "direct_call": true
+      "direct_call": false
     },
     "db_tools.validate_ddl": {
-      "access": "write",
-      "companion_of": null,
-      "direct_call": true
-    },
-    "db_tools.write_query": {
-      "access": "write",
-      "companion_of": null,
-      "direct_call": true
-    },
-    "filesystem_tools.create_file": {
       "access": "write",
       "companion_of": null,
       "direct_call": true
@@ -284,22 +274,12 @@
     "filesystem_tools.delete_file": {
       "access": "write",
       "companion_of": null,
-      "direct_call": true
-    },
-    "filesystem_tools.delete_osi_datasets": {
-      "access": "write",
-      "companion_of": null,
-      "direct_call": true
-    },
-    "filesystem_tools.delete_osi_metrics": {
-      "access": "write",
-      "companion_of": null,
-      "direct_call": true
+      "direct_call": false
     },
     "filesystem_tools.edit_file": {
       "access": "write",
       "companion_of": null,
-      "direct_call": true
+      "direct_call": false
     },
     "filesystem_tools.glob": {
       "access": "read",
@@ -321,25 +301,15 @@
       "companion_of": null,
       "direct_call": true
     },
-    "filesystem_tools.upsert_osi_datasets": {
-      "access": "write",
-      "companion_of": null,
-      "direct_call": true
-    },
-    "filesystem_tools.upsert_osi_metrics": {
-      "access": "write",
-      "companion_of": null,
-      "direct_call": true
-    },
     "filesystem_tools.write_file": {
       "access": "write",
       "companion_of": null,
-      "direct_call": true
+      "direct_call": false
     },
     "lineage_tools.delete_lineage": {
       "access": "write",
       "companion_of": null,
-      "direct_call": true
+      "direct_call": false
     },
     "lineage_tools.query_lineage": {
       "access": "read",
@@ -349,7 +319,7 @@
     "lineage_tools.upsert_lineage": {
       "access": "write",
       "companion_of": null,
-      "direct_call": true
+      "direct_call": false
     },
     "memory_tools.add_memory": {
       "access": "restricted",
@@ -464,12 +434,22 @@
     "semantic_tools.bind_osi_semantic_model_target": {
       "access": "write",
       "companion_of": null,
-      "direct_call": true
+      "direct_call": false
     },
     "semantic_tools.check_semantic_object_exists": {
       "access": "read",
       "companion_of": null,
       "direct_call": true
+    },
+    "semantic_tools.delete_osi_datasets": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "semantic_tools.delete_osi_metrics": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
     },
     "semantic_tools.describe_concept": {
       "access": "read",
@@ -529,12 +509,12 @@
     "semantic_tools.publish_metrics": {
       "access": "write",
       "companion_of": null,
-      "direct_call": true
+      "direct_call": false
     },
     "semantic_tools.publish_semantic_model": {
       "access": "write",
       "companion_of": null,
-      "direct_call": true
+      "direct_call": false
     },
     "semantic_tools.query_metrics": {
       "access": "read",
@@ -549,7 +529,17 @@
     "semantic_tools.sync_osi_to_db": {
       "access": "write",
       "companion_of": null,
-      "direct_call": true
+      "direct_call": false
+    },
+    "semantic_tools.upsert_osi_datasets": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "semantic_tools.upsert_osi_metrics": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
     },
     "semantic_tools.validate_semantic": {
       "access": "read",
@@ -564,7 +554,7 @@
     "semantic_tools.write_semantic_model_plan_file": {
       "access": "write",
       "companion_of": null,
-      "direct_call": true
+      "direct_call": false
     },
     "skills.load_skill": {
       "access": "restricted",

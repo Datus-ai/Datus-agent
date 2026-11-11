@@ -954,7 +954,9 @@ class TestFilesystemZoneProfileMatrix:
             mock_tool = MagicMock()
             mock_tool.name = name
             fs_tools.append(mock_tool)
-        registry.register_tools("filesystem_tools", fs_tools)
+        for tool in fs_tools:
+            category = "semantic_tools" if "_osi_" in tool.name else "filesystem_tools"
+            registry.register_tools(category, [tool])
 
         config = PermissionConfig(
             default_permission=PermissionLevel.ASK,
@@ -1115,65 +1117,23 @@ class TestFilesystemZoneProfileMatrix:
         mock_broker.request.assert_not_called()
 
     # --------------------------------------------------------------- write-set
-    @pytest.mark.asyncio
-    async def test_is_write_set_matches_filesystem_tool_surface(self):
-        """Guard against drift: the hook's write-set must cover every write
-        method the general or OSI metric filesystem surface actually exposes.
-
-        If a new write tool (e.g. ``append_file``) is added without updating
-        ``_FILESYSTEM_WRITE_TOOLS``, the normal-profile INTERNAL gate would
-        silently regress to bypass for that tool.
-        """
+    def test_resource_access_uses_registered_capabilities(self):
+        """File mutations and semantic edits declare writes through their own providers."""
         from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
-        from datus.tools.func_tool.metric_filesystem_tools import (
-            MetricFilesystemFuncTool,
-            OsiSemanticModelFilesystemFuncTool,
-        )
+        from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
+        from datus.tools.registry.contracts import tool_definition
 
-        fs_tool = FilesystemFuncTool(root_path="/tmp")
-        tool_names = {t.name for t in fs_tool.available_tools()}
-        osi_metric_tool = MetricFilesystemFuncTool(
-            root_path="/tmp",
-            current_node="semantic_modeling",
-        )
-        osi_metric_tool_names = {t.name for t in osi_metric_tool.available_tools()}
-        osi_semantic_tool = OsiSemanticModelFilesystemFuncTool(
-            root_path="/tmp",
-            current_node="semantic_modeling",
-        )
-        osi_semantic_tool_names = {t.name for t in osi_semantic_tool.available_tools()}
-        # Every tool the filesystem surface advertises as a mutation must be
-        # declared as a write, so the normal-profile INTERNAL gate doesn't
-        # silently bypass it. Read-only tools (``read_file`` / ``glob`` /
-        # ``grep``) stay out — they have their own gate path.
-        write_names = {
-            "write_file",
-            "edit_file",
-            "delete_file",
-            "upsert_osi_metrics",
-            "delete_osi_metrics",
-            "upsert_osi_datasets",
-            "delete_osi_datasets",
-        }
-        # The hook's declared write-set must equal the writes these tools expose,
-        # not a strict subset. Both directions matter:
-        #   - subset breaks the matrix (writes get silently bypassed)
-        #   - superset means we ASK on a tool name that doesn't exist
-        assert write_names == PermissionHooks._FILESYSTEM_WRITE_TOOLS
-        assert (
-            write_names
-            - {
-                "upsert_osi_metrics",
-                "delete_osi_metrics",
-                "upsert_osi_datasets",
-                "delete_osi_datasets",
-            }
-            <= tool_names
-        )
-        assert "upsert_osi_metrics" in osi_metric_tool_names
-        assert "delete_osi_metrics" in osi_metric_tool_names
-        assert "upsert_osi_datasets" in osi_semantic_tool_names
-        assert "delete_osi_datasets" in osi_semantic_tool_names
+        filesystem = FilesystemFuncTool(root_path="/tmp")
+        editor = MetricFilesystemFuncTool(root_path="/tmp").semantic_editor
+        for tool in filesystem.available_tools():
+            definition = tool_definition(tool)
+            assert definition.category == "filesystem_tools"
+            assert definition.access == ("write" if tool.name in {"write_file", "edit_file", "delete_file"} else "read")
+        for tool in editor.available_tools():
+            definition = tool_definition(tool)
+            assert definition.category == "semantic_tools"
+            assert definition.access == "write"
+            assert definition.direct_call is False
 
 
 class TestNonInteractiveMode:
@@ -1547,7 +1507,9 @@ class TestVisualArtifactAutoAllow:
             mock_tool = MagicMock()
             mock_tool.name = name
             fs_tools.append(mock_tool)
-        registry.register_tools("filesystem_tools", fs_tools)
+        for tool in fs_tools:
+            category = "semantic_tools" if "_osi_" in tool.name else "filesystem_tools"
+            registry.register_tools(category, [tool])
 
         manager = PermissionManager(
             global_config=PermissionConfig(default_permission=PermissionLevel.ASK, rules=[]),
