@@ -345,7 +345,7 @@ async def test_semantic_authoring_base_rolls_back_terminal_failure(monkeypatch):
     node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
     node.agent_config = _agent_config()
     node.result = SimpleNamespace(success=False)
-    node.filesystem_func_tool = SimpleNamespace(
+    node.semantic_model_workspace = SimpleNamespace(
         rollback_failed_authoring=lambda: rolled_back.append(True) or True,
     )
 

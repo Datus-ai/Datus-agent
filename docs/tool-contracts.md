@@ -111,7 +111,7 @@ planning exemptions retain their existing specialized invocation rules.
 
 `filesystem_tools` contains generic file operations only. Dataset/metric upserts
 and deletes belong to `semantic_tools`, implemented by `SemanticModelEditingTools`
-with a guarded filesystem component. Their selected-target revisions, validation,
+with a shared authoring workspace. Their selected-target revisions, validation,
 mutation tracking and path boundaries are shared with raw semantic file edits.
 
 Query nodes such as `ask_metrics` instantiate `SemanticTools`, so their editor
@@ -125,3 +125,20 @@ The retired `create_file`, `write_query` and `get_dimensions` tool aliases are r
 `edit_file`, `delete_file` and `execute_ddl` remain actual Agent tools. Native
 writers without a REST/MCP export declare `direct_call=False`; registering an
 Agent SDK tool alone does not expose a transport endpoint.
+
+### Semantic authoring composition
+
+`SemanticModelFilesystemTools` in `semantic_model_filesystem_tools.py` extends
+`FilesystemFuncTool` for read/search and validated `edit_file` operations. It
+never mounts generic `write_file` or `delete_file`. Ordinary filesystem tools
+continue to use the generic implementation unchanged.
+
+`SemanticModelEditingTools` supplies the four OSI dataset/metric mutations under
+`semantic_tools`. Both providers use one request-local `SemanticModelWorkspace`
+for target revisions, complete-document validation, query-source extensions,
+mutation tracking, metric UID preparation and failure rollback. Generic path
+classification, live allowlists and execution context are reused through access
+callbacks; the object editor does not depend on a filesystem subclass. The node
+mounts both providers explicitly and invokes the workspace for finalization and
+rollback. File and object methods retain their respective permission families,
+including existing `family.*` matching.

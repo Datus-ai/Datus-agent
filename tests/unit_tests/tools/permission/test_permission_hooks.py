@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from datus.cli.execution_state import InteractionBroker
+from datus.tools.func_tool.semantic_model_editing_tools import SemanticModelEditingTools
 from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
 from datus.tools.permission import permission_hooks as permission_hooks_module
 from datus.tools.permission.permission_config import (
@@ -1120,11 +1121,11 @@ class TestFilesystemZoneProfileMatrix:
     def test_resource_access_uses_registered_capabilities(self):
         """File mutations and semantic edits declare writes through their own providers."""
         from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
-        from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
+        from datus.tools.func_tool.semantic_model_filesystem_tools import SemanticModelFilesystemTools
         from datus.tools.registry.contracts import tool_definition
 
         filesystem = FilesystemFuncTool(root_path="/tmp")
-        editor = MetricFilesystemFuncTool(root_path="/tmp").semantic_editor
+        editor = SemanticModelEditingTools(SemanticModelFilesystemTools(root_path="/tmp").workspace)
         for tool in filesystem.available_tools():
             definition = tool_definition(tool)
             assert definition.category == "filesystem_tools"

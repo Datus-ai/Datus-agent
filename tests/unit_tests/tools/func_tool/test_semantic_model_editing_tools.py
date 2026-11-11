@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
-from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
+from datus.tools.func_tool.semantic_model_editing_tools import SemanticModelEditingTools
+from datus.tools.func_tool.semantic_model_filesystem_tools import SemanticModelFilesystemTools
 from datus.tools.permission.permission_config import PermissionConfig, PermissionRule
 from datus.tools.permission.permission_hooks import FilesystemPolicy, PermissionDeniedException, PermissionHooks
 from datus.tools.permission.permission_manager import PermissionManager
@@ -21,7 +22,7 @@ def file_context(tmp_path):
     """Give both providers the same isolated working root."""
     root = tmp_path / "project"
     root.mkdir()
-    return MetricFilesystemFuncTool(root_path=str(root), strict=True)
+    return SemanticModelFilesystemTools(root_path=str(root), strict=True)
 
 
 @pytest.mark.asyncio
@@ -29,7 +30,7 @@ async def test_each_semantic_edit_keeps_strict_file_boundaries(file_context, tmp
     """All four real SDK tools reject external targets before parsing or writing."""
     target = tmp_path / "outside.yml"
     target.write_text("name: untouched\n")
-    editor = file_context.semantic_editor
+    editor = SemanticModelEditingTools(file_context.workspace)
     for tool in editor.available_tools():
         definition = tool_definition(tool)
         assert definition.tool_id == f"semantic_tools.{tool.name}"
@@ -47,7 +48,7 @@ async def test_each_semantic_edit_keeps_strict_file_boundaries(file_context, tmp
 async def test_semantic_edits_cannot_escape_workflow_root(file_context, tmp_path, profile):
     """Moving families must retain the EXTERNAL non-interactive gate."""
     registry = ToolRegistry()
-    tools = file_context.semantic_editor.available_tools()
+    tools = SemanticModelEditingTools(file_context.workspace).available_tools()
     registry.register_tools("semantic_tools", tools)
     broker = SimpleNamespace(request=AsyncMock())
     manager = PermissionManager(global_config=get_profile(profile), active_profile=profile)
@@ -70,7 +71,7 @@ async def test_semantic_edits_cannot_escape_workflow_root(file_context, tmp_path
 @pytest.mark.parametrize("profile", ["normal", "auto"])
 async def test_object_deletes_still_require_confirmation(file_context, profile):
     """A semantic domain does not convert object deletion into an internal-path bypass."""
-    tools = file_context.semantic_editor.available_tools()
+    tools = SemanticModelEditingTools(file_context.workspace).available_tools()
     registry = ToolRegistry()
     registry.register_tools("semantic_tools", tools)
     broker = SimpleNamespace(request=AsyncMock(return_value=[["y"]]))
@@ -92,7 +93,7 @@ async def test_object_deletes_still_require_confirmation(file_context, profile):
 @pytest.mark.asyncio
 async def test_restricted_host_denial_precedes_semantic_file_bypass(file_context):
     """Even AUTO cannot restore an explicitly denied semantic mutation."""
-    tools = file_context.semantic_editor.available_tools()
+    tools = SemanticModelEditingTools(file_context.workspace).available_tools()
     registry = ToolRegistry()
     registry.register_tools("semantic_tools", tools)
     config = PermissionConfig(rules=[PermissionRule(tool="semantic_tools", pattern="*", permission="deny")])
@@ -170,8 +171,8 @@ def bound_editor(tmp_path):
         )
 
     bind()
-    filesystem = MetricFilesystemFuncTool(root_path=str(tmp_path), osi_target_state=state)
-    return filesystem.semantic_editor, target, bind
+    filesystem = SemanticModelFilesystemTools(root_path=str(tmp_path), osi_target_state=state)
+    return SemanticModelEditingTools(filesystem.workspace), target, bind
 
 
 @pytest.mark.parametrize(
@@ -198,7 +199,7 @@ def test_malformed_objects_never_mutate_the_bound_model(bound_editor, method, pa
     result = getattr(editor, method)(str(target), **{parameter: payload})
     assert result.success == 0 and message.lower() in result.error.lower()
     assert target.read_bytes() == original
-    editor.filesystem.osi_target_state.require_current_revision(target)
+    editor.workspace.target_state.require_current_revision(target)
 
 
 @pytest.mark.parametrize(
@@ -257,7 +258,7 @@ def test_disk_errors_preserve_the_original_revision(bound_editor, monkeypatch, m
     """A failed atomic write reports failure without publishing a new revision."""
     editor, target, _ = bound_editor
     original = target.read_bytes()
-    monkeypatch.setattr(editor.filesystem, "_validate_osi_document", lambda _: None)
+    monkeypatch.setattr(editor.workspace, "validate_document", lambda _: None)
 
     def fail_write(*_args):
         """Simulate an unavailable disk at the atomic commit boundary."""
@@ -267,4 +268,4 @@ def test_disk_errors_preserve_the_original_revision(bound_editor, monkeypatch, m
     result = getattr(editor, method)(str(target), **{parameter: payload})
     assert result.success == 0 and "disk full" in result.error
     assert target.read_bytes() == original
-    editor.filesystem.osi_target_state.require_current_revision(target)
+    editor.workspace.target_state.require_current_revision(target)

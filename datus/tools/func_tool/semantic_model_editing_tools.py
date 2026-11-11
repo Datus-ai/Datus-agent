@@ -1,6 +1,6 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
-"""Object-level semantic editing through a guarded filesystem component."""
+"""Object-level semantic editing through a shared authoring workspace."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from datus.tools.semantic_tools.metric_identity import (
 )
 
 if TYPE_CHECKING:
-    from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
+    from datus.tools.func_tool.semantic_model_workspace import SemanticModelWorkspace
 
 
 class SemanticModelEditingTools:
@@ -28,13 +28,13 @@ class SemanticModelEditingTools:
 
     permission_category = "semantic_tools"
 
-    def __init__(self, filesystem: MetricFilesystemFuncTool):
+    def __init__(self, workspace: SemanticModelWorkspace):
         """Share path policy, target revisions and mutation tracking with raw file edits."""
-        self.filesystem = filesystem
+        self.workspace = workspace
 
     def set_tool_context(self, context: Any) -> None:
-        """Bind execution context on the filesystem component used by these operations."""
-        self.filesystem.set_tool_context(context)
+        """Bind execution context shared with the file operations in this request."""
+        self.workspace.set_tool_context(context)
 
     @classmethod
     def all_tools_name(cls) -> List[str]:
@@ -75,8 +75,8 @@ class SemanticModelEditingTools:
             datasets_json: Non-empty array of OSI dataset objects. Prefer a structured
                 array; a JSON-encoded array string is accepted for legacy callers.
         """
-        resolved = self.filesystem._classify(path)
-        policy_error = self.filesystem._reject_write_policy(resolved)
+        resolved = self.workspace.resolve_path(path)
+        policy_error = self.workspace.reject_write_policy(resolved)
         if policy_error is not None:
             return policy_error
         target_path = resolved.resolved
@@ -97,9 +97,7 @@ class SemanticModelEditingTools:
             dataset = dict(dataset)
             source = str(dataset.get("source") or "").lstrip().lower()
             if re.match(r"^(?:select|with)\s", source):
-                dataset["custom_extensions"] = self.filesystem._query_source_extensions(
-                    dataset.get("custom_extensions")
-                )
+                dataset["custom_extensions"] = self.workspace.query_source_extensions(dataset.get("custom_extensions"))
             name = str(dataset.get("name") or "").strip()
             if not name:
                 return FuncToolResult(success=0, error=f"datasets_json[{index}].name is required")
@@ -108,15 +106,13 @@ class SemanticModelEditingTools:
             incoming_by_name[name] = dataset
 
         with semantic_artifact_lock(target_path):
-            guard_error = self.filesystem._mutation_guard_error(target_path)
+            guard_error = self.workspace.mutation_guard_error(target_path)
             if guard_error is not None:
                 return guard_error
             creating = not target_path.exists()
             original_content = b""
             if creating:
-                planned = (
-                    self.filesystem.osi_target_state.planned if self.filesystem.osi_target_state is not None else None
-                )
+                planned = self.workspace.target_state.planned if self.workspace.target_state is not None else None
                 planned_name = str((planned or {}).get("semantic_model_name") or "").strip()
                 if not planned_name:
                     return FuncToolResult(
@@ -179,7 +175,7 @@ class SemanticModelEditingTools:
 
             if created or updated:
                 model["datasets"] = existing_datasets
-                validation_error = self.filesystem._validate_osi_document(document)
+                validation_error = self.workspace.validate_document(document)
                 if validation_error:
                     return FuncToolResult(
                         success=0,
@@ -188,8 +184,8 @@ class SemanticModelEditingTools:
                     )
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 try:
-                    if self.filesystem.osi_target_state is not None:
-                        self.filesystem.osi_target_state.record_artifact_snapshot(
+                    if self.workspace.target_state is not None:
+                        self.workspace.target_state.record_artifact_snapshot(
                             target_path,
                             original_content,
                             existed=not creating,
@@ -197,18 +193,18 @@ class SemanticModelEditingTools:
                     atomic_write_text(target_path, serialized)
                 except OSError as exc:
                     return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
-                self.filesystem._notify_mutation(target_path)
+                self.workspace.notify_mutation(target_path)
                 serialized_content = serialized.encode("utf-8")
             else:
                 serialized_content = original_content
-            if self.filesystem.osi_target_state is not None and self.filesystem.osi_target_state.bound is not None:
-                self.filesystem.osi_target_state.record_dataset_touch(
+            if self.workspace.target_state is not None and self.workspace.target_state.bound is not None:
+                self.workspace.target_state.record_dataset_touch(
                     target_path,
                     serialized_content,
                     list(incoming_by_name),
                 )
-            elif self.filesystem.osi_target_state is not None and self.filesystem.osi_target_state.planned is not None:
-                self.filesystem.osi_target_state.record_planned_dataset_touch([*created, *updated])
+            elif self.workspace.target_state is not None and self.workspace.target_state.planned is not None:
+                self.workspace.target_state.record_planned_dataset_touch([*created, *updated])
 
         return FuncToolResult(
             result={
@@ -234,8 +230,8 @@ class SemanticModelEditingTools:
             path: Existing, planned OSI semantic-model YAML file.
             dataset_names: Dataset business names to remove.
         """
-        resolved = self.filesystem._classify(path)
-        policy_error = self.filesystem._reject_write_policy(resolved)
+        resolved = self.workspace.resolve_path(path)
+        policy_error = self.workspace.reject_write_policy(resolved)
         if policy_error is not None:
             return policy_error
         target_path = resolved.resolved
@@ -254,7 +250,7 @@ class SemanticModelEditingTools:
             return FuncToolResult(success=0, error="dataset_names must contain at least one non-empty name")
 
         with semantic_artifact_lock(target_path):
-            guard_error = self.filesystem._mutation_guard_error(target_path)
+            guard_error = self.workspace.mutation_guard_error(target_path)
             if guard_error is not None:
                 return guard_error
             if not target_path.exists() or not target_path.is_file():
@@ -297,7 +293,7 @@ class SemanticModelEditingTools:
 
             if deleted:
                 model["datasets"] = remaining_datasets
-                validation_error = self.filesystem._validate_osi_document(document)
+                validation_error = self.workspace.validate_document(document)
                 if validation_error:
                     return FuncToolResult(
                         success=0,
@@ -306,8 +302,8 @@ class SemanticModelEditingTools:
                     )
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 try:
-                    if self.filesystem.osi_target_state is not None:
-                        self.filesystem.osi_target_state.record_artifact_snapshot(target_path, original_content)
+                    if self.workspace.target_state is not None:
+                        self.workspace.target_state.record_artifact_snapshot(target_path, original_content)
                     atomic_write_text(target_path, serialized)
                 except OSError as exc:
                     return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
@@ -317,9 +313,9 @@ class SemanticModelEditingTools:
 
             # A byte-preserving retry must still invalidate publication
             # evidence so stale semantic rows can be reconciled from the YAML.
-            self.filesystem._notify_mutation(target_path)
-            if self.filesystem.osi_target_state is not None and self.filesystem.osi_target_state.bound is not None:
-                self.filesystem.osi_target_state.record_dataset_touch(target_path, serialized_content, requested)
+            self.workspace.notify_mutation(target_path)
+            if self.workspace.target_state is not None and self.workspace.target_state.bound is not None:
+                self.workspace.target_state.record_dataset_touch(target_path, serialized_content, requested)
 
         return FuncToolResult(
             result={
@@ -359,8 +355,8 @@ class SemanticModelEditingTools:
             metrics_json: Non-empty array of complete OSI metric objects. Prefer a
                 structured array; a JSON-encoded array string is accepted for legacy callers.
         """
-        resolved = self.filesystem._classify(path)
-        policy_error = self.filesystem._reject_write_policy(resolved)
+        resolved = self.workspace.resolve_path(path)
+        policy_error = self.workspace.reject_write_policy(resolved)
         if policy_error is not None:
             return policy_error
 
@@ -385,16 +381,16 @@ class SemanticModelEditingTools:
             incoming_by_name[name] = metric
 
         target_path = resolved.resolved
-        if self.filesystem.osi_target_state is None:
+        if self.workspace.target_state is None:
             return FuncToolResult(
                 success=0,
                 error="Bind an existing OSI semantic model before authoring metrics.",
                 result={"code": "semantic_model_required"},
             )
         with semantic_artifact_lock(target_path):
-            if self.filesystem.osi_target_state is not None:
+            if self.workspace.target_state is not None:
                 try:
-                    self.filesystem._require_metric_revision(target_path)
+                    self.workspace.require_metric_revision(target_path)
                 except ValueError as exc:
                     return FuncToolResult(
                         success=0,
@@ -468,7 +464,7 @@ class SemanticModelEditingTools:
 
             if created or updated:
                 model["metrics"] = existing_metrics
-                validation_error = self.filesystem._validate_osi_document(document)
+                validation_error = self.workspace.validate_document(document)
                 if validation_error:
                     return FuncToolResult(
                         success=0,
@@ -478,17 +474,17 @@ class SemanticModelEditingTools:
 
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 try:
-                    if self.filesystem.osi_target_state is not None:
-                        self.filesystem.osi_target_state.record_artifact_snapshot(target_path, original_content)
+                    if self.workspace.target_state is not None:
+                        self.workspace.target_state.record_artifact_snapshot(target_path, original_content)
                     atomic_write_text(target_path, serialized)
                 except OSError as exc:
                     return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
-                self.filesystem._notify_mutation(target_path)
+                self.workspace.notify_mutation(target_path)
                 serialized_content = serialized.encode("utf-8")
             else:
                 serialized_content = original_content
-            if self.filesystem.osi_target_state is not None:
-                self.filesystem.osi_target_state.record_metric_touch(
+            if self.workspace.target_state is not None:
+                self.workspace.target_state.record_metric_touch(
                     target_path,
                     serialized_content,
                     list(incoming_by_name),
@@ -517,8 +513,8 @@ class SemanticModelEditingTools:
             path: Bound OSI semantic-model YAML file under the project workspace.
             metric_names: Exact metric names to remove from the model.
         """
-        resolved = self.filesystem._classify(path)
-        policy_error = self.filesystem._reject_write_policy(resolved)
+        resolved = self.workspace.resolve_path(path)
+        policy_error = self.workspace.reject_write_policy(resolved)
         if policy_error is not None:
             return policy_error
 
@@ -536,7 +532,7 @@ class SemanticModelEditingTools:
             return FuncToolResult(success=0, error="metric_names must contain at least one non-empty metric name")
 
         target_path = resolved.resolved
-        if self.filesystem.osi_target_state is None:
+        if self.workspace.target_state is None:
             return FuncToolResult(
                 success=0,
                 error="Bind an existing OSI semantic model before deleting metrics.",
@@ -545,7 +541,7 @@ class SemanticModelEditingTools:
 
         with semantic_artifact_lock(target_path):
             try:
-                self.filesystem._require_metric_revision(target_path)
+                self.workspace.require_metric_revision(target_path)
             except ValueError as exc:
                 return FuncToolResult(
                     success=0,
@@ -596,7 +592,7 @@ class SemanticModelEditingTools:
 
             if deleted:
                 model["metrics"] = remaining_metrics
-                validation_error = self.filesystem._validate_osi_document(document)
+                validation_error = self.workspace.validate_document(document)
                 if validation_error:
                     return FuncToolResult(
                         success=0,
@@ -605,7 +601,7 @@ class SemanticModelEditingTools:
                     )
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 try:
-                    self.filesystem.osi_target_state.record_artifact_snapshot(target_path, original_content)
+                    self.workspace.target_state.record_artifact_snapshot(target_path, original_content)
                     atomic_write_text(target_path, serialized)
                 except OSError as exc:
                     return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
@@ -615,8 +611,8 @@ class SemanticModelEditingTools:
 
             # Even a byte-preserving retry invalidates old publication evidence:
             # the requested names may still exist as stale rows in the KB.
-            self.filesystem._notify_mutation(target_path)
-            self.filesystem.osi_target_state.record_metric_touch(target_path, serialized_content, requested)
+            self.workspace.notify_mutation(target_path)
+            self.workspace.target_state.record_metric_touch(target_path, serialized_content, requested)
 
         return FuncToolResult(
             result={

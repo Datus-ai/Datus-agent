@@ -73,7 +73,11 @@ class TestPermissionCategoryDeclarations:
             ),
             ("datus.tools.func_tool.filesystem_tools", "FilesystemFuncTool", "filesystem_tools"),
             ("datus.tools.func_tool.memory_filesystem_tools", "MemoryFilesystemFuncTool", "filesystem_tools"),
-            ("datus.tools.func_tool.metric_filesystem_tools", "MetricFilesystemFuncTool", "filesystem_tools"),
+            (
+                "datus.tools.func_tool.semantic_model_filesystem_tools",
+                "SemanticModelFilesystemTools",
+                "filesystem_tools",
+            ),
             ("datus.tools.func_tool.memory_tools", "MemoryFuncTool", "memory_tools"),
             ("datus.tools.func_tool.scheduler_tools", "SchedulerTools", "scheduler_tools"),
             ("datus.tools.func_tool.bash_tool", "BashTool", "bash_tools"),

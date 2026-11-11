@@ -18,12 +18,13 @@ from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessa
 
 from datus.storage.semantic_model.artifact_file import semantic_artifact_lock
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
-from datus.tools.func_tool.metric_filesystem_tools import (
-    MetricFilesystemFuncTool,
-    OsiSemanticModelFilesystemFuncTool,
-    SemanticModelingFilesystemFuncTool,
-)
 from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetState
+from datus.tools.func_tool.semantic_model_editing_tools import SemanticModelEditingTools
+from datus.tools.func_tool.semantic_model_filesystem_tools import (
+    SemanticModelFilesystemTools,
+)
+from datus.tools.func_tool.semantic_model_workspace import SemanticModelWorkspace
+from datus.tools.semantic_tools.dosi.engine import datus_extension_version
 
 
 def _osi_metric(name, expression):
@@ -84,7 +85,7 @@ def identity_tool(tmp_path, osi_schema_validator):
             evidence.record_artifact_mutation(path)
             state.record_selected_write()
 
-        tool = SemanticModelingFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             osi_target_state=state,
@@ -110,7 +111,7 @@ async def test_write_tool_schema_and_invocation_accept_structured_arrays(
     identity_tool, name, parameter, objects, encoded
 ):
     tool, target, _, _ = identity_tool([])
-    exposed = next(t for t in tool.semantic_editor.available_tools() if t.name == name)
+    exposed = next(t for t in SemanticModelEditingTools(tool.workspace).available_tools() if t.name == name)
     variants = exposed.params_json_schema["properties"][parameter]["anyOf"]
     assert {v["type"] for v in variants} == {"array", "string"}
     payload = json.dumps(objects) if encoded else objects
@@ -146,10 +147,10 @@ async def test_encoded_upserts_reject_duplicate_keys_without_mutating(
     arguments = {"path": str(target), parameter: payload}
 
     if wrapped:
-        exposed = next(t for t in tool.semantic_editor.available_tools() if t.name == name)
+        exposed = next(t for t in SemanticModelEditingTools(tool.workspace).available_tools() if t.name == name)
         result = await exposed.on_invoke_tool(None, json.dumps(arguments))
     else:
-        result = getattr(tool.semantic_editor, name)(**arguments).model_dump()
+        result = getattr(SemanticModelEditingTools(tool.workspace), name)(**arguments).model_dump()
 
     assert result["success"] == 0
     assert f"Duplicate JSON key {duplicate_key!r}" in result["error"]
@@ -213,7 +214,7 @@ async def test_runner_replays_rejected_encoded_content_and_executes_corrected_re
 
     session = SQLiteSession("encoded-upsert-retry", ":memory:")
     try:
-        exposed = next(t for t in tool.semantic_editor.available_tools() if t.name == name)
+        exposed = next(t for t in SemanticModelEditingTools(tool.workspace).available_tools() if t.name == name)
         result = await Runner.run(
             Agent(name="test", model=SequenceModel(), tools=[exposed]),
             input="update the model",
@@ -238,17 +239,17 @@ def test_metric_upsert_assigns_and_preserves_host_uid(identity_tool):
 
     tool, target, state, _ = identity_tool([])
     metric = _osi_metric("revenue", "SUM(orders.amount)")
-    assert tool.semantic_editor.upsert_osi_metrics(str(target), json.dumps([metric])).success == 1
+    assert SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(str(target), json.dumps([metric])).success == 1
     authored = yaml.safe_load(target.read_bytes())["metrics"][0]
     uid = metric_uid(authored)
     assert len(uid) == 24
     first_content = target.read_bytes()
-    repeated = tool.semantic_editor.upsert_osi_metrics(str(target), json.dumps([metric]))
+    repeated = SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(str(target), json.dumps([metric]))
     assert repeated.result["unchanged"] == ["revenue"]
     assert target.read_bytes() == first_content
     metric["description"] = "Updated definition"
     metric["custom_extensions"] = [{"vendor_name": "DATUS", "data": '{"uid":"model-mistake","unit":"USD"}'}]
-    assert tool.semantic_editor.upsert_osi_metrics(str(target), json.dumps([metric])).success == 1
+    assert SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(str(target), json.dumps([metric])).success == 1
     updated = yaml.safe_load(target.read_bytes())["metrics"][0]
     assert metric_uid(updated) == uid
     assert json.loads(updated["custom_extensions"][0]["data"])["unit"] == "USD"
@@ -281,7 +282,7 @@ def test_final_uid_preparation_tracks_legacy_metrics_and_rolls_back(identity_too
     original = target.read_bytes()
     evidence.record_semantic_artifact_validation("sales", target, validation_scope="all")
     evidence.validation_passed = True
-    identities = tool.ensure_metric_uids(str(target))
+    identities = tool.workspace.ensure_metric_uids(str(target))
     assert len(identities["revenue"]) == 24
     assert state.touched_metric_names == ["revenue"]
     assert state.artifact_snapshot_content == original
@@ -289,10 +290,10 @@ def test_final_uid_preparation_tracks_legacy_metrics_and_rolls_back(identity_too
     assert not evidence.validation_passed
     assert not evidence.semantic_artifact_validation_passed("sales", target, required_scope="all")
     prepared_content = target.read_bytes()
-    assert tool.ensure_metric_uids(str(target)) == identities
+    assert tool.workspace.ensure_metric_uids(str(target)) == identities
     assert target.read_bytes() == prepared_content
     assert "ensure_metric_uids" not in {item.name for item in tool.available_tools()}
-    assert tool.rollback_failed_authoring()
+    assert tool.workspace.rollback_failed_authoring()
     assert target.read_bytes() == original
     state.require_selected_revision(target)
 
@@ -311,7 +312,7 @@ def test_final_uid_preparation_covers_metrics_created_by_edit_file(identity_tool
     assert metric_uid(edited) == ""
     evidence.record_semantic_artifact_validation("sales", target, validation_scope="all")
 
-    identities = tool.ensure_metric_uids(str(target))
+    identities = tool.workspace.ensure_metric_uids(str(target))
     prepared = yaml.safe_load(target.read_bytes())["metrics"][0]
     assert len(identities["revenue"]) == 24
     assert metric_uid(prepared) == identities["revenue"]
@@ -328,7 +329,7 @@ def test_upsert_copied_metric_assigns_distinct_host_uid(identity_tool):
     ensure_metric_uid(metric)
     tool, target, state, _ = identity_tool([metric])
     copied = {**metric, "name": "other_revenue"}
-    result = tool.semantic_editor.upsert_osi_metrics(str(target), json.dumps([copied]))
+    result = SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(str(target), json.dumps([copied]))
     assert result.success == 1
     assert result.result["created"] == ["other_revenue"]
     authored = yaml.safe_load(target.read_bytes())["metrics"]
@@ -360,11 +361,11 @@ def test_edit_file_copied_uid_is_replaced_before_final_validation(identity_tool,
     assert {name: metric for name, metric in edited.items() if name != "revenue"} == {
         metric["name"]: metric for metric in prior if metric["name"] != "revenue"
     }
-    identities = tool.ensure_metric_uids(str(target))
+    identities = tool.workspace.ensure_metric_uids(str(target))
     assert len(identities["revenue"]) == 24
     assert identities["revenue"] != metric_uid(source)
     prepared = target.read_bytes()
-    assert tool.ensure_metric_uids(str(target)) == identities
+    assert tool.workspace.ensure_metric_uids(str(target)) == identities
     assert target.read_bytes() == prepared
     state.require_selected_revision(target)
 
@@ -386,7 +387,7 @@ def test_edit_file_rename_preserves_authoritative_uid(identity_tool):
     assert renamed["name"] == "net_revenue"
     assert metric_uid(renamed) == metric_uid(source)
     assert state.touched_metric_names == ["net_revenue", "revenue"]
-    assert tool.ensure_metric_uids(str(target)) == {"net_revenue": metric_uid(source)}
+    assert tool.workspace.ensure_metric_uids(str(target)) == {"net_revenue": metric_uid(source)}
     state.require_selected_revision(target)
 
 
@@ -403,7 +404,7 @@ def test_edit_file_can_remove_metric_with_invalid_uid(identity_tool):
     assert result.success == 1
     assert yaml.safe_load(target.read_bytes())["metrics"] == []
     assert state.touched_metric_names == ["revenue"]
-    assert tool.ensure_metric_uids(str(target)) == {}
+    assert tool.workspace.ensure_metric_uids(str(target)) == {}
 
 
 @pytest.mark.parametrize("existing", [False, True])
@@ -415,14 +416,16 @@ def test_upsert_without_prior_uid_uses_host_identity(identity_tool, existing, in
     tool, target, state, _ = identity_tool([metric] if existing else [])
     metric["custom_extensions"] = [{"vendor_name": "DATUS", "data": json.dumps({"uid": incoming_uid, "unit": "USD"})}]
 
-    result = tool.semantic_editor.upsert_osi_metrics(str(target), json.dumps([metric]))
+    result = SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(str(target), json.dumps([metric]))
 
     assert result.success == 1
     authored = yaml.safe_load(target.read_bytes())["metrics"][0]
     assert metric_uid(authored) != incoming_uid
     assert len(metric_uid(authored)) == 24
     assert json.loads(authored["custom_extensions"][0]["data"])["unit"] == "USD"
-    assert tool.semantic_editor.upsert_osi_metrics(str(target), json.dumps([metric])).result["unchanged"] == ["revenue"]
+    assert SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(str(target), json.dumps([metric])).result[
+        "unchanged"
+    ] == ["revenue"]
     state.require_selected_revision(target)
 
 
@@ -438,7 +441,7 @@ def test_conflicting_metric_names_do_not_mutate_file(identity_tool, operation):
         result = tool.edit_file(str(target), original.decode("utf-8"), yaml.safe_dump(document, sort_keys=False))
     else:
         incoming = [existing, candidate] if operation == "upsert_batch" else [candidate]
-        result = tool.semantic_editor.upsert_osi_metrics(str(target), json.dumps(incoming))
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(str(target), json.dumps(incoming))
     assert result.success == 0
     assert "Metric name conflict" in result.error
     assert "revenue" in result.error and "REVENUE" in result.error
@@ -463,7 +466,7 @@ def test_edit_file_can_repair_existing_case_conflict_and_preserve_uids(identity_
     assert result.success == 1
     edited = yaml.safe_load(target.read_bytes())["metrics"]
     assert [metric_uid(metric) for metric in edited] == [metric_uid(metric) for metric in metrics]
-    assert tool.ensure_metric_uids(str(target)) == {
+    assert tool.workspace.ensure_metric_uids(str(target)) == {
         "revenue": metric_uid(metrics[0]),
         "gross_revenue": metric_uid(metrics[1]),
     }
@@ -473,11 +476,11 @@ def test_edit_file_can_repair_existing_case_conflict_and_preserve_uids(identity_
 @pytest.fixture
 def osi_schema_validator(monkeypatch):
     validator = Mock(return_value=None)
-    monkeypatch.setattr(MetricFilesystemFuncTool, "_validate_osi_document", staticmethod(validator))
+    monkeypatch.setattr(SemanticModelWorkspace, "validate_document", staticmethod(validator))
     return validator
 
 
-class TestMetricFilesystemFuncTool:
+class TestSemanticModelFilesystemTools:
     @pytest.mark.parametrize("rewrite_uid", [False, True])
     def test_osi_edit_rejects_duplicate_yaml_keys_before_writing(self, tmp_path, rewrite_uid):
         from datus.tools.semantic_tools.metric_identity import ensure_metric_uid, metric_uid
@@ -509,7 +512,7 @@ class TestMetricFilesystemFuncTool:
         if rewrite_uid:
             candidate = candidate.replace(metric_uid(metric), "model-mistake")
         on_mutation = Mock()
-        tool = SemanticModelingFilesystemFuncTool(root_path=str(tmp_path), mutation_callback=on_mutation)
+        tool = SemanticModelFilesystemTools(root_path=str(tmp_path), mutation_callback=on_mutation)
 
         rejected = tool.edit_file(str(target), original, candidate + "relationships: []\n")
 
@@ -527,16 +530,20 @@ class TestMetricFilesystemFuncTool:
         on_mutation.assert_called_once_with(target)
 
     def test_osi_available_tools_include_narrow_dataset_mutations(self, tmp_path):
-        tool = MetricFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
         )
 
-        tool_names = {tool.name for tool in [*tool.available_tools(), *tool.semantic_editor.available_tools()]}
+        tool_names = {
+            tool.name
+            for tool in [*tool.available_tools(), *SemanticModelEditingTools(tool.workspace).available_tools()]
+        }
 
         assert tool_names == {
             "read_file",
             "read_image",
+            "edit_file",
             "upsert_osi_metrics",
             "delete_osi_metrics",
             "upsert_osi_datasets",
@@ -571,7 +578,7 @@ class TestMetricFilesystemFuncTool:
         target.write_text(yaml.safe_dump(original_document, sort_keys=False), encoding="utf-8")
         original_content = target.read_bytes()
         state = _bound_state(target)
-        tool = MetricFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             mutation_guard=state.require_bound_path,
@@ -587,16 +594,16 @@ class TestMetricFilesystemFuncTool:
             },
         ]
 
-        dataset_result = tool.semantic_editor.upsert_osi_datasets(
+        dataset_result = SemanticModelEditingTools(tool.workspace).upsert_osi_datasets(
             str(target.relative_to(tmp_path)), json.dumps([repaired_dataset])
         )
-        delete_result = tool.semantic_editor.delete_osi_datasets(
+        delete_result = SemanticModelEditingTools(tool.workspace).delete_osi_datasets(
             str(target.relative_to(tmp_path)),
             ["obsolete_orders_query"],
         )
         order_count = _osi_metric("order_count", "COUNT(DISTINCT orders.order_id)")
         order_count["datatype"] = "Integer"
-        metric_result = tool.semantic_editor.upsert_osi_metrics(
+        metric_result = SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(
             str(target.relative_to(tmp_path)),
             json.dumps([order_count]),
         )
@@ -647,7 +654,7 @@ class TestMetricFilesystemFuncTool:
             },
             mode="planned",
         )
-        tool = OsiSemanticModelFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             mutation_guard=state.require_planned_path,
@@ -662,7 +669,7 @@ class TestMetricFilesystemFuncTool:
             "custom_extensions": [{"vendor_name": "DATUS", "data": '{"source_type":"query"}'}],
         }
 
-        result = tool.semantic_editor.upsert_osi_datasets(
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             [query_dataset] if structured else json.dumps([query_dataset]),
         )
@@ -677,7 +684,10 @@ class TestMetricFilesystemFuncTool:
         assert {key: value for key, value in authored_query_dataset.items() if key != "custom_extensions"} == {
             key: value for key, value in query_dataset.items() if key != "custom_extensions"
         }
-        assert json.loads(authored_query_dataset["custom_extensions"][0]["data"]) == {"source_type": "query"}
+        assert json.loads(authored_query_dataset["custom_extensions"][0]["data"]) == {
+            "source_type": "query",
+            "v": datus_extension_version(),
+        }
         assert state.target_mutated is True
         assert state.planned_dataset_names == ["retention_query_dataset"]
         assert set(tool.name for tool in tool.available_tools()) == {
@@ -706,7 +716,7 @@ class TestMetricFilesystemFuncTool:
             },
             mode="planned",
         )
-        tool = OsiSemanticModelFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             mutation_guard=state.require_planned_path,
@@ -714,7 +724,7 @@ class TestMetricFilesystemFuncTool:
             osi_target_state=state,
         )
 
-        result = tool.semantic_editor.upsert_osi_datasets(
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps([{"name": "orders", "source": "SELECT * FROM analytics.orders"}]),
         )
@@ -740,7 +750,7 @@ class TestMetricFilesystemFuncTool:
             },
             mode="planned",
         )
-        tool = OsiSemanticModelFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             mutation_guard=state.require_planned_path,
@@ -795,7 +805,7 @@ class TestMetricFilesystemFuncTool:
             },
             mode="planned",
         )
-        tool = OsiSemanticModelFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             mutation_guard=state.require_planned_path,
@@ -803,7 +813,7 @@ class TestMetricFilesystemFuncTool:
             osi_target_state=state,
         )
 
-        result = tool.semantic_editor.delete_osi_datasets(
+        result = SemanticModelEditingTools(tool.workspace).delete_osi_datasets(
             str(target.relative_to(tmp_path)),
             [" Customers ", "customers", "missing_dataset"],
         )
@@ -821,14 +831,16 @@ class TestMetricFilesystemFuncTool:
         assert state.target_mutated is True
 
         after_delete = target.read_bytes()
-        retry = tool.semantic_editor.delete_osi_datasets(str(target.relative_to(tmp_path)), ["customers"])
+        retry = SemanticModelEditingTools(tool.workspace).delete_osi_datasets(
+            str(target.relative_to(tmp_path)), ["customers"]
+        )
 
         assert retry.success == 1
         assert retry.result["deleted"] == []
         assert retry.result["already_absent"] == ["customers"]
         assert target.read_bytes() == after_delete
 
-        restored = tool.semantic_editor.upsert_osi_datasets(
+        restored = SemanticModelEditingTools(tool.workspace).upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps([{"name": "Customers", "source": "analytics.customers"}]),
         )
@@ -848,7 +860,7 @@ class TestMetricFilesystemFuncTool:
         )
         original = target.read_bytes()
         validator = Mock(return_value="datasets: [] should be non-empty")
-        monkeypatch.setattr(MetricFilesystemFuncTool, "_validate_osi_document", staticmethod(validator))
+        monkeypatch.setattr(SemanticModelWorkspace, "validate_document", staticmethod(validator))
         state = OsiSemanticModelTargetState()
         state.select(
             {
@@ -859,14 +871,16 @@ class TestMetricFilesystemFuncTool:
             },
             mode="planned",
         )
-        tool = OsiSemanticModelFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             mutation_guard=state.require_planned_path,
             mutation_callback=state.record_planned_write,
         )
 
-        result = tool.semantic_editor.delete_osi_datasets(str(target.relative_to(tmp_path)), ["orders"])
+        result = SemanticModelEditingTools(tool.workspace).delete_osi_datasets(
+            str(target.relative_to(tmp_path)), ["orders"]
+        )
 
         assert result.success == 0
         assert "should be non-empty" in result.error
@@ -880,7 +894,7 @@ class TestMetricFilesystemFuncTool:
     ):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         state = _planned_state(target)
-        tool = OsiSemanticModelFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             mutation_guard=state.require_planned_path,
@@ -888,7 +902,7 @@ class TestMetricFilesystemFuncTool:
             osi_target_state=state,
         )
 
-        result = tool.semantic_editor.upsert_osi_datasets(
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps([{"name": "orders", "source": "analytics.orders"}]),
         )
@@ -915,8 +929,8 @@ class TestMetricFilesystemFuncTool:
         )
         original = target.read_text(encoding="utf-8")
         validator = Mock(return_value="datasets must not be empty")
-        monkeypatch.setattr(MetricFilesystemFuncTool, "_validate_osi_document", staticmethod(validator))
-        tool = OsiSemanticModelFilesystemFuncTool(
+        monkeypatch.setattr(SemanticModelWorkspace, "validate_document", staticmethod(validator))
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
         )
@@ -951,7 +965,7 @@ class TestMetricFilesystemFuncTool:
             ),
             encoding="utf-8",
         )
-        tool = OsiSemanticModelFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
         )
@@ -960,7 +974,7 @@ class TestMetricFilesystemFuncTool:
             "source": "SELECT user_id FROM newly_retained_users",
         }
 
-        result = tool.semantic_editor.upsert_osi_datasets(
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps([conflicting_dataset]),
         )
@@ -991,7 +1005,7 @@ class TestMetricFilesystemFuncTool:
             ),
             encoding="utf-8",
         )
-        tool = OsiSemanticModelFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
         )
@@ -1000,7 +1014,7 @@ class TestMetricFilesystemFuncTool:
             "source": "SELECT user_id\nFROM retained_users",
         }
 
-        result = tool.semantic_editor.upsert_osi_datasets(
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps([incoming_dataset]),
         )
@@ -1037,7 +1051,7 @@ class TestMetricFilesystemFuncTool:
         target = model_dir / "sales.yml"
         state = _planned_state(target)
         evidence = GenerationEvidence()
-        tool = OsiSemanticModelFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             mutation_guard=state.require_planned_path,
@@ -1046,7 +1060,7 @@ class TestMetricFilesystemFuncTool:
             generation_evidence=evidence,
         )
 
-        result = tool.semantic_editor.upsert_osi_datasets(
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps(
                 [
@@ -1085,13 +1099,13 @@ class TestMetricFilesystemFuncTool:
             encoding="utf-8",
         )
         evidence = GenerationEvidence()
-        tool = OsiSemanticModelFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             generation_evidence=evidence,
         )
 
-        result = tool.semantic_editor.upsert_osi_datasets(
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps(
                 [
@@ -1109,7 +1123,7 @@ class TestMetricFilesystemFuncTool:
         dataset = yaml.safe_load(target.read_text(encoding="utf-8"))["datasets"][0]
         assert dataset["source"] == exact_sql
         extension_data = json.loads(dataset["custom_extensions"][0]["data"])
-        assert extension_data == {"source_type": "query"}
+        assert extension_data == {"source_type": "query", "v": datus_extension_version()}
 
     def test_generated_query_can_replace_same_named_dataset_source(
         self,
@@ -1136,13 +1150,13 @@ class TestMetricFilesystemFuncTool:
         )
         exact_sql = "SELECT user_id FROM retained_users WHERE cohort = 'current'"
         evidence = GenerationEvidence()
-        tool = OsiSemanticModelFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             generation_evidence=evidence,
         )
 
-        result = tool.semantic_editor.upsert_osi_datasets(
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps(
                 [
@@ -1163,17 +1177,20 @@ class TestMetricFilesystemFuncTool:
         osi_schema_validator.assert_called_once()
 
     def test_query_source_extension_always_serializes_data_as_json(self, tmp_path):
-        tool = OsiSemanticModelFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
         )
 
-        extensions = tool._query_source_extensions([{"vendor_name": "DATUS", "data": {"owner": "semantic-authoring"}}])
+        extensions = tool.workspace.query_source_extensions(
+            [{"vendor_name": "DATUS", "data": {"owner": "semantic-authoring"}}]
+        )
 
         assert isinstance(extensions[0]["data"], str)
         assert json.loads(extensions[0]["data"]) == {
             "owner": "semantic-authoring",
             "source_type": "query",
+            "v": datus_extension_version(),
         }
 
     def test_existing_query_backed_dataset_can_be_replaced_with_physical_source(
@@ -1195,12 +1212,12 @@ class TestMetricFilesystemFuncTool:
             ),
             encoding="utf-8",
         )
-        tool = OsiSemanticModelFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
         )
 
-        result = tool.semantic_editor.upsert_osi_datasets(
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps(
                 [
@@ -1256,7 +1273,7 @@ metrics:
             encoding="utf-8",
         )
         before = yaml.safe_load(target.read_text(encoding="utf-8"))
-        tool = MetricFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(project),
             current_node="semantic_modeling",
             osi_target_state=_bound_state(target),
@@ -1271,7 +1288,7 @@ metrics:
             _osi_metric("order_count", "COUNT(*)"),
         ]
         original_incoming = json.dumps(incoming)
-        result = tool.semantic_editor.upsert_osi_metrics(
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(
             "subject/semantic_models/warehouse/sales.yml", incoming if structured else json.dumps(incoming)
         )
 
@@ -1310,14 +1327,14 @@ metrics:
         evidence = GenerationEvidence(validation_passed=True, metric_kb_sync_passed=True)
         evidence.record_semantic_artifact_validation("sales", target)
         state = _bound_state(target)
-        tool = MetricFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             osi_target_state=state,
             mutation_callback=evidence.invalidate_artifact_evidence,
         )
 
-        result = tool.semantic_editor.delete_osi_metrics(
+        result = SemanticModelEditingTools(tool.workspace).delete_osi_metrics(
             str(target.relative_to(tmp_path)),
             ["revenue", "missing_metric", "revenue", ""],
         )
@@ -1354,22 +1371,22 @@ metrics:
         )
         original = target.read_bytes()
         state = _bound_state(target)
-        tool = MetricFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             osi_target_state=state,
         )
         path = str(target.relative_to(tmp_path))
 
-        assert tool.semantic_editor.delete_osi_metrics(path, [" Revenue "]).success == 1
+        assert SemanticModelEditingTools(tool.workspace).delete_osi_metrics(path, [" Revenue "]).success == 1
         assert state.touched_metric_names == ["Revenue"]
 
-        assert tool.semantic_editor.upsert_osi_metrics(path, json.dumps([metric])).success == 1
+        assert SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(path, json.dumps([metric])).success == 1
         assert state.touched_metric_names == ["Revenue"]
 
-        assert tool.semantic_editor.delete_osi_metrics(path, ["revenue"]).success == 1
+        assert SemanticModelEditingTools(tool.workspace).delete_osi_metrics(path, ["revenue"]).success == 1
         assert state.touched_metric_names == ["Revenue"]
-        assert tool.rollback_failed_authoring() is True
+        assert tool.workspace.rollback_failed_authoring() is True
         assert target.read_bytes() == original
         assert state.touched_metric_names == []
 
@@ -1383,14 +1400,16 @@ metrics:
         original = target.read_bytes()
         mutation_callback = Mock()
         state = _bound_state(target)
-        tool = MetricFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             osi_target_state=state,
             mutation_callback=mutation_callback,
         )
 
-        result = tool.semantic_editor.delete_osi_metrics(str(target.relative_to(tmp_path)), ["stale_metric"])
+        result = SemanticModelEditingTools(tool.workspace).delete_osi_metrics(
+            str(target.relative_to(tmp_path)), ["stale_metric"]
+        )
 
         assert result.success == 1
         assert result.result["already_absent"] == ["stale_metric"]
@@ -1413,14 +1432,14 @@ metrics:
             metric_kb_sync_passed=True,
         )
         evidence.record_semantic_artifact_validation("sales", target)
-        tool = MetricFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             osi_target_state=_bound_state(target),
             mutation_callback=evidence.invalidate_artifact_evidence,
         )
 
-        result = tool.semantic_editor.upsert_osi_metrics(
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(
             str(target.relative_to(tmp_path)),
             json.dumps([_osi_metric("revenue", "SUM(amount)")]),
         )
@@ -1441,24 +1460,24 @@ metrics:
         original = target.read_bytes()
         state = _bound_state(target)
         state.planned_dataset_names = ["orders"]
-        tool = MetricFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             osi_target_state=state,
         )
 
-        result = tool.semantic_editor.upsert_osi_metrics(
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(
             str(target.relative_to(tmp_path)),
             json.dumps([_osi_metric("revenue", "SUM(amount)")]),
         )
 
         assert result.success == 1
         assert target.read_bytes() != original
-        assert tool.rollback_failed_authoring() is True
+        assert tool.workspace.rollback_failed_authoring() is True
         assert target.read_bytes() == original
         assert state.touched_metric_names == []
         assert state.planned_dataset_names == []
-        assert tool.rollback_failed_authoring() is False
+        assert tool.workspace.rollback_failed_authoring() is False
 
     def test_full_authoring_failure_restores_artifact_before_dataset_changes(self, tmp_path, osi_schema_validator):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
@@ -1486,7 +1505,7 @@ metrics:
             if state.planned is not None:
                 state.record_planned_write()
 
-        tool = SemanticModelingFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             osi_target_state=state,
@@ -1496,7 +1515,8 @@ metrics:
         path = str(target.relative_to(tmp_path))
 
         assert (
-            tool.semantic_editor.upsert_osi_datasets(
+            SemanticModelEditingTools(tool.workspace)
+            .upsert_osi_datasets(
                 path,
                 json.dumps(
                     [
@@ -1504,7 +1524,8 @@ metrics:
                         {"name": "customers", "source": "customers"},
                     ]
                 ),
-            ).success
+            )
+            .success
             == 1
         )
         state.select(
@@ -1517,13 +1538,13 @@ metrics:
             mode="bound",
         )
         assert (
-            tool.semantic_editor.upsert_osi_metrics(
-                path, json.dumps([_osi_metric("revenue", "SUM(orders.amount)")])
-            ).success
+            SemanticModelEditingTools(tool.workspace)
+            .upsert_osi_metrics(path, json.dumps([_osi_metric("revenue", "SUM(orders.amount)")]))
+            .success
             == 1
         )
 
-        assert tool.rollback_failed_authoring() is True
+        assert tool.workspace.rollback_failed_authoring() is True
         assert target.read_bytes() == original
         assert state.touched_metric_names == []
         assert state.touched_dataset_names == []
@@ -1532,7 +1553,7 @@ metrics:
     def test_failed_new_model_authoring_removes_created_artifact(self, tmp_path, osi_schema_validator):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         state = _planned_state(target)
-        tool = SemanticModelingFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             osi_target_state=state,
@@ -1540,24 +1561,24 @@ metrics:
             mutation_callback=lambda _path: state.record_planned_write(),
         )
 
-        result = tool.semantic_editor.upsert_osi_datasets(
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps([{"name": "orders", "source": "orders"}]),
         )
 
         assert result.success == 1
         assert target.is_file()
-        assert tool.rollback_failed_authoring() is True
+        assert tool.workspace.rollback_failed_authoring() is True
         assert not target.exists()
 
     def test_semantic_modeling_stamps_query_source_with_runtime_dosi_version(self, tmp_path):
-        tool = SemanticModelingFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
         )
 
         with patch("datus.tools.semantic_tools.dosi.engine.datus_extension_version", return_value="1.3"):
-            extensions = tool._query_source_extensions([])
+            extensions = tool.workspace.query_source_extensions([])
 
         assert json.loads(extensions[0]["data"]) == {"source_type": "query", "v": "1.3"}
 
@@ -1567,13 +1588,13 @@ metrics:
         target.write_text("name: model\ndatasets: []\n", encoding="utf-8")
         state = _bound_state(target)
         state.record_artifact_snapshot(target, b"\xff")
-        tool = MetricFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             osi_target_state=state,
         )
 
-        assert tool.rollback_failed_authoring() is False
+        assert tool.workspace.rollback_failed_authoring() is False
         assert state.artifact_snapshot_content == b"\xff"
 
     def test_failed_metric_authoring_rollback_returns_false_on_write_error(self, tmp_path, monkeypatch):
@@ -1582,17 +1603,17 @@ metrics:
         target.write_text("name: model\ndatasets: []\n", encoding="utf-8")
         state = _bound_state(target)
         state.record_artifact_snapshot(target, target.read_bytes())
-        tool = MetricFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             osi_target_state=state,
         )
         monkeypatch.setattr(
-            "datus.tools.func_tool.metric_filesystem_tools.atomic_write_text",
+            "datus.tools.func_tool.semantic_model_workspace.atomic_write_text",
             Mock(side_effect=OSError("disk full")),
         )
 
-        assert tool.rollback_failed_authoring() is False
+        assert tool.workspace.rollback_failed_authoring() is False
         assert state.artifact_snapshot_content == b"name: model\ndatasets: []\n"
 
     def test_identical_upsert_preserves_bytes_and_registers_publish_scope(self, tmp_path, osi_schema_validator):
@@ -1615,14 +1636,16 @@ metrics:
         original_content = target.read_bytes()
         mutation_callback = Mock()
         state = _bound_state(target)
-        tool = MetricFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             osi_target_state=state,
             mutation_callback=mutation_callback,
         )
 
-        result = tool.semantic_editor.upsert_osi_metrics(str(target.relative_to(tmp_path)), json.dumps([metric]))
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(
+            str(target.relative_to(tmp_path)), json.dumps([metric])
+        )
 
         assert result.success == 1
         assert result.result["created"] == []
@@ -1641,13 +1664,13 @@ metrics:
         document["metrics"] = invalid_metrics
         original = yaml.safe_dump(document, sort_keys=False)
         target.write_text(original, encoding="utf-8")
-        tool = MetricFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             osi_target_state=_bound_state(target),
         )
 
-        result = tool.semantic_editor.upsert_osi_metrics(
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(
             str(target.relative_to(tmp_path)), json.dumps([_osi_metric("revenue", "SUM(amount)")])
         )
 
@@ -1660,14 +1683,14 @@ metrics:
         target.parent.mkdir(parents=True)
         original = "version: 0.2.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: orders\n"
         target.write_text(original, encoding="utf-8")
-        tool = MetricFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             osi_target_state=_bound_state(target),
         )
         osi_schema_validator.return_value = "metric expression is required"
 
-        result = tool.semantic_editor.upsert_osi_metrics(
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(
             str(target.relative_to(tmp_path)),
             json.dumps([{"name": "revenue"}]),
         )
@@ -1685,12 +1708,12 @@ metrics:
         )
         target_state = _bound_state(target)
         tools = [
-            MetricFilesystemFuncTool(
+            SemanticModelFilesystemTools(
                 root_path=str(tmp_path),
                 current_node="semantic_modeling",
                 osi_target_state=target_state,
             ),
-            MetricFilesystemFuncTool(
+            SemanticModelFilesystemTools(
                 root_path=str(tmp_path),
                 current_node="semantic_modeling",
                 osi_target_state=target_state,
@@ -1701,7 +1724,7 @@ metrics:
 
         def upsert_from_second_tool():
             second_started.set()
-            return tools[1].semantic_editor.upsert_osi_metrics(
+            return SemanticModelEditingTools(tools[1].workspace).upsert_osi_metrics(
                 relative_path, json.dumps([_osi_metric("order_count", "COUNT(*)")])
             )
 
@@ -1712,7 +1735,7 @@ metrics:
                 assert not second_result.done()
             results = [
                 second_result.result(),
-                tools[0].semantic_editor.upsert_osi_metrics(
+                SemanticModelEditingTools(tools[0].workspace).upsert_osi_metrics(
                     relative_path, json.dumps([_osi_metric("revenue", "SUM(amount)")])
                 ),
             ]
@@ -1722,12 +1745,12 @@ metrics:
         assert {metric["name"] for metric in metrics} == {"revenue", "order_count"}
 
     def test_upsert_osi_metrics_requires_existing_model(self, tmp_path):
-        tool = MetricFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
         )
 
-        result = tool.semantic_editor.upsert_osi_metrics(
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(
             "subject/semantic_models/warehouse/sales.yml",
             json.dumps([_osi_metric("revenue", "SUM(amount)")]),
         )
@@ -1742,34 +1765,34 @@ metrics:
         for path, name in ((selected, "selected"), (other, "other")):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(f"'name: '{name}\n    datasets: []\n", encoding="utf-8")
-        tool = MetricFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             osi_target_state=_bound_state(selected, "selected"),
         )
 
-        result = tool.semantic_editor.upsert_osi_metrics(
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(
             str(other.relative_to(tmp_path)),
             json.dumps([_osi_metric("revenue", "SUM(amount)")]),
         )
 
         assert not result.success
         assert result.result["code"] == "semantic_model_target_invalid"
-        assert "bound to" in result.error
+        assert "limited to" in result.error
 
     def test_upsert_osi_metrics_rejects_target_changed_since_bind(self, tmp_path):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text("name: sales\ndatasets: []\n", encoding="utf-8")
         state = _bound_state(target)
-        tool = MetricFilesystemFuncTool(
+        tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
             osi_target_state=state,
         )
         target.write_text(target.read_text(encoding="utf-8") + "# external edit\n", encoding="utf-8")
 
-        result = tool.semantic_editor.upsert_osi_metrics(
+        result = SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(
             str(target.relative_to(tmp_path)),
             json.dumps([_osi_metric("revenue", "SUM(amount)")]),
         )
@@ -1777,43 +1800,3 @@ metrics:
         assert not result.success
         assert result.result["code"] == "semantic_model_target_invalid"
         assert "changed after selection" in result.error
-
-
-class TestEditFile:
-    """Tests for MetricFilesystemFuncTool.edit_file — covers lines 65-97."""
-
-    def test_edit_file_in_semantic_yaml(self, tmp_path):
-        project = tmp_path / "project"
-        target = project / "subject" / "semantic_models" / "orders.yml"
-        target.parent.mkdir(parents=True)
-        target.write_text("data_source:\n  name: orders\n  description: old\n", encoding="utf-8")
-        tool = MetricFilesystemFuncTool(root_path=str(project), current_node="semantic_modeling")
-        result = tool.edit_file(
-            "subject/semantic_models/orders.yml",
-            "description: old",
-            "description: new",
-        )
-        assert result.success == 1
-        assert "description: new" in target.read_text(encoding="utf-8")
-
-    def test_edit_file_old_string_not_found(self, tmp_path):
-        project = tmp_path / "project"
-        target = project / "subject" / "semantic_models" / "orders.yml"
-        target.parent.mkdir(parents=True)
-        target.write_text("data_source:\n  name: orders\n", encoding="utf-8")
-        tool = MetricFilesystemFuncTool(root_path=str(project), current_node="semantic_modeling")
-        result = tool.edit_file(
-            "subject/semantic_models/orders.yml",
-            "nonexistent string",
-            "replacement",
-        )
-        assert result.success == 0
-
-    def test_edit_file_outside_semantic_yaml_no_postprocess(self, tmp_path):
-        project = tmp_path / "project"
-        project.mkdir(parents=True)
-        target = project / "notes.txt"
-        target.write_text("hello world\n", encoding="utf-8")
-        tool = MetricFilesystemFuncTool(root_path=str(project), current_node="semantic_modeling")
-        result = tool.edit_file("notes.txt", "hello", "goodbye")
-        assert result.success == 1

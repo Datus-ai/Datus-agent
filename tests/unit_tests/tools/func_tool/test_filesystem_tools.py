@@ -1029,9 +1029,8 @@ class TestConcurrentMutationsDoNotLoseUpdates:
     def test_an_edit_waits_for_a_semantic_artifact_writer(self, tmp_path):
         """The two writer paths must exclude each other, not merely share a name.
 
-        `MetricFilesystemFuncTool` subclasses `FilesystemFuncTool`, so one object serves both the
-        semantic-artifact writes (which take the lock under their own name) and the generic
-        `edit_file` it inherits. Separate registries would leave them free to interleave on one
+        Semantic-artifact writers and generic `FilesystemFuncTool.edit_file` can target the
+        same file, including through different tool instances. Separate registries would leave them free to interleave on one
         file. Asserted through behaviour - the edit must not complete while the artifact lock is
         held - rather than by comparing the two names for identity.
         """

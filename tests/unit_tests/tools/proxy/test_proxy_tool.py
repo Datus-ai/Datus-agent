@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from datus.tools.func_tool.semantic_model_editing_tools import SemanticModelEditingTools
 from datus.tools.proxy.proxy_tool import (
     _FS_DEPENDENT_NODES,
     _matches,
@@ -721,9 +722,9 @@ class TestProxiedToolNames:
 
 def test_semantic_editors_keep_server_state_when_proxy_patterns_match(tmp_path):
     """Object edits share local target revisions and must not be sent to the client."""
-    from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
+    from datus.tools.func_tool.semantic_model_filesystem_tools import SemanticModelFilesystemTools
 
-    tools = MetricFilesystemFuncTool(root_path=str(tmp_path)).semantic_editor.available_tools()
+    tools = SemanticModelEditingTools(SemanticModelFilesystemTools(root_path=str(tmp_path)).workspace).available_tools()
     registry = ToolRegistry()
     registry.register_tools("semantic_tools", tools)
     node = SimpleNamespace(

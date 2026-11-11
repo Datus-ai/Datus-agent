@@ -243,12 +243,6 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             semantic_model_name=semantic_model_name,
         )
 
-    def _make_filesystem_tool(self, **kwargs):
-        from datus.tools.func_tool.metric_filesystem_tools import SemanticModelingFilesystemFuncTool
-
-        kwargs["filesystem_tool_cls"] = SemanticModelingFilesystemFuncTool
-        return super()._make_filesystem_tool(**kwargs)
-
     def _semantic_modeling_mutation_guard(self, path: str):
         return self.osi_target_state.require_selected_path(path)
 
@@ -257,19 +251,23 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         self.osi_target_state.record_selected_write()
 
     def _setup_filesystem_tools(self):
+        """Mount file and object tools against the same authoring workspace."""
+        from datus.tools.func_tool.semantic_model_editing_tools import SemanticModelEditingTools
+
         try:
             self.filesystem_func_tool = self._make_filesystem_tool(
                 mutation_guard=self._semantic_modeling_mutation_guard,
                 mutation_callback=self._record_semantic_modeling_mutation,
             )
+            self.semantic_model_workspace = self.filesystem_func_tool.workspace
+            self.semantic_model_editing_tools = SemanticModelEditingTools(self.semantic_model_workspace)
             filesystem_tools = [
                 tool
                 for tool in [
                     *self.filesystem_func_tool.available_tools(),
-                    *self.filesystem_func_tool.semantic_editor.available_tools(),
+                    *self.semantic_model_editing_tools.available_tools(),
                 ]
-                if tool.name != "delete_file"
-                and not (
+                if not (
                     self.authoring_scope == "datasets" and tool.name in {"upsert_osi_metrics", "delete_osi_metrics"}
                 )
             ]
@@ -470,7 +468,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             raise RuntimeError(f"Cannot inspect the selected semantic model for scope enforcement: {exc}") from exc
         if self._metric_definitions(state.artifact_snapshot_content) == self._metric_definitions(current_content):
             return
-        rolled_back = bool(self.filesystem_func_tool and self.filesystem_func_tool.rollback_failed_authoring())
+        rolled_back = bool(self.semantic_model_workspace and self.semantic_model_workspace.rollback_failed_authoring())
         rollback_suffix = " The semantic-model YAML was restored." if rolled_back else ""
         raise RuntimeError(
             "Datasets-only semantic_modeling cannot create, update, or delete metrics." + rollback_suffix
@@ -503,7 +501,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
     def _finalize_selected_osi_artifact(self) -> str:
         """Validate and fully reconcile one target YAML before returning success."""
         semantic_model_file, resolved, model_name = self._selected_osi_artifact()
-        metric_uids = self.filesystem_func_tool.ensure_metric_uids(resolved)
+        metric_uids = self.semantic_model_workspace.ensure_metric_uids(resolved)
         uid_sync_names = self.generation_tools.metric_names_needing_uid_sync(resolved, metric_uids)
         if uid_sync_names:
             self.osi_target_state.record_metric_touch(resolved, None, uid_sync_names)
