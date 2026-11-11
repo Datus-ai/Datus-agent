@@ -23,7 +23,7 @@ class FilesystemTools:
 ```
 
 Both `access` and `direct_call` are required. Effects are `read`, `write`, `sql`,
-`execute`, and `restricted`. Review the actual implementation before declaring
+`execute`, `session`, and `restricted`. Review the actual implementation before declaring
 a reader: a method name does not establish safety. Mixed or caller-controlled
 operations that have not been reviewed for publication remain `restricted`.
 SQL retains its statement-level classification and connector guards.
@@ -59,7 +59,7 @@ on every code PR, independently of impacted-test selection.
 It does not depend on which tools have been instantiated. Duplicate canonical
 identities must agree on their contract; paging companions must name an existing
 non-companion owner with the same effect. Unclassified tools remain denied on
-restricted hosts. Existing family restrictions cannot be relaxed by declarations.
+restricted hosts. Known readers remain readable within their node grants; family restrictions still deny writes and unknown methods.
 
 ## Dynamic tools and wrappers
 
@@ -91,7 +91,7 @@ those paths. Final node assembly verifies registration before visibility filteri
 including when plugins or permission-based visibility are disabled.
 
 An external MCP/provider tool is not automatically trusted because it reports
-itself as a reader. Existing external/restricted family policy remains unchanged;
+itself as a reader. Reviewed reads in mixed families are allowed within explicit node grants;
 a dynamic registration alone does not add an external reader to the native
 publication inventory.
 
@@ -142,3 +142,25 @@ callbacks; the object editor does not depend on a filesystem subclass. The node
 mounts both providers explicitly and invokes the workspace for finalization and
 rollback. File and object methods retain their respective permission families,
 including existing `family.*` matching.
+
+## Default readers and session channels
+
+Normal and auto profiles derive exact read grants from the generated catalog.
+Operator and node overrides remain authoritative for resource access. Publication
+uses the same effects: a declared reader can survive a mixed-family restriction,
+but must still match the node selection and frozen version grant. Empty ask-node
+selections remain empty. SQL, filesystem paths and Skill names retain their own
+resource checks. `load_file_as_table` remains restricted because registration and
+materialization create database objects; `inspect_only` does not make the whole
+method a reader. Credential/adapter getters and authoring target binding are not
+read tools merely because their names resemble queries.
+
+`session` identifies channels that only interact with the user or hold this
+run's plan/result: ask_user, confirm_plan, todo helpers, submit_task_result and
+select_final_metric_result. They do not require resource grants and must never
+be exported as direct REST/MCP calls or companions. Visibility and invocation
+consult the same declaration, so a node DENY cannot remove the channel it needs
+to ask a question or return its result. Nodes still decide whether to mount these
+channels (for example, workflow runs do not mount ask_user). read_tool_result is
+a reader, not a session mutation; it is always granted as session infrastructure
+on publications, and the result store itself enforces session ownership.

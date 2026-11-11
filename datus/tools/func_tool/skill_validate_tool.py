@@ -37,7 +37,7 @@ class SkillValidateTool:
 
     permission_category: str = "tools"
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def validate_skill(self, skill_path: str) -> FuncToolResult:
         """Validate a SKILL.md file and report any issues.
 

@@ -301,7 +301,7 @@ class PlanTool:
     def _overview_items(todo_list: TodoList) -> List[dict]:
         return [{"id": it.id, "title": it.title, "status": it.status.value} for it in todo_list.items]
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="session", direct_call=False)
     def todo_list(self) -> FuncToolResult:
         """Return an overview of all todos in the current session.
 
@@ -334,7 +334,7 @@ class PlanTool:
             }
         )
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="session", direct_call=False)
     def todo_read(self, todo_id: int) -> FuncToolResult:
         """Read the full detail of a single todo item by id.
 
@@ -359,7 +359,7 @@ class PlanTool:
             }
         )
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="session", direct_call=False)
     def todo_write(self, todos_json: str) -> FuncToolResult:
         """Append new todo items to the current list (does NOT overwrite).
 
@@ -448,7 +448,7 @@ class PlanTool:
             }
         )
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="session", direct_call=False)
     def todo_update(self, todo_id: int, status: str) -> FuncToolResult:
         """Update a todo item's status.
 
@@ -512,7 +512,7 @@ class ConfirmPlanTool:
     def available_tools(self) -> List[Tool]:
         return [trans_to_function_tool(self.confirm_plan)]
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="session", direct_call=False)
     async def confirm_plan(self) -> FuncToolResult:
         """Confirm the current plan with the user.
 

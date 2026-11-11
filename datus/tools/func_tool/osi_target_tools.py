@@ -473,7 +473,7 @@ class OsiSemanticModelTargetTools:
         except Exception as exc:
             return self._plan_failure(f"Failed to plan OSI semantic-model target: {exc}")
 
-    @tool_contract(access="restricted", direct_call=True)
+    @tool_contract(access="read", direct_call=True)
     def list_existing_osi_semantic_models(self) -> FuncToolResult:
         """Return the live YAML inventory for LLM semantic target selection."""
         try:

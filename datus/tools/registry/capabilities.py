@@ -4,7 +4,8 @@
 
 Methods declare their contract beside their implementation. The catalog compiler
 and packaging hook generate capabilities.json; this module has no manual method
-list. Family restrictions remain host policy and cannot be relaxed by a method.
+list. Restricted families deny mutations and unknown methods, not declared reads
+or session-local interaction channels.
 """
 
 import json
@@ -49,7 +50,10 @@ TOOL_CAPABILITIES = _load_catalog()
 
 
 def tool_capability(tool_id: str) -> ToolCapability | None:
-    """Resolve a declared method while retaining host-wide family restrictions."""
-    if tool_id.split(".", 1)[0] in DENIED_TOOL_FAMILIES:
+    """Resolve safe declarations before applying the family's mutation restriction."""
+    capability = TOOL_CAPABILITIES.get(tool_id)
+    if tool_id.split(".", 1)[0] in DENIED_TOOL_FAMILIES and (
+        capability is None or capability.access not in {"read", "session"}
+    ):
         return ToolCapability("restricted", direct_call=False)
-    return TOOL_CAPABILITIES.get(tool_id)
+    return capability

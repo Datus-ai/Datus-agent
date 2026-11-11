@@ -2402,7 +2402,7 @@ class DBFuncTool:
         return exclusive, None
 
     @mcp_tool()
-    @tool_contract(access="restricted", direct_call=True)
+    @tool_contract(access="read", direct_call=True)
     def plan_datasource(
         self,
         ddl: str,
@@ -2686,7 +2686,7 @@ class DBFuncTool:
         return {"removed": removed, "added": added, "kept": len(names) - len(added)}
 
     @mcp_tool()
-    @tool_contract(access="restricted", direct_call=True)
+    @tool_contract(access="read", direct_call=True)
     def check_datasource_quality(
         self,
         config_path: Optional[str] = "",
@@ -3314,7 +3314,7 @@ class DBFuncTool:
             )
         return None, sql_type
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def get_table_ddl(
         self,
         table_name: str,
@@ -4147,7 +4147,7 @@ class DBFuncTool:
     # can continue in pure-LLM mode.
 
     @mcp_tool()
-    @tool_contract(access="restricted", direct_call=True)
+    @tool_contract(access="read", direct_call=True)
     def get_migration_capabilities(self, datasource: Optional[str] = "") -> FuncToolResult:
         """
         Get migration target hints (dialect_family, requires, forbids, type_hints,
@@ -4193,7 +4193,7 @@ class DBFuncTool:
         return FuncToolResult(result=capabilities)
 
     @mcp_tool()
-    @tool_contract(access="restricted", direct_call=True)
+    @tool_contract(access="read", direct_call=True)
     def suggest_table_layout(self, datasource: Optional[str] = "", columns_json: str = "[]") -> FuncToolResult:
         """
         Suggest dialect-specific table layout (distribution/partition/order) for

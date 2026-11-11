@@ -494,15 +494,18 @@ class PermissionHooks(AgentHooks):
             )
         review_registry.record(getattr(context, "tool_call_id", None), payload)
 
-    # Plan-mode tooling is always allowed regardless of permission profile:
-    # ``confirm_plan`` already runs its own user interaction, and ``todo_*``
-    # are local-only state helpers that never touch the filesystem or DB.
-    _PLAN_MODE_BYPASS_TOOLS = frozenset({"confirm_plan", "todo_list", "todo_read", "todo_write", "todo_update"})
-
     @classmethod
     def is_permission_exempt_tool(cls, tool_name: str) -> bool:
-        """Identify session planning helpers exempt from generic permission rules."""
-        return tool_name in cls._PLAN_MODE_BYPASS_TOOLS
+        """Identify declared session channels shared by visibility and invocation checks.
+
+        These tools only ask the user, manage the in-memory plan or return the
+        current run's result. They authorize their own interaction and result
+        identities and cannot touch project resources or expose direct endpoints.
+        """
+        from datus.tools.registry.capabilities import TOOL_CAPABILITIES
+
+        capability = TOOL_CAPABILITIES.get(f"tools.{tool_name}")
+        return capability is not None and capability.access == "session"
 
     async def on_tool_start(self, context, agent, tool) -> None:
         """Recheck pending gates when this run's permission profile changes."""
@@ -548,7 +551,7 @@ class PermissionHooks(AgentHooks):
         """
         tool_name = getattr(tool, "name", str(tool))
 
-        # Session planning helpers retain their own UX and permission exemption
+        # Session channels retain their own UX and permission exemption
         # on restricted hosts as well as ordinary CLI hosts.
         if self.is_permission_exempt_tool(tool_name):
             return

@@ -155,7 +155,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             ]
         )
 
-    @tool_contract(access="restricted", direct_call=True, category="semantic_tools")
+    @tool_contract(access="read", direct_call=True, category="semantic_tools")
     def list_existing_osi_semantic_models(self) -> FuncToolResult:
         """Inspect existing models before selecting an authoring target."""
         result = self.osi_target_tools.list_existing_osi_semantic_models()

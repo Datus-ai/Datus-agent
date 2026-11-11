@@ -41,7 +41,7 @@ class SessionSearchTool:
         # Default: ~/.datus/sessions/
         return os.path.expanduser("~/.datus/sessions")
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def search_skill_usage(self, skill_name: str, max_sessions: int = 10) -> FuncToolResult:
         """Search session history for usage of a specific skill.
 

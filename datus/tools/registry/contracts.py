@@ -11,8 +11,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, TypeVar
 
-Access = Literal["read", "write", "execute", "sql", "restricted"]
-_ACCESS = frozenset({"read", "write", "execute", "sql", "restricted"})
+Access = Literal["read", "write", "execute", "sql", "session", "restricted"]
+_ACCESS = frozenset({"read", "write", "execute", "sql", "session", "restricted"})
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*$")
 _Method = TypeVar("_Method", bound=Callable)
 
@@ -33,6 +33,8 @@ class ToolCapability:
         """Reject malformed contract values at their declaration site."""
         if not isinstance(self.access, str) or self.access not in _ACCESS or type(self.direct_call) is not bool:
             raise ToolDefinitionError("Tool contracts require a valid access and boolean direct_call")
+        if self.access == "session" and (self.direct_call or self.companion_of is not None):
+            raise ToolDefinitionError("Session channels cannot be direct calls or endpoint companions")
         if self.companion_of is not None:
             validate_tool_id(self.companion_of)
 

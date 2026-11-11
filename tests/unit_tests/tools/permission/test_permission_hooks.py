@@ -3330,6 +3330,27 @@ async def test_plan_helpers_bypass_denials_on_all_hosts(mock_broker, enforce_met
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("restricted", [False, True])
+@pytest.mark.parametrize("name", ["ask_user", "submit_task_result", "select_final_metric_result"])
+async def test_session_channels_survive_node_denials(mock_broker, restricted, name):
+    """A child must be able to ask questions and return its already-computed result."""
+    manager = PermissionManager(
+        get_profile("auto"),
+        node_overrides={"child": {"rules": [{"tool": "*", "pattern": "*", "permission": "deny"}]}},
+        active_profile="auto",
+    )
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=manager,
+        node_name="child",
+        tool_registry=ToolRegistry({name: "tools"}),
+        enforce_method_denials=restricted,
+    )
+    await hooks.on_tool_start(SimpleNamespace(tool_arguments="{}"), None, SimpleNamespace(name=name))
+    mock_broker.request.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_restricted_skill_dispatch_still_authorizes_the_selected_name(mock_broker):
     manager = PermissionManager(
         PermissionConfig(

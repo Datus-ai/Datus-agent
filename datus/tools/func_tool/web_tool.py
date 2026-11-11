@@ -165,7 +165,7 @@ class WebTool:
 
         return tools
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def web_search(
         self,
         keywords: List[str],
@@ -228,7 +228,7 @@ class WebTool:
             logger.error(f"Web search failed for keywords {keywords}: {e}")
             return FuncToolResult(success=0, error=str(e))
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def web_fetch(
         self,
         url: str,

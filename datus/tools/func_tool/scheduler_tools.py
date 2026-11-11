@@ -371,7 +371,7 @@ class SchedulerTools(BaseTool):
             except Exception as close_exc:
                 logger.debug("adapter.close() failed: %s", close_exc)
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def get_scheduler_job(
         self,
         job_id: str,
@@ -414,7 +414,7 @@ class SchedulerTools(BaseTool):
             except Exception as close_exc:
                 logger.debug("adapter.close() failed: %s", close_exc)
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def list_scheduler_jobs(
         self,
         limit: int = 20,
@@ -699,7 +699,7 @@ class SchedulerTools(BaseTool):
             except Exception as close_exc:
                 logger.debug("adapter.close() failed: %s", close_exc)
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def list_job_runs(
         self,
         job_id: str,
@@ -743,7 +743,7 @@ class SchedulerTools(BaseTool):
             except Exception as close_exc:
                 logger.debug("adapter.close() failed: %s", close_exc)
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def get_run_log(
         self,
         job_id: str,
@@ -782,7 +782,7 @@ class SchedulerTools(BaseTool):
             except Exception as close_exc:
                 logger.debug("adapter.close() failed: %s", close_exc)
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def list_scheduler_connections(self) -> FuncToolResult:
         """List available scheduler connection IDs (conn_id) and their descriptions.
 

@@ -168,8 +168,10 @@ def collect_contracts(package_root: Path) -> dict:
             if values.keys() - {"access", "direct_call", "category", "companion_of", "aliases"}:
                 raise CatalogError("Unknown tool contract argument")
             access, direct = values["access"], values["direct_call"]
-            if access not in {"read", "write", "execute", "sql", "restricted"} or type(direct) is not bool:
+            if access not in {"read", "write", "execute", "sql", "session", "restricted"} or type(direct) is not bool:
                 raise CatalogError("Invalid access or direct_call")
+            if access == "session" and (direct or values.get("companion_of") is not None):
+                raise CatalogError("Session channels cannot be direct calls or endpoint companions")
             family = values.get("category") or category
             if family is None and id(method) in bound_implementations:
                 return  # A shared mixin is inventoried through each concrete tool group.
