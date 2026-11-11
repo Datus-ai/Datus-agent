@@ -8,15 +8,15 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/tool-contracts/">
       
       
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -53,12 +53,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/tool-contracts/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/tool-contracts/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/tool-contracts/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -4912,6 +4907,34 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#semantic-authoring-and-generic-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Semantic authoring and generic files
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Semantic authoring and generic files">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#semantic-authoring-composition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Semantic authoring composition
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5023,6 +5046,35 @@ Upgrading the Agent makes a newly declared safe reader usable under an existing
 family grant; exact grants stay exact and writers remain excluded. No wildcard
 expansion or database migration is required. Skill-name authorization and session
 planning exemptions retain their existing specialized invocation rules.</p>
+<h2 id="semantic-authoring-and-generic-files">Semantic authoring and generic files<a class="headerlink" href="#semantic-authoring-and-generic-files" title="Permanent link">&para;</a></h2>
+<p><code>filesystem_tools</code> contains generic file operations only. Dataset/metric upserts
+and deletes belong to <code>semantic_tools</code>, implemented by <code>SemanticModelEditingTools</code>
+with a shared authoring workspace. Their selected-target revisions, validation,
+mutation tracking and path boundaries are shared with raw semantic file edits.</p>
+<p>Query nodes such as <code>ask_metrics</code> instantiate <code>SemanticTools</code>, so their editor
+catalogs exclude the stateful editing provider. Semantic authoring nodes mount it
+explicitly. <code>family.*</code> remains a pattern over the node's supported tools; it does
+not add another provider to a query node.</p>
+<p>The four former <code>filesystem_tools.upsert/delete_osi_*</code> identities are invalid.
+There are no compatibility aliases or wildcard transfers to the semantic family.
+The retired <code>create_file</code>, <code>write_query</code> and <code>get_dimensions</code> tool aliases are removed; <code>write_file</code>,
+<code>edit_file</code>, <code>delete_file</code> and <code>execute_ddl</code> remain actual Agent tools. Native
+writers without a REST/MCP export declare <code>direct_call=False</code>; registering an
+Agent SDK tool alone does not expose a transport endpoint.</p>
+<h3 id="semantic-authoring-composition">Semantic authoring composition<a class="headerlink" href="#semantic-authoring-composition" title="Permanent link">&para;</a></h3>
+<p><code>SemanticModelFilesystemTools</code> in <code>semantic_model_filesystem_tools.py</code> extends
+<code>FilesystemFuncTool</code> for read/search and validated <code>edit_file</code> operations. It
+never mounts generic <code>write_file</code> or <code>delete_file</code>. Ordinary filesystem tools
+continue to use the generic implementation unchanged.</p>
+<p><code>SemanticModelEditingTools</code> supplies the four OSI dataset/metric mutations under
+<code>semantic_tools</code>. Both providers use one request-local <code>SemanticModelWorkspace</code>
+for target revisions, complete-document validation, query-source extensions,
+mutation tracking, metric UID preparation and failure rollback. Generic path
+classification, live allowlists and execution context are reused through access
+callbacks; the object editor does not depend on a filesystem subclass. The node
+mounts both providers explicitly and invokes the workspace for finalization and
+rollback. File and object methods retain their respective permission families,
+including existing <code>family.*</code> matching.</p>
 
 
 
