@@ -805,6 +805,10 @@ async def test_concurrent_sdk_upserts_all_persist(tmp_path):
         "direction",
         "depth",
         "include_queries",
+        "page_size",
+        "offset",
+        "snapshot_id",
+        "section",
     }
 
 
@@ -824,3 +828,25 @@ def test_analysis_runs_once_per_changed_source(tmp_path, monkeypatch):
     (tmp_path / "b.sql").write_text("INSERT INTO u SELECT * FROM s2;")
     upsert(tool, paths=["*.sql"])
     assert calls == ["b.sql"]
+
+
+@pytest.mark.asyncio
+async def test_native_lineage_sections_are_lossless_and_snapshot_is_stable(tmp_path, monkeypatch):
+    tool = make_tool(tmp_path)
+    upsert(tool, sql=";".join(f"INSERT INTO t{i} SELECT * FROM s{i}" for i in range(120)), source_id="batch")
+    legacy = query(tool)
+    from datus.tools.func_tool.base import trans_to_function_tool
+
+    response = await trans_to_function_tool(tool.query_lineage).on_invoke_tool(None, "{}")
+    assert response["success"] == 1, response
+    page = response["result"]
+    assert len(page["items"]) == 50 and page["total"] == 120
+    assert page["complete"] == legacy["complete"]
+    rid = page["extra"]["snapshot_id"]
+    monkeypatch.setattr(tool.store, "load", lambda: pytest.fail("Snapshot continuation must not load the graph"))
+    tail = query(tool, snapshot_id=rid, offset=50, page_size=1500)
+    assert page["items"] + tail["items"] == legacy["lineage"]
+    assert tail["has_more"] is False
+    nodes = query(tool, snapshot_id=rid, section="nodes", page_size=1500)
+    assert {row["key"]: row["value"] for row in nodes["items"]} == legacy["nodes"]
+    assert tool.query_lineage(snapshot_id=rid, direction="upstream").success == 0

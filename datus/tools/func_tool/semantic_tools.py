@@ -52,6 +52,7 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 from datus.utils.query_result_text import omitted_rows_line
+from datus.utils.result_pagination import native_pagination, validate_page
 
 logger = get_logger(__name__)
 
@@ -868,6 +869,39 @@ class SemanticTools:
             }
         )
 
+    def _query_result_page(self, result_id: str, offset: int, page_size: int) -> FuncToolResult:
+        validate_page(page_size, offset)
+        cached = self.get_cached_query_metrics_result(result_id)
+        if cached is None:
+            return FuncToolResult(success=0, error=f"Unknown or expired query_metrics result_id: {result_id}")
+        total = cached["row_count"]
+        if offset > total:
+            raise ValueError("offset is beyond this query result")
+        rows = self._slice_query_data(cached["data"], offset, page_size)
+        returned = self._query_data_row_count(rows)
+        more = offset + returned < total
+        page = {
+            "offset": offset,
+            "returned": returned,
+            "has_more": more,
+            "next_offset": offset + returned if more else None,
+        }
+        metadata = cached.get("metadata") or {}
+        csv = self._query_data_to_csv(cached["columns"], rows)
+        text = self._render_query_result(
+            result_id,
+            cached["columns"],
+            cached["data"],
+            warnings=metadata.get("warnings"),
+            notes=metadata.get("page_notes"),
+            outputs=metadata.get("outputs"),
+            execution_info=metadata.get("execution_info"),
+            row_cap=metadata.get("row_cap"),
+            page=page,
+            page_csv=csv,
+        )
+        return FuncToolResult(result=text, execution_context=metadata.get("execution_context"))
+
     @staticmethod
     def _slice_query_data(data: Any, offset: int, limit: int) -> Any:
         """Rows ``[offset, offset + limit)`` of a query result, in its own shape."""
@@ -896,13 +930,18 @@ class SemanticTools:
         outputs: Optional[List[Any]] = None,
         execution_info: Optional[List[Dict[str, Any]]] = None,
         row_cap: Optional[int] = None,
+        page: Optional[dict] = None,
+        page_csv: Optional[str] = None,
     ) -> str:
         """An executed result as the agent reads it (``datus.utils.query_result_text``
         has the layout). Only what there is to report gets a line: the compiled
         SQL runs to tens of thousands of characters beside rows that are already
         here, and a column named after its metric needs no ``column`` line."""
         total = self._query_data_row_count(data)
-        preview, cut = self._preview_csv(columns, data, total)
+        if page is None:
+            preview, cut = self._preview_csv(columns, data, total)
+        else:
+            preview, cut = page_csv or "", None
         rows = f"rows: {total}"
         if row_cap is not None and total >= row_cap:
             rows += f" (reached the {row_cap}-row cap; there may be more)"
@@ -910,6 +949,8 @@ class SemanticTools:
             rows += f"; text values longer than {cut} characters are cut and end in …"
         lines = [f"result_id: {result_id}"] if result_id else []
         lines.append(rows)
+        if page is not None:
+            lines.append("page: " + json.dumps(page))
         if execution_info:
             lines.append(f"execution_info: {json.dumps(execution_info, ensure_ascii=False)}")
         lines.extend(_render_query_warning(warning) for warning in warnings or [])
@@ -1431,13 +1472,17 @@ class SemanticTools:
 
     @tool_schema(strict_mode=False)
     @tool_contract(access="read", direct_call=True)
+    @native_pagination()
     def select_records(
         self,
-        from_concept: str,
-        fields: List[str],
+        from_concept: Optional[str] = None,
+        fields: Optional[List[str]] = None,
         where: Optional[str] = None,
         order_by: Optional[List[str]] = None,
         limit: Optional[int] = None,
+        page_size: Optional[int] = None,
+        offset: int = 0,
+        result_id: Optional[str] = None,
     ) -> FuncToolResult:
         """
         Read individual records (not aggregates) of one concept.
@@ -1461,12 +1506,28 @@ class SemanticTools:
                 result column name; prefix with '-' for descending.
             limit: Optional maximum number of rows (default 200).
 
+        Pagination:
+            Agent calls show 100 continuous rows by default. Continue with result_id,
+            offset and page_size; no SQL is repeated and page_size has no hard cap.
+            The existing query limit defaults to 200 independently of the page size.
+
         Returns:
             FuncToolResult with text laid out like query_metrics': a ``result_id``
             line, a ``rows`` line, then the rows as CSV with columns named by the
             requested field paths (the full result is cached and used for the
             final output).
         """
+        try:
+            if result_id:
+                if any((from_concept, fields, where, order_by, limit is not None)):
+                    raise ValueError("Use only result_id, offset and page_size when continuing a result")
+                return self._query_result_page(result_id, offset, 100 if page_size is None else page_size)
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with result_id")
+            if page_size is not None:
+                validate_page(page_size, offset)
+        except (ValueError, TypeError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
         from_concept = str(from_concept or "").strip()
         fields = _normalize_name_list(fields)
         order_by = _normalize_name_list(order_by)
@@ -1490,7 +1551,12 @@ class SemanticTools:
         except Exception as exc:  # noqa: BLE001 - surfaced as a failed tool call
             return self._semantic_failure("select_records", exc)
 
-        metadata = result.metadata or {}
+        metadata = dict(result.metadata or {})
+        if page_size is not None:
+            if limit is None:
+                metadata["row_cap"] = self.SELECT_RECORDS_DEFAULT_LIMIT
+            cached_id = self._cache_query_metrics_result(result.columns, result.data, metadata)
+            return self._query_result_page(cached_id, 0, page_size)
         return FuncToolResult(
             result=self._render_query_result(
                 self._cache_query_metrics_result(result.columns, result.data, metadata),
@@ -1846,9 +1912,10 @@ class SemanticTools:
     @tool_schema(strict_mode=False)
     @mcp_tool()
     @tool_contract(access="read", direct_call=True)
+    @native_pagination()
     def query_metrics(
         self,
-        metrics: List[str],
+        metrics: Optional[List[str]] = None,
         dimensions: Optional[List[str]] = None,
         time_start: Optional[str] = None,
         time_end: Optional[str] = None,
@@ -1859,6 +1926,9 @@ class SemanticTools:
         params: Optional[Dict[str, Any]] = None,
         dry_run: bool = False,
         context_filter: Optional[str] = None,
+        page_size: Optional[int] = None,
+        offset: int = 0,
+        result_id: Optional[str] = None,
     ) -> FuncToolResult:
         """
         Query metrics data (requires runtime).
@@ -1964,9 +2034,40 @@ class SemanticTools:
                 the SQL itself: an executed result carries the same warnings, just
                 not its SQL, so a dry run before executing only repeats the query.
 
+        Pagination:
+            Agent calls default to 100 continuous rows. page_size has no hard cap.
+            Continue with result_id, offset and page_size only; this reads the cached
+            result and never executes the query again. limit still means business Top N.
+            Direct calls without page_size keep the existing compressed preview.
+
         Returns:
             FuncToolResult with the result text, or the compiled SQL of a dry run
         """
+        try:
+            if result_id:
+                if any(
+                    (
+                        metrics,
+                        dimensions,
+                        time_start,
+                        time_end,
+                        time_granularity,
+                        where,
+                        limit is not None,
+                        order_by,
+                        params,
+                        dry_run,
+                        context_filter,
+                    )
+                ):
+                    raise ValueError("Use only result_id, offset and page_size when continuing a result")
+                return self._query_result_page(result_id, offset, 100 if page_size is None else page_size)
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with result_id")
+            if page_size is not None:
+                validate_page(page_size, offset)
+        except (ValueError, TypeError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
         return self._query_metrics(
             metrics=metrics,
             dimensions=dimensions,
@@ -1978,6 +2079,7 @@ class SemanticTools:
             order_by=order_by,
             params=params,
             dry_run=dry_run,
+            result_page_size=page_size,
             context_filter=context_filter,
         )
 
@@ -2002,6 +2104,7 @@ class SemanticTools:
         context_filter: Optional[str] = None,
         *,
         external_sql_execution: bool = False,
+        result_page_size: Optional[int] = None,
     ) -> FuncToolResult:
         metrics = _normalize_name_list(metrics)
         dimensions = _normalize_name_list(dimensions)
@@ -2061,7 +2164,12 @@ class SemanticTools:
             compile_or_query = runtime.compile_for_sql_execution if external_sql_execution else runtime.query_metrics
             result = _run_async(compile_or_query(**runtime_query_kwargs))
             if not dry_run:
-                metadata = result.metadata or {}
+                metadata = dict(result.metadata or {})
+                if result_page_size is not None:
+                    metadata["page_notes"] = self._query_hints(runtime, runtime_query_kwargs, result)
+                    metadata["execution_context"] = execution_context
+                    cached_id = self._cache_query_metrics_result(result.columns, result.data, metadata)
+                    return self._query_result_page(cached_id, 0, result_page_size)
                 return FuncToolResult(
                     execution_context=execution_context,
                     result=self._render_query_result(

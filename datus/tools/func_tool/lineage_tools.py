@@ -25,6 +25,7 @@ from datus.tools.func_tool.fs_path_policy import PathAllowlist, PathZone, classi
 from datus.tools.registry.contracts import tool_contract
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.result_pagination import SnapshotStore, list_page, native_pagination, validate_page
 from datus.utils.sql_lineage import ANALYZER_VERSION
 from datus.utils.sql_utils import parse_dialect
 
@@ -263,17 +264,22 @@ class LineageTools:
     # -- read -------------------------------------------------------------------------------
 
     @tool_contract(access="read", direct_call=True)
+    @native_pagination(50)
     def query_lineage(
         self,
         tables: Optional[List[str]] = None,
-        direction: str = "both",
-        depth: int = 1,
-        include_queries: bool = False,
+        direction: Optional[str] = None,
+        depth: Optional[int] = None,
+        include_queries: Optional[bool] = None,
+        page_size: Optional[int] = None,
+        offset: int = 0,
+        snapshot_id: Optional[str] = None,
+        section: str = "lineage",
     ) -> FuncToolResult:
         """Read table lineage from the project graph saved by upsert_lineage.
 
         With tables, returns the subgraph around them; without, the whole table graph. Results are
-        never paginated or clipped: narrow tables or depth instead. The graph may contain cycles
+        paginated for model calls (50 records by default); direct calls retain the full graph. The graph may contain cycles
         and only covers analyzed sources: a table without upstream here is a root of this corpus,
         not proof of external ownership.
 
@@ -286,6 +292,11 @@ class LineageTools:
                 without tables.
             include_queries: Also return saved pure queries reading the returned tables, as
                 "query:<hash>" targets; otherwise nodes carry only a queried_by count.
+
+        Pagination:
+            Use page_size (no hard cap) and the returned snapshot_id, section and
+            next_offset to read more. Sections include lineage, nodes, files and
+            components. complete describes source analysis, independently of has_more.
 
         Returns:
             lineage records, one per statement: target, sources (every table the statement
@@ -305,6 +316,20 @@ class LineageTools:
             missing edge as absent. resolved, ambiguous and not_found report how tables were
             matched. Names are shortened by stats.default_database.
         """
+        query = {"tables": tables, "direction": direction, "depth": depth, "include_queries": include_queries}
+        try:
+            if page_size is not None:
+                validate_page(page_size, offset)
+            if snapshot_id:
+                return self._lineage_page(None, page_size, offset, snapshot_id, section, query)
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with snapshot_id")
+        except (OSError, ValueError, TypeError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+        direction = "both" if direction is None else direction
+        depth = 1 if depth is None else depth
+        include_queries = False if include_queries is None else include_queries
+        query.update(direction=direction, depth=depth, include_queries=include_queries)
         if direction not in ("upstream", "downstream", "both"):
             return FuncToolResult(success=0, error="direction must be upstream, downstream or both")
         if not isinstance(depth, int) or depth < -1:
@@ -355,10 +380,53 @@ class LineageTools:
             }
             if not document.sources:
                 result["hint"] = "No lineage has been saved for this project yet; call upsert_lineage first."
-            return FuncToolResult(result=result)
+            return self._lineage_page(result, page_size, offset, None, section, query)
         except Exception as e:
             logger.error(f"query_lineage failed: {e}")
             return FuncToolResult(success=0, error=_error_message(e))
+
+    def _lineage_page(
+        self,
+        result: Optional[dict],
+        page_size: Optional[int],
+        offset: int,
+        snapshot_id: Optional[str],
+        section: str,
+        query: dict,
+    ) -> FuncToolResult:
+        if page_size is None and snapshot_id is None and section == "lineage":
+            return FuncToolResult(result=result)
+        size = 50 if page_size is None else page_size
+        validate_page(size, offset)
+        if "_lineage_pages" not in self.__dict__:
+            self._lineage_pages = SnapshotStore()
+        scope = {
+            "project": str(self.project_root),
+            "root": str(self.root_path),
+            "lineage_path": str(self.store.path.resolve()),
+            "allowlist": self.path_allowlist.model_dump(mode="json") if self.path_allowlist is not None else None,
+            "policy": getattr(self.agent_config, "policy_context", {}),
+        }
+        if snapshot_id:
+            result = self._lineage_pages.read(snapshot_id, "query_lineage", scope, query)
+        else:
+            snapshot_id = self._lineage_pages.save("query_lineage", result, scope, query)
+        sections = {key: value for key, value in result.items() if isinstance(value, (list, dict)) and key != "stats"}
+        if section not in sections:
+            raise ValueError(f"Unknown lineage section {section!r}; available: {', '.join(sections)}")
+        records = sections[section]
+        if isinstance(records, dict):
+            records = [{"key": key, "value": value} for key, value in sorted(records.items())]
+        page = list_page(records, snapshot_id, size, offset)
+        page.update(
+            complete=result["complete"],
+            stats=result["stats"],
+            section=section,
+            sections={name: len(rows) for name, rows in sections.items()},
+        )
+        if "hint" in result:
+            page["hint"] = result["hint"]
+        return FuncToolResult(result=page)
 
     def _stale_sources(
         self, document: LineageDocument, source_ids: Iterable[str], settings: AnalysisSettings

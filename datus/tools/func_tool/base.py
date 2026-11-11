@@ -406,6 +406,9 @@ def trans_to_function_tool(
                     "error": f"Invalid arguments for '{method_to_call.__name__}': {detail}. The tool was not executed.",
                     "result": {"argument_errors": errors},
                 }
+            default_page_size = getattr(method_to_call, "__datus_default_page_size__", None)
+            if default_page_size is not None and getattr(validated, "page_size", None) is None:
+                validated.page_size = default_page_size
             positional, kwargs = argument_schema.to_call_args(validated)
             kwargs = {k: v for k, v in kwargs.items() if k not in excluded_param_set}
             if inspect.iscoroutinefunction(method_to_call):
@@ -423,12 +426,6 @@ def trans_to_function_tool(
                 result = await asyncio.to_thread(method_to_call, *positional, **kwargs)
             if isinstance(result, FuncToolResult):
                 result = result.model_dump(mode="json")
-            from datus.utils.tool_result_store import ACTIVE_RESULT_STORE
-
-            store = ACTIVE_RESULT_STORE.get()
-            call_id = getattr(tool_ctx, "tool_call_id", None)
-            if store is not None and isinstance(call_id, str):
-                store.register(call_id, result)
             return result
 
         return final_invoker

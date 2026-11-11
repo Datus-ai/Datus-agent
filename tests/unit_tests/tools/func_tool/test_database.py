@@ -4041,3 +4041,65 @@ def test_read_validation_returns_scope_failures_before_explain(scope_failure):
     assert guard_failure.success == 0
     assert guard_failure.error == expected_error
     connector.execute_query.assert_not_called()
+
+
+class TestNativeCatalogPagination:
+    @pytest.fixture
+    def catalog(self):
+        connector = Mock()
+        connector.dialect = "sqlite"
+        connector.get_databases.return_value = [f"db_{i:04d}" for i in range(1600)]
+        connector.get_schemas.return_value = [f"schema_{i:04d}" for i in range(1600)]
+        connector.get_tables.return_value = [f"t_{i:04d}" for i in range(1600)]
+        connector.get_views.return_value = ["v"]
+        connector.get_materialized_views.return_value = ["mv"]
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG"),
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG"),
+        ):
+            tool = DBFuncTool(connector)
+        connector.reset_mock()
+        return tool, connector
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "name,provider",
+        [("list_tables", "get_tables"), ("list_databases", "get_databases"), ("list_schemas", "get_schemas")],
+    )
+    async def test_model_defaults_and_snapshot_continuation(self, catalog, name, provider):
+        from datus.tools.func_tool.base import trans_to_function_tool
+
+        tool, connector = catalog
+        method = getattr(tool, name)
+        legacy = method()
+        assert legacy.success == 1 and isinstance(legacy.result, list)
+        connector.reset_mock()
+        first = await trans_to_function_tool(method).on_invoke_tool(None, "{}")
+        assert first["success"] == 1, first
+        page = first["result"]
+        assert len(page["items"]) == 100 and page["has_more"]
+        rid = page["extra"]["snapshot_id"]
+        second = method(snapshot_id=rid, offset=100, page_size=1800)
+        assert second.success == 1, second.error
+        assert len(second.result["items"]) == page["total"] - 100
+        assert not second.result["has_more"]
+        assert getattr(connector, provider).call_count == 1
+        expected = sorted(legacy.result, key=lambda x: (x["type"], x["qualified_name"]) if isinstance(x, dict) else x)
+        combined = page["items"] + second.result["items"]
+        assert combined == [{"name": v} if isinstance(v, str) else v for v in expected]
+        flag = {"include_views": True} if name == "list_tables" else {"include_sys": False}
+        assert method(snapshot_id=rid, **flag).success == 1
+        flag = {key: not value for key, value in flag.items()}
+        assert method(snapshot_id=rid, **flag).success == 0
+
+    def test_scope_changes_and_invalid_arguments_do_not_query(self, catalog):
+        from datus.tools.func_tool.database import ScopedTablePattern
+
+        tool, connector = catalog
+        assert tool.list_tables(page_size=0).success == 0
+        assert tool.list_tables(offset=1).success == 0
+        connector.get_tables.assert_not_called()
+        page = tool.list_tables(page_size=10).result
+        tool._scoped_patterns = [ScopedTablePattern(raw="only", table="only")]
+        assert tool.list_tables(snapshot_id=page["extra"]["snapshot_id"]).success == 0
+        assert connector.get_tables.call_count == 1

@@ -77,7 +77,7 @@ async def test_cached_samples_cannot_reenter_archive(run, tmp_path):
     try:
         for call_id in ("first", "cached"):
             result = await tool.on_invoke_tool(SimpleNamespace(tool_call_id=call_id), '{"query_text":"orders"}')
-            projected = store.project(call_id, json.dumps(result), force=True)
+            projected = result
             assert "secret" not in json.dumps(projected)
             assert "sample_rows" not in json.dumps(projected)
         assert metadata.calls == 1
@@ -299,9 +299,6 @@ async def test_late_search_result_never_registers_raw_samples(run, tmp_path):
     async def delayed(context, arguments):
         entered.set()
         await release.wait()
-        active = ACTIVE_RESULT_STORE.get()
-        if active:
-            active.register("late", {"sample_rows": ["secret"]})
         return {"success": 1, "result": {"sample_rows": ["secret"]}}
 
     try:
@@ -314,7 +311,7 @@ async def test_late_search_result_never_registers_raw_samples(run, tmp_path):
         release.set()
         await asyncio.gather(*run._inflight)
         await asyncio.sleep(0)
-        assert not store._registered
+        assert not store.root.exists()
     finally:
         release.set()
         ACTIVE_RESULT_STORE.reset(token)

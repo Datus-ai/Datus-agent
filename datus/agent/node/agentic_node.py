@@ -2606,7 +2606,7 @@ class AgenticNode(Node):
         )
 
     def _get_tool_result_store(self):
-        """Reuse the resolved, writable session archive for indexed result pages."""
+        """Reuse the session directory for native snapshots and legacy recovery."""
         from datus.utils.tool_result_store import ToolResultStore
 
         archive = self._get_archive()
@@ -2631,14 +2631,6 @@ class AgenticNode(Node):
 
         store = self._get_tool_result_store()
         return store.recovery_references(items) if isinstance(store, ToolResultStore) else []
-
-    def _ensure_tool_result_reader(self) -> None:
-        from datus.tools.func_tool.tool_result_tools import ToolResultFuncTool
-
-        if not any(getattr(tool, "name", None) == "read_tool_result" for tool in self.tools or []):
-            self.tool_result_func_tool = ToolResultFuncTool(self._get_tool_result_store)
-            self.tools = [*(self.tools or []), *self.tool_result_func_tool.available_tools()]
-            self.tool_registry.register_tools("tool_result_tools", ["read_tool_result"])
 
     def _apply_init_tool_scope(self) -> None:
         """Reapply invocation-local restrictions after prompt/tool refreshes."""
@@ -3947,7 +3939,6 @@ class AgenticNode(Node):
         # captures ``self.tools``: call arguments evaluate left to right, so
         # deferring to ``hooks=self._compose_run_hooks(ctx)`` would be one
         # argument too late and the first run would execute unwrapped tools.
-        self._ensure_tool_result_reader()
         self._apply_init_tool_scope()
         self._ensure_tool_transformers()
         self._current_action_history = ctx.action_history_manager

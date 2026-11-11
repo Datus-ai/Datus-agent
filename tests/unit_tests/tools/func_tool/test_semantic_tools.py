@@ -3203,3 +3203,62 @@ def test_query_metrics_reports_the_captured_resolved_runtime_context(
         "database": "analytics",
         "schema": "tenant_a",
     }
+
+
+class TestNativeQueryPagination:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["query_metrics", "select_records"])
+    async def test_continuous_model_pages_reuse_query_and_preserve_limit(self, semantic_tools, mock_runtime, name):
+        import csv
+        import io
+
+        rows = [{"id": i, "value": "x" * 250} for i in range(1600)]
+        result = QueryResult(columns=["id", "value"], data=rows, metadata={})
+        mock_runtime.query_metrics = AsyncMock(return_value=result)
+        mock_runtime.select = AsyncMock(return_value=result)
+        method = getattr(semantic_tools, name)
+        arguments = (
+            {"metrics": ["m"], "limit": 1600}
+            if name == "query_metrics"
+            else {"from_concept": "Order", "fields": ["id", "value"], "limit": 1600}
+        )
+        first = await trans_to_function_tool(method).on_invoke_tool(None, json.dumps(arguments))
+        assert first["success"] == 1, first
+        text = parse_query_result_text(first["result"])
+        page = json.loads(next(line[6:] for line in text.lines if line.startswith("page: ")))
+        assert text.row_count == 1600 and page["returned"] == 100 and page["next_offset"] == 100
+        assert "rows omitted" not in text.csv
+        assert list(csv.DictReader(io.StringIO(text.csv))) == [{"id": str(i), "value": "x" * 250} for i in range(100)]
+        second = method(result_id=text.result_id, offset=100, page_size=2000)
+        assert second.success == 1, second.error
+        tail = _text(second)
+        assert len(list(csv.DictReader(io.StringIO(tail.csv)))) == 1500
+        assert '"has_more": false' in second.result
+        called = mock_runtime.query_metrics if name == "query_metrics" else mock_runtime.select
+        called.assert_awaited_once()
+        assert called.await_args.kwargs["limit"] == 1600
+        assert method(result_id=text.result_id, offset=1601).success == 0
+        assert method(result_id=text.result_id, limit=10).success == 0
+        semantic_tools._query_metrics_result_cache.clear()
+        assert method(result_id=text.result_id).success == 0
+
+    def test_default_select_limit_and_legacy_preview_are_preserved(self, semantic_tools, mock_runtime):
+        mock_runtime.select = AsyncMock(
+            return_value=QueryResult(columns=["id"], data=[{"id": i} for i in range(200)], metadata={})
+        )
+        first = semantic_tools.select_records(from_concept="Order", fields=["id"], page_size=100)
+        assert first.success == 1
+        text = _text(first)
+        assert text.row_count == 200 and "200-row cap" in first.result
+        assert mock_runtime.select.await_args.kwargs["limit"] == 200
+        second = semantic_tools.select_records(result_id=text.result_id, offset=100)
+        assert _text(second).shown_rows == 100
+        legacy = semantic_tools.select_records(from_concept="Order", fields=["id"])
+        assert "rows omitted" in legacy.result and "page: " not in legacy.result
+
+    def test_empty_query_page(self, semantic_tools, mock_runtime):
+        mock_runtime.query_metrics = AsyncMock(return_value=QueryResult(columns=["m"], data=[], metadata={}))
+        result = semantic_tools.query_metrics(metrics=["m"], page_size=100)
+        assert result.success == 1, result.error
+        assert _text(result).row_count == 0
+        assert '"returned": 0' in result.result and '"has_more": false' in result.result
