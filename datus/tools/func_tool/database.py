@@ -2800,7 +2800,7 @@ class DBFuncTool:
         return {"removed": removed, "added": added, "kept": len(names) - len(added)}
 
     @mcp_tool()
-    @tool_contract(access="read", direct_call=True)
+    @tool_contract(access="restricted", direct_call=True)
     def check_datasource_quality(
         self,
         config_path: Optional[str] = "",

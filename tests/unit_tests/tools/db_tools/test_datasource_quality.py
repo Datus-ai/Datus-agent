@@ -235,6 +235,22 @@ class TestQualityToolGate:
         assert result.success == 1
         assert next(x for x in result.result["checks"] if x["check"] == "configured")["status"] == "PASS"
 
+    @pytest.mark.parametrize("entrypoint", ["execute_sql", "check_datasource_quality"])
+    def test_quoted_reader_with_matching_cte_cannot_escape_uploads(self, tool, tmp_path, tmp_path_factory, entrypoint):
+        """Both SQL entrypoints reject a real external read disguised by a CTE name."""
+        private = tmp_path_factory.mktemp("quoted_outside") / "private.csv"
+        private.write_text("secret\nOUTSIDE_UPLOADS_SECRET\n")
+        tool._default_datasource = "local_files"
+        sql = f"WITH read_csv_auto AS (SELECT 1) SELECT secret FROM \"read_csv_auto\"('{private.as_posix()}')"
+        if entrypoint == "execute_sql":
+            result = tool.execute_sql(sql=sql, datasource="local_files")
+        else:
+            cfg = self._write(tmp_path, "quoted.json", [{"name": "outside", "expect": "nonzero", "sql": sql}])
+            result = tool.check_datasource_quality(config_path=cfg)
+        assert result.success == 0
+        assert "cannot be called directly" in result.error
+        assert "OUTSIDE_UPLOADS_SECRET" not in str(result)
+
     @pytest.mark.parametrize("context", [{"user_id": "restricted"}, {}])
     def test_bound_read_policy_blocks_raw_quality_queries(self, tool, monkeypatch, context):
         """Both request scope and configured read policies must prevent raw DuckDB reads."""

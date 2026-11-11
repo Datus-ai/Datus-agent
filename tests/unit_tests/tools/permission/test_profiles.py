@@ -30,7 +30,6 @@ def test_every_declared_reader_is_allowed_by_default(profile):
     "identity",
     [
         "db_tools.plan_datasource",
-        "db_tools.check_datasource_quality",
         "db_tools.get_table_ddl",
         "db_tools.get_migration_capabilities",
         "db_tools.suggest_table_layout",
@@ -607,3 +606,13 @@ def test_writer_obeys_profiles_without_the_web_adapter(profile, permission):
     assert (
         manager.check_permission("semantic_tools", "write_semantic_model_plan_file", "semantic_modeling") == permission
     )
+
+
+@pytest.mark.parametrize("profile,expected", [("normal", PermissionLevel.ASK), ("auto", PermissionLevel.ASK)])
+def test_quality_assertion_sql_requires_stronger_authorization(profile, expected):
+    """A SQL-bearing quality operation must not acquire the ordinary reader grant."""
+    from datus.tools.registry.capabilities import TOOL_CAPABILITIES
+
+    assert TOOL_CAPABILITIES["db_tools.check_datasource_quality"].access == "restricted"
+    manager = PermissionManager(get_profile(profile), active_profile=profile)
+    assert manager.check_permission("db_tools", "check_datasource_quality", "child") == expected
