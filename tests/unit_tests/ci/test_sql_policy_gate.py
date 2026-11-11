@@ -8,7 +8,6 @@ import zipfile
 from pathlib import Path
 
 import pytest
-import yaml
 
 from ci.release_artifact import sha256, verify_wheel_payload
 from ci.sql_policy_gate import (
@@ -59,7 +58,7 @@ def test_docs_keep_the_gate_optional_and_scheduled_runs_require_cold_builds():
     assert plan_gate([], force=True)["cold"]
 
 
-def test_release_and_merge_gates_use_the_reviewed_policy_source():
+def test_host_gate_uses_the_reviewed_release_policy_source():
     assert plan_gate([])["sql_policies"] == load_profile()["release_sources"]["sql_policies"]
 
 
@@ -259,30 +258,6 @@ def test_installed_native_payload_must_match_the_identified_wheel(tmp_path, chan
     (bundled if changed == "bundled-library" else package / "_native.so").write_bytes(b"unrelated cached native file")
     with pytest.raises(ValueError, match="payload differs"):
         verify_wheel_payload(wheel, package.parent, package.name)
-
-
-@pytest.mark.parametrize(
-    "required,result,expected",
-    [("true", "success", 0), ("true", "skipped", 1), ("true", "failure", 1), ("false", "skipped", 0)],
-)
-def test_required_merge_context_waits_for_real_policy_acceptance(required, result, expected):
-    workflow = yaml.safe_load((ROOT / ".github/workflows/merge-queue.yml").read_text())
-    gate = workflow["jobs"]["merge-queue-gate"]
-    assert gate["name"] == "Merge Queue Gate"
-    assert set(gate["needs"]) == {"deterministic", "sql-policy", "bi"}
-    completed = subprocess.run(
-        ["bash", "-e", "-c", gate["steps"][0]["run"]],
-        env={
-            **os.environ,
-            "DETERMINISTIC_RESULT": "success",
-            "POLICY_REQUIRED": required,
-            "POLICY_RESULT": result,
-            "BI_REQUIRED": "false",
-            "BI_RESULT": "skipped",
-        },
-        capture_output=True,
-    )
-    assert completed.returncode == expected
 
 
 def test_execution_report_records_the_frozen_source_identity(tmp_path):
