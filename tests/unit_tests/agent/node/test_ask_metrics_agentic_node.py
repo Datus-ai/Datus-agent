@@ -233,7 +233,7 @@ class TestAskMetricsAgenticNode:
         for rule, tool in (
             ("Do not pass limit just to preview data", "query_metrics"),
             ("also pass order_by", "query_metrics"),
-            ("full result is cached", "query_metrics"),
+            ("Full rows are cached", "query_metrics"),
             ("never the same start and end", "query_metrics"),
             ("never repeated in `where`", "query_metrics"),
             ("follow its `suggested_retry`", "query_metrics"),

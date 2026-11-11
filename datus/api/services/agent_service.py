@@ -143,6 +143,7 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
             "semantic_tools.get_metric",
             "semantic_tools.get_dataset",
             "semantic_tools.query_metrics",
+            "semantic_tools.get_query_metrics_result",
             "semantic_tools.attribution_analyze",
             "db_tools.*",
             "context_search_tools.*",

@@ -21,6 +21,8 @@ Tests verify:
 NO MOCK EXCEPT LLM: The only mock is LLMBaseModel.create_model -> MockLLMModel.
 """
 
+import csv
+import io
 import json
 import shutil
 from pathlib import Path
@@ -34,7 +36,14 @@ from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from tests.unit_tests.mock_llm_model import MockToolCall, build_simple_response, build_tool_then_response
 
 LINEAGE_TOOL_NAMES = {"upsert_lineage", "delete_lineage", "query_lineage"}
-METRIC_TOOL_NAMES = {"list_metrics", "get_metric", "get_dataset", "query_metrics", "attribution_analyze"}
+METRIC_TOOL_NAMES = {
+    "list_metrics",
+    "get_metric",
+    "get_dataset",
+    "query_metrics",
+    "get_query_metrics_result",
+    "attribution_analyze",
+}
 
 # ===========================================================================
 # ChatAgenticNode Inheritance Tests
@@ -42,6 +51,75 @@ METRIC_TOOL_NAMES = {"list_metrics", "get_metric", "get_dataset", "query_metrics
 
 
 class TestChatMetricTools:
+    @pytest.mark.asyncio
+    async def test_registered_cache_reader_recovers_omitted_rows_without_requery(
+        self, real_agent_config, mock_llm_create, tmp_path, monkeypatch
+    ):
+        import duckdb
+
+        from datus.configuration.agent_config import DbConfig
+        from datus.utils.query_result_text import parse_query_result_text
+
+        database = tmp_path / "metric_pages.duckdb"
+        with duckdb.connect(str(database)) as connection:
+            connection.execute("CREATE TABLE ledger(d DATE, cat VARCHAR, x DOUBLE, y DOUBLE)")
+            connection.execute(
+                "INSERT INTO ledger SELECT DATE '2024-01-01' + CAST(i AS INTEGER), 'a', i + 1, 0 FROM range(30) t(i)"
+            )
+        real_agent_config.services.datasources["metric_pages"] = DbConfig(type="duckdb", uri=str(database))
+        real_agent_config.current_datasource = "metric_pages"
+        fixtures = Path(__file__).resolve().parents[3] / "data/semantic_models/attribution"
+        models = real_agent_config.path_manager.semantic_model_path("metric_pages")
+        models.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(fixtures / "model.yaml", models / "model.yaml")
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        tools = {tool.name: tool for tool in node.tools}
+        calls = []
+        runtime = node.semantic_tools.runtime
+        original = runtime.query_metrics
+
+        async def observed(*args, **kwargs):
+            calls.append(True)
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(runtime, "query_metrics", observed)
+        query = await tools["query_metrics"].on_invoke_tool(
+            None,
+            json.dumps(
+                {
+                    "metrics": ["net"],
+                    "dimensions": ["metric_time"],
+                    "time_granularity": "day",
+                    "time_start": "2024-01-01",
+                    "time_end": "2024-01-31",
+                    "order_by": ["metric_time:day"],
+                }
+            ),
+        )
+        assert query["success"] == 1, query
+        assert "10 rows omitted" in query["result"]
+        parsed = parse_query_result_text(query["result"])
+        values = []
+        for offset, expected_more in ((0, True), (15, False)):
+            page = await tools["get_query_metrics_result"].on_invoke_tool(
+                None, json.dumps({"result_id": parsed.result_id, "offset": offset, "limit": 15})
+            )
+            assert page["success"] == 1, page
+            assert page["result"]["row_count"] == 30
+            assert page["result"]["returned"] == 15
+            assert page["result"]["has_more"] is expected_more
+            values.extend(float(row["net"]) for row in csv.DictReader(io.StringIO(page["result"]["csv"])))
+        assert values == list(range(1, 31))
+        assert len(calls) == 1
+
+        real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "UnavailableSubject"}
+        denied = await tools["get_query_metrics_result"].on_invoke_tool(
+            None, json.dumps({"result_id": parsed.result_id})
+        )
+        assert denied["success"] == 0
+        assert denied["result"] is None
+        assert len(calls) == 1
+
     @pytest.mark.asyncio
     async def test_metric_scope_uses_runtime_datasource(self, real_agent_config, mock_llm_create, tmp_path):
         import duckdb
@@ -183,6 +261,7 @@ class TestChatMetricTools:
         "patterns, expected",
         [
             ("semantic_tools.query_metrics", {"query_metrics"}),
+            ("semantic_tools.get_query_metrics_result", {"get_query_metrics_result"}),
             (
                 ["semantic_tools.query_metrics", "semantic_tools.attribution_analyze"],
                 {"query_metrics", "attribution_analyze"},

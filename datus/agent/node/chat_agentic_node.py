@@ -56,6 +56,7 @@ class ChatAgenticNode(AgenticNode):
         "get_metric",
         "get_dataset",
         "query_metrics",
+        "get_query_metrics_result",
         "attribution_analyze",
     )
 
@@ -293,9 +294,11 @@ class ChatAgenticNode(AgenticNode):
             return [trans_to_function_tool(getattr(self.semantic_tools, name)) for name in self.DEFAULT_SEMANTIC_TOOLS]
         patterns = raw.split(",") if isinstance(raw, str) else raw if isinstance(raw, (list, tuple)) else [raw]
         patterns = {str(pattern).strip() for pattern in patterns}
+        available = self.semantic_tools.available_tools()
+        available.append(trans_to_function_tool(self.semantic_tools.get_query_metrics_result))
         return [
             tool
-            for tool in self.semantic_tools.available_tools()
+            for tool in available
             if patterns & {"semantic_tools", "semantic_tools.*", f"semantic_tools.{tool.name}"}
         ]
 
@@ -616,7 +619,7 @@ class ChatAgenticNode(AgenticNode):
             ),
             has_parsing_tools=self._tool_group_exposed(self.date_parsing_tools, exposed),
             has_platform_doc_tools=self._tool_group_exposed(self._platform_doc_tool, exposed),
-            has_semantic_tools=self._tool_group_exposed(getattr(self, "semantic_tools", None), exposed),
+            has_semantic_tools=any(tool.name in exposed for tool in self._available_semantic_tools()),
             agent_config=self.agent_config,
             workspace_root=self._resolve_workspace_root(),
         )

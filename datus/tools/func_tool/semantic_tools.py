@@ -780,6 +780,22 @@ class SemanticTools:
             return "unprotected"
         return hashlib.sha256((bound.snapshot_json + bound.context_json).encode()).hexdigest()
 
+    def _query_cache_scope(self, native_scope: Optional[str]) -> Optional[str]:
+        """Bind chat's cached rows to the current policy, routing and metric scope."""
+        if not getattr(self, "_enforce_metric_scope", False):
+            return native_scope
+        from datus_storage_base.conditions import build_where
+
+        self._has_metric_scope()
+        condition = self.metric_rag._sub_agent_filter
+        identity = [
+            native_scope,
+            self._runtime_db_context(),
+            self._metric_scope_key,
+            build_where(condition) if condition is not None else "",
+        ]
+        return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+
     def _cache_query_metrics_result(
         self, columns: List[str], data: Any, metadata: Optional[Mapping[str, Any]] = None
     ) -> Optional[str]:
@@ -794,9 +810,9 @@ class SemanticTools:
         # instance serves every client of a datasource.
         cache_key = f"query_metrics:{secrets.token_urlsafe(12)}"
         self._query_metrics_result_cache[cache_key] = {
-            "policy_scope": metadata["_policy_scope"]
-            if metadata and "_policy_scope" in metadata
-            else self._policy_cache_scope(),
+            "policy_scope": self._query_cache_scope(
+                metadata["_policy_scope"] if metadata and "_policy_scope" in metadata else self._policy_cache_scope()
+            ),
             "columns": list(columns),
             "csv": full_csv,
             "row_count": self._query_data_row_count(data),
@@ -822,7 +838,7 @@ class SemanticTools:
         if scope is None:
             return False
         try:
-            return scope == self._policy_cache_scope()
+            return scope == self._query_cache_scope(self._policy_cache_scope())
         except (DatusException, ValueError):
             return False
 
@@ -831,7 +847,7 @@ class SemanticTools:
         if cached is None:
             return None
         try:
-            scope = self._policy_cache_scope()
+            scope = self._query_cache_scope(self._policy_cache_scope())
         except (DatusException, ValueError):
             return None
         if cached.get("policy_scope", "unprotected") != scope:
@@ -844,9 +860,8 @@ class SemanticTools:
     # any size. A page over this many characters is cut down to fewer rows.
     MAX_QUERY_METRICS_RESULT_PAGE_CHARS = 1_000_000
 
-    # MCP only, deliberately not in ``available_tools``: a node's model is told the
-    # full result is used for its final output, and paging it into the context
-    # would be the opposite of the compression.
+    # MCP and chat expose this bounded reader. Other nodes consume full cached
+    # rows through their structured output path instead of mounting another tool.
     @mcp_tool()
     @tool_contract(access="read", direct_call=True, companion_of="semantic_tools.query_metrics")
     def get_query_metrics_result(self, result_id: str, offset: int = 0, limit: int = 500) -> FuncToolResult:
@@ -1977,9 +1992,11 @@ class SemanticTools:
         Query metrics data (requires runtime).
 
         Return complete metric results by default. Do not pass limit just to
-        preview data, reduce output size, or be conservative; the full result
-        is cached and used for the final output, so a cut preview is never a
-        reason to query again. Use limit only when the user explicitly asks for
+        preview data, reduce output size, or be conservative. Full rows are
+        cached under result_id for structured output consumers or the available
+        get_query_metrics_result reader. Use that reader for omitted rows instead
+        of rerunning the query; do not invent values missing from the preview.
+        Use limit only when the user explicitly asks for
         Top N, first N, maximum N rows, a preview, or another row-count
         restriction. When using limit for Top N/Bottom N, also pass order_by so
         the truncation has stable business meaning.

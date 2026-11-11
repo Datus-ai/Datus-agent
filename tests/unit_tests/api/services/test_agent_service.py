@@ -317,13 +317,14 @@ class TestConstants:
         assert SUBAGENT_TOOL_REFERENCE["ask_metrics"]["default_tools"] == list(AskMetricsAgenticNode.DEFAULT_TOOLS)
 
     def test_tool_reference_chat_has_full_default_set(self):
-        """Chat's editor defaults include the five metric reads, without authoring tools."""
+        """Chat's editor defaults include metric reads and cached rows, without authoring tools."""
         entry = SUBAGENT_TOOL_REFERENCE["chat"]
         assert entry["default_tools"] == [
             "semantic_tools.list_metrics",
             "semantic_tools.get_metric",
             "semantic_tools.get_dataset",
             "semantic_tools.query_metrics",
+            "semantic_tools.get_query_metrics_result",
             "semantic_tools.attribution_analyze",
             "db_tools.*",
             "context_search_tools.*",

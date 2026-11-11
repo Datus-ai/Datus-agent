@@ -2,6 +2,9 @@
 {% if "query_metrics" in tools %}
 ## Metric Queries
 
+{% if "get_query_metrics_result" in tools %}
+- `query_metrics` may show only a preview. When the user needs omitted rows or a complete table, call `get_query_metrics_result` with that result's `result_id`. Read only the needed pages, using `offset + returned` while `has_more` is true. This reads the cache without executing SQL again. If the cache is unavailable, report the gap rather than inventing omitted values.
+{% endif %}
 {% if "get_metric" in tools %}
 - Read each metric with `get_metric` before querying it. Match the user's business meaning, not only its name.
 {% endif %}

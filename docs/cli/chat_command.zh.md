@@ -42,6 +42,8 @@ Datus 会在思考时实时流式输出，展示每一步的执行结果。如�
 
 Chat 可以直接使用 `list_metrics`、`get_metric`、`get_dataset`、`query_metrics` 和 `attribution_analyze` 发现、查询已有语义指标并进行归因。连续追问和较长分析留在当前 chat，不要求委派给 AskMetrics。
 
+需要完整表格时，chat 可以使用 `get_query_metrics_result` 分页读取预览中省略的缓存行，无需重新查询。缓存读取继续受当前策略、数据源和指标范围约束。
+
 没有合适指标时，chat 可以根据可用表结构和业务知识生成、执行只读 SQL。缺少指标不要求先创建指标；只有你明确要求创建或修改指标定义时才进入建模流程。
 
 需要特定业务上下文或发布入口时，可以选择 AskMetrics 或其他限定范围的业务 agent，其工具和数据权限继续生效。显式配置的 chat `tools` 白名单会替换默认工具；已有白名单需要按需加入 `semantic_tools.<method>` 才能使用对应指标能力。
