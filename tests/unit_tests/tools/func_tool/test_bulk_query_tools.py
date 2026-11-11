@@ -124,6 +124,68 @@ def test_inline_sql_ending_in_sql_table_name_is_exported(environment, sql):
     assert pq.read_table(root / result.result["file"]).to_pylist() == [{"id": "0012345678901234567"}]
 
 
+def test_vscode_export_rejects_before_touching_daemon_files_or_connections(environment, monkeypatch):
+    tool, _, _, root = environment
+    tool.agent_config._client_source = "vscode"
+    before = set(root.iterdir())
+    filesystem = Mock(side_effect=AssertionError("Client exports must not access the daemon filesystem"))
+    connector = Mock(side_effect=AssertionError("Client exports must not query the daemon"))
+    diagnostic = Mock(side_effect=AssertionError("Client exports must not write daemon diagnostics"))
+    monkeypatch.setattr(tool, "_bulk_root", filesystem)
+    monkeypatch.setattr(tool, "_get_connector", connector)
+    monkeypatch.setattr(tool, "_bulk_failure", diagnostic)
+
+    result = tool.export_query("client.sql", "exports/result.csv")
+
+    assert result.success == 0
+    assert "workspace lives on the client" in result.error
+    filesystem.assert_not_called()
+    connector.assert_not_called()
+    diagnostic.assert_not_called()
+    assert set(root.iterdir()) == before
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_replaced_project_root_cannot_publish_a_false_completion(environment, monkeypatch, streaming):
+    tool, source, _, root = environment
+    monkeypatch.setattr(source, "supports_streaming_read", streaming)
+    saved = root.with_name(root.name + "-saved")
+
+    def replace_root():
+        root.rename(saved)
+        root.mkdir()
+        (root / "other-project.txt").write_text("keep")
+
+    if streaming:
+        original = source.iter_query_batches
+
+        def stream(*args, **kwargs):
+            for table in original(*args, **kwargs):
+                replace_root()
+                yield table
+
+        monkeypatch.setattr(source, "iter_query_batches", stream)
+    else:
+        original = source.execute_query
+
+        def read(*args, **kwargs):
+            result = original(*args, **kwargs)
+            replace_root()
+            return result
+
+        monkeypatch.setattr(source, "execute_query", read)
+
+    result = tool.export_query("SELECT 1 AS id", "exports/result.csv")
+
+    assert result.success == 0
+    assert "Project root changed" in result.error
+    assert sorted(path.name for path in root.iterdir()) == ["other-project.txt"]
+    assert (root / "other-project.txt").read_text() == "keep"
+    assert not (saved / "exports/result.csv").exists()
+    assert not (saved / "exports/result.csv.meta.json").exists()
+    assert not list((saved / "exports").glob(".query-*"))
+
+
 @pytest.mark.parametrize("suffix", ["csv", "parquet"])
 @pytest.mark.parametrize("empty", [False, True])
 def test_non_streaming_sqlite_exports_complete_results_in_batches(tmp_path, monkeypatch, suffix, empty):
@@ -935,10 +997,13 @@ async def test_queued_bulk_calls_do_not_starve_the_default_thread_pool(environme
 
     tool, source, _, root = environment
     release = threading.Event()
+    both_entered = threading.Event()
     entered = []
 
     def waiting_stream(*args, **kwargs):
         entered.append(threading.get_ident())
+        if len(entered) == 2:
+            both_entered.set()
         release.wait(timeout=2)
         yield pa.table({"id": [1]})
 
@@ -951,7 +1016,7 @@ async def test_queued_bulk_calls_do_not_starve_the_default_thread_pool(environme
         for i in range(40)
     ]
     try:
-        await asyncio.sleep(0.1)
+        assert await asyncio.wait_for(asyncio.to_thread(both_entered.wait, 2), timeout=3) is True
         assert len(entered) == 2
         assert await asyncio.wait_for(asyncio.to_thread(lambda: "responsive"), timeout=0.5) == "responsive"
     finally:

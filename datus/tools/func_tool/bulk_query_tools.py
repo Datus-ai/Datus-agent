@@ -17,7 +17,7 @@ from datus.tools.policy_runtime import PolicyRuntime
 from datus.tools.read_observer import ReadObservation, notify_read
 from datus.tools.registry.contracts import tool_contract
 from datus.utils.bounded_tool_output import bounded_text, error_summary
-from datus.utils.project_files import ProjectFiles
+from datus.utils.project_files import MAX_SQL_FILE_BYTES, ProjectFiles
 from datus.utils.sql_utils import looks_like_sql_file_ref
 
 
@@ -27,7 +27,7 @@ class BulkQueryTools:
 
     def _bulk_sql(self, value: str, files: ProjectFiles) -> tuple[str, str]:
         if looks_like_sql_file_ref(value.lower()):
-            return files.read_sql(value.strip(), 16 * 1024 * 1024)
+            return files.read_sql(value.strip(), MAX_SQL_FILE_BYTES)
         return value, "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
     def _bulk_failure(self, exc, *, file_scope=None, **state) -> FuncToolResult:
@@ -212,6 +212,14 @@ class BulkQueryTools:
         Inspect small query samples with execute_sql instead. Existing files
         are never overwritten. A failed/cancelled export is not complete.
         """
+        if getattr(self.agent_config, "_client_source", None) == "vscode":
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "export_query needs server-side project files, but this VS Code workspace lives on the client. "
+                    "Use a project in the web IDE to export query results."
+                ),
+            )
         files = directory = None
         try:
             effective_datasource = self._resolve_effective_datasource(datasource)

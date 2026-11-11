@@ -1677,6 +1677,60 @@ class TestExportQueryPermission:
         return SimpleNamespace(tool_arguments=json.dumps({"sql": sql, "output_file": "exports/result.csv"}))
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["oversized", "fifo"])
+    async def test_export_permission_sql_file_reads_are_bounded_and_regular(
+        self, mock_broker, tmp_path, monkeypatch, kind
+    ):
+        import os
+
+        from datus.utils.project_files import MAX_SQL_FILE_BYTES, ProjectFiles
+
+        path = tmp_path / "query.sql"
+        if kind == "oversized":
+            path.write_bytes(b" " * (MAX_SQL_FILE_BYTES + 1))
+        else:
+            os.mkfifo(path)
+        limits = []
+        failures = []
+        original = ProjectFiles.read_sql
+
+        def read_sql(files, value, limit):
+            limits.append(limit)
+            try:
+                return original(files, value, limit)
+            except ValueError as exc:
+                failures.append(str(exc))
+                raise
+
+        unbounded = MagicMock(side_effect=AssertionError("Export permissions must not use unbounded reads"))
+        monkeypatch.setattr(ProjectFiles, "read_sql", read_sql)
+        monkeypatch.setattr("datus.utils.sql_utils.read_workspace_sql_file", unbounded)
+        config = get_profile("normal").model_copy(deep=True)
+        config.sql_statements.read = PermissionLevel.DENY
+        hooks = self._hooks(mock_broker, config, project_root=str(tmp_path))
+        with pytest.raises(PermissionDeniedException):
+            await asyncio.wait_for(
+                hooks.on_tool_start(self._context("query.sql"), MagicMock(), SimpleNamespace(name="export_query")),
+                timeout=3,
+            )
+        assert limits == [MAX_SQL_FILE_BYTES]
+        expected = (
+            "SQL file exceeds the 16 MiB input limit" if kind == "oversized" else "Query files must be regular files"
+        )
+        assert failures == [expected]
+        unbounded.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_export_sql_file_preserves_statement_kind_for_session_grants(self, mock_broker, tmp_path):
+        (tmp_path / "query.SQL").write_text("EXPLAIN SELECT 1")
+        config = get_profile("normal").model_copy(deep=True)
+        config.sql_statements.read = PermissionLevel.ASK
+        hooks = self._hooks(mock_broker, config, non_interactive=True, project_root=str(tmp_path))
+        hooks.permission_manager.approve_for_session("db_tools", "execute_sql.explain")
+        await hooks.on_tool_start(self._context("query.SQL"), MagicMock(), SimpleNamespace(name="export_query"))
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("profile", ["normal", "auto"])
     async def test_export_read_uses_existing_profile_defaults(self, mock_broker, profile):
         hooks = self._hooks(mock_broker, get_profile(profile))

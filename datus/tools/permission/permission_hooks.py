@@ -1035,9 +1035,18 @@ class PermissionHooks(AgentHooks):
         # Resolve a ``.sql`` file reference to its real (single) statement so the
         # kind detection below sees the SQL, not the path. On any read failure,
         # leave ``sql`` as-is → unknown → ASK (fail safe).
-        if isinstance(sql, str) and looks_like_sql_file_ref(sql):
+        if isinstance(sql, str) and looks_like_sql_file_ref(sql.lower() if tool_name == "export_query" else sql):
             try:
-                sql = read_workspace_sql_file(sql.strip(), self.project_root or ".")
+                if tool_name == "export_query":
+                    from datus.utils.project_files import MAX_SQL_FILE_BYTES, ProjectFiles
+
+                    def read_export_sql(path):
+                        with ProjectFiles(Path(self.project_root or ".")) as files:
+                            return files.read_sql(path, MAX_SQL_FILE_BYTES)[0]
+
+                    sql = await asyncio.to_thread(read_export_sql, sql.strip())
+                else:
+                    sql = read_workspace_sql_file(sql.strip(), self.project_root or ".")
             except Exception as e:
                 logger.debug("execute_sql gate: could not resolve .sql file (%s); treating as UNKNOWN", e)
         # No dialect available at the hook layer; the keyword fallback in

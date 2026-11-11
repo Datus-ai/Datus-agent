@@ -19,6 +19,10 @@ configured default. A fixed single-connector instance refuses selectors that
 would require switching its bound connection. An omitted output path generates `exports/<id>.csv`. Output paths and SQL files
 are resolved inside the node's project filesystem root. Existing outputs are
 never overwritten. CSV and Parquet are supported; Python can create a final XLSX.
+Exports require a server-side project workspace. VS Code sessions whose
+workspace lives on the client are refused before querying or writing files.
+SQL-file inputs are limited to 16 MiB, including permission inspection, and
+must resolve to regular project files.
 
 The tool returns only a project-relative path, byte/row counts, SQL hashes,
 policy scope and completion status. Query rows never enter the tool response.

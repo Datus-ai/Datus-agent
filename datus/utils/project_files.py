@@ -8,6 +8,8 @@ import stat
 from contextlib import suppress
 from pathlib import Path
 
+MAX_SQL_FILE_BYTES = 16 * 1024 * 1024
+
 
 def _same_file(left, right):
     return (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
@@ -59,6 +61,19 @@ class ProjectFiles:
             descriptor, self.fd = self.fd, None
             os.close(descriptor)
 
+    def verify_current(self):
+        """Check the pinned root against its current path from the filesystem anchor."""
+        anchor = os.open(self.root.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            current = _walk_directory(anchor, self.root.parts[1:])
+            try:
+                if not _same_file(os.fstat(self.fd), os.fstat(current)):
+                    raise ValueError("Project root changed during query execution")
+            finally:
+                os.close(current)
+        finally:
+            os.close(anchor)
+
     def resolve(self, value: str | Path) -> Path:
         candidate = (self.root / value).resolve()
         if not candidate.is_relative_to(self.root):
@@ -72,8 +87,11 @@ class ProjectFiles:
 
     def read_sql(self, value: str, limit: int):
         path = self.resolve(value)
-        with self.directory(path.parent) as directory, directory.open(path.name, "rb") as source:
-            data = source.read(limit + 1)
+        with self.directory(path.parent) as directory:
+            directory.verify_current()
+            with directory.open(path.name, "rb") as source:
+                data = source.read(limit + 1)
+            directory.verify_current()
         if len(data) > limit:
             raise ValueError("SQL file exceeds the 16 MiB input limit")
         return data.decode("utf-8"), str(path.relative_to(self.root))
@@ -103,6 +121,7 @@ class ProjectDirectory:
         return name
 
     def verify_current(self):
+        self.files.verify_current()
         with self.files.directory(self.path) as current:
             if not _same_file(os.fstat(self.fd), os.fstat(current.fd)):
                 raise ValueError("Project directory changed during query execution")
