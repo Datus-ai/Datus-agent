@@ -183,8 +183,10 @@ class LoadedTable:
     preview_columns: List[str] = field(default_factory=list)
     preview_rows: List[List[Any]] = field(default_factory=list)
     materialized: bool = False
+    warnings: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
+        """Serialize table metadata, including optional source details and typing warnings."""
         payload: Dict[str, Any] = {
             "table": self.table,
             "source_file": self.source_file,
@@ -203,6 +205,8 @@ class LoadedTable:
             payload["encoding"] = self.encoding
         if self.materialized:
             payload["materialized"] = True
+        if self.warnings:
+            payload["warnings"] = self.warnings
         return payload
 
 
@@ -597,7 +601,9 @@ def _json_scan(path: Path) -> str:
     return f"read_json_auto({quote_literal(str(path))})"
 
 
-def _xlsx_scan(path: Path, sheet: str, header_row: int, max_row: int, max_column: int) -> Tuple[str, str]:
+def _xlsx_scan(
+    path: Path, sheet: str, header_row: int, max_row: int, max_column: int, *, all_varchar: bool = False
+) -> Tuple[str, str]:
     """``(scan_expression, used_range)`` for one sheet, bounded to its real extent.
 
     ``stop_at_empty=false`` is stated rather than inferred. The range already
@@ -609,7 +615,8 @@ def _xlsx_scan(path: Path, sheet: str, header_row: int, max_row: int, max_column
     used_range = f"A{header_row}:{column_letter(max_column)}{max_row}"
     scan = (
         f"read_xlsx({quote_literal(str(path))}, sheet={quote_literal(sheet)}, "
-        f"range={quote_literal(used_range)}, header=true, stop_at_empty=false)"
+        f"range={quote_literal(used_range)}, header=true, stop_at_empty=false"
+        f"{', all_varchar=true' if all_varchar else ''})"
     )
     return scan, used_range
 
@@ -948,7 +955,143 @@ def _finish_table(
     )
 
 
-def inspect_file(path: Path, *, connection: Any, sheet: Optional[str] = None) -> Dict[str, Any]:
+def _inspect_merged_ranges(worksheet: Any, bounds: Tuple[int, int, int, int]) -> List[str]:
+    """Stream merge references, retaining only ranges intersecting the requested rectangle."""
+    from defusedxml.ElementTree import iterparse
+    from openpyxl.worksheet.cell_range import CellRange
+    from openpyxl.xml.constants import SHEET_MAIN_NS
+
+    left, top, right, bottom = bounds
+    merged_ranges = []
+    stack = []
+    # ReadOnlyWorksheet resolves the worksheet ZIP member through workbook
+    # relationships; using its source also handles nonstandard member names.
+    with worksheet._get_source() as source:
+        for event, element in iterparse(source, events=("start", "end")):
+            if event == "start":
+                stack.append(element)
+                continue
+            if element.tag == f"{{{SHEET_MAIN_NS}}}mergeCell":
+                merged = CellRange(element.attrib["ref"])
+                if (
+                    merged.min_col <= right
+                    and merged.max_col >= left
+                    and merged.min_row <= bottom
+                    and merged.max_row >= top
+                ):
+                    merged_ranges.append(str(merged))
+            stack.pop()
+            if stack:
+                stack[-1].remove(element)
+            element.clear()
+    return merged_ranges
+
+
+def _inspect_spreadsheet(
+    path: Path, *, sheet: Optional[str], cell_range: Optional[str], include: Optional[List[str]]
+) -> Dict[str, Any]:
+    """Read bounded cell evidence. Header and business interpretation belong to the caller."""
+    from openpyxl import load_workbook
+    from openpyxl.utils.cell import range_boundaries
+
+    fields = set(include or ["values"])
+    unknown = fields - {"values", "formulas", "formats", "merges"}
+    if unknown:
+        raise DataFileError(f"Unknown include fields: {sorted(unknown)}. Use values, formulas, formats, merges.")
+    bounds = None
+    if cell_range:
+        if not re.fullmatch(r"[A-Za-z]{1,3}[1-9][0-9]*(?::[A-Za-z]{1,3}[1-9][0-9]*)?", cell_range):
+            raise DataFileError("range must be an A1 cell or rectangle, for example CU1:CX10.")
+        bounds = range_boundaries(cell_range.upper())
+        left, top, right, bottom = bounds
+        if right > 16384 or bottom > 1048576 or right < left or bottom < top:
+            raise DataFileError("range is reversed or exceeds Excel worksheet limits.")
+        if (right - left + 1) * (bottom - top + 1) > 4096:
+            raise DataFileError("Inspect at most 4096 cells at a time; request a smaller range.")
+
+    # Cached values and formula evidence remain separate streaming reads.
+    workbook = load_workbook(path, read_only=True, data_only=False)
+    cached = None
+    try:
+        if sheet and sheet not in workbook.sheetnames:
+            raise DataFileError(f"Sheet {sheet!r} not found in {path.name}. Available: {workbook.sheetnames}")
+        if bounds and not sheet:
+            raise DataFileError("Specify sheet when inspecting a range.")
+        if "values" in fields:
+            cached = load_workbook(path, read_only=True, data_only=True)
+        details = []
+        for name in [sheet] if sheet else workbook.sheetnames:
+            worksheet = workbook[name]
+            max_row, max_column = sheet_bounds(path, name)
+            info: Dict[str, Any] = {
+                "sheet": name,
+                "state": worksheet.sheet_state,
+                "used_rows": max_row,
+                "used_columns": max_column,
+            }
+            if not max_row or not max_column:
+                info["empty"] = True
+                details.append(info)
+                continue
+            left, top, right, bottom = bounds or (
+                1,
+                1,
+                min(max_column, HEADER_PROBE_COLUMN_LIMIT),
+                min(max_row, HEADER_PROBE_ROW_LIMIT),
+            )
+            info["range"] = f"{column_letter(left)}{top}:{column_letter(right)}{bottom}"
+            info["has_more_rows"] = bottom < max_row
+            info["has_more_columns"] = right < max_column
+            cell_metadata = bool(fields & {"formulas", "formats"})
+            if cell_metadata:
+                info["cells"] = []
+            raw_rows = []
+            cached_rows = (
+                iter(cached[name].iter_rows(min_row=top, max_row=bottom, min_col=left, max_col=right))
+                if cached
+                else None
+            )
+            for row in worksheet.iter_rows(min_row=top, max_row=bottom, min_col=left, max_col=right):
+                values = next(cached_rows) if cached_rows is not None else None
+                raw_row = []
+                for index, cell in enumerate(row):
+                    address = f"{column_letter(left + index)}{top + len(raw_rows)}"
+                    evidence: Dict[str, Any] = {"address": address}
+                    if "values" in fields:
+                        evidence["value"] = _jsonable(values[index].value)
+                        raw_row.append(evidence["value"])
+                    if "formulas" in fields:
+                        formula = cell.value if cell.data_type == "f" else None
+                        # openpyxl exposes array formulas as objects rather than strings.
+                        evidence["formula"] = getattr(formula, "text", formula)
+                    if "formats" in fields:
+                        evidence["number_format"] = cell.number_format
+                        evidence["data_type"] = cell.data_type
+                    if cell_metadata:
+                        info["cells"].append(evidence)
+                raw_rows.append(raw_row)
+            if "values" in fields:
+                info["raw_rows"] = raw_rows
+                if not bounds:
+                    info["detected_header_row"] = detect_header_row(raw_rows)
+            if "merges" in fields:
+                info["merged_ranges"] = _inspect_merged_ranges(worksheet, (left, top, right, bottom))
+            details.append(info)
+        return {"sheets": workbook.sheetnames, "sheet_details": details}
+    finally:
+        workbook.close()
+        if cached is not None:
+            cached.close()
+
+
+def inspect_file(
+    path: Path,
+    *,
+    connection: Any,
+    sheet: Optional[str] = None,
+    cell_range: Optional[str] = None,
+    include: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """Describe a file without creating anything.
 
     The point is the *un-interpreted* grid for spreadsheets: when the header
@@ -959,29 +1102,11 @@ def inspect_file(path: Path, *, connection: Any, sheet: Optional[str] = None) ->
     result: Dict[str, Any] = {"file": path.name, "format": suffix.lstrip(".")}
 
     if suffix in _EXCEL_SUFFIXES:
-        sheets = enumerate_sheets(path)
-        result["sheets"] = sheets
-        targets = [sheet] if sheet else sheets
-        grids = []
-        for name in targets:
-            if name not in sheets:
-                raise DataFileError(f"Sheet {name!r} not found in {path.name}. Available: {sheets}")
-            max_row, max_column = sheet_bounds(path, name)
-            if max_row < 1 or max_column < 1:
-                grids.append({"sheet": name, "empty": True})
-                continue
-            grid = _probe_grid(connection, path, name, max_row, max_column)
-            grids.append(
-                {
-                    "sheet": name,
-                    "used_rows": max_row,
-                    "used_columns": max_column,
-                    "detected_header_row": detect_header_row(grid),
-                    "raw_rows": [[_jsonable(cell) for cell in row] for row in grid],
-                }
-            )
-        result["sheet_details"] = grids
+        result.update(_inspect_spreadsheet(path, sheet=sheet, cell_range=cell_range, include=include))
         return result
+
+    if cell_range or include:
+        raise DataFileError("range and include are supported only for .xlsx/.xlsm inspection.")
 
     if suffix in _CSV_SUFFIXES:
         detected = detect_csv_encoding(path)
@@ -1073,20 +1198,36 @@ def load_file(
                     sheet_index=index,
                     taken=_names_owned_by_others(existing, tag),
                 )
-                scan, used_range = _xlsx_scan(path, name, resolved_header, max_row, max_column)
-                _create_view(connection, table, scan, materialize, tag)
-                existing[table] = tag
-                loaded.append(
-                    _finish_table(
-                        connection,
-                        table=table,
-                        source_file=rel_path,
-                        sheet=name,
-                        header_row=resolved_header,
-                        used_range=used_range,
-                        materialized=materialize,
+                for all_varchar in (False, True):
+                    scan, used_range = _xlsx_scan(
+                        path, name, resolved_header, max_row, max_column, all_varchar=all_varchar
                     )
-                )
+                    try:
+                        _create_view(connection, table, scan, materialize, tag)
+                        item = _finish_table(
+                            connection,
+                            table=table,
+                            source_file=rel_path,
+                            sheet=name,
+                            header_row=resolved_header,
+                            used_range=used_range,
+                            materialized=materialize,
+                        )
+                    except Exception as exc:
+                        # Summary rows and pricing terms can defeat DuckDB's
+                        # first-row type inference. Keep the source values as
+                        # text so the caller can inspect and explicitly cast.
+                        if all_varchar or "Could not convert" not in str(exc):
+                            raise
+                        continue
+                    if all_varchar:
+                        item.warnings.append(
+                            "Mixed cell types prevented automatic typing; values were preserved as text. "
+                            "Inspect the source and use explicit casts for numeric analysis."
+                        )
+                    existing[table] = tag
+                    loaded.append(item)
+                    break
             except DataFileError as exc:
                 skipped.append(SkippedSheet(name, str(exc)))
             except Exception as exc:

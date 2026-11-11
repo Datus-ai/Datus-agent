@@ -1,7 +1,6 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-
 # -*- coding: utf-8 -*-
 import json
 from typing import Any, Dict, List, Optional
@@ -13,6 +12,7 @@ from jinja2.sandbox import SandboxedEnvironment
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.reference_template.store import ReferenceTemplateRAG
 from datus.tools.func_tool.base import FuncToolResult, normalize_null, trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 
@@ -98,6 +98,7 @@ class ReferenceTemplateTools:
         return tools
 
     @mcp_tool(availability_check="has_reference_templates")
+    @tool_contract(access="read", direct_call=True)
     def search_reference_template(
         self, query_text: str, subject_path: Optional[List[str]] = None, top_n: int = 5
     ) -> FuncToolResult:
@@ -136,6 +137,7 @@ class ReferenceTemplateTools:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool(availability_check="has_reference_templates")
+    @tool_contract(access="read", direct_call=True)
     def get_reference_template(self, subject_path: List[str], name: str = "") -> FuncToolResult:
         """
         Get reference template detail by exact subject path and name.
@@ -175,6 +177,7 @@ class ReferenceTemplateTools:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool(availability_check="has_reference_templates")
+    @tool_contract(access="read", direct_call=True)
     def render_reference_template(self, subject_path: List[str], name: str, params: str) -> FuncToolResult:
         """
         Render a reference template with the given parameters to produce final SQL.
@@ -284,6 +287,7 @@ class ReferenceTemplateTools:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool(availability_check="has_reference_templates")
+    @tool_contract(access="read", direct_call=True)
     def execute_reference_template(
         self, subject_path: List[str], name: str, params: str, datasource: str = ""
     ) -> FuncToolResult:

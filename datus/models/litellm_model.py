@@ -21,12 +21,17 @@ from datus.utils.image_content import is_tool_image_user_message, tool_images_as
 
 def register_image_model_capabilities(model: str) -> None:
     """Correct LiteLLM metadata for provider models verified to accept images."""
-    if model == "deepseek/deepseek-v4-flash":
+    if model in {
+        "deepseek/deepseek-flash",
+        "deepseek/deepseek-v4-flash",
+    }:
         litellm.register_model(
             {
                 model: {
                     "litellm_provider": "deepseek",
                     "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
                 }
             }
         )

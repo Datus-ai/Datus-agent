@@ -38,7 +38,7 @@ from datus.agent.node.visual_artifact._visual_artifact_finalize import (
     parse_finalize_output,
     run_finalize_analysis,
     run_intent_curation,
-    update_manifest_key_tables,
+    update_manifest_query_metadata,
 )
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.analysis_artifacts import (
@@ -1154,14 +1154,15 @@ class TestAggregateReferencedTables:
 
 
 # --------------------------------------------------------------------------- #
-# update_manifest_key_tables                                                  #
+# update_manifest_query_metadata                                                  #
 # --------------------------------------------------------------------------- #
 
 
-class TestUpdateManifestKeyTables:
+class TestUpdateManifestQueryMetadata:
     def test_writes_key_tables_to_existing_manifest(self, tmp_path: Path):
+        """Replace derived table references while preserving authored manifest fields."""
         manifest_path = _seed_manifest(tmp_path)
-        err = update_manifest_key_tables(manifest_path, ["Account", "Person"])
+        err = update_manifest_query_metadata(manifest_path, ["Account", "Person"])
         assert err is None
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
         assert data["key_tables"] == ["Account", "Person"]
@@ -1174,8 +1175,8 @@ class TestUpdateManifestKeyTables:
         ``key_tables`` is code-generated and authoritative each run,
         so the stale entry must NOT survive."""
         manifest_path = _seed_manifest(tmp_path)
-        update_manifest_key_tables(manifest_path, ["Account", "Person", "OldTable"])
-        update_manifest_key_tables(manifest_path, ["Account", "Person"])
+        update_manifest_query_metadata(manifest_path, ["Account", "Person", "OldTable"])
+        update_manifest_query_metadata(manifest_path, ["Account", "Person"])
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
         assert data["key_tables"] == ["Account", "Person"]
 
@@ -1183,7 +1184,7 @@ class TestUpdateManifestKeyTables:
         """If the value didn't change, skip the disk write (don't bump mtime
         needlessly). We probe by patching the underlying writer."""
         manifest_path = _seed_manifest(tmp_path)
-        update_manifest_key_tables(manifest_path, ["Account"])  # establish baseline
+        update_manifest_query_metadata(manifest_path, ["Account"])  # establish baseline
 
         from datus.agent.node.visual_artifact import _visual_artifact_finalize as finalize_mod
 
@@ -1195,18 +1196,20 @@ class TestUpdateManifestKeyTables:
             original(path, content)
 
         monkeypatch.setattr(finalize_mod, "_atomic_write_text", _spy)
-        err = update_manifest_key_tables(manifest_path, ["Account"])
+        err = update_manifest_query_metadata(manifest_path, ["Account"])
         assert err is None
         assert write_calls == []  # no second write because content was identical
 
     def test_missing_manifest_returns_error_string(self, tmp_path: Path):
-        err = update_manifest_key_tables(tmp_path / "nope.json", ["Account"])
+        """Return a warning string when the manifest does not exist."""
+        err = update_manifest_query_metadata(tmp_path / "nope.json", ["Account"])
         assert "manifest missing" in err
 
     def test_corrupt_manifest_returns_error_string(self, tmp_path: Path):
+        """Return a warning string when the manifest cannot be parsed."""
         path = tmp_path / "manifest.json"
         path.write_text("{not-json", encoding="utf-8")
-        err = update_manifest_key_tables(path, ["Account"])
+        err = update_manifest_query_metadata(path, ["Account"])
         assert "unreadable" in err
 
 
@@ -1662,7 +1665,7 @@ class TestRunFinalizeAnalysis:
         assert schema_path.is_file()
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         # The bake walks ``key_tables`` (already populated by the
-        # update_manifest_key_tables step in the same orchestrator pass)
+        # update_manifest_query_metadata step in the same orchestrator pass)
         # so the sidecar tables list mirrors the manifest entries.
         assert [t["name"] for t in schema["tables"]] == ["Account"]
         assert {c["name"] for c in schema["tables"][0]["columns"]} == {"id", "name"}
@@ -2271,3 +2274,105 @@ def test_reference_snapshot_finalization_respects_render_only_edits(tmp_path, sk
     else:
         context.get_reference_sql.assert_called_once_with(subject_path=["Sales"], name="paid")
         assert json.loads(saved.read_text(encoding="utf-8"))["reference_sql"][0]["sql"] == "SELECT 42"
+
+
+@pytest.mark.ci
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+@pytest.mark.parametrize("skip_narrative", [False, True])
+def test_finalize_rebuilds_sources_after_switch_and_delete_even_without_narrative(tmp_path, kind, skip_narrative):
+    """Rebuild source indexes after edits even when narrative generation is skipped or fails."""
+    artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+    path = artifact_dir / "manifest.json"
+    original = json.loads(path.read_text())
+    original.update(kind=kind, datasources=["stale_source"])
+    path.write_text(json.dumps(original))
+    sql = queries_dir / "rev_by_region.sql"
+    metadata = queries_dir / "rev_by_region.json"
+    if kind == "dashboard":
+        sql = sql.rename(sql.with_suffix(".sql.j2"))
+        metadata = metadata.rename(metadata.with_name("rev_by_region.params.json"))
+    if skip_narrative:
+        TestRunFinalizeSkipNarrative()._seed_existing_narrative(analysis_dir)
+    model = Mock(spec=["generate_with_json_output", "generate"])
+    model.generate_with_json_output.side_effect = RuntimeError("narrative unavailable")
+
+    def finalize():
+        """Run finalize with the configured narrative mode against the current query files."""
+        return run_finalize_analysis(
+            model=model,
+            artifact_kind=kind,
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+            skip_narrative=skip_narrative,
+        )
+
+    finalize()
+    assert json.loads(path.read_text())["datasources"] == ["pg"]
+    payload = json.loads(metadata.read_text())
+    payload["datasource"] = "new_source"
+    metadata.write_text(json.dumps(payload))
+    finalize()
+    assert json.loads(path.read_text())["datasources"] == ["new_source"]
+    sql.unlink()
+    finalize()
+    assert json.loads(path.read_text())["datasources"] == []
+    expected_calls = 0 if skip_narrative else 3
+    assert model.generate_with_json_output.call_count == expected_calls
+
+
+@pytest.mark.ci
+def test_query_source_index_is_available_before_narrative_starts(tmp_path):
+    """Make deterministic source metadata available before any narrative model call."""
+    artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+    observed = []
+
+    def narrative(*args, **kwargs):
+        """Observe the source index at narrative entry, then simulate a model failure."""
+        observed.append(json.loads((artifact_dir / "manifest.json").read_text())["datasources"])
+        raise RuntimeError("narrative unavailable")
+
+    model = Mock(spec=["generate_with_json_output"])
+    model.generate_with_json_output.side_effect = narrative
+    run_finalize_analysis(
+        model=model,
+        artifact_kind="report",
+        artifact_dir=artifact_dir,
+        queries_dir=queries_dir,
+        analysis_dir=analysis_dir,
+        actions=[],
+    )
+    assert observed == [["pg"]]
+
+
+@pytest.mark.ci
+def test_finalize_keeps_previous_index_when_query_metadata_cannot_be_read(tmp_path, monkeypatch):
+    """Preserve the previous manifest and surface unreadable query metadata as a warning."""
+    artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+    path = artifact_dir / "manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["datasources"] = ["previous"]
+    path.write_text(json.dumps(manifest))
+    before = path.read_bytes()
+    TestRunFinalizeSkipNarrative()._seed_existing_narrative(analysis_dir)
+    original_read = Path.read_text
+
+    def read(file, *args, **kwargs):
+        """Fail only the query metadata read while leaving other artifact reads available."""
+        if file == queries_dir / "rev_by_region.json":
+            raise OSError("metadata unavailable")
+        return original_read(file, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read)
+    result = run_finalize_analysis(
+        model=Mock(),
+        artifact_kind="report",
+        artifact_dir=artifact_dir,
+        queries_dir=queries_dir,
+        analysis_dir=analysis_dir,
+        actions=[],
+        skip_narrative=True,
+    )
+    assert path.read_bytes() == before
+    assert any("metadata unavailable" in warning for warning in result["warnings"])

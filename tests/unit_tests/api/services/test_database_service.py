@@ -23,8 +23,9 @@ from datus.api.services import database_service
 from datus.api.services.database_service import DatasourceService
 from datus.storage.semantic_model.artifact_file import artifact_revision, semantic_artifact_lock
 from datus.tools.db_tools.db_manager import DBManager
-from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
 from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetState
+from datus.tools.func_tool.semantic_model_editing_tools import SemanticModelEditingTools
+from datus.tools.func_tool.semantic_model_filesystem_tools import SemanticModelFilesystemTools
 
 
 def _service(*, models_root: Path | None = None) -> DatasourceService:
@@ -378,7 +379,7 @@ class TestSemanticLayerServiceBranches:
             },
             mode="bound",
         )
-        agent_tool = MetricFilesystemFuncTool(
+        agent_tool = SemanticModelFilesystemTools(
             root_path=str(yaml_file.parent),
             current_node="semantic_modeling",
             osi_target_state=target_state,
@@ -392,11 +393,13 @@ class TestSemanticLayerServiceBranches:
                 yield
 
         def mutate_from_agent():
-            return agent_tool.upsert_osi_metrics("orders.yml", '[{"name":"agent_metric"}]')
+            return SemanticModelEditingTools(agent_tool.workspace).upsert_osi_metrics(
+                "orders.yml", '[{"name":"agent_metric"}]'
+            )
 
         with (
             patch(
-                "datus.tools.func_tool.metric_filesystem_tools.semantic_artifact_lock",
+                "datus.tools.func_tool.semantic_model_editing_tools.semantic_artifact_lock",
                 observed_agent_lock,
             ),
             patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls,

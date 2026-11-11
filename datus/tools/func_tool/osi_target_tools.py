@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
 
 from datus.configuration.agent_config import AgentConfig
 from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.registry.contracts import tool_contract
 
 if TYPE_CHECKING:
     from datus.tools.func_tool.generation_evidence import GenerationEvidence
@@ -415,6 +416,7 @@ class OsiSemanticModelTargetTools:
                 "Call list_existing_osi_semantic_models again before selecting a target."
             )
 
+    @tool_contract(access="restricted", direct_call=True)
     def plan_osi_semantic_model_target(
         self,
         semantic_model_name: str = "",
@@ -471,6 +473,7 @@ class OsiSemanticModelTargetTools:
         except Exception as exc:
             return self._plan_failure(f"Failed to plan OSI semantic-model target: {exc}")
 
+    @tool_contract(access="restricted", direct_call=True)
     def list_existing_osi_semantic_models(self) -> FuncToolResult:
         """Return the live YAML inventory for LLM semantic target selection."""
         try:
@@ -518,6 +521,7 @@ class OsiSemanticModelTargetTools:
         self.target_state.last_error_code = code
         return FuncToolResult(success=0, error=error, result={"code": code, **result})
 
+    @tool_contract(access="write", direct_call=False)
     def bind_osi_semantic_model_target(
         self,
         semantic_model_file: str = "",

@@ -34,6 +34,7 @@ from datus.tools.func_tool.base import (
     trans_to_function_tool,
 )
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
+from datus.tools.registry.contracts import tool_contract
 from datus.tools.semantic_tools.dosi import DosiConfig, DosiRuntime
 from datus.tools.semantic_tools.dosi.engine import has_model_files
 from datus.tools.semantic_tools.models import (
@@ -807,6 +808,7 @@ class SemanticTools:
     # full result is used for its final output, and paging it into the context
     # would be the opposite of the compression.
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True, companion_of="semantic_tools.query_metrics")
     def get_query_metrics_result(self, result_id: str, offset: int = 0, limit: int = 500) -> FuncToolResult:
         """
         Read the full rows behind a ``query_metrics`` or ``select_records`` result, one page at a time.
@@ -1363,6 +1365,7 @@ class SemanticTools:
             success=0, error=f"{tool_name} failed: {exc}", result={"execution_info": info} if info else None
         )
 
+    @tool_contract(access="read", direct_call=True)
     def describe_concept(self, name: Optional[str] = None) -> FuncToolResult:
         """
         Describe the ontology: the concept catalog, or one concept in full.
@@ -1391,6 +1394,7 @@ class SemanticTools:
         except Exception as exc:  # noqa: BLE001 - surfaced as a failed tool call
             return self._semantic_failure("describe_concept", exc)
 
+    @tool_contract(access="read", direct_call=True)
     def find_concept_paths(self, source: str, target: str) -> FuncToolResult:
         """
         List every named path from one concept to another (up to 3 hops).
@@ -1426,6 +1430,7 @@ class SemanticTools:
     SELECT_RECORDS_DEFAULT_LIMIT = 200
 
     @tool_schema(strict_mode=False)
+    @tool_contract(access="read", direct_call=True)
     def select_records(
         self,
         from_concept: str,
@@ -1498,6 +1503,7 @@ class SemanticTools:
         )
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def list_metrics(
         self,
         path: Optional[List[str]] = None,
@@ -1650,6 +1656,7 @@ class SemanticTools:
         return None
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def get_metric(
         self,
         name: str,
@@ -1760,6 +1767,7 @@ class SemanticTools:
         return FuncToolResult(success=1, result=record)
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def get_dataset(self, name: str) -> FuncToolResult:
         """
         Get one dataset's fields and their definitions. Read every dataset a
@@ -1837,6 +1845,7 @@ class SemanticTools:
     # Dosi binding names come from metric declarations and require an open schema.
     @tool_schema(strict_mode=False)
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def query_metrics(
         self,
         metrics: List[str],
@@ -2256,6 +2265,7 @@ class SemanticTools:
         )
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=False)
     def validate_semantic(
         self,
         scope: Literal["all", "semantic_model"] = "all",
@@ -2393,6 +2403,7 @@ class SemanticTools:
     # Dosi parameter names come from metric declarations and require an open schema.
     @tool_schema(strict_mode=False)
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def attribution_analyze(
         self,
         metric_name: str,

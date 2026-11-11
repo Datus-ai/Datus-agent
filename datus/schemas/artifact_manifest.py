@@ -91,10 +91,10 @@ class ArtifactManifest(BaseModel):
     datasources: List[str] = Field(
         default_factory=list,
         description=(
-            "Distinct datasource labels referenced by this artifact's queries, populated "
-            "incrementally as ``save_query`` / ``save_query_template`` is called. Used by "
+            "Distinct datasource labels derived from the current saved query metadata at "
+            "finalize and rebuilt from the publication snapshot before publishing. Used by "
             "the subagent that gets spawned for follow-up questions to know which "
-            "connectors to bind. Stable order = first-seen order so diffs stay readable."
+            "connectors to bind. Stable order follows the saved query file order."
         ),
     )
     key_tables: List[str] = Field(

@@ -31,6 +31,7 @@ from bs4 import BeautifulSoup
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.web_result import normalize_fetch_result, normalize_search_results
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -164,6 +165,7 @@ class WebTool:
 
         return tools
 
+    @tool_contract(access="restricted", direct_call=False)
     def web_search(
         self,
         keywords: List[str],
@@ -226,6 +228,7 @@ class WebTool:
             logger.error(f"Web search failed for keywords {keywords}: {e}")
             return FuncToolResult(success=0, error=str(e))
 
+    @tool_contract(access="restricted", direct_call=False)
     def web_fetch(
         self,
         url: str,

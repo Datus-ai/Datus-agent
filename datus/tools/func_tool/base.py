@@ -13,6 +13,7 @@ from agents import FunctionTool, function_tool
 from agents.function_schema import function_schema
 from pydantic import BaseModel, Field, ValidationError, model_serializer
 
+from datus.tools.registry.contracts import definition_from_callable, registered_function_tool
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -300,6 +301,7 @@ def trans_to_function_tool(
         excluded_params: Optional parameter names to remove from the exposed JSON schema.
             Use this for dialect-specific parameters that the current tool instance does not support.
     """
+    definition = definition_from_callable(bound_method)
     if strict_mode is None:
         strict_mode = getattr(bound_method, "__datus_tool_strict_mode__", True)
     tool_template = function_tool(bound_method, strict_mode=strict_mode)
@@ -433,7 +435,8 @@ def trans_to_function_tool(
 
     async_invoker = create_async_invoker(bound_method)
 
-    final_tool = FunctionTool(
+    final_tool = registered_function_tool(
+        definition=definition,
         name=tool_template.name,
         description=tool_template.description,
         params_json_schema=corrected_schema,

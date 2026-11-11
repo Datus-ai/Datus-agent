@@ -49,12 +49,13 @@ from datus.tools.func_tool._visual_artifact_cards import scan_render_cards
 from datus.tools.func_tool._visual_artifact_helpers import (
     append_intent_section,
     coerce_uses_arg,
-    upsert_manifest_after_save,
+    touch_manifest_after_save,
     utc_now_iso,
     write_query_brief,
 )
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.metric_artifact_tools import MetricArtifactToolsMixin
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -357,6 +358,7 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
 
     # -- intent declaration --------------------------------------------------
 
+    @tool_contract(access="restricted", direct_call=False)
     def start_new_report(self, slug: str, name: str, description: str) -> FuncToolResult:
         """
         Create a fresh report directory at ``reports/<slug>/``, write its manifest, and bind it.
@@ -435,6 +437,7 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
             return FuncToolResult(success=0, error=f"Manifest validation failed: {exc}")
         return self._activate(slug, mode="new", create_dirs=True, manifest=manifest)
 
+    @tool_contract(access="restricted", direct_call=False)
     def bind_existing_report(self, report_slug: str) -> FuncToolResult:
         """
         Switch the active report to an existing one and bind subsequent saves there.
@@ -570,6 +573,7 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
             )
         return None
 
+    @tool_contract(access="restricted", direct_call=False)
     def save_query(
         self,
         name: str,
@@ -815,13 +819,12 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
             return FuncToolResult(success=0, error=brief_err)
         (self.queries_dir / f"{name}.metric.json").unlink(missing_ok=True)
 
-        # Manifest upsert (datasources union-add + updated_at bump). Soft
-        # failure — log warning, expose in result, but don't fail the
+        # Refresh recency; finalize derives sources from the saved query files.
+        # Failure is a warning: log it without failing the
         # whole tool call: the artifact's primary contract (SQL+data+
         # brief) is already on disk.
-        manifest_warning = upsert_manifest_after_save(
+        manifest_warning = touch_manifest_after_save(
             self.report_dir / "manifest.json",
-            datasource=ds_label,
             timestamp=payload["executed_at"],
         )
 
@@ -843,6 +846,7 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
             result["manifest_warning"] = manifest_warning
         return FuncToolResult(result=result)
 
+    @tool_contract(access="restricted", direct_call=False)
     def validate_render(self) -> FuncToolResult:
         """
         Validate the assembled render/ tree. Terminal action of this subagent.

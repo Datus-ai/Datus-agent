@@ -59,6 +59,9 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then args+=(--force); fi
           uv run --no-project --with pyyaml python ci/bi_gate.py plan --github-output "$GITHUB_OUTPUT" "${args[@]}"
 
+      - name: Validate generated tool contracts
+        run: python3 datus/tools/registry/catalog_builder.py --check
+
       - name: Install dependencies
         run: |
           if [ "${{ steps.profile.outputs.profile }}" = "code" ] || [ "${{ steps.profile.outputs.ci_tests }}" = "true" ]; then

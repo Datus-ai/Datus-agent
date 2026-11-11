@@ -22,6 +22,7 @@ from datus.storage.lineage.models import AnalysisSettings, LineageDocument, Sour
 from datus.storage.lineage.store import LINEAGE_FILE_NAME, LineageStore, graph_keys, remove_source, replace_source
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.fs_path_policy import PathAllowlist, PathZone, classify_path
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.sql_lineage import ANALYZER_VERSION
@@ -98,6 +99,7 @@ class LineageTools:
 
     # -- write ------------------------------------------------------------------------------
 
+    @tool_contract(access="write", direct_call=False)
     def upsert_lineage(
         self,
         paths: Optional[List[str]] = None,
@@ -220,6 +222,7 @@ class LineageTools:
             logger.error(f"upsert_lineage failed: {e}")
             return FuncToolResult(success=0, error=_error_message(e))
 
+    @tool_contract(access="write", direct_call=False)
     def delete_lineage(self, sources: List[str]) -> FuncToolResult:
         """Remove saved sources and every edge only they supported.
 
@@ -259,6 +262,7 @@ class LineageTools:
 
     # -- read -------------------------------------------------------------------------------
 
+    @tool_contract(access="read", direct_call=True)
     def query_lineage(
         self,
         tables: Optional[List[str]] = None,

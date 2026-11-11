@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from datus.cli.execution_state import InteractionBroker
+from datus.tools.func_tool.semantic_model_editing_tools import SemanticModelEditingTools
 from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
 from datus.tools.permission import permission_hooks as permission_hooks_module
 from datus.tools.permission.permission_config import (
@@ -954,7 +955,9 @@ class TestFilesystemZoneProfileMatrix:
             mock_tool = MagicMock()
             mock_tool.name = name
             fs_tools.append(mock_tool)
-        registry.register_tools("filesystem_tools", fs_tools)
+        for tool in fs_tools:
+            category = "semantic_tools" if "_osi_" in tool.name else "filesystem_tools"
+            registry.register_tools(category, [tool])
 
         config = PermissionConfig(
             default_permission=PermissionLevel.ASK,
@@ -1115,65 +1118,23 @@ class TestFilesystemZoneProfileMatrix:
         mock_broker.request.assert_not_called()
 
     # --------------------------------------------------------------- write-set
-    @pytest.mark.asyncio
-    async def test_is_write_set_matches_filesystem_tool_surface(self):
-        """Guard against drift: the hook's write-set must cover every write
-        method the general or OSI metric filesystem surface actually exposes.
-
-        If a new write tool (e.g. ``append_file``) is added without updating
-        ``_FILESYSTEM_WRITE_TOOLS``, the normal-profile INTERNAL gate would
-        silently regress to bypass for that tool.
-        """
+    def test_resource_access_uses_registered_capabilities(self):
+        """File mutations and semantic edits declare writes through their own providers."""
         from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
-        from datus.tools.func_tool.metric_filesystem_tools import (
-            MetricFilesystemFuncTool,
-            OsiSemanticModelFilesystemFuncTool,
-        )
+        from datus.tools.func_tool.semantic_model_filesystem_tools import SemanticModelFilesystemTools
+        from datus.tools.registry.contracts import tool_definition
 
-        fs_tool = FilesystemFuncTool(root_path="/tmp")
-        tool_names = {t.name for t in fs_tool.available_tools()}
-        osi_metric_tool = MetricFilesystemFuncTool(
-            root_path="/tmp",
-            current_node="semantic_modeling",
-        )
-        osi_metric_tool_names = {t.name for t in osi_metric_tool.available_tools()}
-        osi_semantic_tool = OsiSemanticModelFilesystemFuncTool(
-            root_path="/tmp",
-            current_node="semantic_modeling",
-        )
-        osi_semantic_tool_names = {t.name for t in osi_semantic_tool.available_tools()}
-        # Every tool the filesystem surface advertises as a mutation must be
-        # declared as a write, so the normal-profile INTERNAL gate doesn't
-        # silently bypass it. Read-only tools (``read_file`` / ``glob`` /
-        # ``grep``) stay out — they have their own gate path.
-        write_names = {
-            "write_file",
-            "edit_file",
-            "delete_file",
-            "upsert_osi_metrics",
-            "delete_osi_metrics",
-            "upsert_osi_datasets",
-            "delete_osi_datasets",
-        }
-        # The hook's declared write-set must equal the writes these tools expose,
-        # not a strict subset. Both directions matter:
-        #   - subset breaks the matrix (writes get silently bypassed)
-        #   - superset means we ASK on a tool name that doesn't exist
-        assert write_names == PermissionHooks._FILESYSTEM_WRITE_TOOLS
-        assert (
-            write_names
-            - {
-                "upsert_osi_metrics",
-                "delete_osi_metrics",
-                "upsert_osi_datasets",
-                "delete_osi_datasets",
-            }
-            <= tool_names
-        )
-        assert "upsert_osi_metrics" in osi_metric_tool_names
-        assert "delete_osi_metrics" in osi_metric_tool_names
-        assert "upsert_osi_datasets" in osi_semantic_tool_names
-        assert "delete_osi_datasets" in osi_semantic_tool_names
+        filesystem = FilesystemFuncTool(root_path="/tmp")
+        editor = SemanticModelEditingTools(SemanticModelFilesystemTools(root_path="/tmp").workspace)
+        for tool in filesystem.available_tools():
+            definition = tool_definition(tool)
+            assert definition.category == "filesystem_tools"
+            assert definition.access == ("write" if tool.name in {"write_file", "edit_file", "delete_file"} else "read")
+        for tool in editor.available_tools():
+            definition = tool_definition(tool)
+            assert definition.category == "semantic_tools"
+            assert definition.access == "write"
+            assert definition.direct_call is False
 
 
 class TestNonInteractiveMode:
@@ -1547,7 +1508,9 @@ class TestVisualArtifactAutoAllow:
             mock_tool = MagicMock()
             mock_tool.name = name
             fs_tools.append(mock_tool)
-        registry.register_tools("filesystem_tools", fs_tools)
+        for tool in fs_tools:
+            category = "semantic_tools" if "_osi_" in tool.name else "filesystem_tools"
+            registry.register_tools(category, [tool])
 
         manager = PermissionManager(
             global_config=PermissionConfig(default_permission=PermissionLevel.ASK, rules=[]),
@@ -3294,3 +3257,97 @@ async def test_proxied_plan_writer_cannot_bypass_custom_rules(
         hooks._request_user_confirmation.assert_awaited_once()
     else:
         hooks._request_user_confirmation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["global", "node"])
+@pytest.mark.parametrize(
+    "category,name,arguments",
+    [
+        ("filesystem_tools", name, {"path": "orders.yml"})
+        for name in ("write_file", "edit_file", "delete_file", "upsert_osi_datasets", "upsert_osi_metrics")
+    ]
+    + [
+        ("semantic_tools", "publish_semantic_model", {}),
+        ("semantic_tools", "write_semantic_model_plan_file", {}),
+        ("db_tools", "execute_sql", {"sql": "SELECT 1"}),
+        ("bash_tools", "bash", {"command": "echo denied"}),
+    ],
+)
+async def test_restricted_method_denials_precede_zone_sql_and_proxy_shortcuts(
+    tmp_path, mock_broker, scope, category, name, arguments
+):
+    """Auto INTERNAL writes, SQL reads and client proxies cannot widen host grants."""
+    custom = PermissionConfig(rules=[PermissionRule(tool=category, pattern=name, permission=PermissionLevel.DENY)])
+    base = get_profile("auto")
+    manager = PermissionManager(
+        base.merge_with(custom) if scope == "global" else base,
+        node_overrides={"published": custom} if scope == "node" else None,
+        active_profile="auto",
+    )
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=manager,
+        node_name="published",
+        tool_registry=ToolRegistry({name: category}),
+        fs_policy=FilesystemPolicy(root_path=tmp_path, current_node="published", strict=True),
+        enforce_method_denials=True,
+        proxied_tool_names={name} if category == "semantic_tools" else None,
+    )
+    with pytest.raises(PermissionDeniedException) as exc:
+        await hooks.on_tool_start(
+            SimpleNamespace(tool_arguments=json.dumps(arguments)), None, SimpleNamespace(name=name)
+        )
+    assert exc.value.tool_category == category
+    mock_broker.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enforce_method_denials", [False, True])
+@pytest.mark.parametrize("scope", ["global", "node"])
+async def test_plan_helpers_bypass_denials_on_all_hosts(mock_broker, enforce_method_denials, scope):
+    """The real planning tools retain their exemption under global and node DENY."""
+    from datus.agent.node.agentic_node import AgenticNode
+
+    custom = PermissionConfig(rules=[PermissionRule(tool="*", pattern="*", permission=PermissionLevel.DENY)])
+    manager = PermissionManager(
+        custom if scope == "global" else get_profile("auto"),
+        node_overrides={"published": custom} if scope == "node" else None,
+    )
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=manager,
+        node_name="published",
+        tool_registry=ToolRegistry(),
+        enforce_method_denials=enforce_method_denials,
+    )
+    tools = AgenticNode._get_plan_mode_tools(SimpleNamespace(_session=None, session_id=None))
+    assert tools
+    for tool in tools:
+        assert manager.check_permission("tools", tool.name, "published") == PermissionLevel.DENY
+        await hooks.on_tool_start(SimpleNamespace(tool_arguments="{}"), None, tool)
+    mock_broker.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_restricted_skill_dispatch_still_authorizes_the_selected_name(mock_broker):
+    manager = PermissionManager(
+        PermissionConfig(
+            default_permission=PermissionLevel.DENY,
+            rules=[
+                PermissionRule(tool="skills", pattern="business", permission=PermissionLevel.ALLOW),
+            ],
+        ),
+        active_profile="auto",
+    )
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=manager,
+        node_name="published",
+        tool_registry=ToolRegistry({"load_skill": "skills"}),
+        enforce_method_denials=True,
+    )
+    tool = SimpleNamespace(name="load_skill")
+    await hooks.on_tool_start(SimpleNamespace(tool_arguments='{"skill_name":"business"}'), None, tool)
+    with pytest.raises(PermissionDeniedException):
+        await hooks.on_tool_start(SimpleNamespace(tool_arguments='{"skill_name":"unlinked"}'), None, tool)

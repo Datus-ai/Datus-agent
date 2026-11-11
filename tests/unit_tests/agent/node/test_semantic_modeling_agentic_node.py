@@ -157,6 +157,13 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
     assert '<required_skill name="dosi-semantic-authoring">' in prompt
     node._populate_tool_registry()
     assert node.tool_registry.get("verify_semantic_outputs") == "semantic_tools"
+    from datus.tools.registry.contracts import tool_definition
+
+    for name in ("upsert_osi_metrics", "delete_osi_metrics", "upsert_osi_datasets", "delete_osi_datasets"):
+        mounted = next(tool for tool in node.tools if tool.name == name)
+        assert tool_definition(mounted).tool_id == f"semantic_tools.{name}"
+        assert node.tool_registry.get(name) == "semantic_tools"
+
     assert "## OSI Core reference shapes" in prompt
     assert "## Active DATUS capability directory" in prompt
     assert "ensure_metric_uids" not in tool_names
@@ -430,7 +437,7 @@ metrics: []
             }
         ],
     }
-    updated = node.filesystem_func_tool.upsert_osi_datasets(str(target), json.dumps([dataset]))
+    updated = node.semantic_model_editing_tools.upsert_osi_datasets(str(target), json.dumps([dataset]))
     assert updated.success == 1
     assert node.osi_target_state.target_mutated is True
 
@@ -441,7 +448,7 @@ metrics: []
         "name": "order_count",
         "expression": {"dialects": [{"dialect": "STARROCKS", "expression": "COUNT(*)"}]},
     }
-    metric_result = node.filesystem_func_tool.upsert_osi_metrics(str(target), json.dumps([metric]))
+    metric_result = node.semantic_model_editing_tools.upsert_osi_metrics(str(target), json.dumps([metric]))
     assert metric_result.success == 1
     assert node.osi_target_state.touched_metric_names == ["order_count"]
 
@@ -464,7 +471,7 @@ def test_unified_dosi_plans_new_model_once_for_dataset_and_metric_changes(
     model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
     assert target == str((model_dir / "commerce.yml").resolve())
 
-    dataset_result = node.filesystem_func_tool.upsert_osi_datasets(
+    dataset_result = node.semantic_model_editing_tools.upsert_osi_datasets(
         target,
         json.dumps(
             [
@@ -481,7 +488,7 @@ def test_unified_dosi_plans_new_model_once_for_dataset_and_metric_changes(
             ]
         ),
     )
-    metric_result = node.filesystem_func_tool.upsert_osi_metrics(
+    metric_result = node.semantic_model_editing_tools.upsert_osi_metrics(
         target,
         json.dumps(
             [

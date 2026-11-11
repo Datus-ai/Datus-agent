@@ -1436,3 +1436,22 @@ class TestDashboardFilesystemFuncTool:
         result = fs.delete_file("dashboards/x/queries/q.params.json")
         assert result.success == 0
         assert target.exists()
+
+
+@pytest.mark.ci
+def test_template_save_keeps_query_source_authoritative_until_finalize(dashboard_tools, project_root):
+    """Save template datasource provenance without incrementally modifying the source index."""
+    result = dashboard_tools.save_query_template(
+        name="source_owner",
+        sql_template=_REVENUE_TEMPLATE,
+        sample_params={"month_floor": "2026-01", "regions": ["NA"]},
+        goal="Regions",
+        hypothesis="Sales have regions",
+    )
+    assert result.success == 1, result.error
+    root = project_root / "dashboards" / dashboard_tools.dashboard_slug
+    query = json.loads((root / "queries/source_owner.params.json").read_text())
+    manifest = json.loads((root / "manifest.json").read_text())
+    assert query["datasource"] == "default"
+    assert manifest["datasources"] == []
+    assert manifest["updated_at"] == query["saved_at"]

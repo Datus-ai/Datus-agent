@@ -1,0 +1,655 @@
+{
+  "schema_version": 1,
+  "tools": {
+    "artifact_tools.bind_existing_dashboard": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "artifact_tools.bind_existing_report": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "artifact_tools.save_metric_query": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "artifact_tools.save_metric_query_template": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "artifact_tools.save_query": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "artifact_tools.save_query_template": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "artifact_tools.start_new_dashboard": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "artifact_tools.start_new_report": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "artifact_tools.validate_render": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bash_tools.bash": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.adapter": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.add_chart_to_dashboard": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.create_chart": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.create_dashboard": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.create_dataset": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.delete_chart": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.delete_dashboard": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.delete_dataset": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.get_bi_serving_target": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.get_chart": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.get_chart_data": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.get_dashboard": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.get_dataset": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.list_bi_databases": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.list_charts": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.list_dashboards": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.list_datasets": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.serving_dataset_db": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.serving_db_config": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.update_chart": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "bi_tools.update_dashboard": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "context_search_tools.get_reference_sql": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "context_search_tools.list_subject_tree": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "context_search_tools.search_metrics": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "context_search_tools.search_reference_sql": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "context_search_tools.search_semantic_objects": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "date_parsing_tools.parse_temporal_expressions": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "db_tools.check_datasource_quality": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "db_tools.describe_table": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "db_tools.execute_ddl": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "db_tools.execute_sql": {
+      "access": "sql",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "db_tools.get_datasource_identity": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "db_tools.get_migration_capabilities": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "db_tools.get_table_ddl": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "db_tools.import_database_file": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "db_tools.list_databases": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "db_tools.list_schemas": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "db_tools.list_tables": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "db_tools.load_file_as_table": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "db_tools.plan_datasource": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "db_tools.search_table": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "db_tools.suggest_table_layout": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "db_tools.transfer_query_result": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "db_tools.validate_ddl": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "filesystem_tools.delete_file": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "filesystem_tools.edit_file": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "filesystem_tools.glob": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "filesystem_tools.grep": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "filesystem_tools.read_file": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "filesystem_tools.read_image": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "filesystem_tools.write_file": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "lineage_tools.delete_lineage": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "lineage_tools.query_lineage": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "lineage_tools.upsert_lineage": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "memory_tools.add_memory": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "memory_tools.edit_memory": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "platform_doc_tools.get_document": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "platform_doc_tools.list_document_nav": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "platform_doc_tools.search_document": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "reference_template_tools.execute_reference_template": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "reference_template_tools.get_reference_template": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "reference_template_tools.render_reference_template": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "reference_template_tools.search_reference_template": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "scheduler_tools.delete_job": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "scheduler_tools.get_run_log": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "scheduler_tools.get_scheduler_job": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "scheduler_tools.list_job_runs": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "scheduler_tools.list_scheduler_connections": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "scheduler_tools.list_scheduler_jobs": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "scheduler_tools.pause_job": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "scheduler_tools.resume_job": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "scheduler_tools.submit_sparksql_job": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "scheduler_tools.submit_sql_job": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "scheduler_tools.trigger_scheduler_job": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "scheduler_tools.update_job": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "semantic_tools.attribution_analyze": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "semantic_tools.bind_osi_semantic_model_target": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "semantic_tools.check_semantic_object_exists": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "semantic_tools.delete_osi_datasets": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "semantic_tools.delete_osi_metrics": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "semantic_tools.describe_concept": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "semantic_tools.find_concept_paths": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "semantic_tools.generate_sql_summary_id": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "semantic_tools.get_dataset": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "semantic_tools.get_metric": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "semantic_tools.get_query_metrics_result": {
+      "access": "read",
+      "companion_of": "semantic_tools.query_metrics",
+      "direct_call": true
+    },
+    "semantic_tools.list_existing_osi_semantic_models": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "semantic_tools.list_metrics": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "semantic_tools.plan_osi_semantic_model_target": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "semantic_tools.profile_semantic_model_evidence": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "semantic_tools.publish_metrics": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "semantic_tools.publish_semantic_model": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "semantic_tools.query_metrics": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "semantic_tools.select_records": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "semantic_tools.sync_osi_to_db": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "semantic_tools.upsert_osi_datasets": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "semantic_tools.upsert_osi_metrics": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "semantic_tools.validate_semantic": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "semantic_tools.verify_semantic_outputs": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "semantic_tools.write_semantic_model_plan_file": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "skills.load_skill": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "sub_agent_tools.task": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "tool_result_tools.read_tool_result": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "tools.ask_user": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "tools.confirm_plan": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "tools.create_issue_comment": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "tools.finish_mission": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "tools.mark_blocked": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "tools.request_human_input": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "tools.search_skill_usage": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "tools.select_final_metric_result": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "tools.submit_task_result": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "tools.todo_list": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "tools.todo_read": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "tools.todo_update": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "tools.todo_write": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "tools.update_issue_status": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "tools.validate_skill": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "web_tool.web_fetch": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    },
+    "web_tool.web_search": {
+      "access": "restricted",
+      "companion_of": null,
+      "direct_call": false
+    }
+  }
+}

@@ -18,7 +18,7 @@ from contextlib import nullcontext
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
-from agents import FunctionTool, Tool
+from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.inherited_memory_overrides import inherited_memory
@@ -34,6 +34,7 @@ from datus.schemas.action_history import (
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.schemas.at_context import apply_at_context
 from datus.tools.func_tool.base import FuncToolResult, parse_tool_args, write_back_tool_args
+from datus.tools.registry.contracts import definition_from_callable, registered_function_tool, tool_contract
 from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.loggings import get_logger
 from datus.utils.memory_loader import resolve_memory_node
@@ -311,7 +312,8 @@ class SubAgentTaskTool:
             return result.model_dump()
 
         return [
-            FunctionTool(
+            registered_function_tool(
+                definition=definition_from_callable(self.task),
                 name="task",
                 description=description,
                 params_json_schema=schema,
@@ -320,6 +322,7 @@ class SubAgentTaskTool:
             )
         ]
 
+    @tool_contract(access="restricted", direct_call=False)
     async def task(
         self,
         type: str = "",
@@ -436,7 +439,13 @@ class SubAgentTaskTool:
         if parent_manager is None:
             return
 
+        from datus.tools.permission.live_profile import LivePermissionProfile
         from datus.tools.permission.profile_override import apply_profile_override
+
+        live_profile = getattr(parent_manager, "live_profile", None)
+        if isinstance(live_profile, LivePermissionProfile):
+            live_profile.register(getattr(node, "permission_manager", None))
+            return
 
         apply_profile_override(
             getattr(node, "permission_manager", None),

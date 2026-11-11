@@ -342,7 +342,7 @@ class ChatAgenticNode(AgenticNode):
             )
             self.skill_func_tool = SkillFuncTool(
                 manager=self.skill_manager,
-                node_name="chat",
+                node_name=self.get_node_name(),
                 node_class=self.get_node_class_name(),
                 authoring_mode=self.SKILL_AUTHORING_MODE,
             )
@@ -504,9 +504,12 @@ class ChatAgenticNode(AgenticNode):
         if not self.agent_config:
             return {}
 
-        chat_config = self.agent_config.agentic_nodes.get("chat", {})
-        if isinstance(chat_config, dict) and "permissions" in chat_config:
-            return {"chat": chat_config["permissions"]}
+        # ask_* subclasses inherit Skill setup but authorize their own node,
+        # including aliases, rather than borrowing the main chat node's grants.
+        node_name = self.get_node_name()
+        node_config = self.agent_config.agentic_nodes.get(node_name, {})
+        if isinstance(node_config, dict) and "permissions" in node_config:
+            return {node_name: node_config["permissions"]}
 
         return {}
 

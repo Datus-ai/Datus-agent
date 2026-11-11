@@ -6,6 +6,7 @@ import pytest
 
 from datus.models.request_capacity import ContextCapacityError
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.tool_archive import ToolArchive
 from datus.utils.tool_result_store import ACTIVE_RESULT_STORE, ToolResultStore, json_text
 from datus.utils.tool_result_view import project_tool_results
@@ -256,6 +257,7 @@ async def test_function_tool_keeps_public_result_and_registers_it(store):
     from agents.tool_context import ToolContext
     from agents.usage import Usage
 
+    @tool_contract(access="read", direct_call=True, category="db_tools")
     def list_tables():
         return FuncToolResult(result=[{"name": "t"}])
 
