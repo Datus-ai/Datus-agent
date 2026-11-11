@@ -199,6 +199,7 @@ def test_batch_only_ordinary_rows_preserve_nan(monkeypatch):
         [{"id": 1}, {"id": 2, "secret": "private"}],
         [{"id": 1}, {"id": "private"}],
         [{"id": 9007199254740993}, {"id": 0.5}],
+        [{"id": 2**64 - 1}],
     ],
 )
 def test_batch_only_conversion_fails_closed_instead_of_dropping_or_coercing_rows(monkeypatch, rows):

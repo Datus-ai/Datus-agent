@@ -432,7 +432,7 @@ class PolicyRuntime:
                     hook_result = pa.Table.from_pylist(current_result)
                     if not _same_row_value(current_result, hook_result.to_pylist()):
                         raise ValueError("Arrow conversion would change query values")
-                except (pa.ArrowException, TypeError, ValueError) as exc:
+                except (pa.ArrowException, TypeError, ValueError, OverflowError) as exc:
                     raise DatusException(
                         ErrorCode.TOOL_INVALID_INPUT,
                         message=f"Policy runtime {plugin_name!r} cannot convert query rows to an Arrow batch",
