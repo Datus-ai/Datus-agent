@@ -90,6 +90,64 @@ def _make_model(model_config=None):
         return model
 
 
+@pytest.fixture
+def catalog_unavailable_model(monkeypatch):
+    import litellm
+
+    from datus.configuration.agent_config import ModelConfig
+    from datus.models.openai_model import OpenAIModel
+
+    model = OpenAIModel(ModelConfig(type="openai", model="gpt-4o", api_key="test"))
+
+    def unavailable(_model):
+        raise OSError("catalog unavailable")
+
+    monkeypatch.setattr(OpenAICompatibleModel, "model_specs", property(unavailable))
+    monkeypatch.setattr(litellm, "model_cost", {"gpt-4o": {"max_input_tokens": 128000, "max_output_tokens": 16384}})
+    return model
+
+
+def test_catalog_failure_preserves_available_context_metadata(catalog_unavailable_model, monkeypatch):
+    import litellm
+
+    from datus.models.request_capacity import ContextCapacityError
+
+    model = catalog_unavailable_model
+    monkeypatch.setattr(litellm, "model_cost", {"gpt-4o": {"max_input_tokens": 8192, "max_output_tokens": 1024}})
+    model.model_config.max_tokens = 1024
+    with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+        model.check_request({"input": "word " * 20000})
+    assert model.request_capacity().context_length == 8192
+
+
+def test_catalog_failure_keeps_automatic_output_within_known_ceiling(catalog_unavailable_model):
+    model = catalog_unavailable_model
+    request = model.check_request({"input": "hello"})
+    assert 0 < request["max_tokens"] <= model.request_capacity().output_ceiling
+
+
+def test_catalog_failure_preserves_smaller_output_default(catalog_unavailable_model, monkeypatch):
+    model = catalog_unavailable_model
+    monkeypatch.setattr(model, "max_tokens", lambda: 512)
+    assert model.check_request({"input": "hello"})["max_tokens"] == 512
+
+
+def test_catalog_failure_does_not_clamp_explicit_output(catalog_unavailable_model):
+    from datus.models.request_capacity import ContextCapacityError
+
+    model = catalog_unavailable_model
+    model.model_config.max_tokens = 32768
+    with pytest.raises(ContextCapacityError, match="OUTPUT_LIMIT_EXCEEDED"):
+        model.check_request({"input": "hello"})
+
+
+def test_catalog_failure_keeps_custom_output_ceiling_advisory(catalog_unavailable_model):
+    model = catalog_unavailable_model
+    model.litellm_adapter.base_url = "https://private.example/v1"
+    model.model_config.max_tokens = 32768
+    assert model.check_request({"input": "hello"})["max_tokens"] == 32768
+
+
 class _FakeObservabilityManager:
     def __init__(self, enabled_fields=None):
         self.enabled_fields = set(enabled_fields or [])

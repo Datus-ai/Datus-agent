@@ -185,21 +185,25 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
             output_ceiling = max(output_ceiling or 0, info_output or 0) or None
         context_length = (
             config.context_length
-            or optional_limit("context_length", self.context_length)
             or spec_context
             or info_context
+            or optional_limit("context_length", self.context_length)
             or DEFAULT_CONTEXT_LENGTH
         )
         catalog_context = spec_context or info_context or context_length != DEFAULT_CONTEXT_LENGTH
         catalog_output = spec_output or info_output
+        default_output = config.max_tokens
+        if not default_output:
+            model_default = (
+                optional_limit("max_tokens", self.max_tokens) or spec_output or info_output or DEFAULT_MAX_TOKENS
+            )
+            if not custom_endpoint and supports_limit and output_ceiling:
+                model_default = min(model_default, output_ceiling)
+            default_output = self._default_output_limit(model_default, context_length)
         return RequestCapacity(
             model=name,
             context_length=context_length,
-            default_output=config.max_tokens
-            or self._default_output_limit(
-                optional_limit("max_tokens", self.max_tokens) or spec_output or info_output or DEFAULT_MAX_TOKENS,
-                context_length,
-            ),
+            default_output=default_output,
             tokenizer_ref=config.tokenizer_ref,
             supports_output_limit=supports_limit,
             output_ceiling=output_ceiling,
