@@ -4,6 +4,8 @@
 
 from unittest.mock import Mock, patch
 
+import pytest
+
 from datus.tools.func_tool.context_search import ContextSearchTools
 
 
@@ -39,6 +41,37 @@ def test_context_wildcard_includes_all_available_context_tools():
     tool_names = {tool.name for tool in tools.available_tools()}
 
     assert tool_names == {
+        "list_subject_tree",
+        "search_metrics",
+        "search_reference_sql",
+        "get_reference_sql",
+        "search_semantic_objects",
+    }
+
+
+@pytest.mark.parametrize(
+    "provider,method,expected",
+    [
+        (
+            "metric_rag",
+            "get_metrics_size",
+            {"list_subject_tree", "search_reference_sql", "get_reference_sql", "search_semantic_objects"},
+        ),
+        (
+            "reference_sql_store",
+            "get_reference_sql_size",
+            {"list_subject_tree", "search_metrics", "search_semantic_objects"},
+        ),
+    ],
+)
+def test_availability_read_failure_preserves_other_context_tools_and_recovers(provider, method, expected):
+    tools = _build_tools({"tools": "context_search_tools.*"})
+    count = getattr(getattr(tools, provider), method)
+    count.side_effect = OSError("Knowledge store temporarily unavailable")
+    assert {tool.name for tool in tools.available_tools()} == expected
+
+    count.side_effect = None
+    assert {tool.name for tool in tools.available_tools()} == {
         "list_subject_tree",
         "search_metrics",
         "search_reference_sql",

@@ -46,7 +46,7 @@ Chat 可以直接使用 `list_metrics`、`get_metric`、`get_dataset`、`query_m
 
 没有合适指标时，chat 可以根据可用表结构和业务知识生成、执行只读 SQL。缺少指标不要求先创建指标；只有你明确要求创建或修改指标定义时才进入建模流程。
 
-需要特定业务上下文或发布入口时，可以选择 AskMetrics 或其他限定范围的业务 agent，其工具和数据权限继续生效。显式配置的 chat `tools` 白名单会替换默认工具；已有白名单需要按需加入 `semantic_tools.<method>` 才能使用对应指标能力。
+需要特定业务上下文或发布入口时，可以选择 AskMetrics 或其他限定范围的业务 agent，其工具和数据权限继续生效。非空的 chat `tools` 白名单会替换默认工具；已有白名单需要按需加入 `semantic_tools.<method>` 才能使用对应指标能力。未配置 `tools` 或设置 `tools: []` 时使用默认工具。
 
 ### 上下文注入
 

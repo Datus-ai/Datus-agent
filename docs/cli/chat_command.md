@@ -46,7 +46,7 @@ For complete tables, chat continues `query_metrics` with the same `result_id`, t
 
 When no suitable metric exists, chat can generate and execute read-only SQL using available schema and business knowledge. A missing metric does not require creating one. Metric authoring starts only when you explicitly request creating or changing definitions.
 
-Use AskMetrics or another scoped business agent when you select its particular context or published interface. Its configured tool and data permissions continue to apply. An explicit chat `tools` allowlist replaces the defaults; add the desired `semantic_tools.<method>` entries to enable metric capabilities in an existing allowlist.
+Use AskMetrics or another scoped business agent when you select its particular context or published interface. Its configured tool and data permissions continue to apply. A non-empty chat `tools` allowlist replaces the defaults; add the desired `semantic_tools.<method>` entries to enable metric capabilities in an existing allowlist. Omitting `tools` or setting `tools: []` uses the default tools.
 
 ### Context Injection
 

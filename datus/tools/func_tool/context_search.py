@@ -96,7 +96,7 @@ class ContextSearchTools:
     def has_metrics(self) -> bool:
         try:
             return self.metric_rag.get_metrics_size() > 0
-        except ValueError as exc:
+        except Exception as exc:
             logger.warning("Metric context is unavailable for the configured scope: %s", exc)
             return False
 
@@ -104,7 +104,7 @@ class ContextSearchTools:
     def has_reference_sql(self) -> bool:
         try:
             return self.reference_sql_store.get_reference_sql_size() > 0
-        except ValueError as exc:
+        except Exception as exc:
             logger.warning("SQL context is unavailable for the configured scope: %s", exc)
             return False
 
