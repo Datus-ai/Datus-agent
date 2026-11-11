@@ -826,7 +826,9 @@ class TestChatAgenticNodeSystemPrompt:
         task_description = node.sub_agent_task_tool.available_tools()[0].description
 
         assert "Chat routing priority" in prompt
-        assert "prefer ask_metrics even for one number" in prompt
+        assert "using this chat's available tools" in prompt
+        assert "Missing metrics alone" in prompt
+        assert "only when the user explicitly requests that work" in prompt
         assert "Scheduling and external BI operations use installed plugins directly" in prompt
         assert "only to types listed as available" in prompt
         assert "External BI-to-Datus conversion is a main-agent orchestration workflow" in prompt
