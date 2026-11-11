@@ -390,6 +390,33 @@ class TestSubjectTreeStore:
         tree = store.get_simple_tree_structure()
         assert tree == {}
 
+    def test_scope_tokens_share_one_fresh_tree_read(self, store, monkeypatch):
+        from datus_storage_base.conditions import build_where
+
+        from datus.storage.scoped_filter import ScopedFilterBuilder
+
+        finance = store.find_or_create_path(["Finance", "Revenue", "Daily"])
+        sales = store.find_or_create_path(["Sales", "Products"])
+        calls = []
+        original = store._table.query
+
+        def observed(*args, **kwargs):
+            calls.append(kwargs)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(store._table, "query", observed)
+        condition = ScopedFilterBuilder.build_subject_filter("Finance.Revenue, Sales, Finance.order_count", store)
+        assert len(calls) == 1
+        assert f"subject_node_id = {finance}" in build_where(condition)
+        assert f"subject_node_id = {sales}" in build_where(condition)
+
+        assert store.rename(["Finance"], ["ArchivedFinance"]) is True
+        calls.clear()
+        condition = ScopedFilterBuilder.build_subject_filter("Finance.Revenue, Sales", store)
+        assert len(calls) == 1
+        assert f"subject_node_id = {finance}" not in build_where(condition)
+        assert f"subject_node_id = {sales}" in build_where(condition)
+
     def test_find_or_create_path(self, store):
         """Test path-based node creation."""
         path = ["Finance", "Revenue", "Q1"]

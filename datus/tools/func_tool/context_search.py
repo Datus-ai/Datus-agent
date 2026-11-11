@@ -89,7 +89,11 @@ class ContextSearchTools:
             self.sub_agent_config = SubAgentConfig.model_validate(raw_sub_agent_config)
         else:
             self.sub_agent_config = None
-        self.has_metrics = self.metric_rag.get_metrics_size() > 0
+        try:
+            self.has_metrics = self.metric_rag.get_metrics_size() > 0
+        except ValueError as exc:
+            logger.warning("Metric context is unavailable for the configured scope: %s", exc)
+            self.has_metrics = False
         self.has_reference_sql = self.reference_sql_store.get_reference_sql_size() > 0
         self.has_semantic_objects = self.semantic_rag.get_size() > 0
         self.has_reference_templates = self.reference_template_store.get_reference_template_size() > 0

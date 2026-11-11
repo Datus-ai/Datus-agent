@@ -4,8 +4,11 @@
 
 """Tests for datus/storage/metric/store.py — MetricStorage."""
 
+import json
 import os
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from unittest.mock import Mock
 
 import pytest
@@ -774,7 +777,8 @@ class TestMetricRAGSearch:
         rag = MetricRAG.__new__(MetricRAG)
         rag.storage = Mock()
         rag.datasource_id = ""
-        rag._sub_agent_filter = None
+        rag.agent_config = None
+        rag.sub_agent_name = None
         rag._provenance_enabled = False
         return rag
 
@@ -926,3 +930,69 @@ class TestMetricRAGArtifactDelete:
         rag.delete_artifact_rows.assert_called_once_with("metrics/orders.yml")
         rag.upsert_batch.assert_called_once_with(rows)
         rag.create_indices.assert_called_once_with()
+
+
+class TestMetricRAGScopeReads:
+    @staticmethod
+    def _scoped_rag(config):
+        from datus.storage.metric.store import MetricRAG
+
+        writer = MetricRAG(config)
+        writer.store_batch([_make_metric(1, ["Finance", "Allowed"]), _make_metric(2, ["Private", "Other"])])
+        config.agentic_nodes["metric_reader"] = {
+            "tools": "context_search_tools.*",
+            "scoped_context": {"metrics": "Finance.Allowed"},
+        }
+        return MetricRAG(config, sub_agent_name="metric_reader")
+
+    def test_context_search_denies_unresolved_metric_scope(self, real_agent_config, mock_llm_create):
+        from datus.tools.func_tool.context_search import ContextSearchTools
+
+        rag = self._scoped_rag(real_agent_config)
+        context = ContextSearchTools(real_agent_config, sub_agent_name="metric_reader")
+        assert [row["name"] for row in rag.search_all_metrics()] == ["test_metric_1"]
+        tree = rag.storage.subject_tree
+        assert tree.rename(["Finance"], ["ArchivedFinance"]) is True
+
+        result = context.search_metrics("test_metric_2")
+        assert result.success == 0
+        assert "scope" in result.error
+        taxonomy = json.dumps(context.list_subject_tree().result)
+        assert "test_metric_1" not in taxonomy
+        assert "test_metric_2" not in taxonomy
+
+        fresh = ContextSearchTools(real_agent_config, sub_agent_name="metric_reader")
+        assert fresh.has_metrics is False
+        assert "search_metrics" not in {tool.name for tool in fresh.available_tools()}
+        with pytest.raises(ValueError, match="scope"):
+            fresh.metric_rag.search_all_metrics()
+
+        assert tree.rename(["ArchivedFinance"], ["Finance"]) is True
+        assert [row["name"] for row in rag.search_all_metrics()] == ["test_metric_1"]
+
+    def test_concurrent_invalid_scope_never_broadens_a_filtered_read(
+        self, real_agent_config, mock_llm_create, monkeypatch
+    ):
+        rag = self._scoped_rag(real_agent_config)
+        entered, release = Event(), Event()
+        original = rag.storage.search_all_metrics
+
+        def paused(*args, **kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("Concurrent scope test did not release the reader")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(rag.storage, "search_all_metrics", paused)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            reader = executor.submit(rag.search_all_metrics)
+            try:
+                started = entered.wait(5)
+                assert started is True
+                assert rag.storage.subject_tree.rename(["Finance"], ["ArchivedFinance"]) is True
+                with pytest.raises(ValueError, match="scope"):
+                    rag.search_all_metrics()
+            finally:
+                release.set()
+            rows = reader.result(timeout=5)
+        assert [row["name"] for row in rows] == ["test_metric_1"]

@@ -8,7 +8,7 @@ import fnmatch
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import pyarrow as pa
 from datus_storage_base.conditions import Node, and_, in_, like
@@ -404,10 +404,17 @@ class SubjectTreeStore:
             List of node IDs including the target path and all its descendants,
             or None if the path doesn't exist
         """
+        return self.snapshot_matcher()(subject_path, descendant)
+
+    def snapshot_matcher(self) -> Callable[[Optional[List[str]], bool], List[int]]:
+        """Match several paths against one freshly loaded taxonomy snapshot."""
+        tree = self.get_tree_structure()
+        return lambda subject_path=None, descendant=True: self._match_tree(tree, subject_path, descendant)
+
+    @staticmethod
+    def _match_tree(tree: Dict, subject_path: Optional[List[str]], descendant: bool) -> List[int]:
         if not subject_path:
             subject_path = ["*"]
-
-        tree = self.get_tree_structure()
         result: List[int] = []
 
         def collect_all(node: Dict):
@@ -475,22 +482,18 @@ class SubjectTreeStore:
                 }}
             }
         """
-        roots = []
-        if root_id is None:
-            # Get all root nodes
-            roots = self.get_children(None)
-            if not roots:
-                return {}
-        else:
-            root = self.get_node(root_id)
-            if not root:
-                return {}
-            roots = [root]
-
-        result = {}
-        for root in roots:
-            root_dict = self._build_path_tree_recursive(root)
-            result[root_dict["name"]] = root_dict
+        rows = self._table.query(SubjectNodeRecord, where={"datasource_id": self.datasource_id}, order_by=["name"])
+        nodes = {row.node_id: {"node_id": row.node_id, "name": row.name, "children": {}} for row in rows}
+        result: Dict[str, Any] = {}
+        for row in rows:
+            node = nodes[row.node_id]
+            if row.parent_id == ROOT_PARENT_ID:
+                result[row.name] = node
+            elif row.parent_id in nodes:
+                nodes[row.parent_id]["children"][row.name] = node
+        if root_id is not None:
+            root = nodes.get(root_id)
+            return {root["name"]: root} if root is not None else {}
         return result
 
     def get_simple_tree_structure(self, root_id: Optional[int] = None) -> Dict[str, Any]:
@@ -514,20 +517,6 @@ class SubjectTreeStore:
             return result
 
         return dfs(tree_structure)
-
-    def _build_path_tree_recursive(self, node: Dict[str, Any]) -> Dict[str, Any]:
-        """Recursively build path tree structure with node_id, name, and children."""
-        children = self.get_children(node["node_id"])
-
-        if children:
-            child_dict = {}
-            for child in children:
-                child_node = self._build_path_tree_recursive(child)
-                child_dict[child_node["name"]] = child_node
-        else:
-            child_dict = {}
-
-        return {"node_id": node["node_id"], "name": node["name"], "children": child_dict}
 
     def find_or_create_path(self, path_components: List[str]) -> int:
         """Find or create nodes along a path.
