@@ -130,3 +130,141 @@ async def test_real_file_operations_keep_their_names_without_legacy_alias(tmp_pa
     assert (tmp_path / "probe.txt").read_text() == "after"
     assert (await tools["delete_file"].on_invoke_tool(None, '{"path":"probe.txt"}'))["success"] == 1
     assert not (tmp_path / "probe.txt").exists()
+
+
+@pytest.fixture
+def bound_editor(tmp_path):
+    """Bind real file revision tracking before testing input and persistence failures."""
+    import hashlib
+
+    import yaml
+
+    from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetState
+
+    document = {
+        "version": "0.2.0.dev0",
+        "name": "sales",
+        "datasets": [{"name": "orders", "source": "orders"}],
+        "metrics": [
+            {
+                "name": "revenue",
+                "description": "Revenue",
+                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(orders.amount)"}]},
+            }
+        ],
+    }
+    target = tmp_path / "model.yml"
+    target.write_text(yaml.safe_dump(document))
+    state = OsiSemanticModelTargetState()
+
+    def bind():
+        """Bind the current bytes as the selected authoring revision."""
+        state.select(
+            {
+                "semantic_model_name": "sales",
+                "semantic_model_file": "model.yml",
+                "absolute_path": str(target),
+                "artifact_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+            },
+            mode="bound",
+        )
+
+    bind()
+    filesystem = MetricFilesystemFuncTool(root_path=str(tmp_path), osi_target_state=state)
+    return filesystem.semantic_editor, target, bind
+
+
+@pytest.mark.parametrize(
+    "method,parameter,payload,message",
+    [
+        ("upsert_osi_datasets", "datasets_json", [], "non-empty"),
+        ("upsert_osi_datasets", "datasets_json", [42], "JSON object"),
+        ("upsert_osi_datasets", "datasets_json", [{}], "name is required"),
+        ("upsert_osi_datasets", "datasets_json", [{"name": "a"}, {"name": "a"}], "duplicate"),
+        ("upsert_osi_metrics", "metrics_json", [], "non-empty"),
+        ("upsert_osi_metrics", "metrics_json", [42], "JSON object"),
+        ("upsert_osi_metrics", "metrics_json", [{}], "name is required"),
+        ("upsert_osi_metrics", "metrics_json", [{"name": "a"}, {"name": "a"}], "duplicate"),
+        ("delete_osi_datasets", "dataset_names", "orders", "JSON array"),
+        ("delete_osi_datasets", "dataset_names", [" "], "non-empty"),
+        ("delete_osi_metrics", "metric_names", "revenue", "list"),
+        ("delete_osi_metrics", "metric_names", [" "], "non-empty"),
+    ],
+)
+def test_malformed_objects_never_mutate_the_bound_model(bound_editor, method, parameter, payload, message):
+    """Bad object batches are rejected before revision or file state can change."""
+    editor, target, _ = bound_editor
+    original = target.read_bytes()
+    result = getattr(editor, method)(str(target), **{parameter: payload})
+    assert result.success == 0 and message.lower() in result.error.lower()
+    assert target.read_bytes() == original
+    editor.filesystem.osi_target_state.require_current_revision(target)
+
+
+@pytest.mark.parametrize(
+    "method,parameter,payload",
+    [
+        ("upsert_osi_datasets", "datasets_json", [{"name": "orders", "source": "new_orders"}]),
+        (
+            "upsert_osi_metrics",
+            "metrics_json",
+            [
+                {
+                    "name": "revenue",
+                    "description": "Revenue",
+                    "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(*)"}]},
+                }
+            ],
+        ),
+        ("delete_osi_datasets", "dataset_names", ["orders"]),
+        ("delete_osi_metrics", "metric_names", ["revenue"]),
+    ],
+)
+@pytest.mark.parametrize(
+    "content", [b"[]\n", b"name: sales\n", b"datasets: wrong\nmetrics: wrong\n", b"[unclosed", b"\xff"]
+)
+def test_corrupt_models_are_preserved_for_repair(bound_editor, method, parameter, payload, content):
+    """Invalid existing documents must not be silently replaced by a valid batch."""
+    editor, target, bind = bound_editor
+    target.write_bytes(content)
+    bind()
+    result = getattr(editor, method)(str(target), **{parameter: payload})
+    assert result.success == 0
+    assert any(word in result.error for word in ("load", "root", "datasets", "metrics", "model"))
+    assert target.read_bytes() == content
+
+
+@pytest.mark.parametrize(
+    "method,parameter,payload",
+    [
+        ("upsert_osi_datasets", "datasets_json", [{"name": "orders", "source": "new_orders"}]),
+        (
+            "upsert_osi_metrics",
+            "metrics_json",
+            [
+                {
+                    "name": "revenue",
+                    "description": "Revenue",
+                    "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(*)"}]},
+                }
+            ],
+        ),
+        ("delete_osi_datasets", "dataset_names", ["orders"]),
+        ("delete_osi_metrics", "metric_names", ["revenue"]),
+    ],
+)
+def test_disk_errors_preserve_the_original_revision(bound_editor, monkeypatch, method, parameter, payload):
+    """A failed atomic write reports failure without publishing a new revision."""
+    editor, target, _ = bound_editor
+    original = target.read_bytes()
+    monkeypatch.setattr(editor.filesystem, "_validate_osi_document", lambda _: None)
+
+    def fail_write(*_args):
+        """Simulate an unavailable disk at the atomic commit boundary."""
+        raise OSError("disk full")
+
+    monkeypatch.setattr("datus.tools.func_tool.semantic_model_editing_tools.atomic_write_text", fail_write)
+    result = getattr(editor, method)(str(target), **{parameter: payload})
+    assert result.success == 0 and "disk full" in result.error
+    assert target.read_bytes() == original
+    editor.filesystem.osi_target_state.require_current_revision(target)

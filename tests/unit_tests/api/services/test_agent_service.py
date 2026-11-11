@@ -2412,7 +2412,7 @@ def test_editor_filesystem_catalog_matches_mounted_generic_tools(agent_type, tmp
 
     runtime = FilesystemFuncTool(root_path=str(tmp_path))
     result = AgentService.get_use_tools(agent_type)
-    assert result.success
+    assert result.success is True
     assert set(result.data["tool_types"]["filesystem_tools"]["tools"]) == {t.name for t in runtime.available_tools()}
 
 
