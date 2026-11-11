@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/cli/chat_command/">
       
       
         <link rel="prev" href="../introduction/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/cli/chat_command/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/cli/chat_command/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/cli/chat_command/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/cli/chat_command/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -911,6 +905,17 @@
   
     <nav class="md-nav" aria-label="3. Advanced Features">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#metric-queries-and-attribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metric Queries and Attribution
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#context-injection" class="md-nav__link">
@@ -5108,6 +5113,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#metric-queries-and-attribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metric Queries and Attribution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#context-injection" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5254,6 +5270,11 @@
 <p><img alt="Details of function calling" src="../../assets/function_calling_details.png" /></p>
 <hr />
 <h2 id="3-advanced-features">3. Advanced Features<a class="headerlink" href="#3-advanced-features" title="Permanent link">&para;</a></h2>
+<h3 id="metric-queries-and-attribution">Metric Queries and Attribution<a class="headerlink" href="#metric-queries-and-attribution" title="Permanent link">&para;</a></h3>
+<p>Chat can directly discover and query existing semantic metrics and run attribution with <code>list_metrics</code>, <code>get_metric</code>, <code>get_dataset</code>, <code>query_metrics</code>, and <code>attribution_analyze</code>. Follow-up questions and longer analysis stay in the same chat; these capabilities do not require an AskMetrics handoff.</p>
+<p>For complete tables, chat continues <code>query_metrics</code> with the same <code>result_id</code>, the next <code>offset</code> and a <code>page_size</code>. It can also read bounded cached pages with <code>get_query_metrics_result</code>. Both paths read the existing cache without rerunning the query; cached rows remain subject to the current policy, datasource and metric scope.</p>
+<p>When no suitable metric exists, chat can generate and execute read-only SQL using available schema and business knowledge. A missing metric does not require creating one. Metric authoring starts only when you explicitly request creating or changing definitions.</p>
+<p>Use AskMetrics or another scoped business agent when you select its particular context or published interface. Its configured tool and data permissions continue to apply. A non-empty chat <code>tools</code> allowlist replaces the defaults; add the desired <code>semantic_tools.&lt;method&gt;</code> entries to enable metric capabilities in an existing allowlist. Omitting <code>tools</code> or setting <code>tools: []</code> uses the default tools.</p>
 <h3 id="context-injection">Context Injection<a class="headerlink" href="#context-injection" title="Permanent link">&para;</a></h3>
 <p>Context Injection allows you to pull existing tables, metrics or files into your conversation. There are two ways to do this:</p>
 <h4 id="browse-mode">Browse Mode<a class="headerlink" href="#browse-mode" title="Permanent link">&para;</a></h4>
