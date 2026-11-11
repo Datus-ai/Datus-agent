@@ -3001,6 +3001,30 @@ class TestNestedSessionLayout:
 
 class TestSessionPersistence:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("changed_coordinate", ["datasource", "database", "schema", None])
+    async def test_table_resume_rejects_changed_or_unknown_target(
+        self, real_agent_config, mock_llm_create, changed_coordinate
+    ):
+        from datus.schemas.database_context import EXECUTION_CONTEXT_META_KEY, execution_context_for_node
+
+        tool = SubAgentTaskTool(real_agent_config, allowed_subagents=["gen_table"])
+        sid = "gen_table_session_bound01"
+        node = tool._create_node("gen_table", session_id=sid)
+        session = node.session_manager.get_session(sid)
+        history = [{"role": "user", "content": "Created the requested table on the original target."}]
+        await session.add_items(history)
+        original = execution_context_for_node(real_agent_config).to_dict(include_empty=True)
+        if changed_coordinate:
+            original[changed_coordinate] = f"original_{changed_coordinate}"
+            node.session_manager.save_session_meta(sid, EXECUTION_CONTEXT_META_KEY, json.dumps(original))
+
+        result = await tool.task(type="gen_table", session_id=sid, prompt="Insert one row into the table.")
+
+        assert result.success == 0
+        assert result.result == {"blocker_code": "table_target_unverified", "session_id": sid, "type": "gen_table"}
+        assert await session.get_items() == history
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("subagent_type", ["gen_sql", "sales_analyst"])
     async def test_returns_session_id_in_result(self, task_tool, subagent_type):
         """A successful result identifies the resumable built-in or custom agent."""

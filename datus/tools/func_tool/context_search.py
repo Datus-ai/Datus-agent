@@ -193,8 +193,8 @@ class ContextSearchTools:
     def list_subject_tree(self) -> FuncToolResult:
         """
         Get the domain-layer taxonomy from subject_tree store.
-        Use this as the first step to discover available context entries before calling
-        enabled context retrieval tools.
+        Use this when a knowledge lookup needs an unknown subject path.
+        A known path, entry, physical table, or specified file does not require this lookup.
 
         The response has the structure:
         {
@@ -303,7 +303,8 @@ class ContextSearchTools:
     ) -> FuncToolResult:
         """
         Search for reference SQL queries using natural language queries.
-        MUST call `list_subject_tree` first to get the subject path.
+        Reuse a known subject path. Call `list_subject_tree` only when the requested
+        lookup needs a subject path that is not already available in context.
 
         Args:
             query_text: The natural language query text representing the desired SQL intent.

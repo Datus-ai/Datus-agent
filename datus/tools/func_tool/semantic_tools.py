@@ -626,6 +626,7 @@ class SemanticTools:
         ontology_enabled: bool = False,
         policy_context_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
         initialize_runtime: bool = True,
+        enforce_metric_scope: bool = False,
     ):
         """
         Initialize semantic function tool.
@@ -652,9 +653,12 @@ class SemanticTools:
                 each ontology binds.
             initialize_runtime: Initialize native engines during construction. Authoring nodes
                 retain this default; chat can defer initialization until its first metric call.
+            enforce_metric_scope: Restrict executable metric names to the configured
+                metric subject scope, independently of native database policies.
         """
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
+        self._enforce_metric_scope = enforce_metric_scope
         self.generation_evidence = generation_evidence
         self._runtime_db_context_provider = runtime_db_context_provider
         self._warehouse_dry_run_provider = warehouse_dry_run_provider
@@ -670,6 +674,7 @@ class SemanticTools:
         # list_metrics reads the KB only for navigation paths shared with
         # ContextSearchTools.list_subject_tree; ContextSearchTools owns RAG discovery.
         self.metric_rag = MetricRAG(agent_config, sub_agent_name)
+        self._metric_scope_key = None
         # The token budget of an executed result's preview, and of a dry run's data.
         self._compressor: Optional[DataCompressor] = None
         self._query_metrics_result_cache: OrderedDict[str, dict] = OrderedDict()
@@ -685,6 +690,34 @@ class SemanticTools:
             _ = self.runtime
 
     MODEL_FREE_READS_VERSION = 1
+
+    def _has_metric_scope(self) -> bool:
+        if not getattr(self, "_enforce_metric_scope", False) or not self.sub_agent_name:
+            return False
+        from datus.schemas.agent_models import SubAgentConfig
+
+        raw = self.agent_config.sub_agent_config(self.sub_agent_name)
+        config = SubAgentConfig.model_validate(raw) if raw else None
+        metrics = config.scoped_context.metrics if config and config.scoped_context else None
+        key = (self.agent_config.current_datasource, metrics, config.scoped_kb_path) if metrics else None
+        if getattr(self, "_metric_scope_key", None) != key:
+            # RAG filters are constructed once; do not reuse a formerly unscoped
+            # projection after a host narrows the agent's scope.
+            self.metric_rag = MetricRAG(self.agent_config, self.sub_agent_name)
+            self._metric_scope_key = key
+        return key is not None
+
+    def _check_metric_scope(self, names: List[str]) -> Optional[FuncToolResult]:
+        try:
+            if not self._has_metric_scope():
+                return None
+            allowed = set(self._metric_subject_paths(None))
+            if all(normalize_metric_name(name) in allowed for name in names):
+                return None
+            return FuncToolResult(success=0, error="Requested metric is outside this agent's configured metric scope.")
+        except Exception as exc:
+            logger.warning("Could not verify configured metric scope: %s", exc)
+            return FuncToolResult(success=0, error="Configured metric scope could not be verified.")
 
     @property
     def compressor(self) -> DataCompressor:
@@ -1605,17 +1638,18 @@ class SemanticTools:
             return error
 
         try:
+            scoped = self._has_metric_scope()
             try:
                 kb_paths = self._metric_subject_paths(path)
             except Exception as exc:
-                if path:
+                if path or scoped:
                     raise
                 logger.warning(
                     "Could not load KB metric subject paths; returning the runtime catalog without paths: %s",
                     exc,
                 )
                 kb_paths = {}
-            if path:
+            if path or scoped:
                 if not kb_paths:
                     return self._metric_list_result([], total=0, offset=offset, limit=limit)
 
@@ -1773,6 +1807,9 @@ class SemanticTools:
         name = str(normalize_null(name) or "").strip()
         path = _normalize_optional_path(path)
         logger.debug(f"get_metric called: name={name}, path={path}")
+        scope_error = self._check_metric_scope([name])
+        if scope_error is not None:
+            return scope_error
         runtime, error = self._require_runtime("get_metric")
         if error:
             return error
@@ -2073,6 +2110,9 @@ class SemanticTools:
                 validate_page(page_size, offset)
         except (ValueError, TypeError) as exc:
             return FuncToolResult(success=0, error=str(exc))
+        scope_error = self._check_metric_scope(_normalize_name_list(metrics))
+        if scope_error is not None:
+            return scope_error
         return self._query_metrics(
             metrics=metrics,
             dimensions=dimensions,
@@ -2564,6 +2604,9 @@ class SemanticTools:
             - total_change: Baseline, current, and delta values
             - per_dimension: Per-dimension contribution details
         """
+        scope_error = self._check_metric_scope([metric_name])
+        if scope_error is not None:
+            return scope_error
         runtime, error = self._require_runtime("attribution_analyze")
         if error:
             return error

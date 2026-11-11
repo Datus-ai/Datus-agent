@@ -914,8 +914,7 @@ class TestAskMetricsAgenticNode:
             assert "File exploration is optional for any question" in context
             assert "identify a specific missing fact" in context
             assert "no need to re-read supplied background merely to repeat it" in context
-            if file_tool == "glob":
-                assert "skip clearly unrelated files" in context
+            assert ("skip clearly unrelated files" in context) == (file_tool == "glob")
             assert "Stop once there is enough evidence to proceed" in context
             assert "do not establish causation by themselves" in prompt
 

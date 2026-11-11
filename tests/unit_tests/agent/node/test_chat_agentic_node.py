@@ -70,7 +70,8 @@ class TestChatMetricTools:
         assert "generate and execute read-only SQL here" not in metric_only
         assert node._get_session_system_prompt() == metric_only
 
-    def test_chat_defers_native_initialization_but_authoring_retains_it(
+    @pytest.mark.asyncio
+    async def test_chat_defers_native_initialization_but_authoring_retains_it(
         self, real_agent_config, mock_llm_create, monkeypatch
     ):
         from datus.tools.func_tool.semantic_tools import SemanticTools
@@ -87,6 +88,13 @@ class TestChatMetricTools:
         node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
         node._get_session_system_prompt()
         assert node.semantic_tools._runtime is None
+        assert calls == []
+        from datus.tools.middleware.tool_middleware import apply_tool_transformers
+
+        apply_tool_transformers(node, {"execute_sql": [lambda name, args, context: args]})
+        sql_tool = next(tool for tool in node.tools if tool.name == "execute_sql")
+        result = await sql_tool.on_invoke_tool(None, json.dumps({"sql": "SELECT 1 AS n"}))
+        assert result["success"] == 1
         assert calls == []
         SemanticTools(real_agent_config)
         assert calls == [real_agent_config.current_datasource]
@@ -216,7 +224,10 @@ class TestChatMetricTools:
         )
         parsed = parse_query_result_text(query)
         assert parsed is not None and float(parsed.csv.splitlines()[1]) == 120.0
-        assert node.semantic_tools.get_cached_query_metrics_result(parsed.result_id) is not None
+        cached = node.semantic_tools.get_cached_query_metrics_result(parsed.result_id)
+        assert cached["columns"] == ["net"]
+        assert cached["row_count"] == 1
+        assert float(cached["csv"].splitlines()[1]) == 120.0
         attribution = await invoke(
             "attribution_analyze",
             {
@@ -230,6 +241,47 @@ class TestChatMetricTools:
         )
         assert attribution["total_change"]["delta"] == 20.0
         assert attribution["per_dimension"]["ledger.cat"]["reconciliation"]["passed"]
+        node.semantic_tools.metric_rag.store_batch(
+            [
+                {
+                    "name": "net",
+                    "semantic_model_name": "attribution_model",
+                    "subject_path": ["Finance", "Allowed"],
+                    "description": "Allowed net metric",
+                },
+                {
+                    "name": "x_total",
+                    "semantic_model_name": "attribution_model",
+                    "subject_path": ["Finance", "Hidden"],
+                    "description": "Metric outside the selected subject",
+                },
+            ]
+        )
+        real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "Finance.Allowed"}
+        catalog = await invoke("list_metrics", {})
+        assert "net" in catalog
+        assert "x_total" not in catalog
+        assert "expr:" in await invoke("get_metric", {"name": "net"})
+        for tool_name, arguments in (
+            ("get_metric", {"name": "x_total"}),
+            ("query_metrics", {"metrics": ["net", "x_total"]}),
+            (
+                "attribution_analyze",
+                {
+                    "metric_name": "x_total",
+                    "candidate_dimensions": ["ledger.cat"],
+                    "baseline_start": "2024-01-01",
+                    "baseline_end": "2024-02-01",
+                    "current_start": "2024-02-01",
+                    "current_end": "2024-03-01",
+                },
+            ),
+        ):
+            denied = await tools[tool_name].on_invoke_tool(None, json.dumps(arguments))
+            assert denied["success"] == 0
+            assert "outside this agent's configured metric scope" in denied["error"]
+        real_agent_config.agentic_nodes["chat"].pop("scoped_context")
+        assert "expr:" in await invoke("get_metric", {"name": "x_total"})
         model_path.write_text(model_path.read_text().replace("name: net\n", "name: net_updated\n"))
         assert "net_updated" in await invoke("list_metrics", {})
         assert "expr:" in await invoke("get_metric", {"name": "net_updated"})

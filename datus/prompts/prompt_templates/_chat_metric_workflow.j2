@@ -16,6 +16,7 @@
 - If the available metric tools cannot answer and no SQL tool is available, explain the actual missing capability. Stay within this agent's scope and permissions.
 {% endif %}
 - For a data question, do not create metrics or semantic models, write model YAML, or delegate to semantic_modeling just because a metric is missing. Enter metric authoring only when the user explicitly requests creating or changing definitions.
+- An explicitly requested external dashboard conversion follows dashboard-bootstrap's existing authorization for necessary additive metric definitions within that conversion scope. This exception does not turn ordinary data questions into authoring requests.
 - Use a scoped agent when the user selects it or its specific business context is needed. Continue its existing analysis in the original session. An available AskMetrics or ontology agent is not a mandatory route for ordinary metric queries.
 - Preserve a selected agent's context and access restrictions. If it cannot answer within that scope, explain the gap; do not use broader chat tools to bypass its restrictions.
 

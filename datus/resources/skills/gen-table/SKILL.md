@@ -41,7 +41,12 @@ or schema change against that same table. Reuse the established schema and
 datasource, apply only the requested mutation under the normal permission and
 confirmation policy, and verify its effect. Do not rerun CREATE/CTAS, drop and
 recreate the table, or start the creation phases below for an insert/update/delete
-follow-up. Return the existing table name and a bounded summary of the change.
+follow-up. Retain the original datasource and physical database; if that binding
+is missing or conflicts with the current routing context, stop before writing
+and request the exact target decision. For continuation DDL (ALTER/RENAME), use
+`ask_user` with the complete SQL and obtain confirmation when the tool is available,
+even if a permission rule allows the statement. Return the verified current table
+name (the new name after an explicitly requested rename) and a bounded summary.
 Verify a row change with one focused read of the affected key/filter. Skip extra
 full-table counts and unchanged-schema lookups unless needed for the requested
 result or a concrete error.

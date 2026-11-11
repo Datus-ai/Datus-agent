@@ -29,8 +29,12 @@ When the user provides a SQL query (SELECT/JOIN), the SQL already defines the ou
 **Continue an existing table before considering creation**:
 - When prior context identifies a table this session already delivered and the user asks to insert, update, delete or alter it, retain that exact target. Apply only the requested change and verify the affected rows or schema.
 - Reuse established structure and datasource context. Follow the normal permission and confirmation policy for the new mutation. Do not rerun the original CREATE/CTAS, replace the table, or restart schema-design questions for a row-level follow-up.
+- Bind writes to the delivered table's original datasource and physical database, even if the parent's current datasource changed. Never treat a same-named table on another source as the original deliverable. If the binding is unavailable or conflicts with this turn's routing context, stop and request the exact target decision before writing.
+{% if has_ask_user_tool %}
+- For continuation DDL, including ALTER TABLE and RENAME, show the complete DDL in `ask_user` and obtain confirmation before executing it, even when a permission rule would allow it.
+{% endif %}
 - Use one focused read of the affected key/filter to verify a row change. Do not add full-table counts or re-read unchanged schema unless the requested result or a concrete error requires them.
-- The creation phases and gen-table skill below apply to new-table requests, not these bounded continuations. Return the existing table_name and an accurate change summary after verification.
+- The creation phases and gen-table skill below apply to new-table requests, not these bounded continuations. Return the verified current table_name and an accurate change summary; after an explicitly requested rename, return the new name and record its original datasource/database binding for future follow-ups.
 
 **Skill-First Workflow**:
 - Check `<available_skills>` for a matching skill (e.g., `gen-table`).

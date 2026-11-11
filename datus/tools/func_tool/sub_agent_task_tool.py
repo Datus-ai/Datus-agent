@@ -828,6 +828,17 @@ class SubAgentTaskTool:
             # routing follows the inherited physical database as well.
             db_ctx = self._parent_db_context()
             node.input = self._build_node_input(node, prompt, db_ctx=db_ctx)
+            if session_id is not None:
+                from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+
+                if isinstance(node, GenTableAgenticNode):
+                    target_error = node.continuation_target_error()
+                    if target_error:
+                        return self._convert_to_func_result(
+                            {"success": False, "error": target_error, "blocker_code": "table_target_unverified"},
+                            session_id=session_id,
+                            subagent_type=subagent_type,
+                        )
             self._refresh_node_db_tools(node, db_ctx)
 
             # Inject parent's InteractionBroker so that sub-agent INTERACTION

@@ -279,6 +279,7 @@ class ChatAgenticNode(AgenticNode):
                 sub_agent_name=self.get_node_name(),
                 runtime_db_context_provider=self._semantic_runtime_db_context,
                 initialize_runtime=False,
+                enforce_metric_scope=True,
             )
         except Exception as exc:
             self.semantic_tools = None
