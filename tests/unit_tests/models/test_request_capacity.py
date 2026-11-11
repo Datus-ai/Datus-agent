@@ -95,6 +95,43 @@ def test_unresolved_capacity_and_unknown_tokenizers_have_defaults():
     assert RequestCapacity("unknown-proxy-name", 262144, 100, "tiktoken:o200k_base").check({"input": "hello"}) > 0
 
 
+def test_custom_model_keeps_fallback_output_reservation_off_wire():
+    model = OpenAIModel(
+        ModelConfig(type="openai", model="private-deployment", api_key="test", base_url="https://private.example/v1")
+    )
+    capacity = model.request_capacity()
+    assert capacity.default_output == model.max_tokens() == DEFAULT_MAX_TOKENS
+    assert capacity.input_limit() == capacity.context_length - DEFAULT_MAX_TOKENS - capacity.margin
+    assert "max_tokens" not in model.check_request({"input": "hello"})
+    assert model._build_agent("", str, False, {}, []).model_settings.max_tokens is None
+    assert model.check_request({"input": "hello", "max_tokens": 512})["max_tokens"] == 512
+    assert model._build_agent("", str, False, {}, [], max_tokens=512).model_settings.max_tokens == 512
+
+
+def test_custom_model_sends_known_output_default(monkeypatch):
+    monkeypatch.setitem(
+        litellm.model_cost,
+        "openai/catalogued-custom-output",
+        {"max_input_tokens": 128000, "max_output_tokens": 8192},
+    )
+    model = OpenAIModel(
+        ModelConfig(
+            type="openai", model="catalogued-custom-output", api_key="test", base_url="https://private.example/v1"
+        )
+    )
+    assert model.check_request({"input": "hello"})["max_tokens"] == 8192
+    assert model._build_agent("", str, False, {}, []).model_settings.max_tokens == 8192
+
+
+def test_native_anthropic_keeps_required_output_parameter():
+    from datus.models.claude_model import ClaudeModel
+
+    model = ClaudeModel(
+        ModelConfig(type="claude", model="private-deployment", api_key="test", base_url="https://private.example")
+    )
+    assert model.check_request({"messages": [{"role": "user", "content": "hello"}]})["max_tokens"] > 0
+
+
 @pytest.mark.parametrize("context,output,tokenizer", product([None, 4096], [None, 512], [None, "tiktoken:o200k_base"]))
 def test_custom_model_capacity_settings_are_independently_optional(context, output, tokenizer):
     config = {
@@ -118,8 +155,8 @@ def test_custom_model_capacity_settings_are_independently_optional(context, outp
     assert model.model_config.max_tokens == output
     assert model.model_config.tokenizer_ref == tokenizer
     request = {"messages": [{"role": "user", "content": "Describe the order schema"}]}
-    assert model.check_request(request)["max_tokens"] == expected_output
-    assert model._build_agent("Follow the task", str, False, {}, []).model_settings.max_tokens == expected_output
+    assert model.check_request(request).get("max_tokens") == output
+    assert model._build_agent("Follow the task", str, False, {}, []).model_settings.max_tokens == output
     assert model.check_request({**request, "max_tokens": 256})["max_tokens"] == 256
 
 
@@ -208,7 +245,7 @@ async def test_custom_model_without_new_settings_reaches_transport_despite_estim
         prompt = "Inspect the schema.\n" + "column_name " * 25000
         result = await model.generate_with_tools(prompt, max_turns=1)
         assert result["content"] == "done"
-        assert send.await_args.kwargs["max_tokens"] == DEFAULT_MAX_TOKENS
+        assert send.await_args.kwargs["max_tokens"] is None
         send.reset_mock()
         result = await model.generate_with_tools("\N{EURO SIGN}" * DEFAULT_CONTEXT_LENGTH, max_turns=1)
         assert result["content"] == "done"
@@ -958,7 +995,7 @@ def test_missing_limits_use_flash_budget_and_leave_room_for_input():
     )
     assert model.context_length() == 1048576
     assert model.max_tokens() == 384000
-    assert model.check_request({"input": "hello"})["max_tokens"] == 384000
+    assert "max_tokens" not in model.check_request({"input": "hello"})
 
     small = OpenAIModel(ModelConfig(type="openai", model="private-deployment", api_key="test", context_length=32768))
     assert 0 < small.max_tokens() < small.context_length() // 2
@@ -975,7 +1012,7 @@ def test_metadata_lookup_failure_uses_defaults(monkeypatch):
     capacity = model.request_capacity()
     assert capacity.context_length == 1048576
     assert capacity.default_output == 384000
-    assert model.check_request({"input": "hello"})["max_tokens"] == 384000
+    assert "max_tokens" not in model.check_request({"input": "hello"})
     assert model.max_tokens() == 384000
     assert model.context_length() == 1048576
 

@@ -98,6 +98,7 @@ class RequestCapacity:
     output_source: str = "config"
     enforce_catalog_limits: bool = True
     allow_estimated_overflow: bool = True
+    send_default_output: bool = True
 
     def __post_init__(self) -> None:
         if self.context_length is None:
@@ -131,6 +132,11 @@ class RequestCapacity:
                 f"Requested output {value} exceeds the known maximum {self.output_ceiling} for {self.model}.",
             )
         return value
+
+    def request_output_limit(self, explicit: Any = None) -> int | None:
+        """Keep an unknown output reservation local when the endpoint can choose its default."""
+        value = self.output_limit(explicit)
+        return value if explicit is not None or self.send_default_output else None
 
     def _counter_model(self) -> str | None:
         import litellm
@@ -274,6 +280,7 @@ class RequestCapacity:
             "allow_estimated_overflow": allow_estimated_overflow,
             "context_source": self.context_source,
             "output_source": self.output_source,
+            "send_default_output": self.send_default_output,
             "fallback_reasons": estimate.fallback_reasons,
             "over_budget": count > available,
             "enforced": enforce,

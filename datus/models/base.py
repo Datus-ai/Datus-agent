@@ -212,6 +212,9 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
             enforce_catalog_limits=not custom_endpoint,
             allow_estimated_overflow=custom_endpoint
             or not bool(spec_context or info_context or spec_output or info_output),
+            send_default_output=not (
+                custom_endpoint and name.startswith("openai/") and not config.max_tokens and not catalog_output
+            ),
         )
 
     def _default_output_limit(self, model_limit: Optional[int], context_length: Optional[int] = None) -> Optional[int]:
@@ -237,7 +240,11 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         request = dict(payload)
         capacity = self.request_capacity()
         if capacity.supports_output_limit:
-            request[output_parameter] = capacity.output_limit(request.get(output_parameter))
+            output = capacity.request_output_limit(request.get(output_parameter))
+            if output is None:
+                request.pop(output_parameter, None)
+            else:
+                request[output_parameter] = output
         guard_request(capacity, request)
         return request
 

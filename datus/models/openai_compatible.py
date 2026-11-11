@@ -658,7 +658,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             if explicit_max_completion is not None:
                 params["max_completion_tokens"] = explicit_max_completion
             if explicit_max_tokens is None and explicit_max_completion is None:
-                default_max_tokens = self.request_capacity().default_output
+                default_max_tokens = self.request_capacity().request_output_limit()
                 if isinstance(default_max_tokens, int) and default_max_tokens > 0:
                     uses_completion = (
                         hasattr(self, "_uses_completion_tokens_parameter") and self._uses_completion_tokens_parameter()
@@ -1080,8 +1080,8 @@ class OpenAICompatibleModel(LLMBaseModel):
         if not suppress_sampling_params and self.model_config.top_p is not None:
             model_settings_kwargs["top_p"] = self.model_config.top_p
 
-        # Send the same resolved output cap that the capacity check reserves.
-        model_settings_kwargs["max_tokens"] = self.request_capacity().output_limit(max_tokens)
+        # Unknown custom endpoints choose their wire default; planning retains the reservation.
+        model_settings_kwargs["max_tokens"] = self.request_capacity().request_output_limit(max_tokens)
 
         if self.default_headers:
             model_settings_kwargs["extra_headers"] = self.default_headers

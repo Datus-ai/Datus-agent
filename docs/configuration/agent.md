@@ -153,6 +153,12 @@ existing configurations do not need new fields:
 | `max_tokens` | Retain the known output default, or use `384000` if unknown, matching the bundled DeepSeek V4 Flash budget. Defaults leave room for input and the safety margin, so small windows may get a lower output budget |
 | `tokenizer_ref` | Use LiteLLM counting for known OpenAI models; otherwise reserve UTF-8 bytes, including for private aliases, without downloading a tokenizer |
 
+For an unknown model on a custom OpenAI endpoint, `384000` remains a local
+reservation. When no output limit is configured or known, Datus omits the output
+limit from requests and lets the server choose its default. Explicit per-model
+or per-call limits and known output defaults are still sent. Native protocols
+that require an output limit retain it.
+
 Model selection and runtime capacity checks share an automatically refreshed
 OpenRouter catalog. On first use, Datus reads the cache under the current Agent
 home (`cache/openrouter_models.json`) or fetches the public catalog with an

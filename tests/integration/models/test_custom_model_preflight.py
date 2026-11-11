@@ -39,6 +39,13 @@ def endpoint(monkeypatch, tmp_path):
         def do_POST(self):
             request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             requests.append((self.path, request))
+            output_limit = request.get("max_completion_tokens", request.get("max_tokens", 0)) or 0
+            if output_limit > 131072:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error":{"message":"max_tokens exceeds the 131072-token server window"}}')
+                return
             has_image = any(
                 isinstance(message.get("content"), list)
                 and any(part.get("type") == "image_url" for part in message["content"])
@@ -71,6 +78,7 @@ def endpoint(monkeypatch, tmp_path):
                 }
                 self.wfile.write(("data: " + json.dumps(chunk) + "\n\n").encode())
                 chunk["choices"] = [{"index": 0, "delta": {}, "finish_reason": finish}]
+                chunk["usage"] = {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110}
                 self.wfile.write(("data: " + json.dumps(chunk) + "\n\ndata: [DONE]\n\n").encode())
             else:
                 self.send_header("Content-Type", "application/json")
@@ -125,7 +133,8 @@ async def test_read_image_reaches_unregistered_model_over_http(endpoint, tmp_pat
     for path, body in requests:
         assert path == "/v1/chat/completions"
         assert body["model"] == "Qwen/private-vision"
-        assert body["max_tokens"] == 384000
+        assert "max_tokens" not in body
+        assert "max_completion_tokens" not in body
     content = [
         part
         for message in requests[-1][1]["messages"]
@@ -154,6 +163,28 @@ def test_direct_generation_sends_large_estimated_request(endpoint):
     assert len(requests) == 1
     assert requests[0][1]["messages"][-1]["content"] == prompt
     assert requests[0][1]["max_tokens"] == 1024
+
+
+def test_unknown_custom_model_uses_server_output_default_over_http(endpoint):
+    url, requests = endpoint
+    model = OpenAIModel(ModelConfig(type="openai", model="private-text", api_key="local-test", base_url=url))
+    assert model.generate("hello") == "image reached endpoint"
+    assert model.request_capacity().default_output == 384000
+    assert len(requests) == 1
+    assert "max_tokens" not in requests[0][1]
+    assert "max_completion_tokens" not in requests[0][1]
+
+
+@pytest.mark.asyncio
+async def test_single_call_text_keeps_fallback_reservation_off_wire(endpoint):
+    url, requests = endpoint
+    model = OpenAIModel(ModelConfig(type="openai", model="private-text", api_key="local-test", base_url=url))
+    result = await model.complete_text("hello")
+    assert result["content"] == "image reached endpoint"
+    assert result["usage"].total_tokens == 110
+    assert len(requests) == 1
+    assert "max_tokens" not in requests[0][1]
+    assert "max_completion_tokens" not in requests[0][1]
 
 
 def test_impossible_explicit_output_reservation_stops_before_http(endpoint):
