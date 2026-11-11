@@ -39,6 +39,26 @@ def test_real_query_node_keeps_the_interaction_channel_on_rebuild(
         node.setup_tools()
 
 
+@pytest.mark.parametrize("mode", ["interactive", "workflow"])
+def test_custom_delegation_preserves_parent_execution_and_profile(real_agent_config, mock_llm_create, mode):
+    """The real custom-node factory preserves interactive channels and the parent's profile."""
+    from types import SimpleNamespace
+
+    from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
+    from datus.tools.permission.permission_manager import PermissionManager
+
+    real_agent_config.agentic_nodes["custom_reader"] = {"node_class": "ask_metrics", "tools": "semantic_tools.*"}
+    tool = SubAgentTaskTool(agent_config=real_agent_config)
+    tool._parent_node = SimpleNamespace(
+        execution_mode=mode, permission_manager=PermissionManager(active_profile="auto")
+    )
+    node = tool._create_node("custom_reader")
+    assert node.execution_mode == mode
+    assert node.permission_manager.active_profile == ("auto" if mode == "interactive" else "dangerous")
+    node._compose_hooks()
+    assert sum(t.name == "ask_user" for t in node.tools) == int(mode == "interactive")
+
+
 def _query_action(text, *, action_type="query_metrics", **extra):
     """A successful query action whose result is the text an executed query returns."""
     return {
