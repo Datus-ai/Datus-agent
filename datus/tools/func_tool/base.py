@@ -455,7 +455,7 @@ def trans_to_function_tool(
     if bound_method.__name__ == "export_query":
         import threading
 
-        from datus.tools.db_tools.query_spool import ACTIVE_BULK_CANCEL, data_tool_slot
+        from datus.tools.db_tools.query_spool import ACTIVE_BULK_CANCEL, ACTIVE_EXPORT_SQL_APPROVAL, data_tool_slot
 
         raw_invoker = async_invoker
         pending = set()
@@ -468,6 +468,8 @@ def trans_to_function_tool(
         async def bounded_invoker(context, arguments):
             cancelled = threading.Event()
             token = ACTIVE_BULK_CANCEL.set(cancelled)
+            approval = getattr(context, "_datus_export_sql_approval", None)
+            approval_token = ACTIVE_EXPORT_SQL_APPROVAL.set(approval if isinstance(approval, tuple) else None)
             started = False
 
             async def run_in_slot():
@@ -509,6 +511,7 @@ def trans_to_function_tool(
                 if not started:
                     task.cancel()
                 ACTIVE_BULK_CANCEL.reset(token)
+                ACTIVE_EXPORT_SQL_APPROVAL.reset(approval_token)
 
         async_invoker = bounded_invoker
 

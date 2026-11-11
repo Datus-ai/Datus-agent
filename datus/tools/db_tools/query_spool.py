@@ -20,6 +20,11 @@ import pyarrow as pa
 from datus.utils.project_files import ProjectDirectory, _same_file
 
 ACTIVE_BULK_CANCEL: ContextVar[threading.Event | None] = ContextVar("bulk_query_cancel", default=None)
+# Permission hooks bind a SQL file's root, input reference and content digest
+# to this invocation; contextvars also follow the export into its worker.
+ACTIVE_EXPORT_SQL_APPROVAL: ContextVar[tuple[str, str, str | None] | None] = ContextVar(
+    "export_sql_approval", default=None
+)
 _slots_lock = threading.Lock()
 _read_slots = WeakKeyDictionary()
 _async_slots = WeakKeyDictionary()

@@ -11,7 +11,13 @@ from uuid import uuid4
 
 import pyarrow as pa
 
-from datus.tools.db_tools.query_spool import QueryLimits, QuerySpool, bulk_slot, check_cancelled
+from datus.tools.db_tools.query_spool import (
+    ACTIVE_EXPORT_SQL_APPROVAL,
+    QueryLimits,
+    QuerySpool,
+    bulk_slot,
+    check_cancelled,
+)
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.policy_runtime import PolicyRuntime
 from datus.tools.read_observer import ReadObservation, notify_read
@@ -228,7 +234,15 @@ class BulkQueryTools:
                 if database and database != self._active_database_of(self.connector):
                     raise ValueError("Cannot select another database from a fixed connector")
             files = ProjectFiles(self._bulk_root())
+            source_sql = sql
             sql, sql_ref = self._bulk_sql(sql, files)
+            approval = ACTIVE_EXPORT_SQL_APPROVAL.get()
+            if approval is not None and approval != (
+                str(files.root),
+                source_sql,
+                hashlib.sha256(sql.encode("utf-8")).hexdigest(),
+            ):
+                raise PermissionError("SQL file changed after permission validation; retry export_query")
             destination = files.resolve(output_file or f"exports/{uuid4().hex}.csv")
             if destination.suffix.lower() not in (".csv", ".parquet"):
                 raise ValueError("output_file must end in .csv or .parquet")

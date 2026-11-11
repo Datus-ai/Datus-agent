@@ -3,7 +3,7 @@
 import gzip
 import json
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pandas as pd
 import pyarrow as pa
@@ -74,6 +74,61 @@ def routed_environment(environment):
         yield tool, root
     finally:
         manager.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["unchanged", "replaced", "appeared", "root"])
+async def test_export_executes_only_the_sql_file_checked_by_its_permission_gate(environment, monkeypatch, change):
+    from datus.tools.permission.permission_config import PermissionLevel
+    from datus.tools.permission.permission_hooks import PermissionHooks
+    from datus.tools.permission.permission_manager import PermissionManager
+    from datus.tools.permission.profiles import get_profile
+    from datus.tools.registry.tool_registry import ToolRegistry
+
+    tool, _, _, root = environment
+    project = root / "project"
+    project.mkdir()
+    (project / "query.sql").write_text("SELECT 'wrong project' AS id")
+    query = root / "query.sql"
+    if change != "appeared":
+        query.write_text("SELECT 'approved workspace' AS id")
+    config = get_profile("normal").model_copy(deep=True)
+    config.sql_statements.read = PermissionLevel.ASK
+    broker = SimpleNamespace(request=AsyncMock(return_value=[["y"]]))
+    hooks = PermissionHooks(
+        broker=broker,
+        permission_manager=PermissionManager(global_config=config),
+        node_name="chat",
+        tool_registry=ToolRegistry({"export_query": "db_tools"}),
+        project_root=str(project),
+        export_workspace_root=str(root),
+    )
+    function = tool.to_function_tool(tool.export_query)
+    arguments = json.dumps({"sql": "query.sql", "output_file": "approved.csv"})
+    context = SimpleNamespace(tool_arguments=arguments, tool_call=SimpleNamespace(arguments=arguments))
+    await hooks.on_tool_start(context, None, function)
+    assert broker.request.await_count == 1
+    prompt = broker.request.call_args.args[0][0].content
+    assert "wrong project" not in prompt
+    assert ("approved workspace" in prompt) is (change != "appeared")
+    if change in {"replaced", "appeared"}:
+        query.write_text("SELECT 'unapproved replacement' AS id")
+    if change == "root":
+        tool._filesystem_root = str(project)
+    stage = Mock(wraps=tool._stage_bulk_query)
+    monkeypatch.setattr(tool, "_stage_bulk_query", stage)
+    result = await function.on_invoke_tool(context, arguments)
+    if change == "unchanged":
+        assert result["success"] == 1, result["error"]
+        assert pd.read_csv(root / "approved.csv")["id"].tolist() == ["approved workspace"]
+        stage.assert_called_once()
+    else:
+        assert result["success"] == 0
+        assert "SQL file changed after permission validation" in result["error"]
+        stage.assert_not_called()
+        assert not (root / "approved.csv").exists()
+        assert not (project / "approved.csv").exists()
+    assert context.tool_call.arguments == arguments
 
 
 @pytest.mark.parametrize("suffix", ["csv", "parquet"])

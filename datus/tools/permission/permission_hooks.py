@@ -16,6 +16,7 @@ when prompting users for permission confirmation.
 """
 
 import asyncio
+import hashlib
 import json
 import re
 import weakref
@@ -301,6 +302,7 @@ class PermissionHooks(AgentHooks):
         non_interactive: bool = False,
         proxied_tool_names: Optional[Set[str]] = None,
         project_root: Optional[str] = None,
+        export_workspace_root: Optional[str] = None,
         config_mutable: bool = True,
         bash_classifier: Optional["BashCommandClassifier"] = None,
         auto_reviewer: Optional["AutoReviewer"] = None,
@@ -351,6 +353,8 @@ class PermissionHooks(AgentHooks):
                 prompts omit the project-level choice while retaining once and
                 session approvals. Existing project grants supplied through
                 ``AgentConfig`` still apply.
+            export_workspace_root: Effective DB tool filesystem root for export
+                SQL files. Does not change project-level permission grants.
             bash_classifier: Optional LLM classifier for bash commands (reserved
                 seam, see ``bash_classifier.py``). Consulted only when the
                 static bash rules yield ASK with ``safety_forced=False``; a
@@ -375,6 +379,7 @@ class PermissionHooks(AgentHooks):
         self.bash_classifier = bash_classifier
         self.auto_reviewer = auto_reviewer
         self.review_context_provider = review_context_provider
+        self.export_workspace_root = export_workspace_root
 
     def _auto_review_config(self, action_type: str, effective: Any, bash_rules: Any = None) -> Any:
         """Resolve the current profile's reviewer config plus legacy bash overrides."""
@@ -1032,6 +1037,8 @@ class PermissionHooks(AgentHooks):
         if not isinstance(args, dict):
             return False
         sql = args.get("sql", "")
+        if tool_name == "export_query":
+            context._datus_export_sql_approval = None
         # Resolve a ``.sql`` file reference to its real (single) statement so the
         # kind detection below sees the SQL, not the path. On any read failure,
         # leave ``sql`` as-is → unknown → ASK (fail safe).
@@ -1040,11 +1047,22 @@ class PermissionHooks(AgentHooks):
                 if tool_name == "export_query":
                     from datus.utils.project_files import MAX_SQL_FILE_BYTES, ProjectFiles
 
+                    root = str(Path(self.export_workspace_root or self.project_root or ".").resolve())
+                    source_sql = sql
+                    # An unreadable file cannot become an approved query merely
+                    # by appearing after the gate returns.
+                    context._datus_export_sql_approval = (root, source_sql, None)
+
                     def read_export_sql(path):
-                        with ProjectFiles(Path(self.project_root or ".")) as files:
+                        with ProjectFiles(Path(root)) as files:
                             return files.read_sql(path, MAX_SQL_FILE_BYTES)[0]
 
                     sql = await asyncio.to_thread(read_export_sql, sql.strip())
+                    context._datus_export_sql_approval = (
+                        root,
+                        source_sql,
+                        hashlib.sha256(sql.encode("utf-8")).hexdigest(),
+                    )
                 else:
                     sql = read_workspace_sql_file(sql.strip(), self.project_root or ".")
             except Exception as e:
@@ -1055,8 +1073,8 @@ class PermissionHooks(AgentHooks):
         sql_class = classify_sql_kind(kind)
 
         if tool_name == "export_query":
-            # An export always consumes read permission, even if a SQL file
-            # changes after this check. The tool itself rejects non-read SQL.
+            # Exports always consume read permission; the tool also verifies
+            # the approved file digest and rejects non-read SQL.
             if sql_class != "read":
                 kind, sql_class = SQLType.SELECT.value, "read"
             if (
