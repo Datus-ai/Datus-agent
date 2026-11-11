@@ -14,6 +14,31 @@ from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.query_result_text import parse_query_result_text
 
 
+@pytest.mark.parametrize("mode", ["interactive", "workflow"])
+@pytest.mark.parametrize("is_subagent", [False, True])
+def test_real_query_node_keeps_the_interaction_channel_on_rebuild(
+    real_agent_config, mock_llm_create, mode, is_subagent
+):
+    """Real query-node assembly mounts session channels independently of resource selections."""
+    from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+
+    node = AskMetricsAgenticNode(
+        node_id="interaction_reader",
+        description="Reader interaction regression",
+        node_type="ask_metrics",
+        node_name="ask_metrics",
+        agent_config=real_agent_config,
+        execution_mode=mode,
+        is_subagent=is_subagent,
+    )
+    for _ in range(2):
+        captured_tools = node.tools
+        node._compose_hooks()
+        assert captured_tools is node.tools
+        assert sum(tool.name == "ask_user" for tool in captured_tools) == int(mode == "interactive")
+        node.setup_tools()
+
+
 def _query_action(text, *, action_type="query_metrics", **extra):
     """A successful query action whose result is the text an executed query returns."""
     return {

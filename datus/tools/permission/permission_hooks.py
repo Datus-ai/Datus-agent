@@ -495,7 +495,7 @@ class PermissionHooks(AgentHooks):
         review_registry.record(getattr(context, "tool_call_id", None), payload)
 
     @classmethod
-    def is_permission_exempt_tool(cls, tool_name: str) -> bool:
+    def is_permission_exempt_tool(cls, tool_name: str, category: str = "tools") -> bool:
         """Identify declared session channels shared by visibility and invocation checks.
 
         These tools only ask the user, manage the in-memory plan or return the
@@ -504,7 +504,7 @@ class PermissionHooks(AgentHooks):
         """
         from datus.tools.registry.capabilities import TOOL_CAPABILITIES
 
-        capability = TOOL_CAPABILITIES.get(f"tools.{tool_name}")
+        capability = TOOL_CAPABILITIES.get(f"{category}.{tool_name}")
         return capability is not None and capability.access == "session"
 
     async def on_tool_start(self, context, agent, tool) -> None:
@@ -553,7 +553,7 @@ class PermissionHooks(AgentHooks):
 
         # Session channels retain their own UX and permission exemption
         # on restricted hosts as well as ordinary CLI hosts.
-        if self.is_permission_exempt_tool(tool_name):
+        if self.is_permission_exempt_tool(tool_name, self.tool_registry.get(tool_name, "tools")):
             return
 
         # Restricted hosts narrow nodes to concrete methods. A zone/profile or

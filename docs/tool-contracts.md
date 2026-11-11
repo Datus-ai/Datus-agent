@@ -164,3 +164,10 @@ to ask a question or return its result. Nodes still decide whether to mount thes
 channels (for example, workflow runs do not mount ask_user). read_tool_result is
 a reader, not a session mutation; it is always granted as session infrastructure
 on publications, and the result store itself enforces session ownership.
+
+Interactive nodes attach ask_user at the shared run boundary, after resource
+whitelists and rebuilds and before SDK tool capture. Workflow runs do not mount
+it. Exemptions use the canonical family and method, so an external tool that
+happens to be named ask_user cannot bypass its own rules. Hosted Skill validation
+reuses the owning filesystem policy; web reads validate every redirect target
+before sending another request and bound redirect chains.

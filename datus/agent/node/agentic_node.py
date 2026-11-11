@@ -3923,6 +3923,7 @@ class AgenticNode(Node):
         # argument too late and the first run would execute unwrapped tools.
         self._ensure_tool_result_reader()
         self._apply_init_tool_scope()
+        self._ensure_interaction_channel()
         self._ensure_tool_transformers()
         self._current_action_history = ctx.action_history_manager
         # Per-run mid-turn compactor. Created before ``_compose_run_hooks`` so
@@ -4724,7 +4725,8 @@ class AgenticNode(Node):
         self._populate_tool_registry()
         visible = []
         for tool in self.tools:
-            if PermissionHooks.is_permission_exempt_tool(tool.name):
+            category = self.tool_registry.get(tool.name, "tools")
+            if PermissionHooks.is_permission_exempt_tool(tool.name, category):
                 visible.append(tool)
                 continue
             # Like PermissionHooks, resolve load_skill by its target Skill, not
@@ -4742,7 +4744,6 @@ class AgenticNode(Node):
                     if manager.filter_available_skills(skills, self.get_node_name()):
                         visible.append(tool)
                 continue
-            category = self.tool_registry.get(tool.name, "tools")
             visible.extend(manager.filter_available_tools([tool], self.get_node_name(), category))
         self.tools[:] = visible
 
@@ -4875,6 +4876,23 @@ class AgenticNode(Node):
             return f"[{exc.code}] {exc}"
         return model_error_message(exc) or str(exc)
 
+    def _ensure_interaction_channel(self) -> None:
+        """Mount the interactive session channel after resource-tool selection and rebuilds.
+
+        Query nodes and artifact consultants may replace the entire tool list.
+        A resource whitelist must not remove their channel for asking the user.
+        Keep the list identity because callers may already have captured it.
+        Workflow nodes deliberately have no human interaction channel.
+        """
+        if getattr(self, "execution_mode", None) != "interactive":
+            return
+        if any(getattr(tool, "name", None) == "ask_user" for tool in self.tools or []):
+            return
+        if getattr(self, "ask_user_tool", None) is None:
+            self._setup_ask_user_tool()
+        elif self.tools is not None:
+            self.tools.extend(self.ask_user_tool.available_tools())
+
     def _compose_hooks(self, extra: Any = None) -> Any:
         """Combine permission hooks with an optional per-node hook.
 
@@ -4896,6 +4914,7 @@ class AgenticNode(Node):
         publishes a ``token_usage`` action mid-turn (see
         ``datus/agent/node/token_usage_hook.py``).
         """
+        self._ensure_interaction_channel()
         self._ensure_permission_hooks()
         self._ensure_tool_transformers()
         context_rewriter = getattr(self, "_active_context_rewriter", None)

@@ -3351,6 +3351,21 @@ async def test_session_channels_survive_node_denials(mock_broker, restricted, na
 
 
 @pytest.mark.asyncio
+async def test_an_external_tool_cannot_claim_a_session_channels_name(mock_broker):
+    """Session exemptions belong to canonical identities, not coincidentally matching names."""
+    manager = PermissionManager(PermissionConfig(default_permission=PermissionLevel.DENY))
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=manager,
+        node_name="child",
+        tool_registry=ToolRegistry({"ask_user": "external_tools"}),
+        enforce_method_denials=True,
+    )
+    with pytest.raises(PermissionDeniedException):
+        await hooks.on_tool_start(SimpleNamespace(tool_arguments="{}"), None, SimpleNamespace(name="ask_user"))
+
+
+@pytest.mark.asyncio
 async def test_restricted_skill_dispatch_still_authorizes_the_selected_name(mock_broker):
     manager = PermissionManager(
         PermissionConfig(

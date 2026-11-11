@@ -152,11 +152,11 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
     # LLM-facing tool surface is determined SOLELY by this whitelist: only the
     # groups listed here are eligible, and a tool is exposed only when a
     # whitelist pattern grants it. There is no chat-surface carryover and no
-    # always-on infrastructure — an empty/absent ``tools`` exposes nothing
+    # resource-tool carryover — an empty/absent ``tools`` grants no data access
     # (the agent answers from the inlined artifact context), and e.g.
     # ``filesystem_tools.*`` yields ONLY filesystem tools. ``filesystem_tools``
-    # is therefore gated like any other group; ``ask_user`` / ``task`` /
-    # plan-mode tools are not expressible here and are never exposed on ask_*.
+    # is therefore gated like any other group. Delegation stays unavailable;
+    # session channels are attached by AgenticNode at the shared run boundary.
     _WHITELIST_GROUP_ATTRS: ClassVar[Dict[str, str]] = {
         "db_tools": "db_func_tool",
         "context_search_tools": "context_search_tools",
@@ -269,9 +269,10 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         infrastructure that is NOT a tool (permission/skill managers,
         artifact-anchored filesystem instance, sessions, MCP) is built
         correctly, then replace ``self.tools`` with exactly the tools the
-        whitelist grants. An empty/absent ``tools`` exposes nothing (the agent
+        whitelist grants. An empty/absent ``tools`` grants no data access (the agent
         answers purely from the inlined artifact context); ``filesystem_tools.*``
-        exposes only filesystem tools; and so on.
+        exposes only filesystem tools; and so on. The shared run boundary
+        separately attaches session interaction channels after resource selection.
         """
         super().setup_tools()
         self._apply_tools_whitelist()
@@ -373,7 +374,8 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         A tool survives only when it maps to a selectable group AND a pattern
         grants it. Tools outside the selectable groups (``ask_user`` / ``task``
         / plan-mode) and every tool when ``patterns`` is empty are dropped, so
-        the surface equals exactly what ``tools`` requested. Idempotent — safe
+        the resource surface equals exactly what ``tools`` requested. Session
+        channels are reattached by the shared run boundary. Idempotent — safe
         to call on every rebuild.
         """
         name_to_group = self._whitelist_tool_groups()
