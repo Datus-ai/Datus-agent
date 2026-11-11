@@ -7,8 +7,10 @@
 import os
 import re
 import shutil
+import threading
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 from urllib.parse import unquote, urlparse
 
 import lancedb
@@ -31,6 +33,81 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows locks a file instead of the directory
+    fcntl = None
+
+
+# ---------------------------------------------------------------------------
+# Cross-process write serialization
+# ---------------------------------------------------------------------------
+
+_HELD_WRITE_LOCKS = threading.local()
+
+
+def _local_path(uri: Any) -> Optional[Path]:
+    """Filesystem path behind a LanceDB uri, or ``None`` for remote/unknown stores."""
+    if not isinstance(uri, str) or not uri:
+        return None
+    parsed = urlparse(uri)
+    if parsed.scheme not in {"", "file"}:
+        return None
+    return Path(unquote(parsed.path if parsed.scheme else uri))
+
+
+@contextmanager
+def lance_write_lock(directory: Optional[Path]) -> Iterator[None]:
+    """Hold the database directory's advisory lock around one LanceDB mutation.
+
+    Several Datus processes (``datus web``, ``datus-mcp``, the CLI) routinely
+    open the same ``datus_db``; LanceDB only coordinates their commits
+    optimistically. The lock is taken on the directory itself, which exists
+    for as long as the database does, so no lock file can be unlinked and
+    recreated under a second holder. Re-entrant per thread; a ``None``
+    directory (remote or mocked store) is a no-op.
+    """
+    if directory is None:
+        yield
+        return
+    key = str(directory)
+    held = getattr(_HELD_WRITE_LOCKS, "keys", None)
+    if held is None:
+        held = _HELD_WRITE_LOCKS.keys = set()
+    if key in held:
+        yield
+        return
+    directory.mkdir(parents=True, exist_ok=True)
+    if fcntl is not None:
+        fd = os.open(directory, os.O_RDONLY)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            held.add(key)
+            try:
+                yield
+            finally:
+                held.discard(key)
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+        return
+    import msvcrt
+
+    with (directory / ".datus_write.lock").open("a+b") as lock:
+        lock.seek(0)
+        if not lock.read(1):
+            lock.write(b"\0")
+            lock.flush()
+        lock.seek(0)
+        msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+        held.add(key)
+        try:
+            yield
+        finally:
+            held.discard(key)
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -128,19 +205,27 @@ class LanceVectorTable(VectorTable):
 
     def __init__(self, lance_table: LanceTable) -> None:
         self._table = lance_table
+        table_path = _local_path(getattr(lance_table, "uri", None))
+        self._lock_dir = table_path.parent if table_path is not None else None
+
+    def _write_lock(self):
+        return lance_write_lock(self._lock_dir)
 
     # -- Write operations --
 
     def add(self, data: pd.DataFrame) -> None:
-        self._table.add(data)
+        with self._write_lock():
+            self._table.add(data)
 
     def merge_insert(self, data: pd.DataFrame, on_column: str) -> None:
-        self._table.merge_insert(on_column).when_matched_update_all().when_not_matched_insert_all().execute(data)
+        with self._write_lock():
+            self._table.merge_insert(on_column).when_matched_update_all().when_not_matched_insert_all().execute(data)
 
     def delete(self, where: WhereExpr) -> None:
         compiled = build_where(where)
         if compiled:
-            self._table.delete(compiled)
+            with self._write_lock():
+                self._table.delete(compiled)
 
     def update(self, where: WhereExpr, values: Dict[str, Any]) -> None:
         compiled = build_where(where)
@@ -149,7 +234,8 @@ class LanceVectorTable(VectorTable):
                 ErrorCode.STORAGE_FAILED,
                 message="update() requires a non-empty where clause to prevent accidental full-table updates",
             )
-        self._table.update(where=compiled, values=values)
+        with self._write_lock():
+            self._table.update(where=compiled, values=values)
 
     # -- Search operations --
 
@@ -224,19 +310,21 @@ class LanceVectorTable(VectorTable):
     # -- Index operations --
 
     def create_vector_index(self, column: str, metric: str = "cosine", **kwargs) -> None:
-        self._table.create_index(metric=metric, vector_column_name=column, **kwargs)
+        with self._write_lock():
+            self._table.create_index(metric=metric, vector_column_name=column, **kwargs)
 
     def create_fts_index(self, spec: FtsSpecInput) -> None:
-        for field in normalize_fts_spec(spec).fields:
-            config = FTS(
-                base_tokenizer=field.tokenizer,
-                ngram_min_length=field.ngram_min_length,
-                ngram_max_length=field.ngram_max_length,
-                stem=False,
-                remove_stop_words=False,
-                ascii_folding=False,
-            )
-            self._table.create_index(field.name, config=config, replace=True)
+        with self._write_lock():
+            for field in normalize_fts_spec(spec).fields:
+                config = FTS(
+                    base_tokenizer=field.tokenizer,
+                    ngram_min_length=field.ngram_min_length,
+                    ngram_max_length=field.ngram_max_length,
+                    stem=False,
+                    remove_stop_words=False,
+                    ascii_folding=False,
+                )
+                self._table.create_index(field.name, config=config, replace=True)
 
     def supports_fts(self) -> bool:
         return True
@@ -266,42 +354,46 @@ class LanceVectorTable(VectorTable):
         return FtsIndexStatus.READY
 
     def remove_legacy_fts_index(self) -> bool:
-        legacy_path = self._legacy_fts_path()
-        if legacy_path is None:
-            return False
-        shutil.rmtree(legacy_path)
-        return True
+        with self._write_lock():
+            legacy_path = self._legacy_fts_path()
+            if legacy_path is None:
+                return False
+            shutil.rmtree(legacy_path)
+            return True
 
     def create_scalar_index(self, column: str) -> None:
-        self._table.create_scalar_index(column, replace=True)
+        with self._write_lock():
+            self._table.create_scalar_index(column, replace=True)
 
     def ensure_columns(self, expressions: Dict[str, str]) -> None:
         """Add missing columns using Lance SQL expressions."""
 
-        missing = {name: expr for name, expr in expressions.items() if name not in self._table.schema.names}
-        if missing:
-            self._table.add_columns(missing)
+        with self._write_lock():
+            missing = {name: expr for name, expr in expressions.items() if name not in self._table.schema.names}
+            if missing:
+                self._table.add_columns(missing)
 
     # -- Maintenance --
 
     def optimize(self) -> None:
         """Incrementally add changed fragments to existing indices."""
-        self._table.optimize()
+        with self._write_lock():
+            self._table.optimize()
 
     def compact_files(self) -> None:
-        self._table.compact_files()
+        with self._write_lock():
+            self._table.compact_files()
 
     def cleanup_old_versions(self) -> None:
-        self._table.cleanup_old_versions()
+        with self._write_lock():
+            self._table.cleanup_old_versions()
 
     # -- Internal helpers --
 
     def _legacy_fts_path(self) -> Optional[Path]:
-        uri = str(getattr(self._table, "uri", ""))
-        parsed = urlparse(uri)
-        if parsed.scheme not in {"", "file"}:
+        table_path = _local_path(str(getattr(self._table, "uri", "")))
+        if table_path is None:
             return None
-        table_path = Path(unquote(parsed.path if parsed.scheme else uri))
         legacy_path = table_path / "_indices" / "fts"
         return legacy_path if legacy_path.exists() else None
 
@@ -328,6 +420,7 @@ class LanceVectorDatabase(VectorDatabase):
 
     def __init__(self, db_connection: DBConnection) -> None:
         self._db = db_connection
+        self._lock_dir = _local_path(getattr(db_connection, "uri", None))
 
     def supports_fts(self) -> bool:
         return True
@@ -382,7 +475,8 @@ class LanceVectorDatabase(VectorDatabase):
                     function=lance_fn,
                 )
             ]
-        raw_table = self._db.create_table(table_name, **kwargs)
+        with lance_write_lock(self._lock_dir):
+            raw_table = self._db.create_table(table_name, **kwargs)
         return LanceVectorTable(raw_table)
 
     def open_table(
@@ -398,7 +492,8 @@ class LanceVectorDatabase(VectorDatabase):
         return LanceVectorTable(raw_table)
 
     def drop_table(self, table_name: str, ignore_missing: bool = False) -> None:
-        self._db.drop_table(table_name, ignore_missing=ignore_missing)
+        with lance_write_lock(self._lock_dir):
+            self._db.drop_table(table_name, ignore_missing=ignore_missing)
 
     def refresh_table(
         self,
