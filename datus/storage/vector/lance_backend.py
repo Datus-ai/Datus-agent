@@ -208,23 +208,20 @@ class LanceVectorTable(VectorTable):
         table_path = _local_path(getattr(lance_table, "uri", None))
         self._lock_dir = table_path.parent if table_path is not None else None
 
-    def _write_lock(self):
-        return lance_write_lock(self._lock_dir)
-
     # -- Write operations --
 
     def add(self, data: pd.DataFrame) -> None:
-        with self._write_lock():
+        with lance_write_lock(self._lock_dir):
             self._table.add(data)
 
     def merge_insert(self, data: pd.DataFrame, on_column: str) -> None:
-        with self._write_lock():
+        with lance_write_lock(self._lock_dir):
             self._table.merge_insert(on_column).when_matched_update_all().when_not_matched_insert_all().execute(data)
 
     def delete(self, where: WhereExpr) -> None:
         compiled = build_where(where)
         if compiled:
-            with self._write_lock():
+            with lance_write_lock(self._lock_dir):
                 self._table.delete(compiled)
 
     def update(self, where: WhereExpr, values: Dict[str, Any]) -> None:
@@ -234,7 +231,7 @@ class LanceVectorTable(VectorTable):
                 ErrorCode.STORAGE_FAILED,
                 message="update() requires a non-empty where clause to prevent accidental full-table updates",
             )
-        with self._write_lock():
+        with lance_write_lock(self._lock_dir):
             self._table.update(where=compiled, values=values)
 
     # -- Search operations --
@@ -310,11 +307,11 @@ class LanceVectorTable(VectorTable):
     # -- Index operations --
 
     def create_vector_index(self, column: str, metric: str = "cosine", **kwargs) -> None:
-        with self._write_lock():
+        with lance_write_lock(self._lock_dir):
             self._table.create_index(metric=metric, vector_column_name=column, **kwargs)
 
     def create_fts_index(self, spec: FtsSpecInput) -> None:
-        with self._write_lock():
+        with lance_write_lock(self._lock_dir):
             for field in normalize_fts_spec(spec).fields:
                 config = FTS(
                     base_tokenizer=field.tokenizer,
@@ -354,7 +351,7 @@ class LanceVectorTable(VectorTable):
         return FtsIndexStatus.READY
 
     def remove_legacy_fts_index(self) -> bool:
-        with self._write_lock():
+        with lance_write_lock(self._lock_dir):
             legacy_path = self._legacy_fts_path()
             if legacy_path is None:
                 return False
@@ -362,13 +359,13 @@ class LanceVectorTable(VectorTable):
             return True
 
     def create_scalar_index(self, column: str) -> None:
-        with self._write_lock():
+        with lance_write_lock(self._lock_dir):
             self._table.create_scalar_index(column, replace=True)
 
     def ensure_columns(self, expressions: Dict[str, str]) -> None:
         """Add missing columns using Lance SQL expressions."""
 
-        with self._write_lock():
+        with lance_write_lock(self._lock_dir):
             missing = {name: expr for name, expr in expressions.items() if name not in self._table.schema.names}
             if missing:
                 self._table.add_columns(missing)
@@ -377,15 +374,15 @@ class LanceVectorTable(VectorTable):
 
     def optimize(self) -> None:
         """Incrementally add changed fragments to existing indices."""
-        with self._write_lock():
+        with lance_write_lock(self._lock_dir):
             self._table.optimize()
 
     def compact_files(self) -> None:
-        with self._write_lock():
+        with lance_write_lock(self._lock_dir):
             self._table.compact_files()
 
     def cleanup_old_versions(self) -> None:
-        with self._write_lock():
+        with lance_write_lock(self._lock_dir):
             self._table.cleanup_old_versions()
 
     # -- Internal helpers --
