@@ -22,7 +22,10 @@ def test_validation_uses_the_nodes_filesystem_scope(tmp_path):
 
     root = tmp_path / "project"
     root.mkdir()
-    content = "---\nname: scoped-skill\ndescription: A sufficiently descriptive skill for scope verification\n---\n"
+    content = (
+        "---\nname: scoped-skill\ndescription: A sufficiently descriptive skill for scope verification\n---\n"
+        "Read the scoped project data and return the requested result.\n"
+    )
     (root / "SKILL.md").write_text(content)
     outside = tmp_path / "outside"
     outside.mkdir()
