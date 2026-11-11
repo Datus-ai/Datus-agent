@@ -148,6 +148,27 @@ class TestChatMetricTools:
         assert not METRIC_TOOL_NAMES & {tool.name for tool in node.tools}
         assert "## Attribution Playbook" not in node._get_system_prompt()
 
+    @pytest.mark.parametrize(
+        "patterns",
+        [
+            "semantic_tools.query_metrics,semantic_tools.get_metric,sub_agent_tools.*",
+            "semantic_tools.attribution_analyze,sub_agent_tools.*",
+            "semantic_tools.query_metrics,semantic_tools.get_metric,db_tools.*,sub_agent_tools.*",
+        ],
+    )
+    def test_task_routing_sql_fallback_matches_exposed_tools(self, real_agent_config, mock_llm_create, patterns):
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config, tools=patterns)
+        names = {tool.name for tool in node.tools}
+        assert "task" in names
+        prompt = " ".join(node._get_session_system_prompt().split())
+        routing = prompt.split("Chat routing priority:", 1)[1].split("## Data Questions and Attribution", 1)[0]
+        assert ("If no suitable metric exists, generate and execute read-only SQL here" in routing) == (
+            "execute_sql" in names
+        )
+        assert ("no SQL tool is available, explain the actual missing capability" in routing) == (
+            "execute_sql" not in names
+        )
+
     @pytest.mark.asyncio
     async def test_registered_tools_query_attribute_and_refresh_models(
         self, real_agent_config, mock_llm_create, tmp_path, monkeypatch
