@@ -121,15 +121,22 @@ def apply_proxy_tools(
 
     # Auto-detect nodes whose finalizers depend on filesystem tools
     exclude_categories: Optional[Set[str]] = None
+    semantic_file_tools: Set[str] = set()
     node_name = getattr(node, "get_node_name", lambda: "")()
     if node_name in _FS_DEPENDENT_NODES:
         exclude_categories = {"filesystem_tools"}
+        from datus.tools.func_tool.semantic_model_editing_tools import SemanticModelEditingTools
+
+        semantic_file_tools = set(SemanticModelEditingTools.all_tools_name())
 
     new_tools = []
     proxied_names: Set[str] = set()
     for tool in node.tools:
         if isinstance(tool, FunctionTool) and _matches(tool.name, registry, parsed):
-            if exclude_categories and registry.get(tool.name) in exclude_categories:
+            if exclude_categories and (
+                registry.get(tool.name) in exclude_categories
+                or (registry.get(tool.name) == "semantic_tools" and tool.name in semantic_file_tools)
+            ):
                 logger.info(f"Skipping proxy for tool '{tool.name}' (excluded category on node '{node_name}')")
                 new_tools.append(tool)
             else:

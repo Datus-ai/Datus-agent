@@ -302,7 +302,7 @@ class SemanticPlanFileTools:
         return [trans_to_function_tool(self.write_semantic_model_plan_file)]
 
     @tool_schema(strict_mode=False)
-    @tool_contract(access="write", direct_call=True)
+    @tool_contract(access="write", direct_call=False)
     def write_semantic_model_plan_file(self, model_name: str, plan_json: dict[str, Any] | str) -> FuncToolResult:
         """Convert planning JSON to a graph and write it without changing the model.
 

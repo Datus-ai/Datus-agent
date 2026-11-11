@@ -18,10 +18,11 @@ from datus.prompts.prompt_manager import PromptManager
 from datus.schemas.artifact_manifest import ARTIFACT_SLUG_RE
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.func_tool.database import DBFuncTool
+from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.memory_tools import MemoryFuncTool
-from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
 from datus.tools.func_tool.platform_doc_search import PlatformDocSearchTool
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
+from datus.tools.func_tool.semantic_model_editing_tools import SemanticModelEditingTools
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.tools.func_tool.sub_agent_task_tool import BUILTIN_SUBAGENT_DESCRIPTIONS
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
@@ -36,10 +37,10 @@ logger = get_logger(__name__)
 VALID_TOOL_METHODS: dict[str, set[str]] = {
     "db_tools": set(DBFuncTool.all_tools_name()),
     "context_search_tools": set(ContextSearchTools.all_tools_name()),
-    "semantic_tools": set(SemanticTools.all_tools_name()),
+    "semantic_tools": set(SemanticTools.all_tools_name()) | set(SemanticModelEditingTools.all_tools_name()),
     "reference_template_tools": set(ReferenceTemplateTools.all_tools_name()),
     "date_parsing_tools": {"parse_temporal_expressions"},
-    "filesystem_tools": set(MetricFilesystemFuncTool.all_tools_name()),
+    "filesystem_tools": set(FilesystemFuncTool.all_tools_name()),
     "memory_tools": set(MemoryFuncTool.all_tools_name()),
     "platform_doc_tools": set(PlatformDocSearchTool.all_tools_name()),
 }
@@ -122,6 +123,10 @@ def _build_tool_types(agent_type: str) -> dict[str, dict[str, list[str]]]:
     for category in _TOOL_CATEGORIES_BY_AGENT_TYPE[agent_type]:
         if is_ask_agent and category == "filesystem_tools":
             tool_types[category] = {"tools": list(_ASK_AGENT_FILESYSTEM_READ_ONLY)}
+        elif category == "semantic_tools":
+            # These configurable nodes instantiate the query provider, not the
+            # authoring provider that requires a selected-model context.
+            tool_types[category] = {"tools": sorted(SemanticTools.all_tools_name())}
         else:
             tool_types[category] = {"tools": sorted(VALID_TOOL_METHODS[category])}
     return tool_types
@@ -566,13 +571,22 @@ def _validate_tools_for_agent_type(tools: list[str], agent_type: str) -> list[st
     Returns the offending patterns; an empty list means OK.
 
     The general :func:`_validate_tools` only confirms patterns are
-    syntactically valid (category / method exists). Artifact ask agents also
+    syntactically valid (category / method exists). Query nodes cannot mount
+    stateful semantic editing tools. Artifact ask agents also
     have a narrower read-only filesystem contract, so enforce that allowlist
     matching the ``tool_types`` catalog returned by ``GET /agent/use_tools``.
     """
-    if agent_type not in {"ask_report", "ask_dashboard"}:
+    if agent_type not in SUBAGENT_TOOL_REFERENCE:
         return []
     catalog = SUBAGENT_TOOL_REFERENCE[agent_type]["tool_types"]
+    unsupported = []
+    for raw in tools:
+        category, _, method = raw.strip().partition(".")
+        if category == "semantic_tools" and method not in {"", "*"}:
+            if method not in catalog.get(category, {}).get("tools", []):
+                unsupported.append(raw)
+    if unsupported or agent_type not in {"ask_report", "ask_dashboard"}:
+        return unsupported
     rejected: list[str] = []
     for raw in tools:
         pattern = raw.strip()
@@ -591,7 +605,12 @@ def _validate_tools_for_agent_type(tools: list[str], agent_type: str) -> list[st
             continue
         allowed_methods = set(catalog[category]["tools"])
         if method == "*":
-            if allowed_methods != VALID_TOOL_METHODS.get(category, set()):
+            provider_methods = (
+                set(SemanticTools.all_tools_name())
+                if category == "semantic_tools"
+                else VALID_TOOL_METHODS.get(category, set())
+            )
+            if allowed_methods != provider_methods:
                 rejected.append(pattern)
             continue
         if method not in allowed_methods:

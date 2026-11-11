@@ -63,8 +63,8 @@ class TestNormalProfile:
         config = NORMAL
         assert _resolve(config, "db_tools", "execute_sql") == PermissionLevel.ASK
         assert _resolve(config, "filesystem_tools", "write_file") == PermissionLevel.ASK
-        assert _resolve(config, "filesystem_tools", "delete_osi_metrics") == PermissionLevel.ASK
-        assert _resolve(config, "filesystem_tools", "delete_osi_datasets") == PermissionLevel.ASK
+        assert _resolve(config, "semantic_tools", "delete_osi_metrics") == PermissionLevel.ASK
+        assert _resolve(config, "semantic_tools", "delete_osi_datasets") == PermissionLevel.ASK
         assert _resolve(config, "tools", "todo_write") == PermissionLevel.ASK
 
     def test_lineage_reads_allowed_and_writes_ask(self):
@@ -171,9 +171,9 @@ class TestAutoProfile:
         assert _resolve(config, "filesystem_tools", "write_file") == PermissionLevel.ALLOW
         assert _resolve(config, "filesystem_tools", "edit_file") == PermissionLevel.ALLOW
         assert _resolve(config, "filesystem_tools", "delete_file") == PermissionLevel.ALLOW
-        assert _resolve(config, "filesystem_tools", "upsert_osi_metrics") == PermissionLevel.ALLOW
-        assert _resolve(config, "filesystem_tools", "delete_osi_metrics") == PermissionLevel.ASK
-        assert _resolve(config, "filesystem_tools", "delete_osi_datasets") == PermissionLevel.ASK
+        assert _resolve(config, "semantic_tools", "upsert_osi_metrics") == PermissionLevel.ALLOW
+        assert _resolve(config, "semantic_tools", "delete_osi_metrics") == PermissionLevel.ASK
+        assert _resolve(config, "semantic_tools", "delete_osi_datasets") == PermissionLevel.ASK
 
     def test_lineage_analysis_allowed_delete_asks(self):
         assert _resolve(AUTO, "lineage_tools", "query_lineage") == PermissionLevel.ALLOW
@@ -239,10 +239,6 @@ class TestFilesystemRuleSurface:
         "write_file",
         "edit_file",
         "delete_file",
-        "upsert_osi_metrics",
-        "delete_osi_metrics",
-        "upsert_osi_datasets",
-        "delete_osi_datasets",
     )
 
     def test_dead_filesystem_rules_absent(self):

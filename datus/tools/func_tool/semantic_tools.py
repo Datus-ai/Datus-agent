@@ -1767,8 +1767,7 @@ class SemanticTools:
         return FuncToolResult(success=1, result=record)
 
     @mcp_tool()
-    # Preserve the retired identity for frozen grants; no extra transport is mounted.
-    @tool_contract(access="read", direct_call=True, aliases=("get_dimensions",))
+    @tool_contract(access="read", direct_call=True)
     def get_dataset(self, name: str) -> FuncToolResult:
         """
         Get one dataset's fields and their definitions. Read every dataset a

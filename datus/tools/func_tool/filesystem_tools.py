@@ -473,7 +473,7 @@ class FilesystemFuncTool(BaseTool):
             logger.error(f"Error reading file {path}: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
-    @tool_contract(access="write", direct_call=True, aliases=("create_file",))
+    @tool_contract(access="write", direct_call=False)
     def write_file(self, path: str, content: str, file_type: str = "") -> FuncToolResult:
         """
         Create a new file or overwrite an existing file.
@@ -521,7 +521,7 @@ class FilesystemFuncTool(BaseTool):
             logger.error(f"Error writing file {path}: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
-    @tool_contract(access="write", direct_call=True)
+    @tool_contract(access="write", direct_call=False)
     def delete_file(self, path: str) -> FuncToolResult:
         """
         Delete a single regular file.
@@ -582,7 +582,7 @@ class FilesystemFuncTool(BaseTool):
             logger.error(f"Error deleting file {path}: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
-    @tool_contract(access="write", direct_call=True)
+    @tool_contract(access="write", direct_call=False)
     def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:
         """
         Make a single edit to a file by replacing old_string with new_string.
