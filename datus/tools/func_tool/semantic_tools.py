@@ -625,6 +625,7 @@ class SemanticTools:
         semantic_metric_names_provider: Optional[Callable[[], Optional[List[str]]]] = None,
         ontology_enabled: bool = False,
         policy_context_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
+        initialize_runtime: bool = True,
     ):
         """
         Initialize semantic function tool.
@@ -649,6 +650,8 @@ class SemanticTools:
                 bind them to this datasource's models and expose the ontology tools. Off for every agent that
                 does not ask for it. Mapping documents there say which model
                 each ontology binds.
+            initialize_runtime: Initialize native engines during construction. Authoring nodes
+                retain this default; chat can defer initialization until its first metric call.
         """
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
@@ -676,8 +679,10 @@ class SemanticTools:
         self._runtime: Optional[DosiRuntime] = None
         self._runtime_load_error: Optional[str] = None
         self._runtime_context_key: Optional[Tuple[str, ...]] = None
-        # The runtime initializes native engines before any model file tools run.
-        _ = self.runtime
+        # Authoring nodes need engines initialized before model file tools run.
+        # Chat only reads metrics and can wait until a metric tool needs them.
+        if initialize_runtime:
+            _ = self.runtime
 
     MODEL_FREE_READS_VERSION = 1
 

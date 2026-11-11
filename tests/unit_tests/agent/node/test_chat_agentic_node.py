@@ -42,6 +42,55 @@ METRIC_TOOL_NAMES = {"list_metrics", "get_metric", "get_dataset", "query_metrics
 
 
 class TestChatMetricTools:
+    def test_session_snapshot_tracks_tools_and_replays_when_unchanged(self, real_agent_config, mock_llm_create):
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        node.session_id = "chat_session_metric_tools_snapshot"
+        prompt = node._get_session_system_prompt()
+        meta = node._system_prompt_snapshot_meta(None)
+        assert "## Attribution Playbook" in prompt
+        assert node._get_session_system_prompt() == prompt
+        assert node._system_prompt_snapshot_meta(None) == meta
+
+        resumed = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        resumed.session_id = node.session_id
+        assert resumed._system_prompt_snapshot_meta(None) == meta
+        assert resumed._get_session_system_prompt() == prompt
+
+        node.node_config["tools"] = "db_tools.*"
+        node._rebuild_tools()
+        restricted = node._get_session_system_prompt()
+        assert "## Attribution Playbook" not in restricted
+        assert "## Metric Queries" not in restricted
+        assert node._system_prompt_snapshot_meta(None) != meta
+
+        node.node_config["tools"] = "semantic_tools.attribution_analyze"
+        node._rebuild_tools()
+        metric_only = node._get_session_system_prompt()
+        assert "## Attribution Playbook" in metric_only
+        assert "generate and execute read-only SQL here" not in metric_only
+        assert node._get_session_system_prompt() == metric_only
+
+    def test_chat_defers_native_initialization_but_authoring_retains_it(
+        self, real_agent_config, mock_llm_create, monkeypatch
+    ):
+        from datus.tools.func_tool.semantic_tools import SemanticTools
+        from datus.tools.semantic_tools.dosi.runtime import DosiRuntime
+
+        calls = []
+        initialize = DosiRuntime.initialize
+
+        def observed(runtime):
+            calls.append(runtime.datasource)
+            return initialize(runtime)
+
+        monkeypatch.setattr(DosiRuntime, "initialize", observed)
+        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+        node._get_session_system_prompt()
+        assert node.semantic_tools._runtime is None
+        assert calls == []
+        SemanticTools(real_agent_config)
+        assert calls == [real_agent_config.current_datasource]
+
     def test_defaults_and_rebuild_keep_metric_reads_without_authoring(self, real_agent_config, mock_llm_create):
         node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
         from datus.tools.func_tool.semantic_tools import SemanticTools
@@ -101,12 +150,22 @@ class TestChatMetricTools:
 
     @pytest.mark.asyncio
     async def test_registered_tools_query_attribute_and_refresh_models(
-        self, real_agent_config, mock_llm_create, tmp_path
+        self, real_agent_config, mock_llm_create, tmp_path, monkeypatch
     ):
         import duckdb
 
         from datus.configuration.agent_config import DbConfig
+        from datus.tools.semantic_tools.dosi.runtime import DosiRuntime
         from datus.utils.query_result_text import parse_query_result_text
+
+        initialized = []
+        initialize = DosiRuntime.initialize
+
+        def observed(runtime):
+            initialized.append(runtime.datasource)
+            return initialize(runtime)
+
+        monkeypatch.setattr(DosiRuntime, "initialize", observed)
 
         fixtures = Path(__file__).resolve().parents[3] / "data/semantic_models/attribution"
         database = tmp_path / "attribution.duckdb"
@@ -120,6 +179,7 @@ class TestChatMetricTools:
         shutil.copy2(fixtures / "model.yaml", model_path)
         node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
         tools = {tool.name: tool for tool in node.tools}
+        assert initialized == []
 
         async def invoke(name, arguments):
             result = await tools[name].on_invoke_tool(None, json.dumps(arguments))
@@ -127,6 +187,7 @@ class TestChatMetricTools:
             return result["result"]
 
         definition = await invoke("get_metric", {"name": "net"})
+        assert initialized == ["attribution"]
         assert "expr:" in definition
         assert "cat" in await invoke("get_dataset", {"name": "ledger"})
         query = await invoke(
@@ -164,6 +225,7 @@ class TestChatMetricTools:
             "query_metrics", {"metrics": ["net_updated"], "time_start": "2024-01-01", "time_end": "2024-02-01"}
         )
         assert float(parse_query_result_text(query).csv.splitlines()[1]) == 240.0
+        assert initialized == ["attribution", "next"]
 
 
 class TestChatAgenticNodeInheritance:

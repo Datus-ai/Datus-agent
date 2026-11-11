@@ -10,6 +10,8 @@ chat interactions with markdown output, database/filesystem tool support,
 skills, and permissions. This node is fully independent from GenSQLAgenticNode.
 """
 
+import hashlib
+import json
 from typing import ClassVar, Dict, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
@@ -276,6 +278,7 @@ class ChatAgenticNode(AgenticNode):
                 agent_config=self.agent_config,
                 sub_agent_name=self.get_node_name(),
                 runtime_db_context_provider=self._semantic_runtime_db_context,
+                initialize_runtime=False,
             )
         except Exception as exc:
             self.semantic_tools = None
@@ -576,6 +579,15 @@ class ChatAgenticNode(AgenticNode):
             return any(tool.name in exposed_names for tool in tool_instance.available_tools())
         except Exception:
             return False
+
+    def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
+        # Stabilize lazy mounting and invocation-local restrictions before
+        # fingerprinting the tool surface that controls template rendering.
+        self._ensure_lazy_tools_mounted()
+        self._apply_init_tool_scope()
+        meta = super()._system_prompt_snapshot_meta(prompt_version)
+        meta["tool_names_sha256"] = hashlib.sha256(json.dumps(sorted(self._exposed_tool_names())).encode()).hexdigest()
+        return meta
 
     def _get_system_prompt(
         self,
