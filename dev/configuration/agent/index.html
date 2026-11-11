@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/configuration/agent/">
       
       
         <link rel="prev" href="../introduction/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/configuration/agent/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/configuration/agent/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/configuration/agent/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/configuration/agent/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -5746,11 +5740,25 @@ termination is reported as a failure. Tool runs retain received assistant text
 and usage in the failed result and session; reasoning is not returned as the answer,
 and incomplete tool calls are not executed. Datus does not automatically retry these
 runs. Continue with the existing session when more output is needed.</p>
-<p>Large tool results are preserved in the session archive; the model receives a
-bounded view and can continue with <code>read_tool_result</code>. Original Python tool
-returns and action/UI results retain their existing formats. Source truncation
-and analysis completeness are separate from archive pagination. Disabling
-<code>agent.compact</code> does not disable result bounding or the final send check.</p>
+<p>Tools own their result sizes. Agent calls to <code>list_tables</code>, <code>list_databases</code>,
+<code>list_schemas</code>, <code>query_metrics</code> and <code>select_records</code> default to 200 items per
+page; <code>query_lineage</code> defaults to 100. <code>page_size</code> is caller-controlled with no
+hard maximum. Continue directory/lineage results with the original tool,
+<code>snapshot_id</code>, <code>offset</code> and (for lineage) <code>section</code>. Continue metric/record
+results with the original tool, <code>result_id</code> and <code>offset</code>; this reads the cached
+rows without rerunning SQL. For catalog/lineage pages with <code>has_more=true</code>, use
+<code>offset=extra.next_offset</code>; <code>extra.offset</code> identifies the current page. Business
+<code>limit</code> remains independent of page size.
+Direct Python/MCP calls without pagination arguments retain their existing
+complete catalog/graph or compressed query preview. <code>execute_sql</code> and
+<code>execute_reference_template</code> keep their existing compression.</p>
+<p>There is no <code>read_tool_result</code> tool or generic result projection. Historical
+archive references are recovered into files readable through <code>read_file</code> in
+line ranges. Source truncation and analysis completeness are independent of
+pagination. Disabling <code>agent.compact</code> does not disable the final capacity check;
+an input that still cannot fit is stopped before sending it to the provider.
+Page sizes count whole records, not tokens or bytes, and are not automatically
+reduced. A page of very wide records can therefore still hit the capacity check.</p>
 <p>The Codex subscription transport has no output-limit field in its wire protocol.
 It retains that protocol and reserves the known model output ceiling, including
 provider catalogue metadata, rather than pretending a smaller requested cap is
