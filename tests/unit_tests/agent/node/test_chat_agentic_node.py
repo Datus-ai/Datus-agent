@@ -280,6 +280,29 @@ class TestChatMetricTools:
             denied = await tools[tool_name].on_invoke_tool(None, json.dumps(arguments))
             assert denied["success"] == 0
             assert "outside this agent's configured metric scope" in denied["error"]
+        tree = node.semantic_tools.metric_rag.storage.subject_tree
+        assert tree.rename(["Finance"], ["ArchivedFinance"]) is True
+        for tool_name, arguments in (
+            ("list_metrics", {}),
+            ("get_metric", {"name": "net"}),
+            ("query_metrics", {"metrics": ["net"]}),
+            (
+                "attribution_analyze",
+                {
+                    "metric_name": "net",
+                    "candidate_dimensions": ["ledger.cat"],
+                    "baseline_start": "2024-01-01",
+                    "baseline_end": "2024-02-01",
+                    "current_start": "2024-02-01",
+                    "current_end": "2024-03-01",
+                },
+            ),
+        ):
+            denied = await tools[tool_name].on_invoke_tool(None, json.dumps(arguments))
+            assert denied["success"] == 0
+            assert "scope" in denied["error"]
+        assert tree.rename(["ArchivedFinance"], ["Finance"]) is True
+        assert "expr:" in await invoke("get_metric", {"name": "net"})
         real_agent_config.agentic_nodes["chat"].pop("scoped_context")
         assert "expr:" in await invoke("get_metric", {"name": "x_total"})
         model_path.write_text(model_path.read_text().replace("name: net\n", "name: net_updated\n"))

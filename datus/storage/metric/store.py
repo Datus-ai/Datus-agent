@@ -695,6 +695,15 @@ class MetricRAG:
         )
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.storage, "metrics")
 
+    def refresh_metric_scope(self) -> bool:
+        """Refresh subject IDs after taxonomy edits; report an unresolved scope."""
+        from datus.storage.rag_scope import _build_sub_agent_filter
+
+        self._sub_agent_filter = _build_sub_agent_filter(
+            self.agent_config, self.sub_agent_name, self.storage, "metrics"
+        )
+        return self._sub_agent_filter is not None
+
     def _sub_agent_conditions(self) -> List:
         """Build datasource and sub-agent filter conditions."""
         conditions = [datasource_condition(self.datasource_id)]

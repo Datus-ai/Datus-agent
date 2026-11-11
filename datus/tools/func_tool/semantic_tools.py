@@ -705,6 +705,8 @@ class SemanticTools:
             # projection after a host narrows the agent's scope.
             self.metric_rag = MetricRAG(self.agent_config, self.sub_agent_name)
             self._metric_scope_key = key
+        if key is not None and not self.metric_rag.refresh_metric_scope():
+            raise ValueError("Configured metric scope does not resolve to an existing subject.")
         return key is not None
 
     def _check_metric_scope(self, names: List[str]) -> Optional[FuncToolResult]:
