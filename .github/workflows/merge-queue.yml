@@ -17,7 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       policy_required: ${{ steps.policy.outputs.required }}
-      policy_cold: ${{ steps.policy.outputs.cold }}
       bi_required: ${{ steps.bi.outputs.required }}
     steps:
       - name: Checkout code
@@ -161,7 +160,8 @@ jobs:
     uses: ./.github/workflows/sql-policy-gate.yml
     with:
       agent_ref: ${{ github.sha }}
-      cold: ${{ needs.deterministic.outputs.policy_cold == 'true' }}
+      # Cold-build acceptance runs in scheduled nightly, outside the merge queue.
+      cold: false
     secrets:
       RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
 
