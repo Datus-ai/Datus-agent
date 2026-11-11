@@ -358,12 +358,15 @@ def _metric_datasets(node: Any) -> Optional[Dict[str, List[str]]]:
     return mapping
 
 
-def apply_tool_transformers(node: Any, transformers_by_pattern: Dict[str, List[ToolTransformer]]) -> int:
+def apply_tool_transformers(
+    node: Any, transformers_by_pattern: Dict[str, List[ToolTransformer]], *, tools: Optional[list] = None
+) -> int:
     """Wrap matching tools on ``node`` with the given transformers, in place.
 
     Args:
         node: AgenticNode-like object exposing ``tools``, ``tool_registry``
             and (optionally) ``proxied_tool_names`` / ``db_func_tool``.
+        tools: Optional newly mounted tools to wrap without revisiting init-scoped wrappers.
         transformers_by_pattern: Mapping of tool patterns (proxy syntax:
             ``"execute_sql"``, ``"db_tools.*"``) to transformer lists.
 
@@ -410,7 +413,7 @@ def apply_tool_transformers(node: Any, transformers_by_pattern: Dict[str, List[T
 
     wrapped_count = 0
     new_tools = []
-    existing_tools = getattr(node, "tools", None)
+    existing_tools = tools if tools is not None else getattr(node, "tools", None)
     for tool in existing_tools or []:
         if not isinstance(tool, FunctionTool):
             new_tools.append(tool)

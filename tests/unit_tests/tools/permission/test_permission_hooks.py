@@ -3346,7 +3346,16 @@ async def test_session_channels_survive_node_denials(mock_broker, restricted, na
         tool_registry=ToolRegistry({name: "tools"}),
         enforce_method_denials=restricted,
     )
-    await hooks.on_tool_start(SimpleNamespace(tool_arguments="{}"), None, SimpleNamespace(name=name))
+    from tests.helpers.tool_definitions import registered_test_tool
+
+    tool = registered_test_tool(
+        name=name,
+        description="session channel",
+        params_json_schema={"type": "object"},
+        on_invoke_tool=AsyncMock(),
+        strict_json_schema=False,
+    )
+    await hooks.on_tool_start(SimpleNamespace(tool_arguments="{}"), None, tool)
     mock_broker.request.assert_not_called()
 
 
@@ -3387,3 +3396,71 @@ async def test_restricted_skill_dispatch_still_authorizes_the_selected_name(mock
     await hooks.on_tool_start(SimpleNamespace(tool_arguments='{"skill_name":"business"}'), None, tool)
     with pytest.raises(PermissionDeniedException):
         await hooks.on_tool_start(SimpleNamespace(tool_arguments='{"skill_name":"unlinked"}'), None, tool)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["submit_task_result", "select_final_metric_result"])
+@pytest.mark.parametrize("category_hint", [False, True])
+async def test_unregistered_manual_callback_cannot_claim_session_exemption(mock_broker, name, category_hint):
+    """An arbitrary callback with a session name must still obey explicit DENY."""
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=PermissionManager(PermissionConfig(default_permission=PermissionLevel.DENY)),
+        node_name="child",
+        tool_registry=ToolRegistry({name: "tools"} if category_hint else {}),
+    )
+    with pytest.raises(PermissionDeniedException):
+        await hooks.on_tool_start(SimpleNamespace(tool_arguments="{}"), None, SimpleNamespace(name=name))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method_denied", [False, True])
+async def test_skill_validation_requires_external_path_and_method_authorization(mock_broker, tmp_path, method_denied):
+    """The delegated reader cannot bypass either the path gate or its own method rule."""
+    project = tmp_path / "project"
+    project.mkdir()
+    outside = tmp_path / "SKILL.md"
+    outside.write_text("---\nname: private-skill\n---\nprivate")
+    manager = PermissionManager(
+        PermissionConfig(
+            default_permission=PermissionLevel.ALLOW,
+            rules=[PermissionRule(tool="tools", pattern="validate_skill", permission=PermissionLevel.DENY)]
+            if method_denied
+            else [],
+        ),
+        active_profile="auto",
+    )
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=manager,
+        node_name="child",
+        tool_registry=ToolRegistry({"validate_skill": "tools"}),
+        fs_policy=FilesystemPolicy(root_path=project, current_node="child"),
+        non_interactive=True,
+    )
+    with pytest.raises(PermissionDeniedException):
+        await hooks.on_tool_start(
+            SimpleNamespace(tool_arguments=json.dumps({"skill_path": str(outside)})),
+            None,
+            SimpleNamespace(name="validate_skill"),
+        )
+    mock_broker.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_skill_validation_inside_workspace_remains_a_reader(mock_broker, tmp_path):
+    """Workspace validation stays directly usable under the auto reader profile."""
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=PermissionManager(get_profile("auto"), active_profile="auto"),
+        node_name="child",
+        tool_registry=ToolRegistry({"validate_skill": "tools"}),
+        fs_policy=FilesystemPolicy(root_path=tmp_path, current_node="child"),
+        non_interactive=True,
+    )
+    await hooks.on_tool_start(
+        SimpleNamespace(tool_arguments=json.dumps({"skill_path": str(tmp_path / "SKILL.md")})),
+        None,
+        SimpleNamespace(name="validate_skill"),
+    )
+    mock_broker.request.assert_not_called()

@@ -4746,13 +4746,14 @@ class AgenticNode(Node):
             visible.extend(manager.filter_available_tools([tool], self.get_node_name(), category))
         self.tools[:] = visible
 
-    def _ensure_tool_transformers(self) -> None:
+    def _ensure_tool_transformers(self, *, added_tools: Optional[list] = None) -> None:
         """Wrap ``self.tools`` with plugin-declared argument transformers, once.
 
         Invoked lazily from :meth:`_compose_hooks` so wrapping happens after
         ``setup_tools`` and any ``apply_proxy_tools`` rewrite (proxied tools
         are skipped — they execute client-side). Idempotent via a flag so a
-        node reused across turns never double-wraps.
+        node reused across turns never double-wraps. ``added_tools`` limits a
+        late-mount pass to tools not yet wrapped by init scoping.
 
         Gated by ``agent.plugins_enabled`` like every other plugin surface.
         Collection failures are swallowed inside the registry (a broken plugin
@@ -4762,16 +4763,16 @@ class AgenticNode(Node):
         """
         from datus.tools.registry.contracts import validate_registered_tools
 
-        validate_registered_tools(self.tools)
+        validate_registered_tools(self.tools if added_tools is None else added_tools)
         if getattr(getattr(self, "agent_config", None), "restrict_tool_visibility", False) is True:
             self._filter_permission_denied_tools()
         # Defensive getattr: test doubles that bypass ``AgenticNode.__init__``
         # may carry neither the flag nor an agent_config (same rationale as the
         # ``interaction_broker`` getattr in ``_stream_once``).
-        if getattr(self, "_tool_transformers_applied", False):
+        if added_tools is None and getattr(self, "_tool_transformers_applied", False):
             return
         if not getattr(getattr(self, "agent_config", None), "plugins_enabled", True):
-            self._tool_transformers_applied = True
+            self._tool_transformers_applied = added_tools is None or getattr(self, "_tool_transformers_applied", False)
             return
         from datus.plugins.registry import collect_plugin_tool_transformers
 
@@ -4779,12 +4780,12 @@ class AgenticNode(Node):
         active_names = agent_config.active_plugin_names() if hasattr(agent_config, "active_plugin_names") else None
         transformers_by_pattern = collect_plugin_tool_transformers(active_names)
         if not transformers_by_pattern:
-            self._tool_transformers_applied = True
+            self._tool_transformers_applied = added_tools is None or getattr(self, "_tool_transformers_applied", False)
             return
         try:
             from datus.tools.middleware import apply_tool_transformers
 
-            wrapped = apply_tool_transformers(self, transformers_by_pattern)
+            wrapped = apply_tool_transformers(self, transformers_by_pattern, tools=added_tools)
             logger.debug(
                 "Applied plugin tool transformers on node '%s': %d tool(s) wrapped",
                 self.get_node_name(),
@@ -4794,7 +4795,7 @@ class AgenticNode(Node):
             # attempt would turn the fail-closed raise below into fail-open
             # on the next turn (the early return above would skip wrapping
             # entirely and matched tools would run unenforced).
-            self._tool_transformers_applied = True
+            self._tool_transformers_applied = added_tools is None or getattr(self, "_tool_transformers_applied", False)
         except Exception as e:
             # Fail closed: a declared transformer that cannot be applied means
             # policy enforcement would silently vanish for matched tools.
@@ -4887,10 +4888,20 @@ class AgenticNode(Node):
             return
         if any(getattr(tool, "name", None) == "ask_user" for tool in self.tools or []):
             return
+        previous_count = len(self.tools or [])
         if getattr(self, "ask_user_tool", None) is None:
             self._setup_ask_user_tool()
         elif self.tools is not None:
             self.tools.extend(self.ask_user_tool.available_tools())
+        if getattr(self, "_tool_transformers_applied", False) and len(self.tools or []) > previous_count:
+            added = self.tools[previous_count:]
+            try:
+                self._ensure_tool_transformers(added_tools=added)
+            except BaseException:
+                # Retry the mount next turn; an unwrapped channel must not survive a failed policy pass.
+                del self.tools[previous_count:]
+                raise
+            self.tools[previous_count:] = added
 
     def _compose_hooks(self, extra: Any = None) -> Any:
         """Combine permission hooks with an optional per-node hook.

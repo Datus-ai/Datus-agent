@@ -2617,3 +2617,94 @@ def test_restricted_skill_loader_hidden_without_skill_manager(restricted_skill_n
     node.skill_manager = None
     AgenticNode._filter_permission_denied_tools(node)
     assert node.tools == []
+
+
+@pytest.mark.asyncio
+async def test_late_interaction_mount_transforms_only_the_new_tool():
+    """Init-scoped wrappers stay intact while a newly restored ask_user gains plugin policy."""
+    from types import MethodType
+
+    from datus.cli.init_context import InitContext
+    from datus.tools.middleware import apply_tool_transformers
+    from datus.tools.registry.tool_registry import ToolRegistry
+
+    calls = []
+
+    def transform(name, args, context):
+        """Record actual policy execution for each invoked tool."""
+        calls.append(name)
+        return args
+
+    async def invoke(ctx, args):
+        """Return without any external effect."""
+        return {"success": 1}
+
+    existing = registered_test_tool(
+        name="read_file",
+        description="reader",
+        params_json_schema={"type": "object"},
+        on_invoke_tool=invoke,
+        strict_json_schema=False,
+    )
+    ask = registered_test_tool(
+        name="ask_user",
+        description="question",
+        params_json_schema={"type": "object"},
+        on_invoke_tool=invoke,
+        strict_json_schema=False,
+    )
+    node = TestEnsureToolTransformers._make_fake_node(tools=[existing])
+    node.tool_registry = ToolRegistry({"read_file": "filesystem_tools", "ask_user": "tools"})
+    apply_tool_transformers(node, {"*": [transform]})
+    # A second wrapper deliberately hides the transform marker, as InitContext.wrap_tools does.
+    init = InitContext.__new__(InitContext)
+    node.tools = InitContext.wrap_tools(init, node.tools)
+    wrapped = node.tools[0]
+    node._tool_transformers_applied = True
+    node.execution_mode = "interactive"
+    node.ask_user_tool = SimpleNamespace(available_tools=lambda: [ask])
+    node._ensure_tool_transformers = MethodType(AgenticNode._ensure_tool_transformers, node)
+    captured = node.tools
+    with patch("datus.plugins.registry.collect_plugin_tool_transformers", return_value={"*": [transform]}):
+        AgenticNode._ensure_interaction_channel(node)
+    assert node.tools is captured
+    assert node.tools[0] is wrapped
+    assert node.tools[1] is not ask
+    await node.tools[1].on_invoke_tool(SimpleNamespace(tool_arguments="{}"), "{}")
+    assert calls == ["ask_user"]
+
+
+def test_failed_late_channel_transform_cannot_leave_an_unwrapped_tool():
+    """A failed late policy pass is retried instead of leaving a callable bypass."""
+    from types import MethodType
+    from datus.tools.registry.tool_registry import ToolRegistry
+
+    async def invoke(ctx, args):
+        """Do nothing beyond returning the channel result."""
+        return {"success": 1}
+
+    ask = registered_test_tool(
+        name="ask_user",
+        description="question",
+        params_json_schema={"type": "object"},
+        on_invoke_tool=invoke,
+        strict_json_schema=False,
+    )
+    node = TestEnsureToolTransformers._make_fake_node(tools=[])
+    node.tool_registry = ToolRegistry({"ask_user": "tools"})
+    node.execution_mode = "interactive"
+    node._tool_transformers_applied = True
+    node.ask_user_tool = SimpleNamespace(available_tools=lambda: [ask])
+    node._ensure_tool_transformers = MethodType(AgenticNode._ensure_tool_transformers, node)
+    with patch(
+        "datus.plugins.registry.collect_plugin_tool_transformers", return_value={"ask_user": [lambda n, a, c: a]}
+    ):
+        with patch("datus.tools.middleware.apply_tool_transformers", side_effect=ValueError("broken policy")):
+            from datus.utils.exceptions import DatusException
+
+            with pytest.raises(DatusException, match="broken policy"):
+                AgenticNode._ensure_interaction_channel(node)
+        assert node.tools == []
+        AgenticNode._ensure_interaction_channel(node)
+    assert [tool.name for tool in node.tools] == ["ask_user"]
+    assert node.tools[0] is not ask

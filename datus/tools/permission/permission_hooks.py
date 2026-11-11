@@ -553,7 +553,17 @@ class PermissionHooks(AgentHooks):
 
         # Session channels retain their own UX and permission exemption
         # on restricted hosts as well as ordinary CLI hosts.
-        if self.is_permission_exempt_tool(tool_name, self.tool_registry.get(tool_name, "tools")):
+        from datus.tools.registry.contracts import ToolDefinitionError, tool_definition
+
+        try:
+            definition = tool_definition(tool)
+        except ToolDefinitionError:
+            definition = None
+        if (
+            definition is not None
+            and self.tool_registry.get(tool_name, definition.category) == definition.category
+            and self.is_permission_exempt_tool(tool_name, definition.category)
+        ):
             return
 
         # Restricted hosts narrow nodes to concrete methods. A zone/profile or
@@ -582,6 +592,17 @@ class PermissionHooks(AgentHooks):
         category, pattern_name = self._get_category_and_pattern(tool_name, context)
 
         logger.debug(f"Permission check for tool '{tool_name}': category='{category}', pattern='{pattern_name}'")
+
+        # Delegated Skill reads need both the validator's method permission
+        # and the same path confirmation as a direct filesystem read.
+        if category == "tools" and tool_name == "validate_skill" and self.fs_policy is not None:
+            if self.permission_manager.check_permission(category, pattern_name, self.node_name) == PermissionLevel.DENY:
+                raise PermissionDeniedException(
+                    "PERMISSION_DENIED: Skill validation is blocked by method permissions",
+                    tool_category=category,
+                    tool_name=pattern_name,
+                )
+            await self._handle_filesystem_zone(context, tool_name, pattern_name, path_arg_name="skill_path")
 
         # Filesystem tools: zone-based policy overrides rules.
         #   INTERNAL/WHITELIST → bypass, HIDDEN → bypass (tool returns not-found),
@@ -721,7 +742,9 @@ class PermissionHooks(AgentHooks):
     # without dragging the schema dep into this hook.
     _ARTIFACT_AUTOALLOW_PATH_RE = re.compile(r"^(?:reports|dashboards)/[^/]+/")
 
-    async def _handle_filesystem_zone(self, context: Any, tool_name: str, pattern_name: str) -> bool:
+    async def _handle_filesystem_zone(
+        self, context: Any, tool_name: str, pattern_name: str, *, path_arg_name: str = "path"
+    ) -> bool:
         """Zone × profile × capability gating for filesystem access and semantic file edits.
 
         Returns ``True`` when the call has been fully handled (either allowed
@@ -773,7 +796,7 @@ class PermissionHooks(AgentHooks):
                 args,
             )
             return False
-        path_arg = args.get("path", "")
+        path_arg = args.get(path_arg_name, "")
         try:
             resolved = classify_path(
                 path_arg,

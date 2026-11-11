@@ -266,22 +266,23 @@ class WebTool:
 
         try:
             current_url = url
-            for _ in range(10):
-                response = httpx.get(
-                    current_url,
-                    follow_redirects=False,
-                    timeout=30,
-                    headers={"User-Agent": _DEFAULT_USER_AGENT},
-                )
-                if response.status_code in {301, 302, 303, 307, 308} and response.headers.get("location"):
-                    current_url = urljoin(current_url, response.headers["location"])
-                    if not _is_public_web_target(current_url):
-                        return FuncToolResult(success=0, error="Refusing to fetch non-public redirect target")
-                    continue
-                response.raise_for_status()
-                break
-            else:
-                return FuncToolResult(success=0, error="Too many redirects while fetching URL")
+            with httpx.Client() as client:
+                for _ in range(10):
+                    response = client.get(
+                        current_url,
+                        follow_redirects=False,
+                        timeout=30,
+                        headers={"User-Agent": _DEFAULT_USER_AGENT},
+                    )
+                    if response.status_code in {301, 302, 303, 307, 308} and response.headers.get("location"):
+                        current_url = urljoin(current_url, response.headers["location"])
+                        if not _is_public_web_target(current_url):
+                            return FuncToolResult(success=0, error="Refusing to fetch non-public redirect target")
+                        continue
+                    response.raise_for_status()
+                    break
+                else:
+                    return FuncToolResult(success=0, error="Too many redirects while fetching URL")
         except httpx.HTTPStatusError as e:
             return FuncToolResult(success=0, error=f"HTTP {e.response.status_code} fetching {url}")
         except httpx.HTTPError as e:

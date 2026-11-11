@@ -181,6 +181,22 @@ class TestQualityToolGate:
         path.write_text(json.dumps({"assertions": assertions}), encoding="utf-8")
         return name
 
+    @pytest.mark.parametrize("context", [{"user_id": "restricted"}, {}])
+    def test_bound_read_policy_blocks_raw_quality_queries(self, tool, monkeypatch, context):
+        """Both request scope and configured read policies must prevent raw DuckDB reads."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        tool.agent_config = SimpleNamespace(policy_context=context)
+        with (
+            patch("datus.tools.policy_runtime.PolicyRuntime.requires_bound_read", return_value=True),
+            patch("datus.tools.db_tools.datasource_quality.QualityChecker.run") as run,
+        ):
+            result = tool.check_datasource_quality()
+        assert result.success == 0
+        assert "bound SQL read policy" in result.error
+        run.assert_not_called()
+
     @pytest.mark.acceptance
     def test_write_assertion_is_refused(self, tool, tmp_path):
         cfg = self._write(tmp_path, "bad.json", [{"name": "sneaky", "sql": "DROP TABLE IF EXISTS keepme"}])
@@ -838,16 +854,14 @@ class TestAssertionsThatDisappear:
         assert "profile" in result.result["next"], "the failing branch keeps its own instruction"
 
     @pytest.mark.acceptance
-    def test_the_sidecar_does_not_ship_with_the_project(self, tool, tmp_path):
-        """It lands in the workspace the project publishes, so it is dot-prefixed like the
-        generator's own `.{stem}.meta.json`. A visible `checks.seen.json` would be delivered to
-        the user as if it were part of the dataset."""
+    def test_reader_never_creates_or_overwrites_a_sidecar(self, tool, tmp_path):
+        """Read grants leave even pre-existing drift baselines unchanged."""
         self._run(tool, tmp_path, ["only"])
-
-        visible = sorted(f.name for f in tmp_path.iterdir() if not f.name.startswith("."))
-
-        assert "checks.seen.json" not in visible, visible
-        assert (tmp_path / ".checks.seen.json").exists()
+        sidecar = tmp_path / ".checks.seen.json"
+        assert not sidecar.exists()
+        sidecar.write_text('["original"]')
+        self._run(tool, tmp_path, ["next"])
+        assert sidecar.read_text() == '["original"]'
 
     @pytest.mark.acceptance
     def test_adding_assertions_is_not_drift(self, tool, tmp_path):
