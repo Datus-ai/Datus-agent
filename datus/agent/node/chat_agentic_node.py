@@ -286,6 +286,11 @@ class ChatAgenticNode(AgenticNode):
             self.semantic_tools = None
             logger.warning("Metric tools unavailable; continuing with other chat capabilities: %s", exc)
 
+    def _available_context_search_tools(self) -> list:
+        if self.context_search_tools is None:
+            return []
+        return self.context_search_tools.available_tools()
+
     def _available_semantic_tools(self) -> list:
         if self.semantic_tools is None:
             return []
@@ -460,7 +465,7 @@ class ChatAgenticNode(AgenticNode):
         if self.db_func_tool and enabled("db_tools"):
             self.tools.extend(self.db_func_tool.available_tools())
         if self.context_search_tools and enabled("context_search_tools"):
-            context_tools = self.context_search_tools.available_tools()
+            context_tools = self._available_context_search_tools()
             self._context_search_tool_names = {tool.name for tool in context_tools}
             self.tools.extend(context_tools)
         if self.semantic_tools and enabled("semantic_tools"):
@@ -590,7 +595,7 @@ class ChatAgenticNode(AgenticNode):
     def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
         context_tools = getattr(self, "context_search_tools", None)
         if context_tools is not None and self._family_enabled(self._selected_tool_families(), "context_search_tools"):
-            candidates = context_tools.available_tools()
+            candidates = self._available_context_search_tools()
             available = {tool.name for tool in candidates}
             previous = getattr(self, "_context_search_tool_names", set())
             if available != previous:

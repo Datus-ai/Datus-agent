@@ -299,6 +299,16 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         self._ensure_whitelisted_groups_present(patterns)
         self._restrict_tools_to_whitelist(patterns)
 
+    def _available_context_search_tools(self) -> list:
+        if not self._group_whitelisted("context_search_tools"):
+            return []
+        patterns = self._parse_tool_whitelist(self.node_config.get("tools"))
+        return [
+            tool
+            for tool in super()._available_context_search_tools()
+            if self._tool_matches_whitelist("context_search_tools", tool.name, patterns)
+        ]
+
     @staticmethod
     def _parse_tool_whitelist(tools_value: Any) -> List[str]:
         """Split the comma-separated ``tools`` field into trimmed patterns."""
@@ -437,6 +447,9 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         return any(p == group or p.startswith(f"{group}.") for p in patterns)
 
     # ── Lazy-injection gates (honor the whitelist post-setup_tools) ─────
+
+    def _ensure_memory_tool_in_tools(self) -> None:
+        """Artifact ask whitelists do not grant memory mutation tools."""
 
     def _ensure_bash_tool_in_tools(self) -> None:
         """Gate :class:`AgenticNode`'s lazy bash re-injection on the whitelist.
