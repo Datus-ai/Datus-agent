@@ -3,7 +3,7 @@
 
 """Preserve explicit output-limit failures before SDK response conversion."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
 from inspect import isawaitable
 from typing import Any
@@ -53,11 +53,26 @@ def _received_chat_stream_usage(stream: Any, fallback: Any) -> Any:
     # the reported usage, including usage embedded in the finish chunk (GLM).
     chunks = getattr(stream, "chunks", None)
     if isinstance(chunks, list):
-        return next((_value(chunk, "usage") for chunk in reversed(chunks) if _value(chunk, "usage")), None)
+        received = [_value(chunk, "usage") for chunk in chunks if _value(chunk, "usage")]
+        if not received:
+            return None
+        # Anthropic reports input usage at message_start and output usage at
+        # message_delta. The final chunk alone has no input count. These are
+        # cumulative counters for one request, so merge rather than sum them.
+        merged = {
+            key: max((_value(usage, key, 0) or 0) for usage in received)
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+        }
+        merged["total_tokens"] = max(merged["total_tokens"], merged["prompt_tokens"] + merged["completion_tokens"])
+        for key in ("prompt_tokens_details", "completion_tokens_details"):
+            merged[key] = next((_value(usage, key) for usage in reversed(received) if _value(usage, key)), None)
+        return merged
     return fallback
 
 
-async def checked_chat_completion_stream(stream: Any) -> AsyncIterator[Any]:
+async def checked_chat_completion_stream(
+    stream: Any, *, on_usage: Callable[[Usage | None], None] | None = None
+) -> AsyncIterator[Any]:
     """Stop conversion on length while collecting trailing usage, with per-call state.
 
     The SDK otherwise emits response.completed even for finish_reason=length.
@@ -90,6 +105,9 @@ async def checked_chat_completion_stream(stream: Any) -> AsyncIterator[Any]:
                 "".join(text), chat_completion_usage(_received_chat_stream_usage(stream, usage))
             ) from exc
         raise
+    received_usage = _received_chat_stream_usage(stream, usage)
+    if on_usage is not None:
+        on_usage(chat_completion_usage(received_usage) if received_usage is not None else None)
     if truncated:
         raise ModelOutputTruncatedError(
             "".join(text), chat_completion_usage(_received_chat_stream_usage(stream, usage))
