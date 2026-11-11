@@ -2677,6 +2677,7 @@ async def test_late_interaction_mount_transforms_only_the_new_tool():
 def test_failed_late_channel_transform_cannot_leave_an_unwrapped_tool():
     """A failed late policy pass is retried instead of leaving a callable bypass."""
     from types import MethodType
+
     from datus.tools.registry.tool_registry import ToolRegistry
 
     async def invoke(ctx, args):
