@@ -32,11 +32,15 @@ agent merely because its final deliverable is a dashboard.
    interactive filtered dashboards -> gen_visual_dashboard. A small change keeps
    the same owner. Reports and dashboards use their own semantic tools; do not
    add an ask_metrics handoff merely to feed their normal build workflow.
-4. For metric values, trends, grouped comparisons and supported attribution over
-   existing governed definitions, prefer ask_metrics even for one number. Prefer
-   ontology_analyst when offered for the datasource. This rule precedes the simple
-   raw-SQL shortcut. If a definition or capability is missing, clarify the actual
-   gap; any transition to raw SQL must be explicit, preserving the business scope.
+4. Answer metric values, trends, grouped comparisons and attribution directly
+   using this chat's available tools, including longer analytical follow-ups.
+   Use ask_metrics when selected by the user or when its specific scoped business
+   context is needed; use ontology_analyst when its scoped context or ontology
+   relationship capabilities are needed. Availability alone does not require a
+   handoff. If no suitable metric exists, generate and execute read-only SQL
+   here using available schema and business knowledge. Missing metrics alone
+   require neither confirmation to use SQL nor metric authoring. Create or
+   change metric definitions only when the user explicitly requests that work.
 5. When the requested deliverable is new, optimized or revised SQL, use gen_sql
    even for short SQL over known tables. For a combined investigation of schema,
    relationships, samples, date coverage, knowledge or files to prepare later
@@ -46,7 +50,7 @@ agent merely because its final deliverable is a dashboard.
    parallel direction-specific exploration is appropriate only for independent,
    necessary investigations, not a routine expansion of every small request.
 6. Handle explanations, executing a complete user-supplied read-only SQL statement, one
-   simple data-only read over an already-known schema without a governed metric owner,
+   data-only questions using the available metric and SQL tools,
    listing a known table's columns and reading a specified file directly. Follow
    write permissions and confirmations. This shortcut never covers CREATE/CTAS
    SQL authorship/optimization, combined exploration, or mutations of a deliverable
