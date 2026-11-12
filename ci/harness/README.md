@@ -2,11 +2,11 @@
 
 | Tests | Execution | Boundary and assertions |
 | --- | --- | --- |
-| `tests/integration/agent/test_core_acceptance.py` | Code PRs and code merge groups | Production model adapter, Agents SDK, node loop, tools, SQLite and filesystem. Only remote model responses are scripted over HTTP. Covers chat, metadata discovery, SQL results, joins, follow-up context, tool error recovery, memory across sessions, init knowledge reuse, read-only enforcement, bounded tool results, plan confirmation and a queryable table product with its validator. |
-| `tests/integration/api/test_chat_acceptance.py` | Code PRs and code merge groups | Real FastAPI routes, task manager, chat service and model transport. Covers SQL, follow-up, history, session listing/deletion, user isolation, stop and subsequent reuse. |
-| `test_dosi_authoring_validates_reconciles_and_queries_without_llm` in `test_semantic_modeling_agentic.py` | Code PRs and code merge groups; existing dedicated Nightly group | Real Dosi authoring, validation, reconciliation and metric execution. No external model required. |
-| Capacity, image round-trip and native observability model contracts | Code PRs and code merge groups | Real initialized adapters and SDK paths with external IO replaced. Includes nested JSON tool schemas and native model calls. |
-| Remaining affected unit tests | PR diff and entire merge-group diff | PR and merge queue share unit ownership rules and explicit consumers. Shared model adapters include observability and node consumers. Harness-marked files remain in the fixed list, enforced by `test_harness_alignment.py`. |
+| `tests/integration/agent/test_core_acceptance.py` | Code PRs | Production model adapter, Agents SDK, node loop, tools, SQLite and filesystem. Only remote model responses are scripted over HTTP. Covers chat, metadata discovery, SQL results, joins, follow-up context, tool error recovery, memory across sessions, init knowledge reuse, read-only enforcement, bounded tool results, plan confirmation and a queryable table product with its validator. |
+| `tests/integration/api/test_chat_acceptance.py` | Code PRs | Real FastAPI routes, task manager, chat service and model transport. Covers SQL, follow-up, history, session listing/deletion, user isolation, stop and subsequent reuse. |
+| `test_dosi_authoring_validates_reconciles_and_queries_without_llm` in `test_semantic_modeling_agentic.py` | Code PRs; existing dedicated Nightly group | Real Dosi authoring, validation, reconciliation and metric execution. No external model required. |
+| Capacity, image round-trip and native observability model contracts | Affected model / shared-runtime PRs | Real initialized adapters and SDK paths with external IO replaced. Includes nested JSON tool schemas and native model calls. |
+| Remaining affected unit tests | PR diff | Exact-file / longest-prefix unit owners retain explicit consumers, including harness-marked unit tests. Shared model adapters include observability and node consumers. |
 | `tests/integration/agent/test_core_live.py` | Scheduled Nightly; explicit branch evaluation | Real LLM answers independent business questions: total 350 and East-region total 150. Checks SQL tool results and answers through Chat, then runs GenSQL and independently executes its generated query. Credentials missing means failure. |
 | Existing node-specific real-model suites | Scheduled Nightly and affected branch evaluation | The live plan expands for nodes, models, configuration, prompts, skills, tools, storage, context, API and CLI changes. Semantic modeling, Superset and Airflow retain dedicated service setup. Init evaluates the ordinary scoped case; the large-catalog scale case remains opt-in. |
 
@@ -19,18 +19,43 @@ the real-model questions additionally assess tool selection and reasoning.
 ## Selection and evidence
 
 `coverage-map.yml` contains mandatory `execution.core_nodeids`, unit ownership
-rules and additive product impact rules. The fixed core runs for code changes.
+rules and additive product impact rules. The 16 exact core nodeids run for code
+changes. Core and affected tests execute in one pytest session with file-level
+xdist distribution; whole-file selections subsume their core nodeids to prevent
+duplicate execution. Recollecting the previous 71-file fixed list on this tree
+selects 1,069 cases; the fixed requirement is now the 16 core cases, with the
+remaining deterministic contracts selected by impact.
 For each changed source file, `execution.unit_rules` selects the exact file or
 longest matching directory prefix, including the consumers listed by that owner.
 Node factories, inherited hooks and shared session/result behavior retain the
-node package and its cross-package consumers. Shared startup, configuration and
+node package and its cross-package consumers. Audited leaf owners cover model helpers,
+feedback, visual renderers, prompt compaction, retry, semantic authoring/runtime,
+artifact tools, BI bootstrap and lineage. Each exact-file rule retains its static
+consumers and reviewed caller family; subagent dispatch and SQL read context keep
+their broad boundaries. Shared startup, configuration and
 payload owners retain full unit coverage. Localized MCP, logging and SSL owners
 keep their explicit, audited consumers. Shared model adapters still include
 observability and node consumers. Unknown
 runtime modules retain the full unit fallback, and full-suite rules document why
 they are needed. Rule validation rejects stale targets and ambiguous source paths.
 
-Strict map validation and a fixed acceptance test audit every Python module under
+The 2026-11-11 static-consumer audit adds 35 exact source owners (25 rule
+entries after coalescing identical target families). Replaying the same 60-commit
+sample against the audited 625-file unit inventory reduces file selections from
+27,295 to 25,613 (6.2%); 9 commits improve and none expand. These are selection
+counts, not an estimate of elapsed CI time.
+
+| Changed source | Previous unit files | Selected unit files |
+| --- | ---: | ---: |
+| `models/accepted_turn.py` | 431 | 1 |
+| `models/text_completion.py` | 431 | 43 |
+| `models/litellm_model.py` | 431 | 212 |
+| `tools/func_tool/semantic_tools.py` | 553 | 132 |
+| `tools/func_tool/dashboard_artifact_tools.py` | 553 | 29 |
+| `utils/sql_lineage.py` | 585 | 11 |
+| `configuration/agent_config.py` | 625 | 625 |
+
+Strict map validation and its CI regression test audit every Python module under
 `datus/` against every `tests/unit_tests/**/test_*.py` consumer. The audit parses
 imports (including function-local imports), package re-exports and literal dynamic
 import or mock paths without importing application code. An omitted consumer or
@@ -43,8 +68,8 @@ rule requires retaining both the visible consumers and those shared contracts.
 Changed unit tests select themselves; conftest, helper modules and fixture assets
 select their enclosing test package. Shared test configuration and datasets select
 the full unit suite. Parent directories subsume child targets without restricting
-pytest collection. Both runners use the same selector and enumerate both sides of
-renames. Merge groups use their event's base SHA, covering all included PRs.
+pytest collection. PR selection enumerates both sides of renames. Product planning
+uses the same ownership map without widening leaf unit selections.
 
 `execution.impact_rules` independently unions live targets and provisioned nightly
 groups. Narrowing unit ownership does not remove those product requirements.
@@ -53,17 +78,12 @@ targets and fallback decision, JUnit timings, and execution reports containing
 suite wall time. CI logs also report the 30 slowest test phases. Full unit tests
 continue to run in Nightly.
 
-Both runners load `ci.pytest_gate_plugin`, which records selected nodeids and
+PR and Nightly execution use `ci.pytest_gate_plugin`, which records selected nodeids and
 actual execution outcomes, including xdist reports. `ci/gate-coverage.json`
 fails the gate for missing reports or missing, skipped, xfailed, failed or
 unexecuted core cases. A test merely existing in the repository is insufficient.
 Flow claims marked `partial` retain references outside the fixed gate and are
 not claims of complete execution. Full claims are checked against runtime evidence.
-
-The fixed gate also exercises a runner self-test under a synthetic merge-group
-event with xdist and the outer temp-root environment variable. Nested runners
-receive a child cleanup namespace, and explicit `--suite` runs do not perform
-unrequested Git diff selection. The regression verifies parent-owned files survive.
 
 The normal PR job publishes `ci/product-test-plan.json`; it does **not** execute
 credentialed models. To evaluate an authorized branch using the existing trusted
@@ -88,19 +108,64 @@ Without a group filter or `product_test_base_ref`, Nightly runs the complete P0 
 the broader adapter, provider, UI and product suites. Real LLMs are not required
 in merge-group runs.
 
-## Documentation merge groups
+## PR routing and merge queue
 
-`ci/harness/gate_profile.py` recognizes ordinary documentation, image assets,
-README translations and MkDocs navigation. Changes to flow `docs` lists in the
-coverage map also qualify, but retain the entire CI unit suite. Changes to runtime
-files, prompts, skills, dependencies, workflow code, execution rules or coverage
-claims select the full gate. Mixed and unknown changes also retain the full gate.
+`coverage-map.yml` owns `execution.integration_rules`: deterministic API, CLI,
+storage, database, semantic and MCP targets and their source/consumer paths.
+`ci/harness/pr_test_plan.py` selects these groups by changed paths. Shared model/config/schema
+boundaries select all groups. Changed integration tests select themselves; helper
+changes retain the registered deterministic integration groups. Dashboard/metric
+artifact readers select native Dosi contracts, MCP execution helpers select the
+HTTP MCP contract, and search helpers select document-storage contracts.
+Strict map validation audits their literal imports, package re-exports and mock
+references with the same static scanner as the unit-owner audit. Factories and
+other indirect callers retain explicit source-family rules. Missing registered
+targets or source paths fail both validation and PR planning; only deleted,
+unregistered diff tests are filtered out.
 
-The documentation gate builds English and Chinese docs strictly. The workflow
-also retains release metadata and strict coverage-map checks. It skips runtime
-acceptance and fixture preparation. The profile and the checks actually executed
-are recorded in `ci/gate-coverage.json`; code profiles retain mandatory core-test
-evidence checks.
+The profile step derives `needs_excel` from the actual selected pytest targets,
+using the same fetched base ref as the runner. Excel extension installation runs
+only when the spreadsheet integration file is selected.
+
+Unit tests keep all harness marks;
+integration tests require acceptance/component/llm_harness. Nightly and quarantine
+marks remain excluded, except the explicit local Dosi contracts registered in
+`nightly_pr_contracts()` (legacy dual marks retained for scheduled P0). Every mandatory core case must actually pass: a skip,
+xfail, crash, missing collection or missing execution fails PR CI. Diff coverage
+still requires 80%.
+
+`ci/harness/gate_profile.py` routes ordinary documentation, image assets,
+README translations and MkDocs navigation by changed paths. Pure docs skip the
+Agent environment and runtime tests; Deploy Docs already builds both locales
+strictly on PRs. Coverage-map documentation registrations retain the runtime/CI
+checks. Runtime files, prompts, skills, dependency and workflow changes keep the
+code gate, regardless of the PR title. PR validation always publishes the stable
+`format-check / format-check` and `run-coverage / coverage` contexts, including on
+title/body edits and base-branch changes. Metadata-only edits first run a
+read-only evidence check. Successful reuse skips dependency installation and
+Ruff/pytest. The verifier requires the same head SHA, PR number, base
+branch and base commit SHA. It selects the latest real Code Quality validation
+run and accepts only the matching job's successful outcome. Pending results
+are awaited; failed, cancelled or skipped validation cannot become green. The evidence wait
+is bounded to the existing one-hour test-command budget. Code pushes and
+base-branch changes always run real validation. Test selection, diff coverage
+and the product-test plan all use the base commit SHA recorded in that run,
+rather than a moving branch tip. If no real validation exists for that head and
+base, such as after the base advances, the metadata run performs fresh
+validation. Later edits can reuse that actual validation, but evidence-only
+copies never become sources. Missing or invalid base SHAs and API errors fail closed.
+Metadata-only events never cancel that validation.
+Merge-queue context publication lives in a separate merge-group-only workflow,
+so skipped jobs cannot compete with the real PR check contexts.
+
+Merge Queue runs only generated tool catalog validation and strict coverage-map
+validation on the merged tree. It installs PyYAML without the Agent environment,
+fixtures, pytest suites or docs build. `ci/merge-queue-results.json` records both
+checks and propagates failures to the required `Merge Queue Gate` context. This
+catches catalog/map conflicts introduced by combining PRs; behavior tests remain
+owned by PR CI. Native packages, real services and model quality remain owned by
+Nightly, dedicated acceptance and release validation. No test-result cache is
+introduced.
 
 ## SQL policy host acceptance
 
@@ -108,8 +173,8 @@ Code changes affecting plugin installation, policy execution, datasource reads,
 Dosi, or shared integration fixtures select `P0 SQL Policy Plugin Contracts`.
 The product plan includes this deterministic group even without live-model targets.
 SQL policy host acceptance runs in scheduled Nightly. The required `Merge Queue
-Gate` checks the deterministic suites; SQL policy and BI host acceptance are not
-merge-queue dependencies. Documentation profiles keep their existing smaller gate.
+Gate` checks merged-tree consistency; SQL policy and BI host acceptance are not
+merge-queue dependencies. Documentation builds remain in Deploy Docs.
 
 `sql-policy-gate.yml` runs on the shared Linux x64 `osi-engine` self-hosted runners.
 The runner must have a C compiler, `patchelf`, and the ODBC development package

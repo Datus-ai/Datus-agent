@@ -211,16 +211,19 @@ class TestSharedHelpers:
 class TestFormatOutputVerbose:
     def test_empty(self):
         assert format_output_verbose(None) == []
+        assert format_output_verbose("") == []
+        assert format_output_verbose({}) == []
 
-    def test_string_json(self):
-        lines = format_output_verbose('{"k": "v"}')
-        assert any("k: v" in line for line in lines)
+    @pytest.mark.parametrize("payload", ['{"k": "v"}', {"raw_output": '{"k": "v"}'}])
+    def test_string_json(self, payload):
+        assert format_output_verbose(payload) == ["k: v"]
 
     def test_string_invalid(self):
         assert format_output_verbose("bad") == ["output: bad"]
 
     def test_non_dict(self):
         assert format_output_verbose(42) == ["output: 42"]
+        assert format_output_verbose([1, 2, 3]) == ["output: [1, 2, 3]"]
 
     def test_raw_output_invalid_string(self):
         lines = format_output_verbose({"raw_output": "bad"})
@@ -231,15 +234,11 @@ class TestFormatOutputVerbose:
         assert lines == ["output: [1]"]
 
     def test_multiline_value(self):
-        lines = format_output_verbose({"key": "a\nb"})
-        assert any("key:" in line for line in lines)
-        assert any("a" in line for line in lines)
-        assert any("b" in line for line in lines)
+        lines = format_output_verbose({"raw_output": {"sql": "SELECT\n  col\nFROM t"}}, indent=">>")
+        assert lines == [">>sql:", ">>  SELECT", ">>    col", ">>  FROM t"]
 
     def test_non_dict_inner_data(self):
-        # raw_output parses to a list, not dict
-        lines = format_output_verbose({"raw_output": '"just a string"'})
-        assert any("output:" in line for line in lines)
+        assert format_output_verbose({"raw_output": '"just a string"'}) == ["output: just a string"]
 
 
 # ── format_generic_preview ─────────────────────────────────────────

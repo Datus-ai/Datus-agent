@@ -19,6 +19,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
+from ci.harness.pr_test_plan import validate_integration_consumers, validate_integration_rules  # noqa: E402
 from ci.harness.test_plan import load_map, validate_unit_rules  # noqa: E402
 from ci.harness.unit_consumers import validate_unit_consumers  # noqa: E402
 
@@ -403,11 +404,17 @@ def validate_coverage_map(
         validate_flow(repo_root, flow_ref, errors)
 
     validate_docs_coverage(repo_root, coverage_map, flows, errors)
+    integration_errors = []
+    if "integration_rules" in coverage_map.get("execution", {}):
+        integration_errors = validate_integration_rules(coverage_map, repo_root)
+        errors.extend(integration_errors)
     if "execution" in coverage_map:
         ownership_errors = validate_unit_rules(coverage_map, repo_root)
         errors.extend(ownership_errors)
         if not ownership_errors:
             errors.extend(validate_unit_consumers(coverage_map, repo_root))
+            if "integration_rules" in coverage_map["execution"] and not integration_errors:
+                errors.extend(validate_integration_consumers(coverage_map, repo_root))
 
     if check_github_issues:
         issue_refs = sorted(
