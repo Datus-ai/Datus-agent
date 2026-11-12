@@ -32,11 +32,13 @@ def _build_sub_agent_filter(
     storage: "BaseEmbeddingStore",
     check_scope_attr: str,
     table_column: str = "table_name",
+    fail_closed: bool = False,
 ) -> Optional[Node]:
     """Build scope filter from sub-agent's scoped context.
 
     ``table_column`` names the column holding the physical table name in the
     target store, and only applies to the ``tables`` scope.
+    ``fail_closed`` rejects a declared subject scope that resolves to no nodes.
     """
     if not sub_agent_name:
         return None
@@ -50,12 +52,32 @@ def _build_sub_agent_filter(
         return None
 
     scope_value = getattr(sub_agent_config.scoped_context, check_scope_attr, None)
-    if not scope_value:
+    grouped_tables = check_scope_attr == "tables" and sub_agent_config.scoped_context.tables_by_datasource is not None
+    if grouped_tables:
+        source = agent_config.current_datasource
+        scopes = sub_agent_config.scoped_context.tables_by_datasource
+        if source not in scopes:
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            raise DatusException(
+                code=ErrorCode.COMMON_VALIDATION_FAILED,
+                message=f"Datasource '{source}' is outside the scoped context.",
+            )
+        scope_value = scopes[source]
+    if not scope_value and not grouped_tables:
         return None
 
     if check_scope_attr == "tables":
         dialect = getattr(agent_config, "db_type", "")
-        return ScopedFilterBuilder.build_table_filter(scope_value, dialect, table_column)
+        table_filter = ScopedFilterBuilder.build_table_filter(scope_value, dialect, table_column)
+        if grouped_tables and table_filter is None:
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            raise DatusException(
+                code=ErrorCode.COMMON_VALIDATION_FAILED,
+                message=f"Datasource '{source}' has no valid table scope; use '*' to explicitly allow all tables.",
+            )
+        return table_filter
     elif check_scope_attr in ("metrics", "sqls"):
         subject_tree = getattr(storage, "subject_tree", None)
         if subject_tree is None:
@@ -69,6 +91,9 @@ def _build_sub_agent_filter(
                     "Refusing to return unscoped storage."
                 ),
             )
-        return ScopedFilterBuilder.build_subject_filter(scope_value, subject_tree)
+        condition = ScopedFilterBuilder.build_subject_filter(scope_value, subject_tree)
+        if fail_closed and condition is None:
+            raise ValueError(f"Configured {check_scope_attr} scope does not resolve to an existing subject.")
+        return condition
 
     return None

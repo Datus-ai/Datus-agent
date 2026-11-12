@@ -319,6 +319,66 @@ class TestViewOf:
 
 class TestRewriteSdkInput:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("shape", ["responses", "anthropic", "string"])
+    async def test_saved_summary_restores_legacy_references_without_compacting(self, tmp_path, shape):
+        """Resuming a small saved summary must expose readable archived results."""
+        import copy
+        import hashlib
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        from datus.utils.tool_result_store import ACTIVE_RESULT_STORE, ToolResultStore, json_text
+
+        store = ToolResultStore(SimpleNamespace(dir=tmp_path))
+        wire = json_text({"result": {"columns": [{"name": f"column_{i}"} for i in range(4000)]}})
+        rid = hashlib.sha256(wire.encode()).hexdigest()
+        store.root.mkdir()
+        (store.root / f"{rid}.raw").write_text(wire)
+        (store.root / f"{rid}.json").write_text(json_text({"sha256": rid}))
+        native = {"tool": "list_tables", "snapshot_id": "snapshot:123", "offset": 200}
+        refs = [{"result_id": rid, "section": "columns", "next_cursor": "next"}, native]
+        text = (
+            "Continue inspecting columns.\n\n"
+            "Exact recent tool-result references retained by the runtime. Copy identifiers and cursors verbatim; "
+            "use read_tool_result to continue, or the history below for older results.\n"
+            f"<tool_result_references>\n{json_text(refs)}\n</tool_result_references>"
+        )
+        summary = _assistant(text) if shape == "responses" else _anth_user(text)
+        summary["role"] = "assistant"
+        image = {"type": "image", "source": {"data": "image"}}
+        if shape == "string":
+            summary["content"] = text
+        else:
+            summary["content"].append(image)
+        raw = [summary, _plain_user("Continue")]
+        before = copy.deepcopy(raw)
+        node = _FakeNode(context_length=100_000)
+        node._get_tool_result_store = lambda: store
+        compactor = MidTurnCompactor(node)
+        rewrite = compactor.rewrite_native_messages if shape == "anthropic" else compactor.rewrite_sdk_input
+        token = ACTIVE_RESULT_STORE.set(None)
+        try:
+            restored = await rewrite(raw)
+            assert compactor.compactions == 0
+            assert raw == before
+            content = restored[0]["content"]
+            updated = content if isinstance(content, str) else content[0]["text"]
+            new_refs = json.loads(updated.split("<tool_result_references>")[1].split("</tool_result_references>")[0])
+            assert new_refs[1] == native
+            assert new_refs[0]["read_with"] == "read_file"
+            recovered = "".join(
+                json.loads(line)["text"] for line in Path(new_refs[0]["archive_path"]).read_text().splitlines()
+            )
+            assert recovered == wire
+            assert "use read_file to continue" in updated
+            media = content[1:] if isinstance(content, list) else []
+            assert media == ([image] if shape != "string" else [])
+            assert all(block is image for block in media)
+            assert await rewrite(raw) == restored
+        finally:
+            ACTIVE_RESULT_STORE.reset(token)
+
+    @pytest.mark.asyncio
     async def test_first_call_checks_capacity_and_anchors_the_turn_request(self):
         node = _FakeNode()
         compactor = MidTurnCompactor(node)
@@ -547,3 +607,19 @@ class TestRewriteNativeMessages:
         first = [_anth_user("now")]
         await compactor.rewrite_native_messages(first)
         assert await compactor.rewrite_native_messages(first + [_anth_tool_result("t1")]) is None
+
+
+@pytest.mark.asyncio
+async def test_estimated_pressure_reaches_existing_context_preparation():
+    from datus.configuration.agent_config import ModelConfig
+    from datus.models.openai_model import OpenAIModel
+
+    node = _FakeNode()
+    node.model = OpenAIModel(
+        ModelConfig(type="openai", model="private-deployment", api_key="test", context_length=8192, max_tokens=1024)
+    )
+    raw = [{"role": "user", "content": "\N{CJK UNIFIED IDEOGRAPH-8868}" * 5000}]
+    compactor = MidTurnCompactor(node)
+    assert await compactor.rewrite_sdk_input(raw) == raw
+    prepared = node.compact_mid_turn.await_args.kwargs
+    assert prepared["base_tokens"] > node.model.request_capacity().input_limit()

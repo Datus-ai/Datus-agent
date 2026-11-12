@@ -783,6 +783,7 @@ class AgentConfig:
     logging: LoggingConfig
     observability: ObservabilityConfig
     mcp_tool_execution: Dict[str, int]
+    bulk_query: Dict[str, int]
 
     def __init__(self, nodes: Dict[str, NodeConfig], **kwargs):
         """
@@ -797,6 +798,11 @@ class AgentConfig:
             )
         # Resolve home early so dependent helpers can use a stable path manager.
         self.home = kwargs.get("home", "~/.datus")
+        from datus.tools.db_tools.query_spool import QueryLimits
+
+        bulk_query = kwargs.get("bulk_query")
+        QueryLimits.from_dict(bulk_query)
+        self.bulk_query = dict(bulk_query or {})
         mcp_execution_raw = kwargs.get("mcp_tool_execution")
         if mcp_execution_raw is not None and not isinstance(mcp_execution_raw, Mapping):
             logger.warning(

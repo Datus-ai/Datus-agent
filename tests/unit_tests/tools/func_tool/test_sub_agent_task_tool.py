@@ -32,6 +32,7 @@ from datus.tools.func_tool.sub_agent_task_tool import (
     SubAgentTaskTool,
 )
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
+from tests.helpers.tool_definitions import registered_test_tool
 
 # Built-ins offered only when their prerequisite exists (ontology_analyst needs an ontology).
 CONDITIONAL_SYS_SUB_AGENTS = {"ontology_analyst"}
@@ -65,15 +66,11 @@ def task_tool(mock_agent_config):
 
 @pytest.mark.ci
 class TestInit:
-    def test_init(self, task_tool, mock_agent_config):
-        assert task_tool.agent_config is mock_agent_config
-        assert task_tool._action_bus is None
-        assert task_tool._interaction_broker is None
-
     def test_init_only_requires_agent_config(self, mock_agent_config):
-        """No model or tool params needed."""
         tool = SubAgentTaskTool(agent_config=mock_agent_config)
         assert tool.agent_config is mock_agent_config
+        assert tool._action_bus is None
+        assert tool._interaction_broker is None
 
 
 # ── available_tools ────────────────────────────────────────────────
@@ -92,13 +89,6 @@ class TestAvailableTools:
         assert "type" in schema["properties"]
         assert "prompt" in schema["properties"]
         assert set(schema["required"]) == {"type", "prompt", "description"}
-
-    def test_type_schema_description_requires_available_type(self, task_tool):
-        schema = task_tool.available_tools()[0].params_json_schema
-        type_description = schema["properties"]["type"]["description"]
-        assert "Required" in type_description
-        assert "Available types" in type_description
-        assert "Never omit" in type_description
 
     @pytest.mark.asyncio
     async def test_repairs_arguments_for_replay_without_executing(self, task_tool):
@@ -738,12 +728,40 @@ class TestBuildTaskDescription:
         desc = task_tool._build_task_description()
         assert "Guidelines" in desc
 
-    def test_description_routes_by_deliverable_ownership(self, task_tool):
+    def test_description_defers_routing_to_parent(self, task_tool):
         desc = task_tool._build_task_description()
-        assert "requested deliverable" in desc
-        assert "owning workflow" in desc
-        assert "Task complexity is not the deciding factor" in desc
-        assert "For simple questions, handle directly" not in desc
+        assert "Follow your own system prompt" in desc
+        assert "Chat routing priority" not in desc
+        assert "Task complexity is not the deciding factor" not in desc
+
+    @pytest.mark.parametrize("allowed", [["explore"], ["sales_analyst"]])
+    def test_restricted_description_does_not_advertise_unavailable_agents(self, mock_agent_config, allowed):
+        tool = SubAgentTaskTool(mock_agent_config, allowed_subagents=allowed, parent_node_name="gen_sql")
+        desc = tool.available_tools()[0].description
+
+        assert tool._get_available_types() == allowed
+        assert f"- {allowed[0]}:" in desc
+        assert "gen_sql" not in desc
+        assert "gen_table" not in desc
+        assert "ask_metrics" not in desc
+        assert "session_id MUST be reused with the SAME 'type'" in desc
+
+    def test_standalone_gen_sql_only_describes_its_explore_delegate(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        node = GenSQLAgenticNode(
+            node_id="standalone_sql_routing",
+            description="Generate SQL with exploration support",
+            node_type=NodeType.TYPE_GEN_SQL,
+            agent_config=real_agent_config,
+            node_name="gen_sql",
+        )
+        tool = node.sub_agent_task_tool
+        assert tool._get_available_types() == ["explore"]
+        desc = tool.available_tools()[0].description
+        assert "- explore:" in desc
+        assert "gen_sql" not in desc
+        assert "Chat routing priority" not in node._get_system_prompt()
 
     def test_contains_custom_description(self, task_tool):
         desc = task_tool._build_task_description()
@@ -761,11 +779,11 @@ class TestBuildTaskDescription:
         desc = task_tool._build_task_description()
         assert "Prompt example:" in desc
 
-    def test_guidelines_contain_parallel_explore(self, task_tool):
-        """Guidelines recommend parallel exploration with direction-specific prompts."""
+    def test_guidelines_bound_parallel_explore(self, task_tool):
+        """Small tasks stay focused; parallel discovery requires independent needs."""
         desc = task_tool._build_task_description()
-        assert "PARALLEL" in desc
-        assert "direction-specific prompt" in desc
+        assert "Start with one focused task" in desc
+        assert "split independent necessary subtasks only when needed" in desc
 
     def test_migration_subagent_removed(self, task_tool):
         """Migration has been merged into gen_job — it should no longer be a standalone type."""
@@ -2140,10 +2158,8 @@ class TestBuildTaskDescriptionBuiltIn:
         desc = task_tool._build_task_description()
         for name in HIDDEN_SYS_SUB_AGENTS:
             assert name not in desc
-        for name in SYS_SUB_AGENTS:
-            if name in HIDDEN_SYS_SUB_AGENTS:
-                continue
-            assert name in desc, f"{name} not found in task description"
+        for name in task_tool._get_available_types():
+            assert f"- {name}:" in desc, f"{name} not found in task description"
 
     def test_contains_builtin_descriptions(self, task_tool):
         desc = task_tool._build_task_description()
@@ -2152,10 +2168,10 @@ class TestBuildTaskDescriptionBuiltIn:
                 continue
             assert builtin_desc in desc, f"Description for {name} not found"
 
-    def test_routes_plugin_backed_platforms_to_main_agent(self, task_tool):
+    def test_does_not_inject_chat_platform_routing(self, task_tool):
         desc = task_tool._build_task_description()
-        assert "Scheduling and external BI platform operations are the exception" in desc
-        assert "directly in the main agent" in desc
+        assert "Scheduling and external BI operations use installed plugins directly" not in desc
+        assert "never retired scheduler/gen_dashboard task types" not in desc
 
     def test_semantic_modeling_description_content(self, task_tool):
         desc = task_tool._build_task_description()
@@ -2672,7 +2688,6 @@ class TestProxyToolPropagation:
     )
     @pytest.mark.parametrize("tool_name", ["write_file", "edit_file", "delete_file"])
     async def test_web_forwarded_file_call_uses_the_child_executor(self, task_tool, node_name, tool_name):
-        from agents import FunctionTool
 
         from datus.api.services.action_sse_converter import action_to_sse_event
         from datus.schemas.action_bus import ActionBus
@@ -2683,7 +2698,7 @@ class TestProxyToolPropagation:
         task_tool.set_parent_node(parent)
         bus = ActionBus()
         task_tool.set_action_bus(bus)
-        original = FunctionTool(
+        original = registered_test_tool(
             name=tool_name,
             description="File operation",
             params_json_schema={"type": "object"},
@@ -2975,14 +2990,41 @@ class TestNestedSessionLayout:
 
 class TestSessionPersistence:
     @pytest.mark.asyncio
-    async def test_returns_session_id_in_result(self, task_tool):
-        """A successful task() result must include the subagent's session_id."""
-        node = _build_persistent_mock_node(session_id_to_assign="gen_sql_session_abc12345")
+    @pytest.mark.parametrize("changed_coordinate", ["datasource", "database", "schema", None])
+    async def test_table_resume_rejects_changed_or_unknown_target(
+        self, real_agent_config, mock_llm_create, changed_coordinate
+    ):
+        from datus.schemas.database_context import EXECUTION_CONTEXT_META_KEY, execution_context_for_node
+
+        tool = SubAgentTaskTool(real_agent_config, allowed_subagents=["gen_table"])
+        sid = "gen_table_session_bound01"
+        node = tool._create_node("gen_table", session_id=sid)
+        session = node.session_manager.get_session(sid)
+        history = [{"role": "user", "content": "Created the requested table on the original target."}]
+        await session.add_items(history)
+        original = execution_context_for_node(real_agent_config).to_dict(include_empty=True)
+        if changed_coordinate:
+            original[changed_coordinate] = f"original_{changed_coordinate}"
+            node.session_manager.save_session_meta(sid, EXECUTION_CONTEXT_META_KEY, json.dumps(original))
+
+        result = await tool.task(type="gen_table", session_id=sid, prompt="Insert one row into the table.")
+
+        assert result.success == 0
+        assert result.result == {"blocker_code": "table_target_unverified", "session_id": sid, "type": "gen_table"}
+        assert await session.get_items() == history
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("subagent_type", ["gen_sql", "sales_analyst"])
+    async def test_returns_session_id_in_result(self, task_tool, subagent_type):
+        """A successful result identifies the resumable built-in or custom agent."""
+        session_id = f"{subagent_type}_session_abc12345"
+        node = _build_persistent_mock_node(session_id_to_assign=session_id)
         with patch.object(task_tool, "_create_node", return_value=node):
             with patch.object(task_tool, "_build_node_input", return_value=Mock()):
-                result = await task_tool.task(type="gen_sql", prompt="show tables", description="explore schema")
+                result = await task_tool.task(type=subagent_type, prompt="show tables", description="explore schema")
         assert result.success == 1
-        assert result.result["session_id"] == "gen_sql_session_abc12345"
+        assert result.result["session_id"] == session_id
+        assert result.result["type"] == subagent_type
         # Existing keys still intact
         assert result.result["sql"] == "SELECT 1"
 
@@ -3037,6 +3079,7 @@ class TestSessionPersistence:
         assert node.session_id == "gen_sql_session_resume01"
         assert result.success == 1
         assert result.result["session_id"] == "gen_sql_session_resume01"
+        assert result.result["type"] == "gen_sql"
 
     @pytest.mark.asyncio
     async def test_resume_prefix_mismatch_returns_error(self, task_tool):
@@ -3097,7 +3140,7 @@ class TestSessionPersistence:
                 result = await task_tool.task(type="gen_sql", prompt="x")
         assert result.success == 0
         assert result.error  # subagent error surfaced
-        assert result.result == {"session_id": "gen_sql_session_failed01"}
+        assert result.result == {"session_id": "gen_sql_session_failed01", "type": "gen_sql"}
 
     @pytest.mark.asyncio
     async def test_stream_exception_returns_session_id(self, task_tool):
@@ -3123,7 +3166,7 @@ class TestSessionPersistence:
         assert result.success == 0
         assert "Subagent stream failed" in result.error
         assert "Max turns exceeded" in result.error
-        assert result.result == {"session_id": "gen_sql_session_maxturn1"}
+        assert result.result == {"session_id": "gen_sql_session_maxturn1", "type": "gen_sql"}
         # Session handle release still ran in finally — partial .db survives on disk.
         node._session_manager.close_all_sessions.assert_called_once()
         node._session_manager.delete_session.assert_not_called()
@@ -3384,3 +3427,27 @@ async def test_task_delegation_reviews_plans_through_the_parent_session(task_too
         finally:
             parent.tool_channel.cancel_all()
             await pending
+
+
+@pytest.mark.parametrize("outcome", ["generated", "skipped", "blocked"])
+def test_semantic_result_keeps_host_validation_and_reconciliation(task_tool, outcome):
+    """The parent receives structured host evidence for authored, reused and failed outcomes."""
+    evidence = {
+        "business_validation": {"status": "passed", "checks": ["native_month_of_year"]},
+        "validation": {"status": "passed"},
+        "reconciliation": {"success": True},
+    }
+    output = {
+        "success": outcome != "blocked",
+        "status": outcome,
+        "semantic_models": ["subject/semantic_models/sales.yml"] if outcome == "generated" else [],
+        "response": "Result",
+        **evidence,
+    }
+    if outcome == "skipped":
+        output["skip_reason"] = "no_semantic_change"
+    result = task_tool._convert_to_func_result(output, session_id="semantic_session")
+    assert bool(result.success) == (outcome != "blocked")
+    for key, value in evidence.items():
+        assert result.result[key] == value
+    assert result.result["session_id"] == "semantic_session"

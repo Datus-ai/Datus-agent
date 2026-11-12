@@ -5,11 +5,12 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from agents import FunctionTool
 
 from datus.cli.init_context import InitContext
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.tool_result_store import ACTIVE_RESULT_STORE, ToolResultStore
+from tests.helpers.tool_definitions import registered_test_tool
 
 
 @pytest.fixture
@@ -31,11 +32,13 @@ class Metadata:
     def __init__(self):
         self.calls = 0
 
+    @tool_contract(access="read", direct_call=True, category="db_tools")
     def describe_table(self, table_name: str) -> FuncToolResult:
         """Describe live structure."""
         self.calls += 1
         return FuncToolResult(result={"columns": [{"name": "id", "type": "BIGINT", "pk": True}]})
 
+    @tool_contract(access="read", direct_call=True, category="db_tools")
     def search_table(self, query_text: str) -> FuncToolResult:
         """Search indexed metadata."""
         self.calls += 1
@@ -48,14 +51,18 @@ def wrapped(context, method):
 
 @pytest.mark.asyncio
 async def test_cache_and_metadata_only_tool_surface(run):
+    """Cache scoped metadata calls while excluding SQL execution from init tools."""
     metadata = Metadata()
     tool = wrapped(run, metadata.describe_table)
+    from datus.tools.registry.contracts import definition_from_callable, tool_definition
+
+    assert tool_definition(tool) == definition_from_callable(metadata.describe_table)
     a = await tool.on_invoke_tool(None, '{"table_name":"orders"}')
     b = await tool.on_invoke_tool(None, '{"table_name":"orders"}')
     assert a == b and metadata.calls == 1
     await tool.on_invoke_tool(None, '{"table_name":"customers"}')
     assert metadata.calls == 2
-    unsafe = FunctionTool(
+    unsafe = registered_test_tool(
         name="execute_sql", description="SQL", params_json_schema={}, on_invoke_tool=tool.on_invoke_tool
     )
     assert run.wrap_tools([unsafe]) == []
@@ -70,7 +77,7 @@ async def test_cached_samples_cannot_reenter_archive(run, tmp_path):
     try:
         for call_id in ("first", "cached"):
             result = await tool.on_invoke_tool(SimpleNamespace(tool_call_id=call_id), '{"query_text":"orders"}')
-            projected = store.project(call_id, json.dumps(result), force=True)
+            projected = result
             assert "secret" not in json.dumps(projected)
             assert "sample_rows" not in json.dumps(projected)
         assert metadata.calls == 1
@@ -211,9 +218,12 @@ async def test_literal_dot_and_qualified_name_use_distinct_metadata_cache(tmp_pa
 
 @pytest.mark.asyncio
 async def test_metadata_cache_uses_shared_canonical_arguments(run):
+    """Reuse cached metadata when equivalent argument spellings normalize identically."""
+
     class Catalog:
         calls = 0
 
+        @tool_contract(access="read", direct_call=True, category="db_tools")
         def list_tables(self, include_views: bool = True) -> FuncToolResult:
             self.calls += 1
             return FuncToolResult(result=[{"qualified_name": "orders", "include_views": include_views}])
@@ -289,9 +299,6 @@ async def test_late_search_result_never_registers_raw_samples(run, tmp_path):
     async def delayed(context, arguments):
         entered.set()
         await release.wait()
-        active = ACTIVE_RESULT_STORE.get()
-        if active:
-            active.register("late", {"sample_rows": ["secret"]})
         return {"success": 1, "result": {"sample_rows": ["secret"]}}
 
     try:
@@ -304,7 +311,7 @@ async def test_late_search_result_never_registers_raw_samples(run, tmp_path):
         release.set()
         await asyncio.gather(*run._inflight)
         await asyncio.sleep(0)
-        assert not store._registered
+        assert not store.root.exists()
     finally:
         release.set()
         ACTIVE_RESULT_STORE.reset(token)

@@ -27,6 +27,29 @@ def _find_node_executable() -> str:
     pytest.fail("node executable is required to test the nightly Feishu formatter")
 
 
+@pytest.mark.component
+@pytest.mark.parametrize(
+    "exit_code,cold_result,required,expected",
+    [
+        ("0", "success", True, "PASSED"),
+        ("0", "failure", True, "FAILED"),
+        ("0", "skipped", True, "FAILED"),
+        ("0", "skipped", False, "PASSED"),
+        ("1", "success", True, "FAILED"),
+        ("0", "cancelled", False, "FAILED"),
+        ("0", "", False, "FAILED"),
+    ],
+)
+def test_nightly_notification_requires_the_cold_contract_when_scheduled(exit_code, cold_result, required, expected):
+    module = str(REPO_ROOT / "ci/format-nightly-feishu-report.js")
+    script = (
+        f"const {{nightlyStatus}} = require({json.dumps(module)}); "
+        f"console.log(nightlyStatus({json.dumps(exit_code)}, {json.dumps(cold_result)}, {json.dumps(required)}));"
+    )
+    result = subprocess.run([_find_node_executable(), "-e", script], check=True, capture_output=True, text=True)
+    assert result.stdout.strip() == expected
+
+
 def test_nightly_feishu_report_separates_blocking_failures_from_diagnostics(tmp_path):
     (tmp_path / "nightly-manifest.json").write_text(
         json.dumps(

@@ -14,6 +14,7 @@ from datus.cli.init_context import InitContext
 from datus.configuration.agent_config import ModelConfig
 from datus.models.openai_model import OpenAIModel
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 from tests.unit_tests.cli.test_chat_commands import _make_chat_commands
 from tests.unit_tests.models.conftest import RecordingScriptedModel
 
@@ -41,6 +42,7 @@ class InitScript(RecordingScriptedModel):
 async def test_same_sdk_run_compacts_repeatedly_and_preserves_task(
     real_agent_config, mock_llm_create, tmp_path, exhaust_budget, custom_model
 ):
+    """Preserve the task, todos and user corrections through repeated SDK compaction."""
     chat = _make_chat_commands(real_agent_config)
     node = chat.get_or_create_node()
     session = node._get_or_create_session()
@@ -76,6 +78,7 @@ async def test_same_sdk_run_compacts_repeatedly_and_preserves_task(
     pending = tmp_path / "knowledge/pending-questions.md"
     pending.write_text("Unconfirmed: what is a customer account?")
 
+    @tool_contract(access="read", direct_call=True, category="filesystem_tools")
     def read_file(path: str) -> FuncToolResult:
         """Read one scoped source document."""
         read_paths.append(path)
@@ -85,6 +88,7 @@ async def test_same_sdk_run_compacts_repeatedly_and_preserves_task(
             run.record_user_updates([correction])
         return FuncToolResult(result={"content": (tmp_path / path).read_text()})
 
+    @tool_contract(access="session", direct_call=False, category="tools")
     def ask_user(questions: list[str]) -> FuncToolResult:
         """Clarify the current task with the user."""
         return FuncToolResult(result=[{"question": "Customer scope?", "answer": "Keep customer guidance separate"}])

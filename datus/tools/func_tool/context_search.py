@@ -1,7 +1,6 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-
 # -*- coding: utf-8 -*-
 from typing import Any, Dict, List, Literal, Optional
 
@@ -14,6 +13,7 @@ from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.reference_template.store import ReferenceTemplateRAG
 from datus.storage.semantic_dataset.store import MetricKindNotHere, SemanticDatasetRAG
 from datus.tools.func_tool.base import FuncToolResult, normalize_null, trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 
@@ -89,10 +89,24 @@ class ContextSearchTools:
             self.sub_agent_config = SubAgentConfig.model_validate(raw_sub_agent_config)
         else:
             self.sub_agent_config = None
-        self.has_metrics = self.metric_rag.get_metrics_size() > 0
-        self.has_reference_sql = self.reference_sql_store.get_reference_sql_size() > 0
         self.has_semantic_objects = self.semantic_rag.get_size() > 0
         self.has_reference_templates = self.reference_template_store.get_reference_template_size() > 0
+
+    @property
+    def has_metrics(self) -> bool:
+        try:
+            return self.metric_rag.get_metrics_size() > 0
+        except Exception as exc:
+            logger.warning("Metric context is unavailable for the configured scope: %s", exc)
+            return False
+
+    @property
+    def has_reference_sql(self) -> bool:
+        try:
+            return self.reference_sql_store.get_reference_sql_size() > 0
+        except Exception as exc:
+            logger.warning("SQL context is unavailable for the configured scope: %s", exc)
+            return False
 
     def _has_tool_permission(self, tool_namespace: str, *tool_names: str) -> bool:
         if not self.sub_agent_config:
@@ -189,11 +203,12 @@ class ContextSearchTools:
         return tools
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def list_subject_tree(self) -> FuncToolResult:
         """
         Get the domain-layer taxonomy from subject_tree store.
-        Use this as the first step to discover available context entries before calling
-        enabled context retrieval tools.
+        Use this when a knowledge lookup needs an unknown subject path.
+        A known path, entry, physical table, or specified file does not require this lookup.
 
         The response has the structure:
         {
@@ -263,6 +278,7 @@ class ContextSearchTools:
             return []
 
     @mcp_tool(availability_check="has_metrics")
+    @tool_contract(access="read", direct_call=True)
     def search_metrics(
         self,
         query_text: str,
@@ -295,12 +311,14 @@ class ContextSearchTools:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool(availability_check="has_reference_sql")
+    @tool_contract(access="read", direct_call=True)
     def search_reference_sql(
         self, query_text: str, subject_path: Optional[List[str]] = None, top_n: int = 5
     ) -> FuncToolResult:
         """
         Search for reference SQL queries using natural language queries.
-        MUST call `list_subject_tree` first to get the subject path.
+        Reuse a known subject path. Call `list_subject_tree` only when the requested
+        lookup needs a subject path that is not already available in context.
 
         Args:
             query_text: The natural language query text representing the desired SQL intent.
@@ -329,6 +347,7 @@ class ContextSearchTools:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool(availability_check="has_reference_sql")
+    @tool_contract(access="read", direct_call=True)
     def get_reference_sql(self, subject_path: List[str], name: str = "") -> FuncToolResult:
         """
         Get reference SQL detail by exact subject path and name.
@@ -359,6 +378,7 @@ class ContextSearchTools:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool(availability_check="has_semantic_objects")
+    @tool_contract(access="read", direct_call=True)
     def search_semantic_objects(
         self,
         query_text: str,

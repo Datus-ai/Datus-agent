@@ -1342,6 +1342,7 @@ class DosiRuntime:
         handles, metric_to_path, _ = self._catalog()
         model_path = metric_to_path.get(metric_name)
         if model_path is None:
+            self._raise_for_unavailable_metrics([metric_name])
             candidates = ", ".join(sorted(metric_to_path))
             raise SemanticValidationException(
                 SemanticValidationError(
@@ -1351,6 +1352,56 @@ class DosiRuntime:
                 )
             )
         return dict(handles)[model_path]
+
+    def _raise_for_unavailable_metrics(self, metrics: List[str]) -> None:
+        """Distinguish metrics in failed models from genuinely unknown names.
+
+        Only inspect failed models on a catalog miss. Raw declarations identify
+        the affected metrics; they never make an invalid model queryable. Using
+        the live handles also picks up repaired files and dependency changes.
+        """
+        _, handles = self._registry.snapshot()
+        affected: set[str] = set()
+        errors: Dict[str, str] = {}
+        for model_path, handle in handles:
+            try:
+                handle.get()
+            except SemanticCoreException as exc:
+                error = str(exc)
+            else:
+                continue
+            try:
+                document = load_document(model_path)
+            except (OSError, TypeError, ValueError, yaml.YAMLError):
+                # An unreadable declaration cannot establish metric ownership.
+                continue
+            ref = document.get("semantic_model_ref")
+            if isinstance(ref, dict) and isinstance(ref.get("document"), dict):
+                document = ref["document"]
+            declared = {
+                str(metric.get("name") or "").strip()
+                for model in iter_semantic_models(document)
+                for metric in model.get("metrics") or []
+                if isinstance(metric, dict)
+            }
+            matching = declared.intersection(metrics)
+            if matching:
+                affected.update(matching)
+                errors[model_path] = error
+        if errors:
+            names = [name for name in dict.fromkeys(metrics) if name in affected]
+            raise SemanticValidationException(
+                SemanticValidationError(
+                    code="model_load_error",
+                    metrics=names,
+                    message=(
+                        f"Cannot load semantic model for metric(s) {', '.join(names)}:\n"
+                        + "\n".join(f"{path}: {error}" for path, error in errors.items())
+                    ),
+                    hint="Repair the semantic model definition and retry.",
+                    detail={"model_errors": errors},
+                )
+            )
 
     @staticmethod
     def _field_names_among(names: List[str], handles: tuple[tuple[str, EngineHandle], ...]) -> List[str]:
@@ -1376,6 +1427,7 @@ class DosiRuntime:
         handles, metric_to_path, model_to_path = self._catalog()
         unknown = [name for name in dict.fromkeys(metrics) if name not in metric_to_path]
         if unknown:
+            self._raise_for_unavailable_metrics(unknown)
             fields = self._field_names_among(unknown, handles)
             message = f"unknown metric(s): {', '.join(unknown)}"
             if fields:

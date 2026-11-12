@@ -21,6 +21,13 @@ def summary_payload(items: list[Any], instruction: str, prompt: str) -> dict:
     return {"instructions": instruction, "input": summary_input(items, prompt)}
 
 
+def _planning_check(count: int, capacity: RequestCapacity, output_tokens: int) -> int:
+    """Use estimates for existing summary chunk planning, never as a send guard."""
+    if count > capacity.input_limit(output_tokens):
+        raise ContextCapacityError("CONTEXT_LIMIT_EXCEEDED", "Summary exceeds its planning budget")
+    return count
+
+
 def transcript_chunks(
     items: list[Any],
     capacity: RequestCapacity,
@@ -58,7 +65,11 @@ def transcript_chunks(
                 if check is not None:
                     check(part)
                 else:
-                    capacity.check(summary_payload(part, instruction, prompt), output_tokens)
+                    _planning_check(
+                        capacity.check(summary_payload(part, instruction, prompt), output_tokens),
+                        capacity,
+                        output_tokens,
+                    )
                 low = middle
             except ContextCapacityError as exc:
                 if exc.reason != "CONTEXT_LIMIT_EXCEEDED":
@@ -89,6 +100,12 @@ async def bounded_summary(
 
     capacity = model.request_capacity() if isinstance(model, LLMBaseModel) else None
     check = model.summary_capacity_checker(instruction, prompt, item_format, 4000) if capacity is not None else None
+    if check is not None:
+        transport_check = check
+
+        def check(items: list[Any]) -> int:
+            return _planning_check(transport_check(items), capacity, 4000)
+
     kwargs = dict(
         instruction=instruction,
         prompt=prompt,

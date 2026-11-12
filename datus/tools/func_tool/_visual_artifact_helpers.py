@@ -132,8 +132,8 @@ def extract_artifact_result_field(action: ActionHistory, field: str) -> Optional
 #   * ``append_intent_section`` — append-only writes to ``intent.md``,
 #     filtered through ``_is_meaningful_intent`` so renderer error reports
 #     and "continue" placeholders never reach the file.
-#   * ``upsert_manifest_after_save`` — bump ``manifest.updated_at`` and add a
-#     datasource to ``manifest.datasources`` if it isn't already there.
+#   * ``touch_manifest_after_save`` — bump ``manifest.updated_at`` after a
+#     query write; finalize owns the derived query-index fields.
 #   * ``write_query_brief`` — write ``queries/<name>.brief.json``.
 #
 # Each helper is best-effort: failures are logged and surfaced as a string
@@ -257,30 +257,16 @@ def _format_intent_section(*, user_message: str, mode: str, timestamp: str) -> s
     return f"### [{timestamp}] mode: {mode}\n{fence}\n{body}\n{fence}\n"
 
 
-def upsert_manifest_after_save(
-    manifest_path: Path,
-    *,
-    datasource: Optional[str],
-    timestamp: str,
-) -> Optional[str]:
-    """Bump ``updated_at`` and union-add ``datasource`` into ``manifest.datasources``.
+def touch_manifest_after_save(manifest_path: Path, *, timestamp: str) -> Optional[str]:
+    """Refresh recency after saving a query; finalize derives query-index fields.
 
-    Called by ``save_query`` / ``save_query_template`` after the query
-    has been persisted. Reads the existing manifest, validates it,
-    mutates the two fields, and writes back atomically. Older manifests
-    without the new fields deserialize cleanly (defaults kick in).
-
-    Returns an error string on failure, ``None`` on success.
-
-    Missing / corrupt manifest is a hard error here — every artifact
-    must have a valid manifest by the time ``save_query`` runs (the
-    tool's ``_require_active`` check already guards against the
-    no-active-artifact case, so reaching here without a file means
-    something genuinely went wrong).
+    Datasources remain on each query's own metadata until finalize rebuilds the
+    manifest. A manifest write failure is a warning because the query is already
+    persisted. Returns an error string on failure, or None on success.
     """
     try:
         if not manifest_path.is_file():
-            return f"manifest missing at {manifest_path.name} — cannot upsert datasources"
+            return f"manifest missing at {manifest_path.name} — cannot update timestamp"
         try:
             raw = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
@@ -289,29 +275,12 @@ def upsert_manifest_after_save(
             manifest = ArtifactManifest.model_validate(raw)
         except Exception as exc:
             return f"manifest schema validation failed: {exc}"
-
-        changed = False
-        if datasource:
-            label = datasource.strip()
-            if label and label not in manifest.datasources:
-                manifest.datasources.append(label)
-                changed = True
-        # Always bump updated_at — even if datasources didn't change, the
-        # mutation that triggered this call is meaningful (a query was
-        # rewritten in place against the same datasource).
         manifest.updated_at = timestamp
-        changed = True
-
-        if changed:
-            _atomic_write_text(
-                manifest_path,
-                json.dumps(manifest.model_dump(), ensure_ascii=False, indent=2) + "\n",
-            )
+        _atomic_write_text(manifest_path, json.dumps(manifest.model_dump(), ensure_ascii=False, indent=2) + "\n")
         return None
     except Exception as exc:
-        # Honour the "best-effort: never raise" contract documented above.
-        logger.warning("Failed to upsert %s: %s", manifest_path, exc)
-        return f"Failed to upsert manifest: {exc}"
+        logger.warning("Failed to update %s: %s", manifest_path, exc)
+        return f"Failed to update manifest: {exc}"
 
 
 def write_query_brief(

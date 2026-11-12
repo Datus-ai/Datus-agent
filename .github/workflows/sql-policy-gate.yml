@@ -1,0 +1,159 @@
+name: SQL Policy Host Gate
+
+on:
+  workflow_call:
+    inputs:
+      agent_ref:
+        type: string
+        required: true
+      policy_ref:
+        type: string
+        default: ''
+      cold:
+        type: boolean
+        default: false
+    secrets:
+      RELEASE_BOT_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  sources:
+    runs-on: ubuntu-latest
+    outputs:
+      agent: ${{ steps.sources.outputs.agent }}
+      sql_policies: ${{ steps.sources.outputs.sql_policies }}
+      osi_engine: ${{ steps.sources.outputs.osi_engine }}
+      rust_toolchain: ${{ steps.config.outputs.rust_toolchain }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.agent_ref }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: false
+      - name: Resolve configured policy reference
+        id: config
+        env:
+          POLICY_REF: ${{ inputs.policy_ref }}
+        run: |
+          uv run --no-project --with pyyaml python - <<'PY'
+          import os
+          from ci.sql_policy_gate import load_config
+          config = load_config()
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('policy_ref=' + (os.environ['POLICY_REF'] or config['sql_policies']) + '\n')
+              output.write('rust_toolchain=' + config['rust_toolchain'] + '\n')
+          PY
+      - uses: actions/checkout@v4
+        with:
+          repository: Datus-ai/datus-sql-policies
+          ref: ${{ steps.config.outputs.policy_ref }}
+          path: external/datus-sql-policies
+          token: ${{ secrets.RELEASE_BOT_TOKEN }}
+          persist-credentials: false
+      - name: Freeze the complete source combination
+        id: sources
+        run: |
+          uv run --no-project --with pyyaml python ci/sql_policy_gate.py resolve \
+            --policy external/datus-sql-policies --github-output "$GITHUB_OUTPUT"
+
+  host:
+    needs: sources
+    runs-on: [self-hosted, Linux, X64, osi-engine]
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: ${{ fromJSON(inputs.cold && '["warm","cold"]' || '["warm"]') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sources.outputs.agent }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: Datus-ai/datus-sql-policies
+          ref: ${{ needs.sources.outputs.sql_policies }}
+          path: external/datus-sql-policies
+          token: ${{ secrets.RELEASE_BOT_TOKEN }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: Datus-ai/osi-engine
+          ref: ${{ needs.sources.outputs.osi_engine }}
+          path: external/osi-engine
+          token: ${{ secrets.RELEASE_BOT_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v5
+        with:
+          # This job builds private artifacts. Keep its cache on the self-hosted
+          # runner rather than publishing private wheels through public caches.
+          enable-cache: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ needs.sources.outputs.rust_toolchain }}
+      - name: Verify preinstalled native prerequisites
+        run: |
+          cc --version
+          patchelf --version
+          pkg-config --modversion odbc
+      - name: Prepare locked Agent environment
+        run: |
+          uv sync --locked --group ci
+          uv pip install 'maturin==1.16.0' 'auditwheel==6.8.2'
+      - name: Build, install and verify the frozen combination
+        env:
+          AGENT_SHA: ${{ needs.sources.outputs.agent }}
+          POLICY_SHA: ${{ needs.sources.outputs.sql_policies }}
+          ENGINE_SHA: ${{ needs.sources.outputs.osi_engine }}
+          CACHE_MODE: ${{ matrix.mode }}
+        run: |
+          .venv/bin/python ci/sql_policy_gate.py run \
+            --policy external/datus-sql-policies --engine external/osi-engine \
+            --agent-sha "$AGENT_SHA" --policy-sha "$POLICY_SHA" --engine-sha "$ENGINE_SHA" \
+            --mode "$CACHE_MODE" --work "$RUNNER_TEMP/sql-policy-$CACHE_MODE"
+      - name: Require the bound P0 execution receipt
+        if: always()
+        env:
+          AGENT_SHA: ${{ needs.sources.outputs.agent }}
+          POLICY_SHA: ${{ needs.sources.outputs.sql_policies }}
+          ENGINE_SHA: ${{ needs.sources.outputs.osi_engine }}
+          CACHE_MODE: ${{ matrix.mode }}
+        run: |
+          .venv/bin/python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from ci.sql_policy_gate import ROOT, one_wheel, snapshot, verify_result
+          work = Path(os.environ['RUNNER_TEMP']) / ('sql-policy-' + os.environ['CACHE_MODE'])
+          receipt = json.loads((work / 'result.json').read_text())
+          assert receipt['status'] == 'success'
+          assert receipt['cache_mode'] == os.environ['CACHE_MODE']
+          sources = snapshot(ROOT, ROOT / 'external/datus-sql-policies', ROOT / 'external/osi-engine')
+          assert {key: value['sha'] for key, value in sources.items()} == {
+              'agent': os.environ['AGENT_SHA'], 'sql_policies': os.environ['POLICY_SHA'],
+              'osi_engine': os.environ['ENGINE_SHA'],
+          }
+          verify_result(sources, receipt, work / 'execution.json', {
+              name: one_wheel(work / 'wheels' / name) for name in sources
+          })
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sql-policy-evidence-${{ matrix.mode }}
+          # Source trees, wheel payloads and private build caches stay on the
+          # runner. Only identities, execution receipts and logs are uploaded.
+          path: |
+            ${{ runner.temp }}/sql-policy-${{ matrix.mode }}/result.json
+            ${{ runner.temp }}/sql-policy-${{ matrix.mode }}/execution.json
+            ${{ runner.temp }}/sql-policy-${{ matrix.mode }}/*.log

@@ -1,6 +1,7 @@
 """Parallel SDK tool results must reach presentation before slow siblings finish."""
 
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -16,6 +17,31 @@ from datus.models.tool_result_stream import ToolResultStream
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
 ERROR = "error_code=500006, Unknown column 'missing_join_key' in 'on clause'"
+
+
+@pytest.mark.asyncio
+async def test_data_tool_result_is_bounded_before_delegate_and_event():
+    delegate = SimpleNamespace(on_tool_end=AsyncMock())
+    stream = ToolResultStream(delegate)
+    context = SimpleNamespace(tool_call_id="transfer")
+    tool = SimpleNamespace(name="transfer_query_result")
+    await stream.on_tool_end(context, Agent(name="test"), tool, {"success": 0, "error": "数据库错误" * 1_000_000})
+    delegated = delegate.on_tool_end.call_args.args[-1]
+    event = stream.queue.get_nowait()[1]
+    assert len(json.dumps(delegated, ensure_ascii=False).encode()) <= 16384
+    assert len(json.dumps(event.item.output, ensure_ascii=False).encode()) <= 16384
+
+
+@pytest.mark.asyncio
+async def test_data_tool_hook_exception_is_bounded_before_sdk_and_event():
+    delegate = SimpleNamespace(on_tool_end=AsyncMock(side_effect=RuntimeError("hook failed " + "x" * 4_000_000)))
+    stream = ToolResultStream(delegate)
+    with pytest.raises(RuntimeError) as raised:
+        await stream.on_tool_end(
+            SimpleNamespace(tool_call_id="export"), Agent(name="test"), SimpleNamespace(name="export_query"), {}
+        )
+    assert len(str(raised.value).encode()) <= 2048
+    assert len(json.dumps(stream.queue.get_nowait()[1].item.output).encode()) <= 16384
 
 
 def call_event(agent, name):

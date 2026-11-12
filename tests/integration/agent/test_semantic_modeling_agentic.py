@@ -207,8 +207,8 @@ def test_dosi_authoring_validates_reconciles_and_queries_without_llm(
     target = node.osi_target_state.selected_path
     assert target
 
-    dataset_result = node.filesystem_func_tool.upsert_osi_datasets(target, json.dumps([_orders_dataset()]))
-    metric_result = node.filesystem_func_tool.upsert_osi_metrics(target, json.dumps([_revenue_metric()]))
+    dataset_result = node.semantic_model_editing_tools.upsert_osi_datasets(target, json.dumps([_orders_dataset()]))
+    metric_result = node.semantic_model_editing_tools.upsert_osi_metrics(target, json.dumps([_revenue_metric()]))
     assert dataset_result.success == 1, dataset_result.error
     assert metric_result.success == 1, metric_result.error
 

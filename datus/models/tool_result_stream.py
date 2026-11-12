@@ -48,17 +48,31 @@ class ToolResultStream(AgentHooks):
         return await self._forward("on_tool_start", *args)
 
     async def on_tool_end(self, context: Any, agent: Any, tool: Any, result: Any) -> Any:
+        from datus.utils.bounded_tool_output import DATA_TOOLS, bound_data_tool_result, error_summary
+
+        bounded = getattr(tool, "name", "") in DATA_TOOLS
+        if bounded:
+            result = bound_data_tool_result(result)
         try:
             value = await self._forward("on_tool_end", context, agent, tool, result)
         except Exception as exc:
-            self._completed(context, agent, {"success": 0, "error": str(exc), "result": None})
+            failure = {"success": 0, "error": str(exc), "result": None}
+            self._completed(context, agent, bound_data_tool_result(failure) if bounded else failure)
+            if bounded:
+                span = get_current_span()
+                if span is not None:
+                    span.set_error({"message": error_summary(exc), "data": {"tool": tool.name}})
+                raise RuntimeError(error_summary(exc)) from None
             raise
         span = get_current_span()
         # The SDK may turn a raised tool exception into plain text. Preserve
         # its error state instead of presenting that text as successful data.
         if span is not None and span.error:
             result = {"success": 0, "error": span.error.get("message") or str(result), "result": None}
-        self._completed(context, agent, result)
+            if bounded:
+                result = bound_data_tool_result(result)
+                span.set_error({"message": result["error"], "data": {"tool": tool.name}})
+        self._completed(context, agent, bound_data_tool_result(result) if bounded else result)
         return value
 
     def _completed(self, context: Any, agent: Any, result: Any) -> None:

@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from datus.configuration.logging_config import LoggingConfig
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -90,24 +91,28 @@ class PluginRuntimeContext:
     plugin_path: Optional[str] = None
     delegates: Dict[str, PluginRuntimeTarget] = field(default_factory=dict)
     version: int = RUNTIME_CONTEXT_VERSION
+    logging: Optional[Dict[str, Any]] = None
 
     def encode(self) -> str:
         """Return the versioned, ASCII-only environment value."""
         try:
-            raw = json.dumps(
-                {
-                    "version": self.version,
-                    "plugin_name": self.plugin_name,
-                    "profile": self.profile,
-                    "plugin_path": self.plugin_path,
-                    "delegates": {
-                        name: {
-                            "profile": target.profile,
-                            "plugin_path": target.plugin_path,
-                        }
-                        for name, target in self.delegates.items()
-                    },
+            payload = {
+                "version": self.version,
+                "plugin_name": self.plugin_name,
+                "profile": self.profile,
+                "plugin_path": self.plugin_path,
+                "delegates": {
+                    name: {
+                        "profile": target.profile,
+                        "plugin_path": target.plugin_path,
+                    }
+                    for name, target in self.delegates.items()
                 },
+            }
+            if self.logging is not None:
+                payload["logging"] = self.logging
+            raw = json.dumps(
+                payload,
                 ensure_ascii=False,
                 separators=(",", ":"),
             ).encode("utf-8")
@@ -148,6 +153,13 @@ class PluginRuntimeContext:
             raise PluginRuntimeContextError("Plugin runtime context profile must be an object")
         if plugin_path is not None and (not isinstance(plugin_path, str) or not plugin_path.strip()):
             raise PluginRuntimeContextError("Plugin runtime context path must be a non-empty string")
+        logging_config = data.get("logging")
+        if logging_config is not None:
+            try:
+                parsed_logging = LoggingConfig.from_dict(logging_config)
+            except ValueError:
+                raise PluginRuntimeContextError("Plugin runtime context logging settings are invalid") from None
+            logging_config = {"level": parsed_logging.level, "redact": parsed_logging.redact}
         raw_delegates = data.get("delegates", {})
         if not isinstance(raw_delegates, dict):
             raise PluginRuntimeContextError("Plugin runtime context delegates must be an object")
@@ -175,6 +187,7 @@ class PluginRuntimeContext:
             plugin_path=plugin_path,
             delegates=delegates,
             version=RUNTIME_CONTEXT_VERSION,
+            logging=logging_config,
         )
         if expected_plugin is None or expected_plugin == plugin_name:
             return context
@@ -188,6 +201,7 @@ class PluginRuntimeContext:
             profile=target.profile,
             plugin_path=target.plugin_path,
             version=RUNTIME_CONTEXT_VERSION,
+            logging=context.logging,
         )
 
 
@@ -477,6 +491,11 @@ def prepare_plugin_invocation(command: str, agent_config: Any) -> Optional[Prepa
         profile=profile,
         plugin_path=str(plugin_path) if plugin_path is not None else None,
         delegates=delegates,
+        logging=(
+            {"level": agent_config.logging.level, "redact": agent_config.logging.redact}
+            if isinstance(getattr(agent_config, "logging", None), LoggingConfig)
+            else None
+        ),
     )
     encoded = runtime.encode()
 

@@ -150,8 +150,14 @@ existing configurations do not need new fields:
 | Setting | When omitted |
 | --- | --- |
 | `context_length` | Use existing model specifications or the provider catalogue; fall back to a `1048576` (1M) token budget if unknown |
-| `max_tokens` | Retain the known output default, or use `128000` (128K) if unknown, constrained by the discovered output ceiling. Transports with an output cap also leave room for input and the safety margin, so small windows may get a lower default |
+| `max_tokens` | Retain the known output default, or use `384000` if unknown, matching the bundled DeepSeek V4 Flash budget. Defaults leave room for input and the safety margin, so small windows may get a lower output budget |
 | `tokenizer_ref` | Use LiteLLM counting for known OpenAI models; otherwise reserve UTF-8 bytes, including for private aliases, without downloading a tokenizer |
+
+For an unknown model on a custom OpenAI endpoint, `384000` remains a local
+reservation. When no output limit is configured or known, Datus omits the output
+limit from requests and lets the server choose its default. Explicit per-model
+or per-call limits and known output defaults are still sent. Native protocols
+that require an output limit retain it.
 
 Model selection and runtime capacity checks share an automatically refreshed
 OpenRouter catalog. On first use, Datus reads the cache under the current Agent
@@ -165,9 +171,9 @@ Explicit settings take priority over catalog metadata, with
 versions do not inherit an older version's limits through prefix matching.
 An advertised output ceiling does not automatically increase the default output
 budget: known defaults are retained, and newly discovered models keep the
-`128000` default, lowered when the catalog or remaining context requires it.
-Public catalog limits describe the catalog's serving provider; private or native
-endpoints may require explicit limits matching their deployment.
+`384000` default, lowered when the catalog or remaining context requires it.
+Public catalog limits describe the catalog's serving provider. On custom endpoints,
+these limits are planning hints and cannot reject explicitly configured output limits.
 
 The fallback window is a local budget assumption, not automatic detection of
 server capacity. Private deployments can override any of these settings. Set
@@ -190,15 +196,25 @@ agent:
 limit overrides the configured default. `tokenizer_ref` accepts a local Hugging
 Face tokenizer JSON, a Hugging Face tokenizer reference, or `tiktoken:<encoding>`
 when that encoding matches the deployment. Local files must be readable by the
-Datus process. Omitted settings use defaults; explicitly invalid values or a
-tokenizer that cannot be loaded still produce an error.
+Datus process. Omitted settings use defaults; explicitly invalid numeric settings
+still produce an error. An unavailable tokenizer falls back to an available model
+counter or UTF-8 byte estimation, recording the fallback reason in logs.
+Failed tokenizer initialization is remembered for up to five minutes across
+capacity checks, then retried, so repeated planning checks do not repeat the same download failure.
 Local counting includes serialized messages, instructions, tools and output
 schemas, plus framing allowance; a deployment with different templates or
 routing limits can still reject a request and should be configured accordingly.
 UTF-8 byte estimates can trigger compaction earlier and are not measured provider
-token usage. Output caps above a known maximum are rejected explicitly.
-Remote image URLs and opaque file inputs require extracted content or a provider
-token count; counting only their URL or file ID cannot establish request capacity.
+token usage. Custom endpoints and models without catalog metadata can send requests
+above an estimated planning budget. Trusted counts are retained separately: if the
+trusted portion alone exceeds an explicit deployment limit, adding unmeasurable
+media does not disable that limit. Known standard provider endpoints retain their
+existing context checks and catalog output ceilings.
+Images use an available image counter, or a 4096-token estimate per image. Remote
+image references and opaque files also receive a 4096-token estimate per item when
+their content cannot be counted. Binary data is excluded from text estimation, and
+the original request content and references are preserved. These estimates do not
+require model registration and are not assertions about the server's actual limits.
 
 In the OpenAI-compatible and native OpenAI Responses paths, an explicit output-limit
 termination is reported as a failure. Tool runs retain received assistant text
@@ -206,11 +222,26 @@ and usage in the failed result and session; reasoning is not returned as the ans
 and incomplete tool calls are not executed. Datus does not automatically retry these
 runs. Continue with the existing session when more output is needed.
 
-Large tool results are preserved in the session archive; the model receives a
-bounded view and can continue with `read_tool_result`. Original Python tool
-returns and action/UI results retain their existing formats. Source truncation
-and analysis completeness are separate from archive pagination. Disabling
-`agent.compact` does not disable result bounding or the final send check.
+Tools own their result sizes. Agent calls to `list_tables`, `list_databases`,
+`list_schemas`, `query_metrics` and `select_records` default to 200 items per
+page; `query_lineage` defaults to 100. `page_size` is caller-controlled with no
+hard maximum. Continue directory/lineage results with the original tool,
+`snapshot_id`, `offset` and (for lineage) `section`. Continue metric/record
+results with the original tool, `result_id` and `offset`; this reads the cached
+rows without rerunning SQL. For catalog/lineage pages with `has_more=true`, use
+`offset=extra.next_offset`; `extra.offset` identifies the current page. Business
+`limit` remains independent of page size.
+Direct Python/MCP calls without pagination arguments retain their existing
+complete catalog/graph or compressed query preview. `execute_sql` and
+`execute_reference_template` keep their existing compression.
+
+There is no `read_tool_result` tool or generic result projection. Historical
+archive references are recovered into files readable through `read_file` in
+line ranges. Source truncation and analysis completeness are independent of
+pagination. Disabling `agent.compact` does not disable the final capacity check;
+an input that still cannot fit is stopped before sending it to the provider.
+Page sizes count whole records, not tokens or bytes, and are not automatically
+reduced. A page of very wide records can therefore still hit the capacity check.
 
 The Codex subscription transport has no output-limit field in its wire protocol.
 It retains that protocol and reserves the known model output ceiling, including

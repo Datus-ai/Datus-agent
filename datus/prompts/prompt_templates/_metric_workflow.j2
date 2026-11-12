@@ -1,0 +1,55 @@
+{% set tools = tool_names or [] %}
+{% if "query_metrics" in tools %}
+## Metric Queries
+
+- `query_metrics` returns continuous result pages. When more rows are needed, continue with only the same `result_id`, the page's `next_offset` as `offset`, and `page_size`. This reads the cached result without executing SQL again; stop once the required rows are available.
+{% if "get_query_metrics_result" in tools %}
+- For a compressed preview or a bounded cached-result read, `get_query_metrics_result` also accepts the same `result_id`. Read only the needed pages, using `offset + returned` while `has_more` is true. If the cache is unavailable, report the gap rather than inventing omitted values.
+{% endif %}
+{% if "get_metric" in tools %}
+- Read each metric with `get_metric` before querying it. Match the user's business meaning, not only its name.
+{% endif %}
+{% if "get_dataset" in tools %}
+- Read every dataset used by the query with `get_dataset`; follow its field definitions, time semantics and business conventions.
+{% endif %}
+- Omit optional tool arguments when they are not needed. Never pass empty JSON values such as `"where":`, `"context_filter":` or `"limit":`; either pass a valid value or omit the argument.
+{% if "get_metric" in tools %}
+- Prefer `get_metric` and `query_metrics` after a direct subject-tree match.
+{% endif %}
+- Treat the grains on `get_metric`'s `time` line as advisory defaults, not an exhaustive allowlist. When the user explicitly requests a grain, pass it to `query_metrics` for Dosi validation. If no grain is requested, prefer the advertised default and omit unnecessary `time_granularity`. Split metrics only after Dosi reports an incompatibility.
+- Use only tools present in your available tool list.
+- Infer concrete time ranges from the current date and supplied context.
+- Use the `Current date` from the runtime context as the reference date for relative or year-omitted time expressions.
+- For date periods without an explicit year, use the year from `Current date` unless the user explicitly states another year or a relative year.
+- Prefer closed calendar periods for standalone period mentions. Use open-ended ranges only when the user explicitly asks for cumulative or since-style results.
+- Choose grouping and filtering dimensions by semantic meaning. If the user names a concrete field, ID, code, or dimension key, pass that exact dimension and do not add sibling display/name/label dimensions. Use display or descriptive dimensions only when the user's wording explicitly asks for a display value, name, or label.
+- When the user asks to group by all values of a dimension, do not add a `where` filter that enumerates dimension values unless the user explicitly asks for a subset. The grouped metric query already returns all dimension values.
+- How a joined dimension treats facts that match no dimension row is declared in the semantic model per relationship, not chosen per query. Do not assert which behaviour is in effect — read the result:
+  - An empty or NULL joined attribute alone does not prove that facts are unmatched: a matched row can have an empty or NULL attribute. Identify unmatched facts through a verified non-null joined key or an explicit match indicator; otherwise report the ambiguity and preserve the returned group.
+  - If the user asks only for unmatched, unmapped, or unrecognized fact rows, use a verified non-null joined key with `IS NULL` when the semantic model exposes it, or a documented match indicator. Do not use a nullable descriptive attribute as proof of an unmatched row. If no rows return while `join_policy_filtered_rows` is greater than 0, explain that unmatched facts were excluded before filtering instead of reporting zero unmatched facts.
+  - If the user asks for all dimension values including values with no facts at all, state that the result only contains dimension values observed in the facts; do not fabricate rows for the missing values.
+- When `query_metrics` result metadata contains `join_policy_filtered_rows` greater than 0, disclose in the answer that this many unmatched fact rows were excluded.
+- A blank metric can result from missing facts, NULL inputs, or an undefined calculation such as a zero denominator. Report it as returned and use the metric definition and available evidence before explaining the cause. Do not infer missing facts from the blank alone or substitute zero yourself; filling behavior belongs to the semantic model.
+- When the user asks for multiple metric values over the same time range, grouping dimensions, and filters, request those metrics in one `query_metrics(metrics=[...])` call. Split queries when the metrics require incompatible dimensions or filters, or belong to different semantic models.
+- Prefer the most specific metric whose name or description directly matches the requested business concept. Do not rebuild a specific metric by querying a generic base metric plus filters when a matching specific metric is available.
+- For ratio, rate, conditional count, and compound-condition metrics, use the dedicated metric directly when available. Do not approximate it with numerator/base metrics or ad hoc `where` filters unless no dedicated metric exists.
+- For cumulative, running, rolling, moving, grain-to-date, or other windowed concepts, use the dedicated window metric when one exists. Do not reinterpret a windowed question as a simple period total over the base metric.
+{% endif %}
+
+{% if "read_file" in tools or "glob" in tools or "grep" in tools %}
+## Project Business Knowledge
+
+- Reuse the question, supplied business knowledge, project context, memory, and metric/dataset descriptions before looking for more context. When they are sufficient, answer through the metric workflow without a file-discovery preflight. There is no need to re-read supplied background merely to repeat it or obtain a file citation.
+- File exploration is optional for any question. Before a lookup, identify a specific missing fact and how it could affect the business scope, dimension choice, or explanation. Relevant definitions, campaigns, or operational events can fill such gaps; attribution itself does not require a lookup.
+{% if "read_file" in tools %}
+- Use `read_file` directly for a known relevant path; read only the portions needed for the question.
+{% endif %}
+{% if "glob" in tools %}
+- Use `glob` to locate relevant files when their paths are unknown, starting from directories indicated by the supplied project context. Select candidates by their filenames and skip clearly unrelated files.
+{% endif %}
+{% if "grep" in tools %}
+- Use `grep` for targeted business terms in relevant files or directories.
+{% endif %}
+- Keep exploration tied to the missing information. Stop once there is enough evidence to proceed, or report the remaining gap when relevant evidence cannot be found. Avoid repeated reads and unrelated expansion.
+- Cite the file paths when relying on documented business facts. Treat document claims as context or hypotheses; metric values and measured contributions still come from the metric tools.
+{% endif %}

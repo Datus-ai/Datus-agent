@@ -179,6 +179,7 @@ class LiteLLMAdapter:
         "kimi": ["api.moonshot.ai", "api.moonshot.cn", "api.kimi.com"],
         "minimax": ["api.minimaxi.com"],
         "glm": ["open.bigmodel.cn"],
+        "openrouter": ["openrouter.ai"],
     }
 
     # Protocol keywords that appear in proxy URL paths (e.g. /apps/anthropic, /coding/)
@@ -223,6 +224,15 @@ class LiteLLMAdapter:
         self._reasoning_effort = reasoning_effort.strip().lower() if isinstance(reasoning_effort, str) else None
         self.default_headers = default_headers
         self._litellm_model_name = None
+
+    @property
+    def is_custom_endpoint(self) -> bool:
+        """Catalog specifications are hints when a provider uses a private endpoint."""
+        if not self.base_url:
+            return False
+        hostname = (urlparse(self.base_url).hostname or "").lower()
+        domains = self.PROVIDER_DOMAINS.get(self.provider, [])
+        return not any(hostname == domain or hostname.endswith(f".{domain}") for domain in domains)
 
     def _detect_provider_from_model(self, provider: str, model: str, base_url: Optional[str] = None) -> str:
         """

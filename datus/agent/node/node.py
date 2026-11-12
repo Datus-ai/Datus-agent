@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from agents import Tool
 from datus_db_core import BaseSqlConnector
@@ -56,7 +56,9 @@ class Node(ABC):
         node_name: Optional[str] = None,
         is_subagent: bool = False,
         session_id: Optional[str] = None,
+        execution_mode: Literal["interactive", "workflow"] = "workflow",
     ):
+        """Construct a node with workflow defaults or the delegating caller's execution mode."""
         validate_node_class(node_type, node_name or node_id)
 
         from datus.agent.node import (
@@ -102,7 +104,7 @@ class Node(ABC):
                 input_data,
                 agent_config,
                 tools,
-                execution_mode="workflow",
+                execution_mode=execution_mode,
                 is_subagent=is_subagent,
                 session_id=session_id,
             )
@@ -115,7 +117,7 @@ class Node(ABC):
                 agent_config,
                 tools,
                 node_name or NodeType.TYPE_GEN_SQL,
-                execution_mode="workflow",
+                execution_mode=execution_mode,
                 is_subagent=is_subagent,
                 session_id=session_id,
             )
@@ -127,7 +129,7 @@ class Node(ABC):
                 authoring_scope = getattr(input_data, "authoring_scope", "full") if input_data is not None else "full"
                 node = SemanticModelingAgenticNode(
                     agent_config=agent_config,
-                    execution_mode="workflow",
+                    execution_mode=execution_mode,
                     authoring_scope=authoring_scope,
                     is_subagent=is_subagent,
                     session_id=session_id,
@@ -148,7 +150,7 @@ class Node(ABC):
                 agent_config,
                 tools,
                 node_name,
-                execution_mode="workflow",
+                execution_mode=execution_mode,
                 is_subagent=is_subagent,
                 session_id=session_id,
             )
@@ -163,7 +165,7 @@ class Node(ABC):
                 agent_config,
                 tools,
                 node_name,
-                execution_mode="workflow",
+                execution_mode=execution_mode,
                 is_subagent=is_subagent,
                 session_id=session_id,
             )
@@ -178,7 +180,7 @@ class Node(ABC):
                 agent_config,
                 tools,
                 node_name,
-                execution_mode="workflow",
+                execution_mode=execution_mode,
                 is_subagent=is_subagent,
                 session_id=session_id,
             )
@@ -193,6 +195,7 @@ class Node(ABC):
                 agent_config,
                 tools,
                 node_name,
+                execution_mode=execution_mode,
                 is_subagent=is_subagent,
                 session_id=session_id,
             )
@@ -201,7 +204,7 @@ class Node(ABC):
 
             node = GenTableAgenticNode(
                 agent_config=agent_config,
-                execution_mode="workflow",
+                execution_mode=execution_mode,
                 node_id=node_id,
                 node_name=node_name,
                 is_subagent=is_subagent,
@@ -215,7 +218,7 @@ class Node(ABC):
 
             node = GenJobAgenticNode(
                 agent_config=agent_config,
-                execution_mode="workflow",
+                execution_mode=execution_mode,
                 is_subagent=is_subagent,
                 session_id=session_id,
             )
@@ -233,13 +236,14 @@ class Node(ABC):
                 agent_config,
                 tools,
                 node_name,
+                execution_mode=execution_mode,
                 is_subagent=is_subagent,
                 session_id=session_id,
             )
         elif node_type == NodeType.TYPE_FEEDBACK:
             from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
 
-            node = FeedbackAgenticNode(agent_config=agent_config, execution_mode="workflow", session_id=session_id)
+            node = FeedbackAgenticNode(agent_config=agent_config, execution_mode=execution_mode, session_id=session_id)
             if input_data is not None:
                 node.input = input_data
             return node

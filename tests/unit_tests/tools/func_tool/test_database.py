@@ -2,8 +2,10 @@
 Test cases for DBFuncTool compressor model_name initialization and execute_ddl.
 """
 
+import json
 import re
 from collections import OrderedDict
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -13,6 +15,7 @@ from datus.configuration.agent_config import DbConfig
 from datus.tools.db_tools.db_manager import DBManager
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.database import DBFuncTool
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.exceptions import DatusException
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -1404,6 +1407,10 @@ class TestGetConnectorRouting:
 class TestTransferQueryResult:
     """Tests for DBFuncTool.transfer_query_result method."""
 
+    @pytest.fixture(autouse=True)
+    def diagnostic_root(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(DBFuncTool, "_bulk_root", lambda self: tmp_path)
+
     def _make_multi_tool(self, source_connector, target_connector, default_db="source_db"):
         """Create a DBFuncTool with mocked _get_connector for multi-db routing."""
         with (
@@ -1657,7 +1664,8 @@ class TestTransferQueryResult:
         assert result.success == 1
         assert result.result["rows_transferred"] == 0
         assert result.result["target_table_created"] is True
-        assert result.result["target_table_create_sql"].startswith("CREATE TABLE tgt.users")
+        assert "target_table_create_sql" not in result.result
+        assert target.execute_ddl.call_args.args[0].startswith("CREATE TABLE tgt.users")
         target.execute_insert.assert_not_called()
 
     def test_transfer_append_mode_no_truncate(self):
@@ -1924,6 +1932,155 @@ class TestTransferQueryResult:
 
         assert result.success == 0
         assert "target" in result.error.lower()
+
+    @pytest.mark.parametrize("batch_size", [True, 1.5, 10_001])
+    def test_transfer_rejects_oversized_or_noninteger_batches_before_execution(self, batch_size):
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame({"id": [1]}))
+        target, insert = self._make_target_connector()
+        tool = self._make_multi_tool(source, target)
+        result = tool.transfer_query_result(
+            "SELECT id FROM users", "source_db", "orders", "target_db", batch_size=batch_size
+        )
+        assert result.success == 0
+        assert "batch_size" in result.error
+        source.execute_pandas.assert_not_called()
+        target.execute_ddl.assert_not_called()
+        insert.assert_not_called()
+
+    def test_transfer_checks_all_insert_byte_limits_before_replace(self):
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame({"payload": ["ok", "数据'" * 10]}))
+        target, insert = self._make_target_connector()
+        tool = self._make_multi_tool(source, target)
+        tool._TRANSFER_MAX_SQL_BYTES = 100
+        result = tool.transfer_query_result(
+            "SELECT payload FROM users", "source_db", "orders", "target_db", batch_size=1
+        )
+        assert result.success == 0
+        assert "SQL limit" in result.error
+        source.execute_pandas.assert_called_once()
+        target.execute_ddl.assert_not_called()
+        insert.assert_not_called()
+
+    def test_native_transfer_checks_oversized_identifiers_before_replace(self):
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame({"a" * (1024 * 1024 + 1): [1]}))
+        target, insert = self._make_target_connector()
+        operations = Mock()
+        operations.quote_identifier.side_effect = lambda name: '"' + name.upper().replace('"', '""') + '"'
+        tool = self._make_multi_tool(source, target)
+        with patch(
+            "datus.tools.func_tool.database.get_dialect_operations",
+            side_effect=lambda **kwargs: operations if kwargs.get("connector") is target else None,
+        ):
+            result = tool.transfer_query_result("SELECT value FROM users", "source_db", "orders", "target_db")
+        assert result.success == 0
+        assert "SQL limit" in result.error
+        source.execute_pandas.assert_called_once()
+        target.execute_ddl.assert_not_called()
+        operations.write_dataframe.assert_not_called()
+        insert.assert_not_called()
+
+    def test_native_empty_replace_keeps_existing_clear_behavior_without_an_insert(self):
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame(columns=["a" * (1024 * 1024 + 1)]))
+        target, _ = self._make_target_connector()
+        operations = Mock()
+        tool = self._make_multi_tool(source, target)
+        with patch(
+            "datus.tools.func_tool.database.get_dialect_operations",
+            side_effect=lambda **kwargs: operations if kwargs.get("connector") is target else None,
+        ):
+            result = tool.transfer_query_result("SELECT value FROM users", "source_db", "orders", "target_db")
+        assert result.success == 1, result.error
+        assert result.result["rows_transferred"] == 0
+        target.execute_ddl.assert_called_once_with("TRUNCATE TABLE orders")
+        operations.write_dataframe.assert_not_called()
+
+    @pytest.mark.parametrize("sql_limit,allowed", [(54, True), (53, False)])
+    def test_native_transfer_checks_bind_sql_size_without_counting_bound_values(self, sql_limit, allowed):
+        import pandas as pd
+
+        payload = "x" * (1024 * 1024 + 1)
+        source = self._make_source_connector(pd.DataFrame({"id": [1], "payload": [payload]}))
+        target, _ = self._make_target_connector()
+        operations = Mock()
+        operations.quote_identifier.side_effect = lambda name: f'"{name.upper()}"'
+        operations.write_dataframe.return_value = 1
+        tool = self._make_multi_tool(source, target)
+        tool._TRANSFER_MAX_SQL_BYTES = sql_limit
+        with patch(
+            "datus.tools.func_tool.database.get_dialect_operations",
+            side_effect=lambda **kwargs: operations if kwargs.get("connector") is target else None,
+        ):
+            result = tool.transfer_query_result("SELECT id, payload FROM users", "source_db", "orders", "target_db")
+        if allowed:
+            assert result.success == 1, result.error
+            target.execute_ddl.assert_called_once_with("TRUNCATE TABLE orders")
+            operations.write_dataframe.assert_called_once()
+            assert operations.write_dataframe.call_args.args[2]["payload"].tolist() == [payload]
+        else:
+            assert result.success == 0
+            assert "SQL limit" in result.error
+            target.execute_ddl.assert_not_called()
+            operations.write_dataframe.assert_not_called()
+
+    def test_transfer_never_echoes_large_source_sql(self):
+        import hashlib
+        import json
+
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame({"id": [1]}))
+        target, _ = self._make_target_connector()
+        tool = self._make_multi_tool(source, target)
+        sql = "SELECT id FROM users /*" + "sensitive query data " * 10_000 + "*/"
+        result = tool.transfer_query_result(sql, "source_db", "orders", "target_db")
+        assert result.success == 1, result.error
+        assert result.result["rows_transferred"] == 1
+        assert result.result["source_sql_sha256"] == hashlib.sha256(sql.encode()).hexdigest()
+        assert "source_sql" not in result.result
+        assert "target_table_create_sql" not in result.result
+        assert len(json.dumps(result.model_dump()).encode()) <= 16_384
+        source.execute_pandas.assert_called_once_with(sql)
+
+    @pytest.mark.parametrize("phase", ["source", "insert_result", "insert_exception"])
+    def test_transfer_large_database_errors_stay_out_of_tool_results(self, tmp_path, phase):
+        import gzip
+        import json
+
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame({"id": range(4)}))
+        target, insert = self._make_target_connector()
+        tool = self._make_multi_tool(source, target)
+        payload = "private row 数据" * 300_000
+        error = "database failure [SQL: INSERT INTO orders VALUES ('" + payload + "')]"
+        if phase == "source":
+            source.execute_pandas.return_value = Mock(success=False, error=error)
+        else:
+            failure = RuntimeError(error) if phase == "insert_exception" else Mock(success=False, error=error)
+            insert.side_effect = [Mock(success=True), failure]
+        result = tool.transfer_query_result("SELECT id FROM users", "source_db", "orders", "target_db", batch_size=2)
+        assert result.success == 0
+        assert "database failure" in result.error
+        wire = json.dumps(result.model_dump(), ensure_ascii=False).encode()
+        assert len(result.error.encode()) <= 2048
+        assert len(wire) <= 16_384
+        assert b"private row" not in wire
+        with gzip.open(tmp_path / result.result["diagnostic_ref"], "rt") as diagnostic:
+            assert payload in diagnostic.read()
+        if phase == "source":
+            target.execute_ddl.assert_not_called()
+            insert.assert_not_called()
+        else:
+            assert "after writing 2 rows" in result.error
+            assert insert.call_count == 2
 
 
 class TestPathTraversalGuard:
@@ -3330,6 +3487,84 @@ class TestHeaderRowNormalisation:
         silently auto-detecting would hide a caller bug."""
         assert self._capture(tmp_path, header_row=-1)["header_row"] == -1
 
+    def test_inspection_passes_region_and_evidence_options(self, tmp_path):
+        """Forward the requested region and evidence fields to spreadsheet inspection."""
+        from types import SimpleNamespace
+
+        tool = self._tool()
+        book = tmp_path / "book.xlsx"
+        book.write_bytes(b"")
+        tool._resolve_data_file = lambda path: SimpleNamespace(resolved=book, display=path)
+        with patch("datus.tools.func_tool.database.inspect_file", return_value={"sheet_details": []}) as inspect:
+            result = tool.load_file_as_table(
+                path="book.xlsx",
+                sheet="Projects",
+                inspect_only=True,
+                range="CU1:CX10",
+                include=["values", "formulas", "merges"],
+            )
+        assert result.success == 1
+        assert result.result == {"sheet_details": []}
+        assert inspect.call_args.kwargs["cell_range"] == "CU1:CX10"
+        assert inspect.call_args.kwargs["include"] == ["values", "formulas", "merges"]
+        assert inspect.call_args.kwargs["sheet"] == "Projects"
+
+    @pytest.mark.parametrize("suffix", [".xlsx", ".XLSX", ".xlsm"])
+    def test_spreadsheet_inspection_does_not_resolve_a_connector(self, tmp_path, suffix):
+        """Spreadsheet metadata reads must succeed without opening or locking DuckDB."""
+        from types import SimpleNamespace
+
+        import openpyxl
+
+        tool = self._tool()
+        book = tmp_path / f"book{suffix}"
+        workbook = openpyxl.Workbook()
+        workbook.active["A1"] = "Grouped header"
+        workbook.active.merge_cells("A1:C1")
+        workbook.save(book)
+        tool._resolve_data_file = lambda path: SimpleNamespace(resolved=book, display=path)
+        tool._get_connector = Mock(side_effect=AssertionError("Spreadsheet inspection must not touch DuckDB"))
+
+        result = tool.load_file_as_table(path=book.name, inspect_only=True, include=["merges"])
+
+        assert result.success == 1
+        assert result.result["sheet_details"][0]["merged_ranges"] == ["A1:C1"]
+        tool._get_connector.assert_not_called()
+
+    def test_csv_inspection_still_uses_the_exclusive_connection(self, tmp_path):
+        """Formats inspected through SQL retain their existing connection lock."""
+        import contextlib
+        from types import SimpleNamespace
+
+        tool = self._tool()
+        source = tmp_path / "rows.csv"
+        source.write_text("id\n1\n")
+        tool._resolve_data_file = lambda path: SimpleNamespace(resolved=source, display=path)
+        connection = Mock()
+        connector = Mock()
+        connector.exclusive_connection.return_value = contextlib.nullcontext(connection)
+        tool._get_connector = Mock(return_value=connector)
+        with patch("datus.tools.func_tool.database.inspect_file", return_value={"preview_columns": ["id"]}) as inspect:
+            result = tool.load_file_as_table(path="rows.csv", inspect_only=True)
+
+        assert result.success == 1
+        connector.exclusive_connection.assert_called_once_with()
+        assert inspect.call_args.kwargs["connection"] is connection
+
+    def test_load_does_not_silently_ignore_inspection_options(self, tmp_path):
+        """Reject inspection-only arguments before registering a SQL table."""
+        from types import SimpleNamespace
+
+        tool = self._tool()
+        book = tmp_path / "book.xlsx"
+        book.write_bytes(b"")
+        tool._resolve_data_file = lambda path: SimpleNamespace(resolved=book, display=path)
+        with patch("datus.tools.func_tool.database.load_file") as load:
+            result = tool.load_file_as_table(path="book.xlsx", range="A1:B2")
+        assert result.success == 0
+        assert "inspect_only=true" in result.error
+        load.assert_not_called()
+
 
 @pytest.mark.asyncio
 async def test_registered_sql_timeout_is_structured_and_late_worker_cannot_replace_it(monkeypatch):
@@ -3351,6 +3586,7 @@ async def test_registered_sql_timeout_is_structured_and_late_worker_cannot_repla
         def _excluded_tool_params(self):
             return set()
 
+        @tool_contract(access="sql", direct_call=True)
         def execute_sql(self, sql: str) -> FuncToolResult:
             started.set()
             try:
@@ -3380,6 +3616,7 @@ async def test_registered_sql_timeout_is_structured_and_late_worker_cannot_repla
 
 @pytest.mark.asyncio
 async def test_registered_sql_preserves_real_failure_and_parent_cancellation():
+    """Preserve driver failures and cancellation through the registered SQL invoker."""
     import asyncio
     from types import SimpleNamespace
 
@@ -3394,6 +3631,7 @@ async def test_registered_sql_preserves_real_failure_and_parent_cancellation():
         def _excluded_tool_params(self):
             return set()
 
+        @tool_contract(access="sql", direct_call=True)
         async def execute_sql(self, sql: str) -> FuncToolResult:
             self.started.set()
             if self.wait:
@@ -3483,3 +3721,578 @@ def test_persisted_artifact_binding_keeps_original_database_after_the_turn_switc
     )
     assert tool._get_connector("warehouse") is current
     manager.close()
+
+
+class TestDatasourceIdentity:
+    """Expose configured physical coordinates without returning credential-bearing fields."""
+
+    @pytest.mark.parametrize("as_mapping", [False, True])
+    def test_returns_only_public_configured_coordinates(self, as_mapping):
+        """Dataclass and mapping configurations expose the same strict allowlist."""
+        config = DbConfig(
+            type="postgresql",
+            host="warehouse.example.test",
+            port="5432",
+            database="analytics",
+            schema="sales",
+            catalog="sales_catalog",
+            account="warehouse_account",
+            username="private-user",
+            password="private-password",
+            uri="postgres://private-user:private-password@host/db",
+            private_key_file="private-key",
+            extra={"api_key": "private-api-key"},
+        )
+        value = config.to_dict() if as_mapping else config
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(current_db_configs=lambda: {"warehouse": value})
+        tool._default_datasource = "warehouse"
+
+        result = tool.get_datasource_identity()
+
+        assert result.success == 1
+        assert result.result["identity_status"] == "unresolved"
+        assert result.result["identity"] == {}
+        assert result.result["configured_identity"] == {
+            "type": "postgresql",
+            "host": "warehouse.example.test",
+            "port": "5432",
+            "database": "analytics",
+            "schema": "sales",
+            "catalog": "sales_catalog",
+            "account": "warehouse_account",
+        }
+
+    def test_unknown_requested_source_does_not_fall_back(self):
+        """An explicit unknown name must never resolve to the default connection."""
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(current_db_configs=lambda: {"warehouse": DbConfig(type="postgresql")})
+        tool._default_datasource = "warehouse"
+        result = tool.get_datasource_identity("missing")
+        assert result.success == 0
+        assert result.result is None
+
+    def test_no_configuration_is_reported_as_unavailable(self):
+        """A connector without authoritative config cannot fabricate physical identity."""
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = None
+        tool._default_datasource = "warehouse"
+        result = tool.get_datasource_identity()
+        assert result.success == 0
+        assert result.result is None
+
+    @pytest.mark.parametrize(
+        "host", ["postgres://user:secret@host/db", "https://host?token=secret", "user:secret", "bad..host", "999.1.1.1"]
+    )
+    def test_credential_bearing_host_is_not_exposed(self, host):
+        """Reject URLs in endpoint fields instead of leaking embedded credentials."""
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(
+            current_db_configs=lambda: {"warehouse": DbConfig(type="postgresql", host=host)}
+        )
+        tool._default_datasource = "warehouse"
+        result = tool.get_datasource_identity()
+        assert result.success == 1
+        assert result.result["configured_identity"] == {"type": "postgresql"}
+        assert result.result["identity"] == {}
+        assert result.result["identity_status"] == "unresolved"
+
+    def test_config_failure_does_not_expose_exception_credentials(self):
+        """A configuration-loader failure must not return its private diagnostic text."""
+
+        def fail():
+            """Emulate a loader diagnostic containing a private connection URI."""
+            raise ValueError("postgres://private-user:private-password@host/db")
+
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(current_db_configs=fail)
+        tool._default_datasource = "warehouse"
+        result = tool.get_datasource_identity()
+        assert result.success == 0
+        assert result.error == "Configured datasource identity is unavailable"
+        assert result.result is None
+
+    @pytest.mark.parametrize("port", ["-1", "65536", "private-password", True])
+    def test_invalid_port_is_not_returned_as_identity(self, port):
+        """Malformed endpoint coordinates remain unknown rather than becoming evidence."""
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(
+            current_db_configs=lambda: {"warehouse": {"type": "postgresql", "port": port}}
+        )
+        tool._default_datasource = "warehouse"
+        result = tool.get_datasource_identity()
+        assert result.success == 1
+        assert result.result["configured_identity"] == {"type": "postgresql"}
+        assert result.result["identity"] == {}
+        assert result.result["identity_status"] == "unresolved"
+
+    @pytest.mark.parametrize(
+        "host", ["localhost", "warehouse.example.test", "127.0.0.1", "::1", "[2001:db8::1]", "2001:db8::1"]
+    )
+    def test_effective_runtime_coordinates_override_configuration(self, host):
+        """The constructed adapter and selected database, not configured defaults, identify the target."""
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(
+            current_db_configs=lambda: {
+                "warehouse": DbConfig(
+                    type="postgresql",
+                    host="configured.example",
+                    database="configured",
+                    uri="postgres://user:secret@uri-host/uri-db",
+                    extra={"host": host},
+                )
+            }
+        )
+        tool._default_datasource = "warehouse"
+        tool._get_connector = lambda _: SimpleNamespace(
+            dialect="postgresql",
+            host=host,
+            port=5544,
+            database_name="selected",
+            schema_name="runtime_schema",
+            catalog_name="runtime_catalog",
+        )
+        result = tool.get_datasource_identity()
+        assert result.result["identity_status"] == "resolved"
+        assert result.result["identity"] == {
+            "type": "postgresql",
+            "host": host,
+            "port": 5544,
+            "database": "selected",
+            "schema": "runtime_schema",
+            "catalog": "runtime_catalog",
+        }
+        assert result.result["configured_identity"]["host"] == "configured.example"
+        assert result.result["execution_context"]["database"] == "selected"
+        assert "secret" not in json.dumps(result.result)
+
+    def test_empty_database_is_omitted(self):
+        """An absent database is not fabricated from the datasource display name."""
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(
+            current_db_configs=lambda: {"warehouse": DbConfig(type="postgresql", database="")}
+        )
+        tool._default_datasource = "warehouse"
+        tool._get_connector = lambda _: SimpleNamespace(
+            dialect="postgresql", host="localhost", port=5432, database_name=""
+        )
+        result = tool.get_datasource_identity()
+        assert "database" not in result.result["configured_identity"]
+        assert "database" not in result.result["identity"]
+        assert result.result["identity_status"] == "unresolved"
+
+    def test_effective_inspection_failure_never_uses_configured_match(self):
+        """A failed runtime inspection stays unresolved and does not leak its error URI."""
+
+        def fail(_):
+            """Emulate an adapter failure with a private diagnostic."""
+            raise ValueError("postgres://private-user:private-password@host/db")
+
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(
+            current_db_configs=lambda: {
+                "warehouse": DbConfig(type="postgresql", host="configured.example", database="analytics")
+            }
+        )
+        tool._default_datasource = "warehouse"
+        tool._get_connector = fail
+        result = tool.get_datasource_identity()
+        assert result.result["identity"] == {}
+        assert result.result["identity_status"] == "unresolved"
+        assert "private-password" not in json.dumps(result.result)
+
+    def test_glob_identity_reports_selected_sqlite_file(self, tmp_path):
+        """Native SQLite metadata identifies the selected glob file rather than its default sibling."""
+        import sqlite3
+
+        for name in ["a", "b"]:
+            with sqlite3.connect(tmp_path / f"{name}.sqlite") as db:
+                db.execute("CREATE TABLE marker(value TEXT)")
+        configured = DbConfig(type="sqlite", path_pattern=str(tmp_path / "*.sqlite"))
+        manager = DBManager({"warehouse": configured})
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(current_db_configs=lambda: {"warehouse": configured})
+        tool._db_manager = manager
+        tool._default_datasource = "warehouse"
+        tool._default_database = "b"
+        tool._execution_context = {"datasource": "warehouse", "database": "b"}
+        tool._connector_cache = OrderedDict()
+        tool._connector_cache_size = 8
+        try:
+            result = tool.get_datasource_identity()
+            assert result.result["identity_status"] == "resolved"
+            assert result.result["identity"]["path"] == str((tmp_path / "b.sqlite").resolve())
+            assert result.result["execution_context"]["database"] == "b"
+        finally:
+            manager.close()
+
+    def test_attached_duckdb_identity_reports_selected_catalog_file(self, tmp_path):
+        """A selected attached DuckDB catalogue must not inherit the primary file's identity."""
+        from datus.tools.db_tools.config import DuckDBConfig
+        from datus.tools.db_tools.duckdb_connector import DuckdbConnector
+
+        primary, attached = tmp_path / "primary.duckdb", tmp_path / "attached.duckdb"
+        connector = DuckdbConnector(DuckDBConfig(db_path=str(primary)))
+        connector.connect()
+        connector.connection.execute("ATTACH '" + str(attached).replace("'", "''") + "' AS selected")
+        connector.database_name = "selected"
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(
+            current_db_configs=lambda: {"warehouse": DbConfig(type="duckdb", uri=str(primary))}
+        )
+        tool._default_datasource = "warehouse"
+        tool._get_connector = lambda _: connector
+        try:
+            result = tool.get_datasource_identity()
+            assert result.result["identity_status"] == "resolved"
+            assert result.result["identity"]["path"] == str(attached.resolve())
+            assert result.result["execution_context"]["database"] == "selected"
+        finally:
+            connector.close()
+
+    def test_host_credential_content_cannot_escape_in_identity(self):
+        """A colon pair mistaken for a hostname must not disclose credential text."""
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(
+            current_db_configs=lambda: {"warehouse": DbConfig(type="postgresql", host="user:private-secret")}
+        )
+        tool._default_datasource = "warehouse"
+        result = tool.get_datasource_identity()
+        assert "private-secret" not in json.dumps(result.result)
+
+    def test_unavailable_file_metadata_does_not_guess_the_configured_path(self):
+        """An unavailable native inspector keeps file identity unresolved."""
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(
+            current_db_configs=lambda: {"warehouse": DbConfig(type="sqlite", uri="/configured/first.sqlite")}
+        )
+        tool._default_datasource = "warehouse"
+        tool._get_connector = lambda _: SimpleNamespace(
+            dialect="sqlite",
+            database_name="selected",
+            db_path="/configured/first.sqlite",
+            execute_query=lambda *args, **kwargs: FuncToolResult(success=0, error="Unavailable"),
+        )
+        result = tool.get_datasource_identity()
+        assert "path" not in result.result["identity"]
+        assert result.result["identity_status"] == "unresolved"
+
+
+@pytest.mark.ci
+class TestDatasourceTableScopes:
+    """Mixed dialect scopes must follow the routed source and never OR across sources."""
+
+    @pytest.fixture(params=["sr", "mysql", "pg"])
+    def scoped_tool(self, request):
+        """Build a mixed-dialect tool whose configured default is independent of the project default."""
+        from datus.schemas.agent_models import SubAgentConfig
+
+        connectors = {
+            "sr": Mock(dialect="starrocks", catalog_name="default_catalog", database_name="analytics", schema_name=""),
+            "mysql": Mock(dialect="mysql", catalog_name="", database_name="sales", schema_name=""),
+            "pg": Mock(dialect="postgresql", catalog_name="", database_name="warehouse", schema_name="public"),
+            "unrelated": Mock(dialect="mysql", catalog_name="", database_name="private", schema_name=""),
+        }
+        # Mock connectors must declare their namespace contract without relying
+        # on optional adapters being installed in the test environment.
+        capabilities = {
+            "sr": {"catalog", "database"},
+            "mysql": {"database"},
+            "pg": {"database", "schema"},
+            "unrelated": {"database"},
+        }
+        for source, connector in connectors.items():
+            connector.get_effective_capabilities.return_value = capabilities[source]
+        scopes = {"sr": "default_catalog.analytics.*", "mysql": "sales.*", "pg": "warehouse.reporting.*"}
+        config = _mock_agent_config(current_datasource="unrelated", project_name="scope-test")
+        config.current_db_configs.return_value = {
+            name: DbConfig(type=connector.dialect) for name, connector in connectors.items()
+        }
+        config.sub_agent_config.return_value = SubAgentConfig(
+            scoped_context={
+                "datasource": request.param,
+                "tables": scopes[request.param],
+                "tables_by_datasource": scopes,
+            }
+        )
+        manager = Mock(spec=DBManager)
+        manager.get_conn.side_effect = lambda name, *args, **kwargs: connectors[name]
+        with (
+            patch("datus.tools.func_tool.database.metadata_fts_enabled", return_value=False),
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as rag,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as semantic,
+        ):
+            rag.return_value.schema_store.table_size.return_value = 0
+            semantic.return_value.get_size.return_value = 0
+            tool = DBFuncTool(manager, agent_config=config, sub_agent_name="ask_dashboard")
+        return tool, connectors
+
+    @pytest.mark.parametrize(
+        ("source", "allowed", "denied"),
+        [
+            ("sr", "default_catalog.analytics.orders", "default_catalog.other.orders"),
+            ("mysql", "sales.orders", "analytics.orders"),
+            ("pg", "warehouse.reporting.orders", "warehouse.public.orders"),
+        ],
+    )
+    def test_sql_scopes_follow_each_sources_dialect(self, scoped_tool, source, allowed, denied):
+        """Allow and deny SQL tables according to the routed source's own dialect."""
+        tool, _ = scoped_tool
+        connector = tool._get_connector(source)
+        assert tool._check_sql_table_scope(f"SELECT * FROM {allowed}", connector) == []
+        denied_tables = tool._check_sql_table_scope(f"SELECT * FROM {denied}", connector)
+        assert denied_tables
+        assert all(name.endswith("orders") for name in denied_tables)
+
+    def test_secondary_metadata_uses_its_own_scope(self, scoped_tool):
+        """Restrict secondary-source schema metadata using that source's grouped scope."""
+        tool, connectors = scoped_tool
+        connectors["pg"].get_schemas.return_value = ["reporting", "public"]
+        result = tool.list_schemas(database="warehouse", datasource="pg")
+        assert result.success == 1
+        assert result.result == ["reporting"]
+
+    def test_unlisted_source_is_refused(self, scoped_tool):
+        """Reject connector selection for a source absent from the grouped scope."""
+        tool, _ = scoped_tool
+        with pytest.raises(DatusException, match="scoped context"):
+            tool._get_connector("unrelated")
+
+    def test_persisted_query_cannot_bypass_source_scope(self, scoped_tool):
+        """Reject saved execution contexts that route outside the allowed source map."""
+        tool, _ = scoped_tool
+        with pytest.raises(DatusException, match="scoped context"):
+            tool.connector_for_execution_context({"datasource": "unrelated", "database": "private"})
+
+
+@pytest.mark.ci
+def test_malformed_source_scopes_cannot_degrade_into_an_unscoped_tool():
+    """Reject invalid grouped-scope shapes instead of dropping the restriction."""
+    tool = object.__new__(DBFuncTool)
+    tool.agent_config = SimpleNamespace(
+        sub_agent_config=lambda _: {
+            "scoped_context": {"tables_by_datasource": {"sr": ["default_catalog.analytics.*"]}},
+        }
+    )
+    with pytest.raises(DatusException, match="refusing unscoped"):
+        tool._load_sub_agent_config("ask_dashboard")
+
+
+@pytest.mark.ci
+@pytest.mark.parametrize("scope", ["", "   ", ",\n,", ".", "..."])
+def test_listed_datasource_without_parseable_patterns_is_rejected(scope):
+    """A listed source with no usable table pattern must never grant all tables."""
+    connector = Mock(dialect="mysql", database_name="sales", catalog_name="", schema_name="")
+    tool = object.__new__(DBFuncTool)
+    tool._tables_by_datasource = {"mysql": scope}
+    tool._connector_datasources = {id(connector): "mysql"}
+    tool._primary_connector = connector
+    with pytest.raises(DatusException, match="scope"):
+        tool._check_sql_table_scope("SELECT * FROM sales.private_orders", connector)
+
+
+@pytest.mark.ci
+def test_explicit_wildcard_grouped_scope_allows_tables():
+    """An explicit wildcard remains the supported unrestricted grouped scope."""
+    connector = Mock(dialect="mysql", database_name="sales", catalog_name="", schema_name="")
+    tool = object.__new__(DBFuncTool)
+    tool._tables_by_datasource = {"mysql": "*"}
+    tool._connector_datasources = {id(connector): "mysql"}
+    tool._primary_connector = connector
+    assert tool._check_sql_table_scope("SELECT * FROM sales.orders", connector) == []
+
+
+@pytest.mark.ci
+@pytest.mark.parametrize("scoped_tables", [["orders"], ("sales.orders",)])
+def test_grouped_scopes_cannot_replace_an_explicit_run_allowlist(scoped_tables):
+    """Conflicting scope mechanisms must be rejected rather than widen the run's allowlist."""
+    from datus.schemas.agent_models import SubAgentConfig
+
+    config = _mock_agent_config(current_datasource="mysql")
+    config.current_db_configs.return_value = {"mysql": DbConfig(type="mysql")}
+    config.sub_agent_config.return_value = SubAgentConfig(
+        scoped_context={"datasource": "mysql", "tables_by_datasource": {"mysql": "sales.*"}}
+    )
+    manager = Mock(spec=DBManager)
+    manager.get_conn.return_value = Mock(dialect="mysql")
+    with (
+        patch("datus.tools.func_tool.database.metadata_fts_enabled", return_value=False),
+        patch("datus.tools.func_tool.database.SchemaWithValueRAG"),
+        patch("datus.tools.func_tool.database.SemanticDatasetRAG"),
+        pytest.raises(DatusException, match="scoped_tables.*tables_by_datasource"),
+    ):
+        DBFuncTool(manager, agent_config=config, sub_agent_name="ask", scoped_tables=scoped_tables)
+
+
+@pytest.mark.ci
+class TestGlobDatabaseListingScopes:
+    """File discovery is connection-free until a grouped scope requires filtering."""
+
+    @pytest.fixture
+    def tool(self):
+        """Build an enumeration-only tool whose connector access fails visibly."""
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(
+            current_db_config=lambda _: SimpleNamespace(path_pattern="/data/*.sqlite"),
+            list_databases=Mock(return_value=["sales", "private"]),
+        )
+        tool._is_multi_connector = True
+        tool._datasources = ["files"]
+        tool._default_datasource = "files"
+        tool._tables_by_datasource = None
+        tool._get_connector = Mock(side_effect=ConnectionError("connector unavailable"))
+        return tool
+
+    def test_unscoped_listing_does_not_open_connector(self, tool):
+        """A glob discovery call must work even when no database can be opened."""
+        result = tool.list_databases(datasource="files")
+        assert result.success == 1
+        assert result.result == ["sales", "private"]
+        tool._get_connector.assert_not_called()
+
+    def test_grouped_listing_filters_databases(self, tool):
+        """The grouped scope filters glob discoveries through the source's dialect."""
+        connector = Mock(dialect="sqlite", catalog_name="", database_name="sales", schema_name="")
+        tool._get_connector = Mock(return_value=connector)
+        tool._primary_connector = connector
+        tool._tables_by_datasource = {"files": "sales.*"}
+        tool._connector_datasources = {id(connector): "files"}
+        result = tool.list_databases(datasource="files")
+        assert result.success == 1
+        assert result.result == ["sales"]
+        tool._get_connector.assert_called()
+
+    @pytest.mark.parametrize("failure_stage", ["enumeration", "connector", "filter"])
+    def test_glob_errors_return_failed_result(self, tool, failure_stage):
+        """Discovery, connector, and scope errors use the public failure contract."""
+        tool._tables_by_datasource = {"files": "sales.*"}
+        tool._primary_connector = Mock(dialect="sqlite")
+        if failure_stage == "enumeration":
+            tool.agent_config.list_databases.side_effect = RuntimeError("discovery failed")
+        elif failure_stage == "filter":
+            tool._get_connector = Mock(return_value=tool._primary_connector)
+            tool._database_matches_scope = Mock(side_effect=ValueError("invalid scope"))
+        result = tool.list_databases(datasource="files")
+        assert result.success == 0
+        assert result.error
+
+
+@pytest.mark.ci
+@pytest.mark.parametrize("scope_failure", ["empty", "unlisted", "unbound"])
+def test_read_validation_returns_scope_failures_before_explain(scope_failure):
+    """Scope errors retain their text and SQL type and never reach EXPLAIN execution."""
+    from datus.utils.constants import SQLType
+
+    connector = Mock(dialect="mysql")
+    tool = object.__new__(DBFuncTool)
+    tool._primary_connector = connector
+    tool._tables_by_datasource = {"mysql": ""}
+    tool._connector_datasources = {id(connector): "mysql"}
+    if scope_failure == "unlisted":
+        tool._tables_by_datasource = {"other": "*"}
+    elif scope_failure == "unbound":
+        tool._connector_datasources = {}
+    sql = "SELECT * FROM sales.orders"
+    with pytest.raises(DatusException) as scope_error:
+        tool._check_sql_table_scope(sql, connector)
+    expected_error = str(scope_error.value)
+
+    failure, sql_type = tool._validate_read_sql(sql, connector)
+    assert failure.success == 0
+    assert failure.error == expected_error
+    assert sql_type == SQLType.SELECT
+
+    guard_failure = tool.guard_estimated_rows(sql, connector)
+    assert guard_failure.success == 0
+    assert guard_failure.error == expected_error
+    connector.execute_query.assert_not_called()
+
+
+class TestNativeCatalogPagination:
+    @pytest.fixture
+    def catalog(self):
+        connector = Mock()
+        connector.dialect = "sqlite"
+        connector.get_databases.return_value = [f"db_{i:04d}" for i in range(1600)]
+        connector.get_schemas.return_value = [f"schema_{i:04d}" for i in range(1600)]
+        connector.get_tables.return_value = [f"t_{i:04d}" for i in range(1600)]
+        connector.get_views.return_value = ["v"]
+        connector.get_materialized_views.return_value = ["mv"]
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG"),
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG"),
+        ):
+            tool = DBFuncTool(connector)
+        connector.reset_mock()
+        return tool, connector
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "name,provider",
+        [("list_tables", "get_tables"), ("list_databases", "get_databases"), ("list_schemas", "get_schemas")],
+    )
+    async def test_model_defaults_and_snapshot_continuation(self, catalog, name, provider):
+        from datus.tools.func_tool.base import trans_to_function_tool
+
+        tool, connector = catalog
+        method = getattr(tool, name)
+        legacy = method()
+        assert legacy.success == 1 and isinstance(legacy.result, list)
+        connector.reset_mock()
+        first = await trans_to_function_tool(method).on_invoke_tool(None, "{}")
+        assert first["success"] == 1, first
+        page = first["result"]
+        assert len(page["items"]) == 200 and page["has_more"]
+        rid = page["extra"]["snapshot_id"]
+        second = method(snapshot_id=rid, offset=200, page_size=1800)
+        assert second.success == 1, second.error
+        assert len(second.result["items"]) == page["total"] - 200
+        assert not second.result["has_more"]
+        assert getattr(connector, provider).call_count == 1
+        expected = sorted(legacy.result, key=lambda x: (x["type"], x["qualified_name"]) if isinstance(x, dict) else x)
+        combined = page["items"] + second.result["items"]
+        assert combined == [{"name": v} if isinstance(v, str) else v for v in expected]
+        flag = {"include_views": True} if name == "list_tables" else {"include_sys": False}
+        continued = method(snapshot_id=rid, **flag)
+        assert continued.success == 1
+        assert len(continued.result["items"]) == 200
+        flag = {key: not value for key, value in flag.items()}
+        assert method(snapshot_id=rid, **flag).success == 0
+
+    def test_scope_changes_and_invalid_arguments_do_not_query(self, catalog):
+        from datus.tools.func_tool.database import ScopedTablePattern
+
+        tool, connector = catalog
+        assert tool.list_tables(page_size=0).success == 0
+        assert tool.list_tables(offset=1).success == 0
+        connector.get_tables.assert_not_called()
+        page = tool.list_tables(page_size=10).result
+        tool._scoped_patterns = [ScopedTablePattern(raw="only", table="only")]
+        assert tool.list_tables(snapshot_id=page["extra"]["snapshot_id"]).success == 0
+        assert connector.get_tables.call_count == 1
+
+    @pytest.mark.parametrize(
+        "name,provider",
+        [("list_tables", "get_tables"), ("list_databases", "get_databases"), ("list_schemas", "get_schemas")],
+    )
+    def test_returned_page_mutations_do_not_change_memory_snapshot(self, catalog, name, provider):
+        from datus.utils.tool_result_store import ACTIVE_RESULT_STORE
+
+        tool, connector = catalog
+        method = getattr(tool, name)
+        token = ACTIVE_RESULT_STORE.set(None)
+        try:
+            first = method(page_size=1)
+            assert first.success == 1, first.error
+            snapshot_id = first.result["extra"]["snapshot_id"]
+            page = method(snapshot_id=snapshot_id, offset=1, page_size=1)
+            assert page.success == 1, page.error
+            expected = deepcopy(page.result)
+            page.result["items"][0].clear()
+            page.result["extra"]["offset"] = -1
+            reread = method(snapshot_id=snapshot_id, offset=1, page_size=1)
+            assert reread.success == 1, reread.error
+            assert reread.result == expected
+            assert getattr(connector, provider).call_count == 1
+        finally:
+            ACTIVE_RESULT_STORE.reset(token)

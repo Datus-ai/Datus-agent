@@ -10,6 +10,8 @@ chat interactions with markdown output, database/filesystem tool support,
 skills, and permissions. This node is fully independent from GenSQLAgenticNode.
 """
 
+import hashlib
+import json
 from typing import ClassVar, Dict, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
@@ -20,9 +22,11 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
+from datus.tools.func_tool.base import trans_to_function_tool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.lineage_tools import LineageTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
+from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
 from datus.tools.skill_tools.skill_manager import SkillManager
@@ -47,6 +51,14 @@ class ChatAgenticNode(AgenticNode):
 
     DEFAULT_SUBAGENTS = "*"
     result_class = ChatNodeResult
+    DEFAULT_SEMANTIC_TOOLS = (
+        "list_metrics",
+        "get_metric",
+        "get_dataset",
+        "query_metrics",
+        "get_query_metrics_result",
+        "attribution_analyze",
+    )
 
     # Subclasses whose contract is read-only (e.g. artifact ask agents) set this
     # to True so the unified write-capable ``execute_sql`` tool hard-rejects any
@@ -93,6 +105,7 @@ class ChatAgenticNode(AgenticNode):
         # Initialize tool attributes BEFORE calling parent constructor
         self.db_func_tool: Optional[DBFuncTool] = None
         self.context_search_tools: Optional[ContextSearchTools] = None
+        self.semantic_tools: Optional[SemanticTools] = None
         self.degraded_capabilities: Dict[str, str] = {}
         self.date_parsing_tools: Optional[DateParsingTools] = None
         self.lineage_tools: Optional[LineageTools] = None
@@ -161,8 +174,9 @@ class ChatAgenticNode(AgenticNode):
         if not raw:
             return None
         families = set()
-        for pattern in str(raw).split(","):
-            pattern = pattern.strip()
+        patterns = raw.split(",") if isinstance(raw, str) else raw if isinstance(raw, (list, tuple)) else [raw]
+        for pattern in patterns:
+            pattern = str(pattern).strip()
             if not pattern:
                 continue
             families.add(pattern.split(".", 1)[0])
@@ -198,6 +212,10 @@ class ChatAgenticNode(AgenticNode):
             )
         if self._family_enabled(selected, "context_search_tools"):
             self._setup_context_search_tools()
+        # Artifact ask subclasses build semantic tools only through their own
+        # exact whitelist, including when that whitelist is empty.
+        if self.HONOURS_CONFIGURED_TOOLS and self._family_enabled(selected, "semantic_tools"):
+            self._setup_semantic_tools()
         if self._family_enabled(selected, "reference_template_tools"):
             self._setup_reference_template_tools()
         if self._family_enabled(selected, "date_parsing_tools"):
@@ -253,6 +271,41 @@ class ChatAgenticNode(AgenticNode):
             self.context_search_tools = None
             warning = self._record_context_search_degraded(exc)
             logger.warning("Failed to setup context search tools, continuing without: %s", warning)
+
+    def _setup_semantic_tools(self) -> None:
+        """Bind metric reads to this agent's scope and the current turn's DB context."""
+        try:
+            self.semantic_tools = SemanticTools(
+                agent_config=self.agent_config,
+                sub_agent_name=self.get_node_name(),
+                runtime_db_context_provider=self._semantic_runtime_db_context,
+                initialize_runtime=False,
+                enforce_metric_scope=True,
+            )
+        except Exception as exc:
+            self.semantic_tools = None
+            logger.warning("Metric tools unavailable; continuing with other chat capabilities: %s", exc)
+
+    def _available_context_search_tools(self) -> list:
+        if self.context_search_tools is None:
+            return []
+        return self.context_search_tools.available_tools()
+
+    def _available_semantic_tools(self) -> list:
+        if self.semantic_tools is None:
+            return []
+        raw = self.node_config.get("tools")
+        if not raw:
+            return [trans_to_function_tool(getattr(self.semantic_tools, name)) for name in self.DEFAULT_SEMANTIC_TOOLS]
+        patterns = raw.split(",") if isinstance(raw, str) else raw if isinstance(raw, (list, tuple)) else [raw]
+        patterns = {str(pattern).strip() for pattern in patterns}
+        available = self.semantic_tools.available_tools()
+        available.append(trans_to_function_tool(self.semantic_tools.get_query_metrics_result))
+        return [
+            tool
+            for tool in available
+            if patterns & {"semantic_tools", "semantic_tools.*", f"semantic_tools.{tool.name}"}
+        ]
 
     def _setup_reference_template_tools(self):
         """Setup reference-template tools without blocking DB/chat capabilities."""
@@ -342,7 +395,7 @@ class ChatAgenticNode(AgenticNode):
             )
             self.skill_func_tool = SkillFuncTool(
                 manager=self.skill_manager,
-                node_name="chat",
+                node_name=self.get_node_name(),
                 node_class=self.get_node_class_name(),
                 authoring_mode=self.SKILL_AUTHORING_MODE,
             )
@@ -408,10 +461,15 @@ class ChatAgenticNode(AgenticNode):
             return self._family_enabled(selected, family)
 
         self.tools = []
+        self._context_search_tool_names = set()
         if self.db_func_tool and enabled("db_tools"):
             self.tools.extend(self.db_func_tool.available_tools())
         if self.context_search_tools and enabled("context_search_tools"):
-            self.tools.extend(self.context_search_tools.available_tools())
+            context_tools = self._available_context_search_tools()
+            self._context_search_tool_names = {tool.name for tool in context_tools}
+            self.tools.extend(context_tools)
+        if self.semantic_tools and enabled("semantic_tools"):
+            self.tools.extend(self._available_semantic_tools())
         if self.reference_template_tools and enabled("reference_template_tools"):
             self.tools.extend(self.reference_template_tools.available_tools())
         if self.date_parsing_tools and enabled("date_parsing_tools"):
@@ -504,9 +562,12 @@ class ChatAgenticNode(AgenticNode):
         if not self.agent_config:
             return {}
 
-        chat_config = self.agent_config.agentic_nodes.get("chat", {})
-        if isinstance(chat_config, dict) and "permissions" in chat_config:
-            return {"chat": chat_config["permissions"]}
+        # ask_* subclasses inherit Skill setup but authorize their own node,
+        # including aliases, rather than borrowing the main chat node's grants.
+        node_name = self.get_node_name()
+        node_config = self.agent_config.agentic_nodes.get(node_name, {})
+        if isinstance(node_config, dict) and "permissions" in node_config:
+            return {node_name: node_config["permissions"]}
 
         return {}
 
@@ -530,6 +591,39 @@ class ChatAgenticNode(AgenticNode):
             return any(tool.name in exposed_names for tool in tool_instance.available_tools())
         except Exception:
             return False
+
+    def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
+        context_tools = getattr(self, "context_search_tools", None)
+        if context_tools is not None and self._family_enabled(self._selected_tool_families(), "context_search_tools"):
+            candidates = self._available_context_search_tools()
+            available = {tool.name for tool in candidates}
+            previous = getattr(self, "_context_search_tool_names", set())
+            if available != previous:
+                removed = previous - available
+                self.tools = [tool for tool in self.tools if tool.name not in removed]
+                mounted = {tool.name for tool in self.tools}
+                added = [tool for tool in candidates if tool.name not in previous and tool.name not in mounted]
+                self.tools.extend(added)
+                self._context_search_tool_names = available
+                self._tool_transformers_applied = False
+                self._populate_tool_registry()
+                patterns = getattr(self, "proxy_tool_patterns", None)
+                if patterns:
+                    from datus.tools.proxy.proxy_tool import apply_proxy_tools
+
+                    apply_proxy_tools(
+                        self,
+                        patterns,
+                        channel=getattr(self, "_proxy_tool_channel", None),
+                        only_tool_names={tool.name for tool in added},
+                    )
+        # Stabilize lazy mounting and invocation-local restrictions before
+        # fingerprinting the tool surface that controls template rendering.
+        self._ensure_lazy_tools_mounted()
+        self._apply_init_tool_scope()
+        meta = super()._system_prompt_snapshot_meta(prompt_version)
+        meta["tool_names_sha256"] = hashlib.sha256(json.dumps(sorted(self._exposed_tool_names())).encode()).hexdigest()
+        return meta
 
     def _get_system_prompt(
         self,
@@ -557,12 +651,14 @@ class ChatAgenticNode(AgenticNode):
             ),
             has_parsing_tools=self._tool_group_exposed(self.date_parsing_tools, exposed),
             has_platform_doc_tools=self._tool_group_exposed(self._platform_doc_tool, exposed),
-            has_semantic_tools=self._tool_group_exposed(getattr(self, "semantic_tools", None), exposed),
+            has_semantic_tools=any(tool.name in exposed for tool in self._available_semantic_tools()),
             agent_config=self.agent_config,
             workspace_root=self._resolve_workspace_root(),
         )
         context["has_task_tool"] = bool(self.sub_agent_task_tool)
         context["has_ask_user_tool"] = "ask_user" in exposed
+        context["tool_names"] = sorted(exposed)
+        context["has_export_query"] = "export_query" in exposed
         # Web tools (web_search / web_fetch) are NOT advertised in the system
         # prompt: their own tool-schema descriptions document usage, and prompt
         # advertisement can't track per-tool availability (builtin-only vs

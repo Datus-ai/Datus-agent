@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from agents import Tool
 
 from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import parse_dialect
 
@@ -76,6 +77,7 @@ class SemanticDiscoveryTools:
             methods_to_convert.append(self.profile_semantic_model_evidence)
         return [trans_to_function_tool(bound_method) for bound_method in methods_to_convert]
 
+    @tool_contract(access="read", direct_call=True)
     def profile_semantic_model_evidence(
         self,
         sql_queries: Optional[List[str]] = None,

@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -43,6 +44,42 @@ class TestDBFuncToolIntegrationReal:
         finally:
             connector.close()
 
+    @pytest.mark.asyncio
+    async def test_large_catalog_pages_survive_connector_and_tool_recreation(self, tmp_path):
+        from types import SimpleNamespace
+
+        from datus.tools.db_tools.config import SQLiteConfig
+        from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+        from datus.utils.tool_result_store import ACTIVE_RESULT_STORE, ToolResultStore
+
+        path = tmp_path / "catalog.db"
+        with sqlite3.connect(path) as db:
+            db.executescript(";".join(f"CREATE TABLE table_{i:05d} (id INTEGER)" for i in range(2200)))
+        connector = SQLiteConnector(SQLiteConfig(db_path=str(path)))
+        store = ToolResultStore(SimpleNamespace(dir=tmp_path / "session"))
+        token = ACTIVE_RESULT_STORE.set(store)
+        try:
+            tool = DBFuncTool(connector)
+            first = await trans_to_function_tool(tool.list_tables).on_invoke_tool(None, "{}")
+            assert first["success"] == 1, first
+            page = first["result"]
+            assert page["total"] == 2200 and len(page["items"]) == 200
+            rid = page["extra"]["snapshot_id"]
+            # A newly constructed tool reads the same session's snapshot even
+            # after the source database has changed and its connector is closed.
+            with sqlite3.connect(path) as db:
+                db.execute("DROP TABLE table_02199")
+            restored_tool = DBFuncTool(connector)
+            connector.close()
+            tail = restored_tool.list_tables(snapshot_id=rid, offset=200, page_size=3000)
+            assert tail.success == 1, tail.error
+            assert tail.result["total"] == 2200 and not tail.result["has_more"]
+            names = [row["qualified_name"].split(".")[-1] for row in page["items"] + tail.result["items"]]
+            assert names == [f"table_{i:05d}" for i in range(2200)]
+        finally:
+            ACTIVE_RESULT_STORE.reset(token)
+            connector.close()
+
     @pytest.fixture
     def ssb_sqlite_config(self):
         """Load SSB SQLite datasource configuration."""
@@ -58,6 +95,27 @@ class TestDBFuncToolIntegrationReal:
         return db_function_tool_instance_multi(ssb_sqlite_config)
 
     # ==================== SQLite Tests ====================
+
+    @pytest.mark.asyncio
+    async def test_datasource_identity_is_invocable_without_private_connection_fields(self, ssb_db_tool):
+        """The real function-tool adapter exposes only configured public coordinates."""
+        tool = next(tool for tool in ssb_db_tool.available_tools() if tool.name == "get_datasource_identity")
+        result = await tool.on_invoke_tool(None, "{}")
+        assert result["success"] == 1, result
+        assert result["result"]["datasource"] == ssb_db_tool._default_datasource
+        assert result["result"]["identity"]["type"] == DBType.SQLITE
+        assert set(result["result"]["identity"]) <= {
+            "type",
+            "host",
+            "port",
+            "database",
+            "catalog",
+            "schema",
+            "account",
+            "path",
+        }
+        assert result["result"]["identity_status"] == "resolved"
+        assert Path(result["result"]["identity"]["path"]).is_absolute()
 
     def test_sqlite_list_tables_returns_actual_tables(self, ssb_db_tool):
         """Test that list_tables returns actual tables from SSB.db."""
@@ -513,8 +571,7 @@ class TestAllToolsNameContract:
             assert method not in names, f"{method} is not an agent tool and must be excluded"
 
     def test_all_tools_name_is_exactly_the_real_tool_surface(self):
-        """The full db_tools surface is exactly the decorated tools plus the
-        gen_job-mounted tools — no more, no less. Pins the saas editor catalog."""
+        """Pin the SaaS catalog, including configured identity and gen_job tools."""
         assert set(DBFuncTool.all_tools_name()) == {
             # @mcp_tool()-decorated
             "search_table",
@@ -527,6 +584,10 @@ class TestAllToolsNameContract:
             "plan_datasource",
             "import_database_file",
             "check_datasource_quality",
+            # mounted when authoritative datasource configuration is available
+            "get_datasource_identity",
+            # Agent-only file export
+            "export_query",
             # mounted directly by gen_job
             "transfer_query_result",
             "get_migration_capabilities",
@@ -644,3 +705,62 @@ class TestSqlReadOnlyDeploymentAgainstRealSqlite:
 
         assert tool.execute_sql("INSERT INTO t (id, name) VALUES (2, 'added')").success == 1
         assert self._rows(db_path) == [(1, "original"), (2, "added")]
+
+
+@pytest.mark.acceptance
+def test_mixed_datasource_scopes_enforce_real_sqlite_and_duckdb_reads(tmp_path, monkeypatch):
+    """One tool routes two dialects while table scopes remain source-local."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    import duckdb
+
+    from datus.configuration.agent_config import DbConfig
+    from datus.schemas.agent_models import SubAgentConfig
+    from datus.tools.db_tools.db_manager import DBManager
+
+    sqlite_path = tmp_path / "sqlite_source.db"
+    duck_path = tmp_path / "duck_source.duckdb"
+    with sqlite3.connect(sqlite_path) as connection:
+        connection.execute("CREATE TABLE allowed(value TEXT)")
+        connection.execute("INSERT INTO allowed VALUES ('sqlite')")
+        connection.execute("CREATE TABLE secret(value TEXT)")
+    with duckdb.connect(str(duck_path)) as connection:
+        connection.execute("CREATE TABLE allowed(value VARCHAR)")
+        connection.execute("INSERT INTO allowed VALUES ('duckdb')")
+        connection.execute("CREATE TABLE secret(value VARCHAR)")
+    configs = {
+        "sqlite": DbConfig(type="sqlite", uri=str(sqlite_path)),
+        "duck": DbConfig(type="duckdb", uri=str(duck_path)),
+    }
+    node = SubAgentConfig(
+        scoped_context={
+            "datasource": "sqlite",
+            "tables": "sqlite_source.allowed",
+            "tables_by_datasource": {"sqlite": "sqlite_source.allowed", "duck": "duck_source.main.allowed"},
+        }
+    )
+    config = SimpleNamespace(
+        current_datasource="sqlite",
+        sql_read_only=True,
+        project_name="",
+        current_db_configs=lambda: configs,
+        active_plugin_names=lambda: set(),
+        sub_agent_config=lambda _: node,
+    )
+    monkeypatch.setattr("datus.tools.func_tool.database.metadata_fts_enabled", lambda _: False)
+    monkeypatch.setattr("datus.tools.func_tool.database.SchemaWithValueRAG", MagicMock())
+    monkeypatch.setattr("datus.tools.func_tool.database.SemanticDatasetRAG", MagicMock())
+    manager = DBManager(configs)
+    try:
+        tool = DBFuncTool(manager, agent_config=config, sub_agent_name="ask_dashboard", read_only=True)
+        for name, expected in [("sqlite", "sqlite"), ("duck", "duckdb")]:
+            result = tool.read_query("SELECT value FROM allowed", datasource=name, compress=False)
+            assert result.success == 1, result.error
+            assert result.result == [{"value": expected}]
+            denied = tool.read_query("SELECT value FROM secret", datasource=name, compress=False)
+            assert denied.success == 0
+            assert "outside scoped context" in denied.error
+    finally:
+        for name in configs:
+            manager.get_conn(name).close()

@@ -130,6 +130,15 @@ When generated SQL is 50 lines or more:
 2. Validate by calling `execute_sql` with the file path.
 3. Put the file path in the final `sql` field.
 For shorter SQL, return the SQL text inline.
+
+{% if "export_query" in tools %}
+For complete result files, call `export_query` with a SQL file path and a project
+`.csv`/`.parquet` output path. Optional `datasource` and `database` select the
+connection as with `execute_sql`; otherwise the current connection is used. It
+returns a file reference and counts. Keep large
+datasets in files; return only counts, status and paths. Store result files under
+`exports/<task>/`. Downloads follow Explorer's existing limits.
+{% endif %}
 {% endif %}
 
 The current datasource and its SQL dialect for THIS turn are given in the `<system_reminder>` block of the user message. Unless the user explicitly requests a different datasource, use ONLY that datasource for all operations and generate SQL for that dialect.

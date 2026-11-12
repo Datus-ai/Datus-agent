@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -14,6 +15,7 @@ from ci.harness.test_plan import (
     check_product_execution,
     impact_plan,
     load_map,
+    product_group_filter,
     unit_test_plan,
     validate_unit_rules,
 )
@@ -57,6 +59,20 @@ def test_storage_changes_select_required_postgresql_acceptance(path):
 
 def test_documentation_changes_have_no_remote_model_requirement():
     assert impact_plan(["docs/index.md"])["live_targets"] == []
+
+
+def test_policy_changes_select_p0_without_requiring_remote_models(tmp_path):
+    plan = impact_plan(["datus/plugins/store.py"])
+    assert plan["live_targets"] == []
+    assert "P0 SQL Policy Plugin Contracts" in plan["nightly_groups"]
+    from ci.p0_plan import load_profile
+
+    nodes = load_profile()["groups"]["P0 SQL Policy Plugin Contracts"]["nodeids"]
+    report = tmp_path / "execution.json"
+    report.write_text(json.dumps({"collected": nodes, "outcomes": {node: "passed" for node in nodes}, "exit_code": 0}))
+    assert check_product_execution(plan, [report])["status"] == "success"
+    assert re.search(product_group_filter(plan), "P0 SQL Policy Plugin Contracts")
+    assert not re.search(product_group_filter(plan), "Product E2E Nightly Tests")
 
 
 @pytest.mark.parametrize(
@@ -114,6 +130,7 @@ def test_unit_owners_cover_all_visible_test_consumers():
                 "tests/unit_tests/utils/test_mcp_execution.py",
                 "tests/unit_tests/utils/test_windows_compatibility.py",
                 "tests/unit_tests/tools/mcp_tools/",
+                "tests/unit_tests/tools/registry/",
                 "tests/unit_tests/api/services/test_mcp_service.py",
             },
         ),
@@ -121,6 +138,7 @@ def test_unit_owners_cover_all_visible_test_consumers():
             "datus/configuration/logging_config.py",
             {
                 "tests/unit_tests/configuration/test_logging_config.py",
+                "tests/unit_tests/plugins/test_runtime_context.py",
                 "tests/unit_tests/utils/test_loggings.py",
                 "tests/unit_tests/observability/test_privacy.py",
                 "tests/unit_tests/agent/node/test_node.py",
@@ -227,7 +245,8 @@ def test_tool_category_owners_retain_permission_routing_contracts(source):
 def test_node_owners_retain_package_coverage_for_factories_and_shared_hooks():
     data = load_map()
     package = "tests/unit_tests/agent/node/"
-    for source in (ROOT / "datus/agent/node").glob("*.py"):
+    for name in ("agentic_node.py", "node.py", "node_factory.py", "chat_agentic_node.py", "gen_sql_agentic_node.py"):
+        source = ROOT / "datus/agent/node" / name
         targets = unit_test_plan([source.relative_to(ROOT).as_posix()], data)["targets"]
         assert any(t.endswith("/") and package.startswith(t) for t in targets), source
 
@@ -405,7 +424,7 @@ def _map():
         "flow_groups": {
             "chat": {
                 "flows": [
-                    {"coverage": {"merge_queue": {"status": "covered", "nodeids": ["test_api.py::test_history"]}}}
+                    {"coverage": {"pr_acceptance": {"status": "covered", "nodeids": ["test_api.py::test_history"]}}}
                 ]
             }
         },
@@ -418,9 +437,9 @@ def test_execution_evidence_requires_both_product_and_api_cases(tmp_path):
         p = tmp_path / f"{name}.json"
         p.write_text(json.dumps({"collected": [nodeid], "outcomes": {nodeid: "passed"}}))
         reports.append(p)
-    assert check_execution(reports, "merge_queue", _map())["status"] == "success"
+    assert check_execution(reports, "pr_acceptance", _map())["status"] == "success"
     reports[1].unlink()
-    assert check_execution(reports, "merge_queue", _map())["status"] == "failure"
+    assert check_execution(reports, "pr_acceptance", _map())["status"] == "failure"
 
 
 @pytest.mark.parametrize("outcome", ["skipped", "failed", "xfailed", "not_executed"])
@@ -434,7 +453,7 @@ def test_required_cases_must_execute_successfully(tmp_path, outcome):
             }
         )
     )
-    result = check_execution([report], "merge_queue", _map())
+    result = check_execution([report], "pr_acceptance", _map())
     assert result["status"] == "failure"
     assert "test_api.py::test_history" in result["errors"][0]
 

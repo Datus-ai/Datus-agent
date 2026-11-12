@@ -13,23 +13,28 @@ import pytest
 from datus.cli.service_client import READ_METHODS, ServiceClient, ServiceClientRegistry
 from datus.cli.service_commands import ServiceCommands
 from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.registry.contracts import tool_contract
 
 
 class _BiToolStub:
+    @tool_contract(access="read", direct_call=False, category="bi_tools")
     def list_dashboards(self, search: str = "") -> FuncToolResult:
         """List dashboards (read)."""
         return FuncToolResult(result=[{"id": 1, "search": search}])
 
+    @tool_contract(access="read", direct_call=False, category="bi_tools")
     def get_dashboard(self, dashboard_id: str) -> FuncToolResult:
         """Get one dashboard by id."""
         if not dashboard_id:
             return FuncToolResult(success=0, error="dashboard_id required")
         return FuncToolResult(result={"id": dashboard_id})
 
+    @tool_contract(access="read", direct_call=False, category="bi_tools")
     def get_chart_data(self, chart_id: str, dashboard_id: str = "", limit: int = 0) -> FuncToolResult:
         """Get chart data with optional limit."""
         return FuncToolResult(result={"chart_id": chart_id, "limit": limit, "dashboard_id": dashboard_id})
 
+    @tool_contract(access="restricted", direct_call=False, category="bi_tools")
     def create_dashboard(self, title: str) -> FuncToolResult:
         """Write method — should NOT be dispatchable."""
         return FuncToolResult(result={"created": title})

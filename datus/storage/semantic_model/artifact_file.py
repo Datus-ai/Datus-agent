@@ -37,8 +37,8 @@ def _thread_mutation_lock(target_path: Path) -> Iterator[None]:
 
     One registry for every writer, deliberately. The agent framework dispatches tool calls with
     ``asyncio.gather``, so two edits of the same file can run at once, and
-    ``MetricFilesystemFuncTool`` inherits the generic ``edit_file`` from ``FilesystemFuncTool`` -
-    a second registry would leave those two paths free to interleave on the same file.
+    semantic-model tools and generic ``FilesystemFuncTool`` can target the same file.
+    A second registry would leave those writer paths free to interleave.
     """
 
     target_path = target_path.resolve(strict=False)

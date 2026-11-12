@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, List, Optional
 from agents import Tool
 
 from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -111,6 +112,7 @@ class BIFuncTool:
         return self._dash_cfg
 
     @property
+    @tool_contract(access="restricted", direct_call=False)
     def adapter(self) -> Any:
         """Lazily construct the underlying BI adapter on first access.
 
@@ -184,12 +186,14 @@ class BIFuncTool:
     # ------------------------------------------------------------------ #
 
     @property
+    @tool_contract(access="restricted", direct_call=False)
     def serving_dataset_db(self) -> Optional["DatasetDbConfig"]:
         """The thin DatasetDbConfig record (datasource_ref + bi_database_name)."""
         dash_cfg = self._resolved_dash_cfg
         return dash_cfg.dataset_db if dash_cfg else None
 
     @property
+    @tool_contract(access="restricted", direct_call=False)
     def serving_db_config(self) -> Optional["DbConfig"]:
         """Resolve ``dataset_db.datasource_ref`` against
         ``agent_config.services.datasources`` and return the ``DbConfig``.
@@ -209,6 +213,7 @@ class BIFuncTool:
     # Read operations (available on all adapters)
     # ------------------------------------------------------------------ #
 
+    @tool_contract(access="read", direct_call=False)
     def list_dashboards(self, search: str = "", limit: int = 50, offset: int = 0) -> FuncToolResult:
         """List dashboards in the BI platform. Optionally filter by search keyword.
 
@@ -232,6 +237,7 @@ class BIFuncTool:
             logger.warning(f"list_dashboards failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
+    @tool_contract(access="read", direct_call=False)
     def get_dashboard(self, dashboard_id: str) -> FuncToolResult:
         """Get detailed information about a specific dashboard by its ID."""
         try:
@@ -243,6 +249,7 @@ class BIFuncTool:
             logger.warning(f"get_dashboard failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
+    @tool_contract(access="read", direct_call=False)
     def list_charts(self, dashboard_id: str, limit: int = 50, offset: int = 0) -> FuncToolResult:
         """List all charts/panels in a dashboard.
 
@@ -255,6 +262,7 @@ class BIFuncTool:
             logger.warning(f"list_charts failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
+    @tool_contract(access="read", direct_call=False)
     def get_chart(self, chart_id: str, dashboard_id: Optional[str] = "") -> FuncToolResult:
         """Get detailed information about a specific chart or panel by its ID.
 
@@ -271,6 +279,7 @@ class BIFuncTool:
             logger.warning(f"get_chart failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
+    @tool_contract(access="read", direct_call=False)
     def get_chart_data(self, chart_id: str, dashboard_id: Optional[str] = "", limit: int = 0) -> FuncToolResult:
         """Get backend query results for a specific chart.
 
@@ -304,6 +313,7 @@ class BIFuncTool:
             logger.warning(f"get_chart_data failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
+    @tool_contract(access="read", direct_call=False)
     def list_datasets(self, dashboard_id: str = "", limit: int = 50, offset: int = 0) -> FuncToolResult:
         """List datasets available in the BI platform.
 
@@ -350,6 +360,7 @@ class BIFuncTool:
     # Dashboard write operations (DashboardWriteMixin)
     # ------------------------------------------------------------------ #
 
+    @tool_contract(access="restricted", direct_call=False)
     def create_dashboard(self, title: str, description: str = "") -> FuncToolResult:
         """Create a new empty dashboard with the given title."""
         try:
@@ -364,6 +375,7 @@ class BIFuncTool:
             logger.warning(f"create_dashboard failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
+    @tool_contract(access="restricted", direct_call=False)
     def update_dashboard(self, dashboard_id: str, title: str = "", description: str = "") -> FuncToolResult:
         """Update an existing dashboard's title or description."""
         try:
@@ -384,6 +396,7 @@ class BIFuncTool:
             logger.warning(f"update_dashboard failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
+    @tool_contract(access="restricted", direct_call=False)
     def delete_dashboard(self, dashboard_id: str) -> FuncToolResult:
         """Delete a dashboard by its ID."""
         try:
@@ -397,6 +410,7 @@ class BIFuncTool:
     # Chart write operations (ChartWriteMixin)
     # ------------------------------------------------------------------ #
 
+    @tool_contract(access="restricted", direct_call=False)
     def create_chart(
         self,
         chart_type: str,
@@ -456,13 +470,14 @@ class BIFuncTool:
                 if ds_uid:
                     extra["datasource_uid"] = ds_uid
 
+            dims_list, axis = self._chart_grouping(chart_type, dims_list, x_axis or None)
             spec = ChartSpec(
                 chart_type=chart_type,
                 title=title,
                 description=description,
                 dataset_id=ds_id,
                 sql=sql or None,
-                x_axis=x_axis or None,
+                x_axis=axis,
                 metrics=metrics_list,
                 dimensions=dims_list,
                 extra=extra,
@@ -475,6 +490,7 @@ class BIFuncTool:
             logger.warning(f"create_chart failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
+    @tool_contract(access="restricted", direct_call=False)
     def update_chart(
         self,
         chart_id: str,
@@ -484,8 +500,12 @@ class BIFuncTool:
         metrics: str = "",
         x_axis: str = "",
         description: str = "",
+        dimensions: Optional[str] = None,
     ) -> FuncToolResult:
-        """Update an existing chart's type, SQL, metrics, or title."""
+        """Update a chart. Omit dimensions or pass null to preserve grouping; use an empty string to clear it.
+
+        For Superset tables, dimensions contains groupby columns; x_axis is not used.
+        """
         try:
             from datus_bi_core.models import ChartSpec
 
@@ -493,13 +513,17 @@ class BIFuncTool:
             existing = self.adapter.get_chart(chart_id)
             if existing is None:
                 return FuncToolResult(success=0, error=f"Chart {chart_id} not found")
+            effective_type = chart_type or existing.chart_type
+            dims = [d.strip() for d in dimensions.split(",") if d.strip()] if dimensions is not None else None
+            dims, axis = self._chart_grouping(effective_type, dims, x_axis or None)
             spec = ChartSpec(
-                chart_type=chart_type or existing.chart_type,
+                chart_type=effective_type,
                 title=title or existing.name,
                 description=description or getattr(existing, "description", "") or "",
                 sql=sql or getattr(existing, "sql", None),
-                x_axis=x_axis or getattr(existing, "x_axis", None),
-                metrics=metrics_list or getattr(existing, "metrics", None),
+                x_axis=axis,
+                metrics=metrics_list,
+                dimensions=dims,
             )
             result = self.adapter.update_chart(chart_id, spec)
             payload = result.model_dump()
@@ -509,6 +533,7 @@ class BIFuncTool:
             logger.warning(f"update_chart failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
+    @tool_contract(access="restricted", direct_call=False)
     def add_chart_to_dashboard(self, chart_id: str, dashboard_id: str) -> FuncToolResult:
         """Add an existing chart to a dashboard."""
         try:
@@ -528,11 +553,15 @@ class BIFuncTool:
             logger.warning(f"add_chart_to_dashboard failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
+    @tool_contract(access="restricted", direct_call=False)
     def delete_chart(self, chart_id: str) -> FuncToolResult:
         """Delete a chart by its ID."""
         try:
-            success = self.adapter.delete_chart(chart_id)
-            return FuncToolResult(result={"deleted": success, "chart_id": chart_id})
+            success = bool(self.adapter.delete_chart(chart_id))
+            payload = {"deleted": success, "chart_id": chart_id}
+            if success:
+                payload["deleted_deliverable"] = self._build_bi_target("chart", {"id": chart_id})
+            return FuncToolResult(result=payload)
         except Exception as exc:
             logger.warning(f"delete_chart failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
@@ -541,6 +570,7 @@ class BIFuncTool:
     # Dataset write operations (DatasetWriteMixin)
     # ------------------------------------------------------------------ #
 
+    @tool_contract(access="restricted", direct_call=False)
     def create_dataset(self, name: str, database_id: str, sql: str = "", description: str = "") -> FuncToolResult:
         """
         Create a dataset in the BI platform.
@@ -571,6 +601,7 @@ class BIFuncTool:
             logger.warning(f"create_dataset failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
+    @tool_contract(access="read", direct_call=False)
     def list_bi_databases(self) -> FuncToolResult:
         """List available database connections in the BI platform. Call this before create_dataset."""
         try:
@@ -580,6 +611,7 @@ class BIFuncTool:
             logger.warning(f"list_bi_databases failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
+    @tool_contract(access="restricted", direct_call=False)
     def delete_dataset(self, dataset_id: str) -> FuncToolResult:
         """Delete a dataset by its ID."""
         try:
@@ -589,6 +621,7 @@ class BIFuncTool:
             logger.warning(f"delete_dataset failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
+    @tool_contract(access="read", direct_call=False)
     def get_bi_serving_target(self) -> FuncToolResult:
         """Expose the BI serving DB's identity for orchestrator hand-off.
 
@@ -609,6 +642,7 @@ class BIFuncTool:
             }
         )
 
+    @tool_contract(access="read", direct_call=False)
     def get_dataset(self, dataset_id: str, dashboard_id: str = "") -> FuncToolResult:
         """Fetch a single dataset's metadata. Read-only; used by ValidationHook's
         Layer A ``dataset_exists`` check."""
@@ -626,6 +660,20 @@ class BIFuncTool:
     # ------------------------------------------------------------------ #
     # DeliverableTarget self-reporting
     # ------------------------------------------------------------------ #
+
+    def _chart_grouping(
+        self, chart_type: str, dimensions: Optional[List[str]], x_axis: Optional[str]
+    ) -> tuple[Optional[List[str]], Optional[str]]:
+        """Superset tables group by dimensions and must clear a previously saved axis."""
+        adapter_type = getattr(self._resolved_dash_cfg, "adapter_type", "")
+        if not isinstance(adapter_type, str) or not adapter_type:
+            adapter_type = self._resolved_platform()
+        if adapter_type == "superset" and chart_type == "table":
+            if x_axis:
+                dimensions = list(dict.fromkeys([*(dimensions or []), x_axis]))
+            # None means 'preserve saved axis' to the adapter; empty explicitly clears it.
+            return dimensions, ""
+        return dimensions, x_axis
 
     def _build_bi_target(
         self,

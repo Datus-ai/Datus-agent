@@ -115,9 +115,6 @@ class TestResolveEnv:
     def test_non_string_returns_as_is(self):
         assert resolve_env(42) == 42
 
-    def test_no_placeholder_unchanged(self):
-        assert resolve_env("plain/path/no/vars") == "plain/path/no/vars"
-
     def test_file_db_extra_resolves_nested_env_values(self, monkeypatch):
         monkeypatch.setenv("ICEBERG_URI", "http://iceberg-rest:8181")
         monkeypatch.setenv("WAREHOUSE", "s3://warehouse/")

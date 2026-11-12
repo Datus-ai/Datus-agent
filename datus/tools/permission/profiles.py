@@ -55,12 +55,22 @@ from datus.tools.permission.permission_config import (
     PermissionRule,
     SqlStatementRules,
 )
+from datus.tools.registry.capabilities import TOOL_CAPABILITIES
 
 PROFILE_NAMES: tuple[str, ...] = ("normal", "auto", "dangerous")
 
 
 def _rule(tool: str, pattern: str, permission: PermissionLevel) -> PermissionRule:
     return PermissionRule(tool=tool, pattern=pattern, permission=permission)
+
+
+def _reader_rules() -> list[PermissionRule]:
+    """Derive default read grants from declarations; operator overrides still apply last."""
+    return [
+        _rule(*identity.split("."), PermissionLevel.ALLOW)
+        for identity, capability in sorted(TOOL_CAPABILITIES.items())
+        if capability.access == "read"
+    ]
 
 
 # --- Normal ------------------------------------------------------------------
@@ -72,12 +82,10 @@ _NORMAL_RULES = [
     # static SQL lineage read. ``upsert_lineage`` / ``delete_lineage`` write the project file
     # lineage/lineage.json (deleting sources, saving inline SQL), so they fall through to ASK.
     _rule("lineage_tools", "query_lineage", PermissionLevel.ALLOW),
-    _rule("tool_result_tools", "read_tool_result", PermissionLevel.ALLOW),
-    # db read. ``execute_sql`` is the unified SQL entry point; its gating is
-    # handled dynamically per statement class in
+    # SQL execution and exports use dynamic statement-class gating in
     # ``PermissionHooks._handle_sql_permission`` driven by each profile's
     # ``sql_statements`` ruleset (read auto-allow, write/destructive per
-    # profile), so it intentionally has no static rule here.
+    # profile), so neither tool has a static ALLOW rule here.
     _rule("db_tools", "verify_sql", PermissionLevel.ALLOW),
     _rule("db_tools", "list_*", PermissionLevel.ALLOW),
     _rule("db_tools", "search_*", PermissionLevel.ALLOW),
@@ -119,8 +127,10 @@ _NORMAL_RULES = [
     _rule("filesystem_tools", "grep", PermissionLevel.ALLOW),
     # Object-scoped deletes remain individually confirmable even in auto;
     # unlike a general file delete they are exposed directly to authoring LLMs.
-    _rule("filesystem_tools", "delete_osi_metrics", PermissionLevel.ASK),
-    _rule("filesystem_tools", "delete_osi_datasets", PermissionLevel.ASK),
+    _rule("semantic_tools", "upsert_osi_metrics", PermissionLevel.ASK),
+    _rule("semantic_tools", "upsert_osi_datasets", PermissionLevel.ASK),
+    _rule("semantic_tools", "delete_osi_metrics", PermissionLevel.ASK),
+    _rule("semantic_tools", "delete_osi_datasets", PermissionLevel.ASK),
     # persistent memory: ALLOW. add_memory/edit_memory only touch a single
     # hidden, 2000-byte-capped MEMORY.md with no external reach — gating
     # benign self-notes behind a prompt would fire on routine "remember this"
@@ -293,7 +303,7 @@ _AUTO_BASH_ALLOW = _NORMAL_BASH_ALLOW + [
 
 NORMAL = PermissionConfig(
     default_permission=PermissionLevel.ASK,
-    rules=_NORMAL_RULES,
+    rules=_NORMAL_RULES + _reader_rules(),
     bash_commands=BashCommandRules(allow=_NORMAL_BASH_ALLOW),
     # execute_sql statement classes: reads auto-allow, everything else ASK
     # (the SqlStatementRules defaults are exactly normal's posture).
@@ -316,8 +326,8 @@ _AUTO_EXTRA_RULES = [
     _rule("filesystem_tools", "write_file", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "edit_file", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "delete_file", PermissionLevel.ALLOW),
-    _rule("filesystem_tools", "upsert_osi_metrics", PermissionLevel.ALLOW),
-    _rule("filesystem_tools", "upsert_osi_datasets", PermissionLevel.ALLOW),
+    _rule("semantic_tools", "upsert_osi_metrics", PermissionLevel.ALLOW),
+    _rule("semantic_tools", "upsert_osi_datasets", PermissionLevel.ALLOW),
     # lineage analysis is a workspace write that re-derives sources from files; removing saved
     # sources stays individually confirmable, like the object-scoped OSI deletes.
     _rule("lineage_tools", "upsert_lineage", PermissionLevel.ALLOW),
@@ -350,7 +360,7 @@ _AUTO_EXTRA_RULES = [
 
 AUTO = PermissionConfig(
     default_permission=PermissionLevel.ASK,
-    rules=_NORMAL_RULES + _AUTO_EXTRA_RULES,
+    rules=_NORMAL_RULES + _AUTO_EXTRA_RULES + _reader_rules(),
     bash_commands=BashCommandRules(allow=_AUTO_BASH_ALLOW),
     # execute_sql statement classes: reads AND non-destructive writes (INSERT/
     # CREATE/benign DDL/USE) auto-allow; destructive statements (UPDATE/DELETE/

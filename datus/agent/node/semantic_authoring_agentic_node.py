@@ -12,9 +12,12 @@ from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
-from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.generation_tools import GenerationTools
+from datus.tools.func_tool.semantic_model_editing_tools import SemanticModelEditingTools
+from datus.tools.func_tool.semantic_model_filesystem_tools import SemanticModelFilesystemTools
+from datus.tools.func_tool.semantic_model_workspace import SemanticModelWorkspace
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -82,7 +85,9 @@ class SemanticAuthoringAgenticNode(AgenticNode):
 
         # Setup tools
         self.db_func_tool = None
-        self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
+        self.filesystem_func_tool: Optional[SemanticModelFilesystemTools] = None
+        self.semantic_model_workspace: Optional[SemanticModelWorkspace] = None
+        self.semantic_model_editing_tools: Optional[SemanticModelEditingTools] = None
         self.generation_tools: Optional[GenerationTools] = None
         from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetState
 
@@ -115,9 +120,9 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             finally:
                 result = getattr(self, "result", None)
                 if result is not None and not getattr(result, "success", False):
-                    filesystem_tool = getattr(self, "filesystem_func_tool", None)
+                    workspace = getattr(self, "semantic_model_workspace", None)
                     try:
-                        if filesystem_tool is not None and filesystem_tool.rollback_failed_authoring():
+                        if workspace is not None and workspace.rollback_failed_authoring():
                             logger.info("Rolled back authored artifact after terminal generation failure")
                     except Exception:
                         logger.exception("Failed to roll back authored artifact after terminal generation failure")
@@ -135,10 +140,10 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         """Keep semantic authoring on its narrow filesystem surface."""
 
     def _make_filesystem_tool(self, **kwargs):
+        """Build restricted model-file access with request-local authoring state."""
         from datus.configuration.inherited_memory_overrides import get_inherited_memory
-        from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
 
-        filesystem_tool_cls = kwargs.pop("filesystem_tool_cls", MetricFilesystemFuncTool)
+        filesystem_tool_cls = kwargs.pop("filesystem_tool_cls", SemanticModelFilesystemTools)
 
         root_path = kwargs.pop("root_path", None) or self._resolve_workspace_root()
         datus_home = kwargs.pop("datus_home", None)
@@ -190,7 +195,10 @@ class SemanticAuthoringAgenticNode(AgenticNode):
 
         reference_dir = None
         if skill_name == "dosi-semantic-authoring":
-            cache_dir = Path(self.agent_config.path_manager.session_data_dir(self.session_id)) / "semantic_authoring"
+            data_dir = self._resolve_session_data_dir()
+            if not data_dir:
+                raise DatusException(ErrorCode.STORAGE_FAILED, message="Session data directory is unavailable")
+            cache_dir = Path(data_dir) / "semantic_authoring"
             reference_dir = prepare_authoring_references(cache_dir)
 
         return render_required_authoring_skill(

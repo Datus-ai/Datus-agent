@@ -27,6 +27,7 @@ from typing import ClassVar, Optional
 
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+from datus.tools.registry.contracts import tool_contract
 
 # Extensions allowed under ``<root>/<id>/render/``. JSON / data files are
 # intentionally excluded — those belong under ``queries/`` and only the
@@ -131,6 +132,7 @@ class ArtifactFilesystemFuncTool(FilesystemFuncTool):
 
     # ── Overrides ────────────────────────────────────────────────────────
 
+    @tool_contract(access="write", direct_call=False)
     def write_file(self, path: str, content: str, file_type: str = "") -> FuncToolResult:  # type: ignore[override]
         if self._is_queries_path(path):
             return FuncToolResult(success=0, error=self._queries_write_reject())
@@ -140,6 +142,7 @@ class ArtifactFilesystemFuncTool(FilesystemFuncTool):
                 return self._render_extension_reject(path)
         return super().write_file(path, content, file_type)
 
+    @tool_contract(access="write", direct_call=False)
     def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:  # type: ignore[override]
         if self._is_queries_path(path):
             return FuncToolResult(success=0, error=self._queries_edit_reject())
@@ -149,6 +152,7 @@ class ArtifactFilesystemFuncTool(FilesystemFuncTool):
                 return self._render_extension_reject(path)
         return super().edit_file(path, old_string, new_string)
 
+    @tool_contract(access="write", direct_call=False)
     def delete_file(self, path: str) -> FuncToolResult:  # type: ignore[override]
         if self._is_queries_path(path):
             return FuncToolResult(success=0, error=self._queries_delete_reject())

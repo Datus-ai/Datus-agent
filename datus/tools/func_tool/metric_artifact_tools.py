@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 from pathlib import Path
@@ -17,6 +16,7 @@ from datus.schemas.gen_visual_dashboard_models import QueryTemplateMetaFile, Tem
 from datus.schemas.gen_visual_report_models import ColumnSemanticType, QueryColumnMeta, QueryResultFile
 from datus.schemas.metric_artifact_query import MetricQueryFile, MetricQueryRequest, ParamRef
 from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
@@ -121,17 +121,10 @@ def execute_metric_artifact_query(
     model_path = Path(binding["model_path"]).resolve()
     # Absolute Studio paths are never persisted or accepted from a viewer.
     relative_path = model_path.relative_to(project_root.resolve()).as_posix()
-    if saved and (
-        saved.model_path != relative_path
-        or saved.model_revision != binding["model_revision"]
-        or saved.datasource != binding["datasource"]
-    ):
-        raise ValueError(
-            "METRIC_MODEL_CHANGED: saved semantic model or datasource differs; regenerate or republish the query"
-        )
     if saved:
-        # Published execution uses the pinned model and captured identity, not
-        # mutable subject-index availability. Compilation validates dimensions.
+        # The caller selects the project runtime for previews or a frozen
+        # runtime for published queries. Reuse the captured subject identity;
+        # the selected compiler validates the query's dimensions and metric.
         detail = saved.metric_detail
     else:
         detail_result = semantic_tools.metric_record(name=query.metric.name, path=query.metric.path)
@@ -196,8 +189,6 @@ def execute_metric_artifact_query(
     sql = (compiled.metadata or {}).get("sql")
     if not isinstance(sql, str) or not sql.strip():
         raise ValueError("metric engine returned no compiled SQL")
-    if hashlib.sha256(model_path.read_bytes()).hexdigest() != binding["model_revision"]:
-        raise ValueError("semantic model changed while compiling; retry the metric query")
     datasource = binding["datasource"]
     config = getattr(runtime, "config", None)
     db_config = getattr(config, "db_config", None)
@@ -365,6 +356,7 @@ class MetricArtifactToolsMixin:
             return f"Invalid saved metric query: {exc}"
         return None
 
+    @tool_contract(access="restricted", direct_call=False)
     def save_metric_query(
         self, name: str, query: dict[str, Any], goal: str, hypothesis: str, caveats: str = ""
     ) -> FuncToolResult:
@@ -377,6 +369,7 @@ class MetricArtifactToolsMixin:
         """
         return self._save_metric_artifact(name, query, goal, hypothesis, caveats, None, None)
 
+    @tool_contract(access="restricted", direct_call=False)
     def save_metric_query_template(
         self,
         name: str,
@@ -396,8 +389,9 @@ class MetricArtifactToolsMixin:
         return self._save_metric_artifact(name, query, goal, hypothesis, caveats, params, sample_params)
 
     def _save_metric_artifact(self, name, query, goal, hypothesis, caveats, params, sample_params) -> FuncToolResult:
+        """Persist a metric recipe and query result, then refresh the manifest timestamp."""
         from datus.api.services.dashboard_service import _validate_params
-        from datus.tools.func_tool._visual_artifact_helpers import upsert_manifest_after_save
+        from datus.tools.func_tool._visual_artifact_helpers import touch_manifest_after_save
         from datus.tools.func_tool.report_artifact_tools import _MAX_QUERY_BYTES, _atomic_write_text
 
         kind = "dashboard" if params is not None else "report"
@@ -480,9 +474,7 @@ class MetricArtifactToolsMixin:
             for suffix in (".sql", ".sql.j2"):
                 (self.queries_dir / f"{name}{suffix}").unlink(missing_ok=True)
             artifact_dir = self.dashboard_dir if kind == "dashboard" else self.report_dir
-            warning = upsert_manifest_after_save(
-                artifact_dir / "manifest.json", datasource=payload.datasource, timestamp=payload.executed_at
-            )
+            warning = touch_manifest_after_save(artifact_dir / "manifest.json", timestamp=payload.executed_at)
             return FuncToolResult(
                 result={
                     "name": name,

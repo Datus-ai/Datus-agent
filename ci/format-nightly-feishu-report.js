@@ -312,6 +312,11 @@ function summarizeTraceDiagnostics(processDiagnostics) {
   };
 }
 
+function nightlyStatus(testExitCode, coldResult, coldRequired = false) {
+  const coldPassed = coldResult === 'success' || (!coldRequired && coldResult === 'skipped');
+  return String(testExitCode) === '0' && coldPassed ? 'PASSED' : 'FAILED';
+}
+
 function buildNightlyFeishuMessage({
   status,
   runNumber,
@@ -424,6 +429,7 @@ function buildNightlyFeishuMessage({
 }
 
 module.exports = {
+  nightlyStatus,
   buildNightlyFeishuMessage,
   findLatestNightlyLog,
   readFailureClassification,

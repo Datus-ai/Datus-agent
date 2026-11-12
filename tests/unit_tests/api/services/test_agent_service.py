@@ -30,6 +30,7 @@ from datus.api.services.agent_service import (
     _validate_tools_for_agent_type,
     sanitize_agentic_node_name,
 )
+from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
 
 ISO_UTC_Z_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
@@ -188,9 +189,9 @@ class TestValidateToolsForAgentType:
         assert _validate_tools(tools) == []
         assert _validate_tools_for_agent_type(tools, "ask_metrics") == []
 
-    @pytest.mark.parametrize("agent_type", ["ask_report", "ask_dashboard", "ask_metrics"])
-    def test_ask_default_tools_all_resolve(self, agent_type):
-        """Every entry in ``default_tools`` for ask_* must be recognised by
+    @pytest.mark.parametrize("agent_type", list(SUBAGENT_TOOL_REFERENCE))
+    def test_default_tools_all_resolve(self, agent_type):
+        """Every entry in ``default_tools`` must be recognised by
         ``_validate_tools``.
 
         Anchors the regression where ``db_tools.execute_sql`` was kept in
@@ -203,8 +204,8 @@ class TestValidateToolsForAgentType:
         invalid = _validate_tools(defaults)
         assert invalid == [], f"{agent_type} default_tools has unrecognised entries: {invalid}"
 
-    @pytest.mark.parametrize("agent_type", ["ask_report", "ask_dashboard", "ask_metrics"])
-    def test_ask_default_tools_pass_agent_type_gate(self, agent_type):
+    @pytest.mark.parametrize("agent_type", list(SUBAGENT_TOOL_REFERENCE))
+    def test_default_tools_pass_agent_type_gate(self, agent_type):
         """``default_tools`` must also satisfy the per-agent-type allowlist
         — preselected tools should never include anything the saas editor
         would later reject (e.g. ``filesystem_tools.write_file``)."""
@@ -242,7 +243,11 @@ class TestConstants:
             "context_search_tools",
         }
         for category, payload in entry["tool_types"].items():
-            assert payload == {"tools": sorted(VALID_TOOL_METHODS[category])}
+            assert payload == {
+                "tools": sorted(
+                    SemanticTools.all_tools_name() if category == "semantic_tools" else VALID_TOOL_METHODS[category]
+                )
+            }
         # gen_sql defaults to db / semantic / context_search wildcards (matches saas)
         assert entry["default_tools"] == [
             "db_tools.*",
@@ -256,52 +261,12 @@ class TestConstants:
         assert "platform_doc_tools" not in _USER_FACING_TOOL_CATEGORIES
 
     def test_filesystem_tools_valid_methods_match_runtime_surface(self):
-        """``VALID_TOOL_METHODS["filesystem_tools"]`` tracks the complete
-        general plus OSI metric filesystem surface.
-
-        Pin both directions: every name the runtime advertises ends up
-        in the saas catalog, and every name in the catalog is a real
-        public method on the class.
-        """
+        """The common filesystem catalog contains only its actual operations."""
         from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
-        from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
 
         catalog = VALID_TOOL_METHODS["filesystem_tools"]
-        introspected = set(MetricFilesystemFuncTool.all_tools_name())
-        assert catalog == introspected
-
-        # The runtime advertises its tool surface in ``available_tools``;
-        # the read/write/edit/delete + glob/grep set is the load-bearing
-        # contract — make sure introspection captures all of them and
-        # filters out BaseTool framework methods.
-        expected_runtime_methods = {
-            "read_file",
-            "read_image",
-            "write_file",
-            "edit_file",
-            "delete_file",
-            "upsert_osi_metrics",
-            "delete_osi_metrics",
-            "upsert_osi_datasets",
-            "delete_osi_datasets",
-            "glob",
-            "grep",
-        }
-        assert introspected == expected_runtime_methods
-        for name in expected_runtime_methods - {
-            "upsert_osi_metrics",
-            "delete_osi_metrics",
-            "upsert_osi_datasets",
-            "delete_osi_datasets",
-        }:
-            assert hasattr(FilesystemFuncTool, name), f"FilesystemFuncTool dropped method {name!r}"
-        assert hasattr(MetricFilesystemFuncTool, "upsert_osi_metrics")
-        assert hasattr(MetricFilesystemFuncTool, "delete_osi_metrics")
-        assert hasattr(MetricFilesystemFuncTool, "upsert_osi_datasets")
-        assert hasattr(MetricFilesystemFuncTool, "delete_osi_datasets")
-        # BaseTool framework methods must NOT show up in the catalog.
-        for framework_method in ("set_tool_context", "get_actions", "call_action"):
-            assert framework_method not in catalog
+        runtime = FilesystemFuncTool(root_path="/tmp").available_tools()
+        assert catalog == set(FilesystemFuncTool.all_tools_name()) == {tool.name for tool in runtime}
 
     def test_tool_reference_gen_visual_report_has_saas_defaults(self):
         """The report editor exposes the tools needed to produce report artifacts."""
@@ -329,10 +294,15 @@ class TestConstants:
             "semantic_tools.query_metrics",
             "semantic_tools.attribution_analyze",
             "context_search_tools.list_subject_tree",
+            "filesystem_tools.read_file",
+            "filesystem_tools.glob",
+            "filesystem_tools.grep",
         ]
         assert set(entry["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES)
         for category, payload in entry["tool_types"].items():
-            assert payload["tools"] == sorted(VALID_TOOL_METHODS[category])
+            assert payload["tools"] == sorted(
+                SemanticTools.all_tools_name() if category == "semantic_tools" else VALID_TOOL_METHODS[category]
+            )
 
     def test_tool_reference_ask_metrics_matches_the_node_defaults(self):
         """A client persisting these defaults must get a working AskMetrics.
@@ -347,9 +317,15 @@ class TestConstants:
         assert SUBAGENT_TOOL_REFERENCE["ask_metrics"]["default_tools"] == list(AskMetricsAgenticNode.DEFAULT_TOOLS)
 
     def test_tool_reference_chat_has_full_default_set(self):
-        """chat default_tools enumerates every non-semantic category as wildcard."""
+        """Chat's editor defaults include metric reads and cached rows, without authoring tools."""
         entry = SUBAGENT_TOOL_REFERENCE["chat"]
         assert entry["default_tools"] == [
+            "semantic_tools.list_metrics",
+            "semantic_tools.get_metric",
+            "semantic_tools.get_dataset",
+            "semantic_tools.query_metrics",
+            "semantic_tools.get_query_metrics_result",
+            "semantic_tools.attribution_analyze",
             "db_tools.*",
             "context_search_tools.*",
             "reference_template_tools.*",
@@ -378,6 +354,13 @@ class TestConstants:
     def test_valid_tool_methods_db_tools_has_methods(self):
         """db_tools category exposes core query methods."""
         assert "describe_table" in VALID_TOOL_METHODS["db_tools"]
+
+    @pytest.mark.parametrize("agent_type", list(SUBAGENT_TOOL_REFERENCE))
+    def test_cached_metric_reader_is_configurable_only_for_chat(self, agent_type):
+        reader = "semantic_tools.get_query_metrics_result"
+        expected = [] if agent_type == "chat" else [reader]
+        assert _validate_tools([reader]) == []
+        assert _validate_tools_for_agent_type([reader], agent_type) == expected
 
     def test_valid_tool_methods_filesystem_tools_contains_read_file(self):
         """filesystem_tools contains read_file."""
@@ -421,7 +404,9 @@ class TestGetUseTools:
         }
         for category, payload in result.data["tool_types"].items():
             assert list(payload.keys()) == ["tools"]
-            assert payload["tools"] == sorted(VALID_TOOL_METHODS[category])
+            assert payload["tools"] == sorted(
+                SemanticTools.all_tools_name() if category == "semantic_tools" else VALID_TOOL_METHODS[category]
+            )
 
     def test_gen_visual_report_returns_correct_defaults(self):
         """The report editor exposes the tools needed to produce report artifacts."""
@@ -536,7 +521,14 @@ class TestPerAgentTypeCategoryWhitelist:
                     # must be absent and the read trio must be present.
                     assert set(payload["tools"]) == set(_ASK_AGENT_FILESYSTEM_READ_ONLY)
                 else:
-                    assert payload["tools"] == sorted(VALID_TOOL_METHODS[category])
+                    expected = (
+                        set(SemanticTools.all_tools_name())
+                        if category == "semantic_tools"
+                        else VALID_TOOL_METHODS[category]
+                    )
+                    if category == "semantic_tools" and agent_type == "chat":
+                        expected = expected | {"get_query_metrics_result"}
+                    assert payload["tools"] == sorted(expected)
 
     def test_payload_no_longer_wraps_in_tools_key(self):
         """Old shape {"tools": [...]} is gone — data is now {default_tools, tool_types}."""
@@ -2432,3 +2424,26 @@ class TestEditAgentChannels:
         result = await svc.delete_agent("chan_agent", real_agent_config)
         assert result.success is True
         assert "slack-main" not in real_agent_config.channels_config
+
+
+@pytest.mark.parametrize("agent_type", ["chat", "ask_metrics", "gen_visual_report"])
+def test_editor_filesystem_catalog_matches_mounted_generic_tools(agent_type, tmp_path):
+    """The editor offers the same filesystem surface ordinary nodes instantiate."""
+    from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+    runtime = FilesystemFuncTool(root_path=str(tmp_path))
+    result = AgentService.get_use_tools(agent_type)
+    assert result.success is True
+    assert set(result.data["tool_types"]["filesystem_tools"]["tools"]) == {t.name for t in runtime.available_tools()}
+
+
+def test_semantic_editing_identities_validate_only_in_their_domain():
+    """Editing identities belong to the semantic domain and require an authoring node."""
+    methods = ("upsert_osi_metrics", "delete_osi_metrics", "upsert_osi_datasets", "delete_osi_datasets")
+    for method in methods:
+        new = f"semantic_tools.{method}"
+        old = f"filesystem_tools.{method}"
+        assert _validate_tools([new]) == []
+        assert _validate_tools([old]) == [old]
+        for agent_type in SUBAGENT_TOOL_REFERENCE:
+            assert _validate_tools_for_agent_type([new], agent_type) == [new]

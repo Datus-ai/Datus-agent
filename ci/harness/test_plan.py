@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Iterable
@@ -63,11 +64,15 @@ def normalize_path(path: str) -> str:
 
 
 def collapse_targets(targets: Iterable[str]) -> list[str]:
-    """Keep parent directories without narrowing pytest collection to explicit children."""
+    """Collect each file once when a directory or whole-file target subsumes it."""
     unique = list(dict.fromkeys(targets))
     directories = [target for target in unique if target.endswith("/")]
+    files = {target for target in unique if "::" not in target and not target.endswith("/")}
     return [
-        target for target in unique if not any(target != parent and target.startswith(parent) for parent in directories)
+        target
+        for target in unique
+        if not any(target != parent and target.startswith(parent) for parent in directories)
+        and not ("::" in target and target.split("::", 1)[0] in files)
     ]
 
 
@@ -269,12 +274,27 @@ def verify_gate(reports: list[Path], layer: str, output: Path) -> int:
     return int(bool(result["errors"]))
 
 
+def product_group_filter(plan: dict) -> str:
+    groups = (["Product E2E Nightly Tests"] if plan.get("live_targets") else []) + plan.get("nightly_groups", [])
+    if not groups:
+        raise ValueError("No product targets or provisioned groups selected for the requested comparison")
+    return "^(" + "|".join(re.escape(group) for group in dict.fromkeys(groups)) + ")$"
+
+
 def check_product_execution(plan: dict, reports: list[Path]) -> dict:
     """Every planned file/nodeid must contribute successfully executed tests."""
-    if not plan.get("live_targets"):
+    required = list(plan.get("live_targets", []))
+    if plan.get("nightly_groups"):
+        from ci.p0_plan import load_profile
+
+        groups = load_profile()["groups"]
+        for name in plan["nightly_groups"]:
+            if name in groups:
+                required.extend(groups[name]["nodeids"])
+    if not required:
         return {"status": "failure", "errors": ["The product plan has no live targets"], "evidence": {}}
     return check_execution(
         reports,
         "product_e2e",
-        {"execution": {"core_nodeids": plan["live_targets"]}, "flow_groups": {}},
+        {"execution": {"core_nodeids": list(dict.fromkeys(required))}, "flow_groups": {}},
     )

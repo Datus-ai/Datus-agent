@@ -13,13 +13,13 @@ import asyncio
 import copy
 import json
 from contextlib import contextmanager
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, AsyncIterator
 
 from agents import FunctionTool
 
 from datus.tools.func_tool.base import parse_tool_args, write_back_tool_args
+from datus.tools.registry.contracts import clone_registered_tool
 from datus.utils.sql_utils import parse_table_name_parts
 from datus.utils.tool_result_store import ToolResultStore, parse_result
 
@@ -35,7 +35,6 @@ _READS = {
     "get_table_ddl",
     "search_table",
     "query_lineage",
-    "read_tool_result",
 }
 _WRITES = {"write_file", "edit_file"}
 _CACHEABLE = {"list_databases", "list_schemas", "list_tables", "describe_table", "get_table_ddl", "search_table"}
@@ -124,12 +123,12 @@ class InitContext:
         }
         if store is not None:
             for field in ("request", "user_clarifications"):
-                context[field] = store.project(f"init-{field}", context[field])
+                context[field] = store.archive_context(f"init-{field}", context[field])
         return (
             "\n<init_context>\n" + json.dumps(context, ensure_ascii=False) + "\n</init_context>\n"
             "This /init runs in the current chat loop. Choose useful business topics and continue here. "
             "Use todo_list/read/write/update for work steps; they do not require plan approval. "
-            "User clarifications are newest first; later corrections win. Use read_tool_result for "
+            "User clarifications are newest first; later corrections win. Use read_file in line ranges for "
             "archived instructions and results when needed. "
             "Use metadata and project sources to resolve structural questions. Do not query business rows. "
             "Read existing knowledge before incremental edits. Keep unsupported interpretations in "
@@ -198,7 +197,7 @@ class InitContext:
                     return _error(error)
                 return await self.invoke(_name, _original, context, canonical)
 
-            wrapped_tool = replace(tool, on_invoke_tool=invoke)
+            wrapped_tool = clone_registered_tool(tool, on_invoke_tool=invoke)
             wrapped_tool._init_context = self
             wrapped_tool._init_original_tool = tool
             wrapped.append(wrapped_tool)
@@ -245,13 +244,13 @@ class InitContext:
                 self.state.setdefault("user_instructions", []).extend(
                     {**answer, "source": "scope_answer"} for answer in answers
                 )
-                return self._register_result(context, result)
+                return result
             except TimeoutError:
                 return self._stop("Init interaction timed out; the operation may still be running")
         key = name + ":" + json.dumps(resolved, sort_keys=True)
         if key in self._cache:
             result = copy.deepcopy(self._cache[key])
-            return self._register_result(context, result)
+            return result
         if self.state.get("stop_reason"):
             return _error(self.state["stop_reason"] + ". Report unfinished work and finish this invocation.")
         self.calls += 1
@@ -269,7 +268,7 @@ class InitContext:
                         self.state["outputs"].append(output)
             if success and name in _CACHEABLE:
                 self._cache[key] = copy.deepcopy(result)
-            return self._register_result(context, result)
+            return result
         except TimeoutError:
             # A timed-out driver thread may still run. Keep the lease until it
             # exits and stop further exploration rather than pile up queries.
@@ -305,30 +304,10 @@ class InitContext:
             self._finish()
 
     async def _tracked_call(self, original, context, arguments: str):
-        from datus.utils.tool_result_store import ACTIVE_RESULT_STORE
-
-        # Only this wrapper publishes sanitized results. A late driver result
-        # must not register unsanitized samples after its caller timed out.
-        token = ACTIVE_RESULT_STORE.set(None)
-        try:
-            task = asyncio.create_task(original(context, arguments))
-        finally:
-            ACTIVE_RESULT_STORE.reset(token)
+        task = asyncio.create_task(original(context, arguments))
         self._inflight.add(task)
         task.add_done_callback(self._task_done)
         return await asyncio.shield(task)
-
-    @staticmethod
-    def _register_result(context, result):
-        # The underlying generic invoker registers raw results for A's result
-        # archive. Replace that registration after hiding cached sample rows.
-        from datus.utils.tool_result_store import ACTIVE_RESULT_STORE
-
-        store = ACTIVE_RESULT_STORE.get()
-        call_id = getattr(context, "tool_call_id", None)
-        if store is not None and isinstance(call_id, str):
-            store.register(call_id, result)
-        return result
 
     async def stream(self, actions: AsyncIterator):
         """Use the ordinary chat limits and report partial results on interruption."""

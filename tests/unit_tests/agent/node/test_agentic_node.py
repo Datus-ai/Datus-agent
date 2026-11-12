@@ -23,6 +23,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.base import BaseInput, BaseResult
 from datus.schemas.token_usage import TokenUsage
 from datus.utils.language_utils import NATIVE_DIRECTIVE_MAP
+from tests.helpers.tool_definitions import registered_test_tool
 
 _UNSET = object()
 
@@ -167,6 +168,111 @@ class TestExecuteAgenticNode:
 # ---------------------------------------------------------------------------
 # TestGetNodeName
 # ---------------------------------------------------------------------------
+
+
+class TestSessionArchiveFilesystem:
+    def test_relocation_refreshes_mounted_archive_read_permissions(self, real_agent_config, tmp_path):
+        """Moving a subagent revokes the old anchor and grants only its new archive."""
+        from pathlib import Path
+
+        real_agent_config.session_dir = str(tmp_path / "custom_sessions")
+        node = _make_node(real_agent_config, session_id="current", _archive=None)
+        node.filesystem_func_tool = node._make_filesystem_tool(strict=True)
+        node.permission_hooks = SimpleNamespace(fs_policy=node._make_filesystem_policy())
+        old_dir = Path(node._resolve_session_data_dir())
+        old_dir.mkdir(parents=True)
+        old_file = old_dir / "history.txt"
+        old_file.write_text("old history")
+        assert node.filesystem_func_tool.read_file(str(old_file)).result == "old history"
+
+        node.relocate_session(scope="tenant", session_subdir="parent")
+        new_dir = Path(node._resolve_session_data_dir())
+        new_dir.mkdir(parents=True)
+        new_file = new_dir / "history.txt"
+        new_file.write_text("new history")
+        assert node.filesystem_func_tool.read_file(str(new_file)).result == "new history"
+        assert node.filesystem_func_tool.read_file(str(old_file)).success == 0
+        assert node.permission_hooks.fs_policy.session_data_dir == new_dir
+
+    @pytest.mark.parametrize("session_id", ["..", "../other", "/other", r"..\other"])
+    def test_invalid_session_does_not_grant_an_archive_anchor(self, real_agent_config, session_id):
+        """Changing the archive root must preserve validation of session segments."""
+        node = _make_node(real_agent_config, session_id=session_id)
+        assert node._resolve_session_data_dir() is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("strict", [False, True])
+    @pytest.mark.parametrize("scope, parent", [(None, None), ("tenant", "parent_session")])
+    async def test_custom_session_archive_is_readable_without_prompt(
+        self, real_agent_config, tmp_path, monkeypatch, strict, scope, parent
+    ):
+        """Tool and permission hook must grant only this session's archive reads."""
+        import json
+
+        from datus.configuration.agent_config import CompactConfig
+        from datus.tools.func_tool import bash_tool as bash_tool_module
+        from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel
+        from datus.tools.permission.permission_hooks import PermissionHooks
+        from datus.tools.permission.permission_manager import PermissionManager
+        from datus.tools.registry.tool_registry import ToolRegistry
+        from datus.utils.tool_archive import parse_archived_marker
+        from datus.utils.tool_result_store import ToolResultStore
+
+        real_agent_config.session_dir = str(tmp_path / "custom_sessions")
+        node = _make_node(
+            real_agent_config,
+            session_id="current",
+            scope=scope,
+            session_subdir=parent,
+            _archive=None,
+            _compact_cfg=CompactConfig(),
+        )
+        archive = node._get_archive()
+        store = ToolResultStore(archive)
+        reference = store.archive_context("clarifications", {"instructions": "clarification " * 10_000})["result"]
+        path = reference["archive_path"]
+        filesystem = node._make_filesystem_tool(strict=strict)
+        read = filesystem.read_file(path)
+        assert read.success == 1, read.error
+        recovered = "".join(json.loads(line)["text"] for line in read.result.splitlines())
+        assert json.loads(recovered) == {"instructions": "clarification " * 10_000}
+        assert filesystem._classify(path).read_only
+        assert not filesystem.write_file(path, "changed").success
+        policy = node._make_filesystem_policy()
+        assert policy.session_data_dir == archive.dir
+        registry = ToolRegistry()
+        registry.register_tools("filesystem_tools", filesystem.available_tools())
+        broker = MagicMock()
+        broker.request = AsyncMock(side_effect=AssertionError("Archive reads must not prompt"))
+        hooks = PermissionHooks(
+            broker=broker,
+            permission_manager=PermissionManager(
+                global_config=PermissionConfig(default_permission=PermissionLevel.ASK)
+            ),
+            node_name=node.get_node_name(),
+            tool_registry=registry,
+            fs_policy=policy,
+            non_interactive=True,
+        )
+        read_tool = next(tool for tool in filesystem.available_tools() if tool.name == "read_file")
+        await hooks.on_tool_start(SimpleNamespace(tool_arguments=json.dumps({"path": path})), None, read_tool)
+        monkeypatch.setattr(bash_tool_module, "BASH_ARCHIVE_THRESHOLD", 100)
+        bash = bash_tool_module.BashTool(
+            workspace_root=node._resolve_workspace_root(),
+            allowed_patterns=["*"],
+            output_dir_provider=node._bash_output_dir,
+        )
+        output = bash.bash("python -c \"print('Y' * 5000)\"")
+        assert output.success == 1, output.error
+        bash_path = parse_archived_marker(output.result)["path"]
+        bash_read = filesystem.read_file(bash_path)
+        assert bash_read.success == 1, bash_read.error
+        assert bash_read.result == "Y" * 5000 + "\n"
+        assert filesystem._classify(bash_path).read_only
+        await hooks.on_tool_start(SimpleNamespace(tool_arguments=json.dumps({"path": bash_path})), None, read_tool)
+        broker.request.assert_not_awaited()
+        other = _make_node(real_agent_config, session_id="other", scope=scope, session_subdir=parent)
+        assert not other._make_filesystem_tool(strict=True).read_file(path).success
 
 
 class TestGetNodeName:
@@ -2045,6 +2151,31 @@ class TestEnsurePermissionHooksProxyWiring:
         kwargs = ph_cls.call_args.kwargs
         assert kwargs["proxied_tool_names"] == set()
 
+    def test_export_gate_uses_node_workspace_without_changing_project_grants(self):
+        node = self._prepare_node(set())
+        node.agent_config = SimpleNamespace(project_root="/project")
+        node.node_config = {"workspace_root": "/node-workspace"}
+        with patch("datus.tools.permission.permission_hooks.PermissionHooks") as ph_cls:
+            node._ensure_permission_hooks()
+        assert ph_cls.call_args.kwargs["export_workspace_root"] == "/node-workspace"
+        assert ph_cls.call_args.kwargs["project_root"] == "/project"
+
+    @pytest.mark.parametrize("client_source,expected", [("vscode", True), ("web", False), (None, False)])
+    def test_export_gate_knows_when_files_live_on_the_client(self, client_source, expected):
+        node = self._prepare_node(set())
+        node.agent_config = SimpleNamespace(_client_source=client_source)
+        with patch("datus.tools.permission.permission_hooks.PermissionHooks") as ph_cls:
+            node._ensure_permission_hooks()
+        assert ph_cls.call_args.kwargs["client_only_workspace"] is expected
+
+    @pytest.mark.parametrize("restricted", [True, False])
+    def test_restricted_hosts_enforce_method_denials_at_invocation(self, restricted):
+        node = self._prepare_node(set())
+        node.agent_config = SimpleNamespace(restrict_tool_visibility=restricted)
+        with patch("datus.tools.permission.permission_hooks.PermissionHooks") as ph_cls:
+            node._ensure_permission_hooks()
+        assert ph_cls.call_args.kwargs["enforce_method_denials"] is restricted
+
     def test_passes_config_mutable_from_agent_config(self):
         """Multi-tenant API nodes suppress project-level permission choices."""
         node = self._prepare_node(set())
@@ -2152,14 +2283,13 @@ class TestEnsureToolTransformers:
 
     @staticmethod
     def _make_fake_node(plugins_enabled: bool = True, tools: Optional[List[Any]] = None) -> SimpleNamespace:
-        from agents import FunctionTool
-
+        """Construct a node with a registered SQL tool for transformer wiring checks."""
         from datus.tools.registry.tool_registry import ToolRegistry
 
         async def invoke(tool_ctx: Any, args_str: str) -> dict:
             return {"success": 1, "result": "ok", "error": None}
 
-        default_tool = FunctionTool(
+        default_tool = registered_test_tool(
             name="execute_sql",
             description="t",
             params_json_schema={"type": "object"},
@@ -2285,3 +2415,314 @@ class TestEnsureToolTransformers:
         assert node.tools is captured
         assert captured[0] is not original_tool
         assert captured[0].name == "execute_sql"
+
+
+def test_restricted_host_hides_denied_tools_and_retains_sql_ask():
+    """Hide denied methods in place on initial assembly and subsequent rebuilds."""
+    from datus.tools.permission.permission_manager import PermissionManager
+    from datus.tools.permission.profiles import build_effective_config
+    from datus.tools.registry.tool_registry import ToolRegistry
+
+    config = build_effective_config(
+        "auto",
+        {
+            "rules": [
+                {"tool": "*", "pattern": "*", "permission": "deny"},
+                {"tool": "db_tools", "pattern": "execute_sql", "permission": "ask"},
+            ]
+        },
+    )
+    tools = [SimpleNamespace(name=name) for name in ("execute_sql", "write_file", "new_unclassified_tool")]
+    captured = tools
+    node = SimpleNamespace(
+        agent_config=SimpleNamespace(restrict_tool_visibility=True),
+        permission_manager=PermissionManager(config),
+        tool_registry=ToolRegistry({"execute_sql": "db_tools", "write_file": "filesystem_tools"}),
+        tools=tools,
+        _populate_tool_registry=lambda: None,
+        get_node_name=lambda: "chat",
+    )
+    AgenticNode._filter_permission_denied_tools(node)
+    assert [tool.name for tool in captured] == ["execute_sql"]
+    # A later tool rebuild must be filtered again, independently of plugin flags.
+    node.tools.append(SimpleNamespace(name="write_file"))
+    AgenticNode._filter_permission_denied_tools(node)
+    assert [tool.name for tool in captured] == ["execute_sql"]
+
+
+@pytest.mark.parametrize("scope", ["global", "node"])
+def test_restricted_visibility_preserves_plan_tool_exemptions(scope):
+    """Real plan helpers survive DENY while ordinary tool grants remain enforced."""
+    from datus.tools.permission.permission_config import PermissionConfig, PermissionRule
+    from datus.tools.permission.permission_manager import PermissionManager
+    from datus.tools.registry.tool_registry import ToolRegistry
+
+    custom = PermissionConfig(
+        rules=[
+            PermissionRule(tool="*", pattern="*", permission="deny"),
+            PermissionRule(tool="filesystem_tools", pattern="read_file", permission="allow"),
+            PermissionRule(tool="db_tools", pattern="execute_sql", permission="ask"),
+        ]
+    )
+    manager = PermissionManager(
+        custom if scope == "global" else PermissionConfig(),
+        node_overrides={"chat": custom} if scope == "node" else None,
+    )
+    plan_tools = AgenticNode._get_plan_mode_tools(SimpleNamespace(_session=None, session_id=None))
+    assert plan_tools
+    assert all(manager.check_permission("tools", tool.name, "chat") == "deny" for tool in plan_tools)
+    tools = [
+        plan_tools[0],
+        SimpleNamespace(name="write_file"),
+        SimpleNamespace(name="read_file"),
+        *plan_tools[1:],
+        SimpleNamespace(name="execute_sql"),
+        SimpleNamespace(name="write_semantic_model_plan_file"),
+        SimpleNamespace(name="unknown_tool"),
+    ]
+    node = SimpleNamespace(
+        agent_config=SimpleNamespace(restrict_tool_visibility=True),
+        permission_manager=manager,
+        tool_registry=ToolRegistry(
+            {
+                "write_file": "filesystem_tools",
+                "read_file": "filesystem_tools",
+                "execute_sql": "db_tools",
+                "write_semantic_model_plan_file": "semantic_tools",
+            }
+        ),
+        tools=tools,
+        _populate_tool_registry=lambda: None,
+        get_node_name=lambda: "chat",
+    )
+    AgenticNode._filter_permission_denied_tools(node)
+    assert node.tools is tools
+    assert tools == [
+        plan_tools[0],
+        SimpleNamespace(name="read_file"),
+        *plan_tools[1:],
+        SimpleNamespace(name="execute_sql"),
+    ]
+
+
+def test_restricted_visibility_requires_permission_enforcement():
+    node = SimpleNamespace(agent_config=SimpleNamespace(restrict_tool_visibility=True), permission_manager=None)
+    with pytest.raises(RuntimeError, match="permission manager"):
+        AgenticNode._filter_permission_denied_tools(node)
+
+
+def test_ordinary_hosts_keep_existing_tool_visibility():
+    tools = [SimpleNamespace(name="write_file")]
+    node = SimpleNamespace(agent_config=SimpleNamespace(), tools=tools)
+    AgenticNode._filter_permission_denied_tools(node)
+    assert node.tools == tools
+
+
+@pytest.fixture
+def restricted_skill_node(tmp_path):
+    from datus.tools.permission.permission_manager import PermissionManager
+    from datus.tools.permission.profiles import build_effective_config
+    from datus.tools.registry.tool_registry import ToolRegistry
+    from datus.tools.skill_tools.skill_config import SkillConfig
+    from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
+    from datus.tools.skill_tools.skill_manager import SkillManager
+
+    def make(*, verdict="allow", patterns="business", metadata="", node_class="gen_sql"):
+        directory = tmp_path / "business"
+        directory.mkdir(exist_ok=True)
+        (directory / "SKILL.md").write_text(
+            f"---\nname: business\ndescription: Frozen instructions\n{metadata}---\nFrozen business guidance"
+        )
+        manager = PermissionManager(
+            build_effective_config(
+                "auto",
+                {
+                    "rules": [
+                        {"tool": "*", "pattern": "*", "permission": "deny"},
+                        {"tool": "skills", "pattern": "business", "permission": verdict},
+                    ]
+                },
+            )
+        )
+        skill_manager = SkillManager(
+            config=SkillConfig(directories=[str(tmp_path)]),
+            permission_manager=manager,
+            config_mutable=False,
+        )
+        skill_tool = SkillFuncTool(skill_manager, "analyst", node_class=node_class)
+        node = SimpleNamespace(
+            agent_config=SimpleNamespace(restrict_tool_visibility=True),
+            permission_manager=manager,
+            skill_manager=skill_manager,
+            skill_func_tool=skill_tool,
+            node_config={"skills": patterns},
+            tool_registry=ToolRegistry({"load_skill": "skills", "write_file": "filesystem_tools"}),
+            tools=[*skill_tool.available_tools(), SimpleNamespace(name="write_file")],
+            _populate_tool_registry=lambda: None,
+            get_node_name=lambda: "analyst",
+            get_node_class_name=lambda: node_class,
+        )
+        return node
+
+    return make
+
+
+@pytest.mark.parametrize("verdict", ["allow", "ask"])
+def test_restricted_skill_loader_visible_for_accessible_skill(restricted_skill_node, verdict):
+    """Expose the loader for an eligible named Skill with ALLOW or ASK access."""
+    node = restricted_skill_node(verdict=verdict, metadata="allowed_agents: [gen_sql]\n")
+    assert node.permission_manager.check_permission("skills", "load_skill", "analyst") == "deny"
+    AgenticNode._filter_permission_denied_tools(node)
+    assert [tool.name for tool in node.tools] == ["load_skill"]
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"verdict": "deny"},
+        {"patterns": "unselected-*"},
+        {"metadata": "allowed_agents: [other_agent]\n"},
+        {"metadata": "disable_model_invocation: true\n"},
+        {"metadata": "requires_mutable_config: true\n"},
+    ],
+)
+def test_restricted_skill_loader_hidden_without_accessible_skills(restricted_skill_node, options):
+    node = restricted_skill_node(**options)
+    AgenticNode._filter_permission_denied_tools(node)
+    assert node.tools == []
+
+
+@pytest.mark.asyncio
+async def test_visible_skill_loader_still_checks_specific_skill_on_invocation(restricted_skill_node):
+    """A visible loader may load the granted Skill while rejecting unlinked names."""
+    import json
+
+    from agents.tool_context import ToolContext
+    from agents.usage import Usage
+
+    from datus.tools.permission.permission_hooks import PermissionDeniedException, PermissionHooks
+
+    node = restricted_skill_node()
+    tool = node.tools[0]
+    AgenticNode._filter_permission_denied_tools(node)
+    assert [item.name for item in node.tools] == ["load_skill"]
+    hooks = PermissionHooks(
+        broker=SimpleNamespace(request=AsyncMock()),
+        permission_manager=node.permission_manager,
+        node_name="analyst",
+        tool_registry=node.tool_registry,
+        non_interactive=True,
+    )
+    context = ToolContext(
+        context=None,
+        usage=Usage(),
+        tool_name="load_skill",
+        tool_call_id="load_business",
+        tool_arguments=json.dumps({"skill_name": "business"}),
+    )
+    await hooks.on_tool_start(context, None, tool)
+    result = await tool.on_invoke_tool(context, context.tool_arguments)
+    assert result["success"] == 1
+    assert "Frozen business guidance" in result["result"]
+    context.tool_arguments = json.dumps({"skill_name": "unlinked"})
+    with pytest.raises(PermissionDeniedException):
+        await hooks.on_tool_start(context, None, tool)
+
+
+def test_restricted_skill_loader_hidden_without_skill_manager(restricted_skill_node):
+    node = restricted_skill_node()
+    node.skill_manager = None
+    AgenticNode._filter_permission_denied_tools(node)
+    assert node.tools == []
+
+
+@pytest.mark.asyncio
+async def test_late_interaction_mount_transforms_only_the_new_tool():
+    """Init-scoped wrappers stay intact while a newly restored ask_user gains plugin policy."""
+    from types import MethodType
+
+    from datus.cli.init_context import InitContext
+    from datus.tools.middleware import apply_tool_transformers
+    from datus.tools.registry.tool_registry import ToolRegistry
+
+    calls = []
+
+    def transform(name, args, context):
+        """Record actual policy execution for each invoked tool."""
+        calls.append(name)
+        return args
+
+    async def invoke(ctx, args):
+        """Return without any external effect."""
+        return {"success": 1}
+
+    existing = registered_test_tool(
+        name="read_file",
+        description="reader",
+        params_json_schema={"type": "object"},
+        on_invoke_tool=invoke,
+        strict_json_schema=False,
+    )
+    ask = registered_test_tool(
+        name="ask_user",
+        description="question",
+        params_json_schema={"type": "object"},
+        on_invoke_tool=invoke,
+        strict_json_schema=False,
+    )
+    node = TestEnsureToolTransformers._make_fake_node(tools=[existing])
+    node.tool_registry = ToolRegistry({"read_file": "filesystem_tools", "ask_user": "tools"})
+    apply_tool_transformers(node, {"*": [transform]})
+    # A second wrapper deliberately hides the transform marker, as InitContext.wrap_tools does.
+    init = InitContext.__new__(InitContext)
+    node.tools = InitContext.wrap_tools(init, node.tools)
+    wrapped = node.tools[0]
+    node._tool_transformers_applied = True
+    node.execution_mode = "interactive"
+    node.ask_user_tool = SimpleNamespace(available_tools=lambda: [ask])
+    node._ensure_tool_transformers = MethodType(AgenticNode._ensure_tool_transformers, node)
+    captured = node.tools
+    with patch("datus.plugins.registry.collect_plugin_tool_transformers", return_value={"*": [transform]}):
+        AgenticNode._ensure_interaction_channel(node)
+    assert node.tools is captured
+    assert node.tools[0] is wrapped
+    assert node.tools[1] is not ask
+    await node.tools[1].on_invoke_tool(SimpleNamespace(tool_arguments="{}"), "{}")
+    assert calls == ["ask_user"]
+
+
+def test_failed_late_channel_transform_cannot_leave_an_unwrapped_tool():
+    """A failed late policy pass is retried instead of leaving a callable bypass."""
+    from types import MethodType
+
+    from datus.tools.registry.tool_registry import ToolRegistry
+
+    async def invoke(ctx, args):
+        """Do nothing beyond returning the channel result."""
+        return {"success": 1}
+
+    ask = registered_test_tool(
+        name="ask_user",
+        description="question",
+        params_json_schema={"type": "object"},
+        on_invoke_tool=invoke,
+        strict_json_schema=False,
+    )
+    node = TestEnsureToolTransformers._make_fake_node(tools=[])
+    node.tool_registry = ToolRegistry({"ask_user": "tools"})
+    node.execution_mode = "interactive"
+    node._tool_transformers_applied = True
+    node.ask_user_tool = SimpleNamespace(available_tools=lambda: [ask])
+    node._ensure_tool_transformers = MethodType(AgenticNode._ensure_tool_transformers, node)
+    with patch(
+        "datus.plugins.registry.collect_plugin_tool_transformers", return_value={"ask_user": [lambda n, a, c: a]}
+    ):
+        with patch("datus.tools.middleware.apply_tool_transformers", side_effect=ValueError("broken policy")):
+            from datus.utils.exceptions import DatusException
+
+            with pytest.raises(DatusException, match="broken policy"):
+                AgenticNode._ensure_interaction_channel(node)
+        assert node.tools == []
+        AgenticNode._ensure_interaction_channel(node)
+    assert [tool.name for tool in node.tools] == ["ask_user"]
+    assert node.tools[0] is not ask

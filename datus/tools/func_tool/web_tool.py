@@ -22,7 +22,7 @@ backends and exposes whichever ones the node asks for.
 import ipaddress
 import os
 from typing import List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from agents import Tool
@@ -31,6 +31,7 @@ from bs4 import BeautifulSoup
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.web_result import normalize_fetch_result, normalize_search_results
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -164,6 +165,7 @@ class WebTool:
 
         return tools
 
+    @tool_contract(access="read", direct_call=False)
     def web_search(
         self,
         keywords: List[str],
@@ -226,6 +228,7 @@ class WebTool:
             logger.error(f"Web search failed for keywords {keywords}: {e}")
             return FuncToolResult(success=0, error=str(e))
 
+    @tool_contract(access="read", direct_call=False)
     def web_fetch(
         self,
         url: str,
@@ -262,13 +265,24 @@ class WebTool:
             )
 
         try:
-            response = httpx.get(
-                url,
-                follow_redirects=True,
-                timeout=30,
-                headers={"User-Agent": _DEFAULT_USER_AGENT},
-            )
-            response.raise_for_status()
+            current_url = url
+            with httpx.Client() as client:
+                for _ in range(10):
+                    response = client.get(
+                        current_url,
+                        follow_redirects=False,
+                        timeout=30,
+                        headers={"User-Agent": _DEFAULT_USER_AGENT},
+                    )
+                    if response.status_code in {301, 302, 303, 307, 308} and response.headers.get("location"):
+                        current_url = urljoin(current_url, response.headers["location"])
+                        if not _is_public_web_target(current_url):
+                            return FuncToolResult(success=0, error="Refusing to fetch non-public redirect target")
+                        continue
+                    response.raise_for_status()
+                    break
+                else:
+                    return FuncToolResult(success=0, error="Too many redirects while fetching URL")
         except httpx.HTTPStatusError as e:
             return FuncToolResult(success=0, error=f"HTTP {e.response.status_code} fetching {url}")
         except httpx.HTTPError as e:

@@ -21,6 +21,7 @@ from agents import Tool
 
 from datus.tools import BaseTool
 from datus.tools.func_tool import FuncToolResult
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 from datus.utils.memory_loader import (
     MEMORY_BYTE_LIMIT,
@@ -91,6 +92,7 @@ class MemoryFuncTool(BaseTool):
 
     # ------------------------------------------------------------------- tools
 
+    @tool_contract(access="restricted", direct_call=False)
     def add_memory(self, content: str) -> FuncToolResult:
         """
         Append a new entry to persistent memory.
@@ -135,6 +137,7 @@ class MemoryFuncTool(BaseTool):
             logger.error(f"MemoryFuncTool.add_memory failed for node '{self._memory_node}': {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
+    @tool_contract(access="restricted", direct_call=False)
     def edit_memory(self, old_string: str, new_string: str) -> FuncToolResult:
         """
         Replace a unique occurrence of ``old_string`` in memory with ``new_string``.

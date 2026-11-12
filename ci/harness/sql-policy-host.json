@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "sql_policies": "ba9e0ab91427191d53bfdb5f9db661d771f6df03",
+  "rust_toolchain": "1.97.1",
+  "cold_paths": [
+    "pyproject.toml",
+    "uv.lock",
+    "ci/harness/p0.yml",
+    "ci/harness/sql-policy-host.json",
+    "ci/sql_policy_gate.py",
+    "tests/integration/conftest.py",
+    ".github/workflows/sql-policy-gate.yml",
+    ".github/workflows/run-nightly.yml"
+  ]
+}

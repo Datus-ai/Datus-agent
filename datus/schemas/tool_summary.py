@@ -265,12 +265,16 @@ def _fmt_describe_table(result: Any) -> str:
 
 
 def _fmt_list_tables(result: Any) -> str:
+    if isinstance(result, dict):
+        return _envelope_with_label(result, "table", "tables")
     if isinstance(result, list):
         return _list_count(result, "table", "tables")
     return ""
 
 
 def _fmt_list_databases(result: Any) -> str:
+    if isinstance(result, dict):
+        return _envelope_with_label(result, "db", "dbs")
     if isinstance(result, list):
         n = len(result)
         return f"{n} db" if n == 1 else f"{n} dbs"
@@ -278,6 +282,8 @@ def _fmt_list_databases(result: Any) -> str:
 
 
 def _fmt_list_schemas(result: Any) -> str:
+    if isinstance(result, dict):
+        return _envelope_with_label(result, "schema", "schemas")
     if isinstance(result, list):
         return _list_count(result, "schema", "schemas")
     return ""

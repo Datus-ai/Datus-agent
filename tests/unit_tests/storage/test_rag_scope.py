@@ -10,6 +10,7 @@ import pytest
 from datus_storage_base.conditions import build_where
 
 from datus.storage.rag_scope import _build_sub_agent_filter
+from datus.tools.db_tools import ConnectorRegistry, connector_registry
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -106,6 +107,13 @@ class TestBuildSubAgentFilter:
         )
         result = _build_sub_agent_filter(config, "team_a", _mock_storage(), "tables")
         assert result is None
+
+    def test_unresolved_metric_scope_rejects_strict_reads(self):
+        config = _mock_agent_config(sub_agent_configs={"team_a": {"scoped_context": {"metrics": "MissingSubject"}}})
+        storage = _mock_storage(has_subject_tree=True)
+        storage.subject_tree.get_matched_children_id.return_value = []
+        with pytest.raises(ValueError, match="scope"):
+            _build_sub_agent_filter(config, "team_a", storage, "metrics", fail_closed=True)
 
 
 class TestRuntimeOverrideIntegration:
@@ -231,3 +239,91 @@ class TestRuntimeOverrideIntegration:
         # YAML system_prompt and tools survive because override didn't set them.
         assert merged["system_prompt"] == "yaml_prompt"
         assert merged["tools"] == "list_tables,describe_table"
+
+
+@pytest.mark.ci
+@pytest.mark.parametrize(
+    ("source", "dialect", "expected_column", "expected_value"),
+    [
+        ("sr", "starrocks", "database_name", "analytics"),
+        ("mysql", "mysql", "database_name", "sales"),
+        ("pg", "postgresql", "schema_name", "reporting"),
+    ],
+)
+def test_grouped_table_filter_follows_active_datasource(source, dialect, expected_column, expected_value, monkeypatch):
+    """Filter RAG rows using the active source's namespace and dialect."""
+    # Namespace contracts are test inputs, independent of optional adapter installation.
+    monkeypatch.setattr(ConnectorRegistry, "_capabilities", ConnectorRegistry._capabilities.copy())
+    for name, capabilities in {
+        "starrocks": {"catalog", "database"},
+        "mysql": {"database"},
+        "postgresql": {"database", "schema"},
+    }.items():
+        connector_registry.register_handlers(name, capabilities=capabilities)
+    config = _mock_agent_config(
+        sub_agent_configs={
+            "ask": {
+                "scoped_context": {
+                    "datasource": "sr",
+                    "tables": "default_catalog.analytics.*",
+                    "tables_by_datasource": {
+                        "sr": "default_catalog.analytics.*",
+                        "mysql": "sales.*",
+                        "pg": "warehouse.reporting.*",
+                    },
+                }
+            }
+        },
+        db_type=dialect,
+    )
+    config.current_datasource = source
+    result = _build_sub_agent_filter(config, "ask", _mock_storage(), "tables")
+    clause = build_where(result)
+    assert f"{expected_column} = '{expected_value}'" in clause
+
+
+@pytest.mark.ci
+def test_grouped_table_filter_refuses_unlisted_datasource():
+    """Reject RAG access through a datasource outside the grouped scope."""
+    from datus.utils.exceptions import DatusException
+
+    config = _mock_agent_config(
+        sub_agent_configs={
+            "ask": {
+                "scoped_context": {
+                    "tables_by_datasource": {"sr": "default_catalog.analytics.*"},
+                }
+            }
+        },
+        db_type="mysql",
+    )
+    config.current_datasource = "unrelated"
+    with pytest.raises(DatusException, match="scoped context"):
+        _build_sub_agent_filter(config, "ask", _mock_storage(), "tables")
+
+
+@pytest.mark.ci
+@pytest.mark.parametrize("scope", ["", "   ", ",\n,", ".", "..."])
+def test_grouped_rag_filter_rejects_listed_source_without_patterns(scope):
+    """An empty or unparseable listed scope cannot become unrestricted RAG access."""
+    from datus.utils.exceptions import DatusException
+
+    config = _mock_agent_config(
+        sub_agent_configs={"ask": {"scoped_context": {"tables_by_datasource": {"mysql": scope}}}},
+        db_type="mysql",
+    )
+    config.current_datasource = "mysql"
+    with pytest.raises(DatusException, match="scope"):
+        _build_sub_agent_filter(config, "ask", _mock_storage(), "tables")
+
+
+@pytest.mark.ci
+def test_grouped_rag_filter_accepts_explicit_wildcard():
+    """Wildcard access must be intentional and still produce a valid filter."""
+    config = _mock_agent_config(
+        sub_agent_configs={"ask": {"scoped_context": {"tables_by_datasource": {"mysql": "*"}}}},
+        db_type="mysql",
+    )
+    config.current_datasource = "mysql"
+    result = _build_sub_agent_filter(config, "ask", _mock_storage(), "tables")
+    assert "table_name LIKE '%'" in build_where(result)

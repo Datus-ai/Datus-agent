@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
+from datus.tools.registry.contracts import tool_contract
+
 if TYPE_CHECKING:
     from datus.agent.workflow import Workflow
 
@@ -55,6 +57,9 @@ class AskMetricsAgenticNode(AgenticNode):
         "semantic_tools.query_metrics",
         "semantic_tools.attribution_analyze",
         "context_search_tools.list_subject_tree",
+        "filesystem_tools.read_file",
+        "filesystem_tools.glob",
+        "filesystem_tools.grep",
     )
 
     def __init__(
@@ -405,6 +410,7 @@ class AskMetricsAgenticNode(AgenticNode):
         _walk(tree, [])
         return entries
 
+    @tool_contract(access="read", direct_call=True, category="context_search_tools")
     def list_subject_tree(self) -> FuncToolResult:
         """
         List metric subject entries available to ask_metrics.
@@ -420,6 +426,7 @@ class AskMetricsAgenticNode(AgenticNode):
             }
         )
 
+    @tool_contract(access="session", direct_call=False, category="tools")
     def select_final_metric_result(self, result_id: str) -> FuncToolResult:
         """
         Select the query_metrics result that should be stored as the final structured result.
