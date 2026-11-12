@@ -7,10 +7,9 @@ on:
       - synchronize
       - reopened
       - edited
-  merge_group:
 
 concurrency:
-  # Metadata edits must not cancel the in-flight check for the same commit.
+  # Metadata edits retain real required checks and must not cancel in-flight validation.
   group: code-quality-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
   cancel-in-progress: ${{ github.event.action != 'edited' || !!github.event.changes.base }}
 
@@ -19,31 +18,8 @@ permissions:
 
 jobs:
   format-check:
-    # Separate skipped metadata jobs from branch-protection check names.
-    name: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base) && 'format-check' || 'format-not-requested' }}
-    if: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || !!github.event.changes.base) }}
     uses: ./.github/workflows/python-format-check.yml
 
   run-coverage:
     needs: format-check
-    name: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base) && 'run-coverage' || 'coverage-not-requested' }}
-    if: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || !!github.event.changes.base) }}
     uses: ./.github/workflows/run-ut-and-coverage.yml
-
-  format-check-merge-group-context:
-    name: ${{ github.event_name == 'merge_group' && 'format-check / format-check' || 'merge-format-not-requested' }}
-    if: ${{ github.event_name == 'merge_group' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Publish merge queue format context
-        run: echo "format-check / format-check is enforced on pull_request before merge queue entry."
-
-  run-coverage-merge-group-context:
-    name: ${{ github.event_name == 'merge_group' && 'run-coverage / coverage' || 'merge-coverage-not-requested' }}
-    if: ${{ github.event_name == 'merge_group' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Publish merge queue coverage context
-        run: |
-          echo "run-coverage / coverage is enforced on pull_request before merge queue entry."
-          echo "Merge Queue Gate checks generated contracts and coverage-map consistency on the merged tree."

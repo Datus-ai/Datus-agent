@@ -139,8 +139,12 @@ README translations and MkDocs navigation by changed paths. Pure docs skip the
 Agent environment and runtime tests; Deploy Docs already builds both locales
 strictly on PRs. Coverage-map documentation registrations retain the runtime/CI
 checks. Runtime files, prompts, skills, dependency and workflow changes keep the
-code gate, regardless of the PR title. Editing only the PR title/body does not
-cancel or replace code checks; changing its base branch does revalidate.
+code gate, regardless of the PR title. PR validation always publishes the stable
+`format-check / format-check` and `run-coverage / coverage` contexts, including on
+title/body edits and base-branch changes. Metadata-only edits do not cancel an
+in-flight code validation run, but currently revalidate instead of reusing status.
+Merge-queue context publication lives in a separate merge-group-only workflow,
+so skipped jobs cannot compete with the real PR check contexts.
 
 Merge Queue runs only generated tool catalog validation and strict coverage-map
 validation on the merged tree. It installs PyYAML without the Agent environment,
