@@ -48,3 +48,29 @@ You first need to install and initialize Datus-CLI through the installation proc
 ```bash
 datus-cli --datasource duckdb-demo
 ```
+
+## Unattended Print Mode
+
+`datus --print` streams JSON lines to stdout. Its default execution mode is
+`workflow`, which cannot ask a person to approve a tool call. Choose a permission
+profile explicitly when running unattended jobs:
+
+```bash
+datus --datasource duckdb-demo --print "Summarize the tree table" --permission-mode auto
+```
+
+| Profile | Behavior in non-interactive print mode |
+| --- | --- |
+| `normal` (default when not configured) | Allow rules run directly. ASK calls without automatic approval fail with `PERMISSION_DENIED`; AI review is disabled by default. |
+| `auto` | Enable AI review for eligible Bash/SQL ASK calls. Review can allow or deny a call; unavailable, timed-out, or inconclusive review still fails closed. |
+| `dangerous` | Allow actions by default, without AI review. This is a broad permission grant; explicit deny rules and non-interactive filesystem protections still apply. |
+
+The selected profile comes from `permissions.profile` in `agent.yml` unless
+overridden by `--permission-mode`. User and node permission overrides can change
+review settings. Print mode warns on stderr before execution when the effective
+`normal` profile has both shared AI review and the legacy Bash classifier disabled.
+The warning leaves stdout available for JSON consumers and does not change permissions.
+
+For a program that can answer approval requests, use `--execution-mode interactive`
+and implement the stdin/stdout interaction protocol instead. `auto` does not
+provide automatic approval for every tool or bypass explicit denials.
