@@ -8,15 +8,15 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/tool-contracts/">
       
       
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -53,12 +53,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/tool-contracts/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/tool-contracts/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/tool-contracts/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -4940,6 +4935,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#default-readers-and-session-channels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Default readers and session channels
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4986,7 +4992,7 @@ families. It describes the implementation; it does not grant permission.</p>
 </span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>        <span class="o">...</span>
 </span></code></pre></div>
 <p>Both <code>access</code> and <code>direct_call</code> are required. Effects are <code>read</code>, <code>write</code>, <code>sql</code>,
-<code>execute</code>, and <code>restricted</code>. Review the actual implementation before declaring
+<code>execute</code>, <code>session</code>, and <code>restricted</code>. Review the actual implementation before declaring
 a reader: a method name does not establish safety. Mixed or caller-controlled
 operations that have not been reviewed for publication remain <code>restricted</code>.
 SQL retains its statement-level classification and connector guards.</p>
@@ -5014,7 +5020,7 @@ on every code PR, independently of impacted-test selection.</p>
 It does not depend on which tools have been instantiated. Duplicate canonical
 identities must agree on their contract; paging companions must name an existing
 non-companion owner with the same effect. Unclassified tools remain denied on
-restricted hosts. Existing family restrictions cannot be relaxed by declarations.</p>
+restricted hosts. Known readers remain readable within their node grants; family restrictions still deny writes and unknown methods.</p>
 <h2 id="dynamic-tools-and-wrappers">Dynamic tools and wrappers<a class="headerlink" href="#dynamic-tools-and-wrappers" title="Permanent link">&para;</a></h2>
 <p>Use <code>trans_to_function_tool(declared_method)</code> for ordinary methods. A custom
 schema or invoker uses the same registration boundary:</p>
@@ -5039,7 +5045,7 @@ including approvals and enablement. Native code must not construct raw SDK
 those paths. Final node assembly verifies registration before visibility filtering,
 including when plugins or permission-based visibility are disabled.</p>
 <p>An external MCP/provider tool is not automatically trusted because it reports
-itself as a reader. Existing external/restricted family policy remains unchanged;
+itself as a reader. Reviewed reads in mixed families are allowed within explicit node grants;
 a dynamic registration alone does not add an external reader to the native
 publication inventory.</p>
 <h2 id="compatibility">Compatibility<a class="headerlink" href="#compatibility" title="Permanent link">&para;</a></h2>
@@ -5080,6 +5086,31 @@ callbacks; the object editor does not depend on a filesystem subclass. The node
 mounts both providers explicitly and invokes the workspace for finalization and
 rollback. File and object methods retain their respective permission families,
 including existing <code>family.*</code> matching.</p>
+<h2 id="default-readers-and-session-channels">Default readers and session channels<a class="headerlink" href="#default-readers-and-session-channels" title="Permanent link">&para;</a></h2>
+<p>Normal and auto profiles derive exact read grants from the generated catalog.
+Operator and node overrides remain authoritative for resource access. Publication
+uses the same effects: a declared reader can survive a mixed-family restriction,
+but must still match the node selection and frozen version grant. Empty ask-node
+selections remain empty. SQL, filesystem paths and Skill names retain their own
+resource checks. <code>load_file_as_table</code> remains restricted because registration and
+materialization create database objects; <code>inspect_only</code> does not make the whole
+method a reader. Credential/adapter getters and authoring target binding are not
+read tools merely because their names resemble queries.</p>
+<p><code>session</code> identifies channels that only interact with the user or hold this
+run's plan/result: ask_user, confirm_plan, todo helpers, submit_task_result and
+select_final_metric_result. They do not require resource grants and must never
+be exported as direct REST/MCP calls or companions. Visibility and invocation
+consult the same declaration, so a node DENY cannot remove the channel it needs
+to ask a question or return its result. Nodes still decide whether to mount these
+channels (for example, workflow runs do not mount ask_user). read_tool_result is
+a reader, not a session mutation; it is always granted as session infrastructure
+on publications, and the result store itself enforces session ownership.</p>
+<p>Interactive nodes attach ask_user at the shared run boundary, after resource
+whitelists and rebuilds and before SDK tool capture. Workflow runs do not mount
+it. Exemptions use the canonical family and method, so an external tool that
+happens to be named ask_user cannot bypass its own rules. Hosted Skill validation
+reuses the owning filesystem policy; web reads validate every redirect target
+before sending another request and bound redirect chains.</p>
 
 
 
