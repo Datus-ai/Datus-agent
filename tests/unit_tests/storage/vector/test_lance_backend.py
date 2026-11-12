@@ -7,6 +7,7 @@
 import os
 import threading
 import unittest.mock
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import lancedb
@@ -580,13 +581,26 @@ class TestLanceWriteSerialization:
         assert done.wait(10), "write never resumed after the directory lock was released"
         assert not errors
 
-    def test_database_create_and_drop_wait_for_foreign_directory_lock(self, db_dir, raw_table):
+    def test_database_create_waits_for_foreign_directory_lock(self, db_dir):
         db = LanceVectorDatabase(lancedb.connect(str(db_dir)))
         schema = pa.schema([pa.field("id", pa.int64())])
         fd = _hold_directory_lock(db_dir)
         try:
-            done, errors = _run_in_thread(lambda: (db.create_table("second", schema=schema), db.drop_table("second")))
+            done, errors = _run_in_thread(lambda: db.create_table("second", schema=schema))
             assert not done.wait(0.5), "DDL ran while another holder owned the directory lock"
+        finally:
+            _release_directory_lock(fd)
+        assert done.wait(10)
+        assert not errors
+        assert "second" in db.table_names()
+
+    def test_database_drop_waits_for_foreign_directory_lock(self, db_dir):
+        db = LanceVectorDatabase(lancedb.connect(str(db_dir)))
+        db.create_table("second", schema=pa.schema([pa.field("id", pa.int64())]))
+        fd = _hold_directory_lock(db_dir)
+        try:
+            done, errors = _run_in_thread(lambda: db.drop_table("second"))
+            assert not done.wait(0.5), "drop ran while another holder owned the directory lock"
         finally:
             _release_directory_lock(fd)
         assert done.wait(10)
@@ -615,3 +629,32 @@ class TestLanceWriteSerialization:
         LanceVectorTable(raw).add(pd.DataFrame([{"id": 1}]))
         raw.add.assert_called_once()
         assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "uri,expected",
+    [
+        pytest.param("/data/proj/datus_db", Path("/data/proj/datus_db"), id="posix-absolute"),
+        pytest.param("file:///data/proj/datus_db", Path("/data/proj/datus_db"), id="file-uri"),
+        pytest.param("s3://bucket/proj/datus_db", None, id="remote"),
+        pytest.param("gs://bucket/proj/datus_db", None, id="remote-gcs"),
+        pytest.param("", None, id="empty"),
+        pytest.param(None, None, id="missing"),
+    ],
+)
+def test_local_path_resolves_supported_uris(uri, expected):
+    from datus.storage.vector.lance_backend import _local_path
+
+    assert _local_path(uri) == expected
+
+
+@pytest.mark.parametrize("uri", ["C:\\data\\datus_db", "c:\\data\\datus_db", "D:/data/datus_db"])
+def test_local_path_treats_windows_drive_letters_as_local(uri):
+    """A drive letter reads as a URI scheme to urlparse; it must still resolve.
+
+    A ``None`` result disables the cross-process write lock entirely, so this
+    pins the class of path rather than the platform-specific normalisation.
+    """
+    from datus.storage.vector.lance_backend import _local_path
+
+    assert _local_path(uri) is not None

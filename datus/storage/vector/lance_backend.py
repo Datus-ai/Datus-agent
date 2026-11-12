@@ -4,10 +4,12 @@
 
 """Default LanceDB implementation of the vector backend abstraction."""
 
+import errno
 import os
 import re
 import shutil
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
@@ -51,6 +53,10 @@ def _local_path(uri: Any) -> Optional[Path]:
     """Filesystem path behind a LanceDB uri, or ``None`` for remote/unknown stores."""
     if not isinstance(uri, str) or not uri:
         return None
+    # ``urlparse("C:\\data")`` reads the drive letter as a URI scheme, which
+    # would silently disable locking for every Windows database.
+    if len(uri) >= 2 and uri[0].isalpha() and uri[1] == ":":
+        return Path(uri)
     parsed = urlparse(uri)
     if parsed.scheme not in {"", "file"}:
         return None
@@ -94,13 +100,19 @@ def lance_write_lock(directory: Optional[Path]) -> Iterator[None]:
         return
     import msvcrt
 
+    # Lock a byte past end of file: reading it first would hit the lock a
+    # competing holder owns, and deny the read instead of waiting. ``LK_LOCK``
+    # gives up after ten one-second retries, which a long index build exceeds,
+    # so poll ``LK_NBLCK`` without a ceiling.
     with (directory / ".datus_write.lock").open("a+b") as lock:
-        lock.seek(0)
-        if not lock.read(1):
-            lock.write(b"\0")
-            lock.flush()
-        lock.seek(0)
-        msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+        while True:
+            try:
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                break
+            except OSError as exc:
+                if exc.errno not in (errno.EACCES, errno.EDEADLK):
+                    raise
+                time.sleep(0.1)
         held.add(key)
         try:
             yield
