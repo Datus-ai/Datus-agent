@@ -1636,6 +1636,7 @@ execution:
         - tests/unit_tests/configuration/
         - tests/unit_tests/models/
         - tests/unit_tests/plugins/
+        - tests/unit_tests/prompts/
         - tests/unit_tests/schemas/
         - tests/unit_tests/storage/
         - tests/unit_tests/test_mcp_server.py
@@ -1705,6 +1706,7 @@ execution:
         - tests/unit_tests/configuration/
         - tests/unit_tests/models/
         - tests/unit_tests/plugins/
+        - tests/unit_tests/prompts/
         - tests/unit_tests/schemas/
         - tests/unit_tests/storage/
         - tests/unit_tests/test_mcp_server.py
@@ -2412,6 +2414,7 @@ execution:
         - tests/unit_tests/api/services/test_report_service.py
         - tests/unit_tests/cli/test_package_builder.py
         - tests/unit_tests/cli/test_package_cli.py
+        - tests/unit_tests/prompts/
         - tests/unit_tests/tools/func_tool/test_dashboard_artifact_tools.py
         - tests/unit_tests/tools/func_tool/test_filesystem_tools.py
         - tests/unit_tests/tools/func_tool/test_fs_path_policy.py
