@@ -4,6 +4,8 @@
 
 from unittest.mock import Mock, patch
 
+import pytest
+
 from datus.tools.func_tool.context_search import ContextSearchTools
 
 
@@ -47,6 +49,37 @@ def test_context_wildcard_includes_all_available_context_tools():
     }
 
 
+@pytest.mark.parametrize(
+    "provider,method,expected",
+    [
+        (
+            "metric_rag",
+            "get_metrics_size",
+            {"list_subject_tree", "search_reference_sql", "get_reference_sql", "search_semantic_objects"},
+        ),
+        (
+            "reference_sql_store",
+            "get_reference_sql_size",
+            {"list_subject_tree", "search_metrics", "search_semantic_objects"},
+        ),
+    ],
+)
+def test_availability_read_failure_preserves_other_context_tools_and_recovers(provider, method, expected):
+    tools = _build_tools({"tools": "context_search_tools.*"})
+    count = getattr(getattr(tools, provider), method)
+    count.side_effect = OSError("Knowledge store temporarily unavailable")
+    assert {tool.name for tool in tools.available_tools()} == expected
+
+    count.side_effect = None
+    assert {tool.name for tool in tools.available_tools()} == {
+        "list_subject_tree",
+        "search_metrics",
+        "search_reference_sql",
+        "get_reference_sql",
+        "search_semantic_objects",
+    }
+
+
 def test_unrelated_tool_scope_does_not_expose_context_tools():
     tools = _build_tools({"tools": "db_tools.*"})
 
@@ -75,7 +108,8 @@ def test_list_subject_tree_description_does_not_name_disabled_context_tools():
     subject_tree_tool = next(tool for tool in available_tools if tool.name == "list_subject_tree")
 
     assert tool_names == {"list_subject_tree", "search_metrics"}
-    assert "enabled context retrieval tools" in subject_tree_tool.description
+    assert "unknown subject path" in subject_tree_tool.description
+    assert "does not require this lookup" in subject_tree_tool.description
     assert "get_reference_sql" not in subject_tree_tool.description
 
 

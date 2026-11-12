@@ -2,7 +2,7 @@
 
 ## Overview
 
-`ask_metrics` is a built-in metric question-answering subagent. It answers questions from existing semantic metrics instead of exploring raw tables or asking the model to write ad hoc SQL; Dosi compiles and executes the query.
+`ask_metrics` is a built-in metric question-answering subagent that can package a specific business context and tool surface for selected users. It answers questions from existing semantic metrics; Dosi compiles and executes the query. The main chat also provides metric queries and attribution directly. Choose AskMetrics when you want its scoped context or explicitly selected agent interface.
 
 Use AskMetrics when the user asks for:
 
@@ -29,7 +29,7 @@ Continue from the DuckDB example in [Semantic Modeling](semantic_modeling.md#qui
 datus --datasource duckdb_demo
 ```
 
-After creating the `bank_failures` model, ask the question directly in the main chat. The main agent delegates it to AskMetrics automatically:
+After creating the `bank_failures` model, ask directly in the main chat, which can query the metrics itself:
 
 ```text
 Show bank failure count and failed assets by year.
@@ -100,6 +100,11 @@ Key behavior:
 | `semantic_tools.get_dataset` | Describe one dataset: its fields with their definitions, fixed fields, time field, and relationships |
 | `semantic_tools.query_metrics` | Query metric values |
 | `semantic_tools.attribution_analyze` | Explain metric movement across candidate dimensions |
+| `filesystem_tools.read_file` | Read relevant project business definitions or background |
+| `filesystem_tools.glob` | Locate relevant project files |
+| `filesystem_tools.grep` | Search project files for specific business terms |
+
+File exploration is optional for any question when business scope or interpretation needs more context. AskMetrics first reuses supplied knowledge and metric/dataset descriptions; a simple query with enough context proceeds without a file lookup. Attribution may benefit from business definitions or operational records, but does not require a file-discovery step. When using project documents, AskMetrics cites their paths and distinguishes measured contributions from business hypotheses.
 
 If the Dosi runtime is unavailable, AskMetrics cannot safely answer metric questions. If context search is unavailable, AskMetrics can still query Dosi, but it will not have subject-tree routing context.
 
@@ -147,7 +152,7 @@ agent:
 
 When `system_prompt` is omitted, Datus first looks for a prompt template matching the custom agent name, such as `sales_metric_qa_system_1.0.j2`, then falls back to the built-in `ask_metrics_system` template.
 
-`tools` can be a comma-separated string or a list. The default surface is metric-focused. Custom agents can opt into other user-facing tool categories when needed, but keeping AskMetrics metric-only produces more deterministic answers.
+`tools` can be a comma-separated string or a list. An explicit allowlist replaces the defaults; the three file tools are not appended automatically. To enable project-file access in an existing custom allowlist, add the desired `filesystem_tools.read_file`, `filesystem_tools.glob`, and `filesystem_tools.grep` entries alongside its metric tools. Custom agents can also opt into other user-facing tool categories when needed.
 
 For existing custom tool lists, remove `context_search_tools.get_metrics`. Use `semantic_tools.get_metric` when the metric definition is needed; `context_search_tools.search_metrics` remains available for discovery.
 

@@ -89,10 +89,24 @@ class ContextSearchTools:
             self.sub_agent_config = SubAgentConfig.model_validate(raw_sub_agent_config)
         else:
             self.sub_agent_config = None
-        self.has_metrics = self.metric_rag.get_metrics_size() > 0
-        self.has_reference_sql = self.reference_sql_store.get_reference_sql_size() > 0
         self.has_semantic_objects = self.semantic_rag.get_size() > 0
         self.has_reference_templates = self.reference_template_store.get_reference_template_size() > 0
+
+    @property
+    def has_metrics(self) -> bool:
+        try:
+            return self.metric_rag.get_metrics_size() > 0
+        except Exception as exc:
+            logger.warning("Metric context is unavailable for the configured scope: %s", exc)
+            return False
+
+    @property
+    def has_reference_sql(self) -> bool:
+        try:
+            return self.reference_sql_store.get_reference_sql_size() > 0
+        except Exception as exc:
+            logger.warning("SQL context is unavailable for the configured scope: %s", exc)
+            return False
 
     def _has_tool_permission(self, tool_namespace: str, *tool_names: str) -> bool:
         if not self.sub_agent_config:
@@ -193,8 +207,8 @@ class ContextSearchTools:
     def list_subject_tree(self) -> FuncToolResult:
         """
         Get the domain-layer taxonomy from subject_tree store.
-        Use this as the first step to discover available context entries before calling
-        enabled context retrieval tools.
+        Use this when a knowledge lookup needs an unknown subject path.
+        A known path, entry, physical table, or specified file does not require this lookup.
 
         The response has the structure:
         {
@@ -303,7 +317,8 @@ class ContextSearchTools:
     ) -> FuncToolResult:
         """
         Search for reference SQL queries using natural language queries.
-        MUST call `list_subject_tree` first to get the subject path.
+        Reuse a known subject path. Call `list_subject_tree` only when the requested
+        lookup needs a subject path that is not already available in context.
 
         Args:
             query_text: The natural language query text representing the desired SQL intent.

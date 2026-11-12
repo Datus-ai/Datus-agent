@@ -5,6 +5,7 @@
 """Tests for datus/storage/reference_sql/store.py -- ReferenceSqlStorage."""
 
 import hashlib
+import json
 import os
 import tempfile
 
@@ -58,6 +59,42 @@ def _make_sql_item(
 def ref_sql_storage(tmp_path) -> ReferenceSqlStorage:
     """Create a ReferenceSqlStorage with real vector backend."""
     return ReferenceSqlStorage(embedding_model=get_db_embedding_model())
+
+
+def test_context_sql_scope_denies_missing_subject_and_recovers(real_agent_config, mock_llm_create):
+    from datus.tools.func_tool.context_search import ContextSearchTools
+
+    writer = ReferenceSqlRAG(real_agent_config)
+    writer.store_batch([_make_sql_item(1, ["Finance", "Allowed"]), _make_sql_item(2, ["Private", "Other"])])
+    real_agent_config.agentic_nodes["sql_reader"] = {
+        "tools": "context_search_tools.*",
+        "scoped_context": {"metrics": "MissingMetricSubject", "sqls": "Finance.Allowed"},
+    }
+    context = ContextSearchTools(real_agent_config, sub_agent_name="sql_reader")
+    reader = context.reference_sql_store
+    assert [row["name"] for row in reader.search_all_reference_sql()] == ["query_1"]
+    tree = writer.reference_sql_storage.subject_tree
+    assert tree.rename(["Finance"], ["ArchivedFinance"]) is True
+
+    for tools in (context, ContextSearchTools(real_agent_config, sub_agent_name="sql_reader")):
+        assert tools.has_reference_sql is False
+        names = {tool.name for tool in tools.available_tools()}
+        assert "search_reference_sql" not in names
+        assert "get_reference_sql" not in names
+        for result in (tools.search_reference_sql("query_2"), tools.get_reference_sql(["Private", "Other"], "query_2")):
+            assert result.success == 0
+            assert result.result is None
+            assert "scope" in result.error
+        taxonomy = json.dumps(tools.list_subject_tree().result)
+        assert "query_1" not in taxonomy
+        assert "query_2" not in taxonomy
+        with pytest.raises(ValueError, match="scope"):
+            tools.reference_sql_store.search_all_reference_sql()
+
+    assert tree.rename(["ArchivedFinance"], ["Finance"]) is True
+    assert context.has_reference_sql is True
+    assert "search_reference_sql" in {tool.name for tool in context.available_tools()}
+    assert [row["name"] for row in reader.search_all_reference_sql()] == ["query_1"]
 
 
 # ============================================================

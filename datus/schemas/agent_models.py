@@ -72,6 +72,14 @@ class SubAgentConfig(BaseModel):
         description="Node class type for custom subagents: 'gen_sql' (default) or 'gen_visual_report'",
     )
     tools: str = Field(default="", init=True, description="Native tools to be used by sub-agents")
+
+    @field_validator("tools", mode="before")
+    @classmethod
+    def normalize_tools(cls, value):
+        if isinstance(value, (list, tuple)) and all(isinstance(item, str) for item in value):
+            return ",".join(item.strip() for item in value if item.strip())
+        return value
+
     mcp: str = Field(default="", init=True, description="MCP tools to be used by sub-agents")
     scoped_context: Optional[ScopedContext] = Field(
         default=None, init=True, description="Scoped context for sub-agents"

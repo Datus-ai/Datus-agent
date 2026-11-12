@@ -165,7 +165,10 @@ def _load_model_specs() -> Dict[str, Dict[str, int]]:
                                         slug, litellm.model_cost.get(f"openrouter/{slug}", {})
                                     ).get("max_output_tokens")
                                     baseline = known or lite or DEFAULT_MAX_TOKENS
-                                    specs.setdefault(slug, {})["default_max_tokens"] = min(value, baseline)
+                                    model_spec = specs.setdefault(slug, {})
+                                    model_spec["default_max_tokens"] = min(
+                                        model_spec.get("default_max_tokens", baseline), value, baseline
+                                    )
                                 specs.setdefault(slug, {})[field] = value
 
             _MODEL_SPECS_CACHE = specs
@@ -647,8 +650,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 params["top_p"] = 1.0
 
             # Resolve max_tokens / max_completion_tokens.
-            # Priority: kwargs > model_specs.max_tokens. If neither is set, omit
-            # the parameter so the provider's own default applies.
+            # Priority: kwargs > the shared configured/resolved capacity default.
             explicit_max_tokens = kwargs.get("max_tokens")
             explicit_max_completion = kwargs.get("max_completion_tokens")
             if explicit_max_tokens is not None:
@@ -656,15 +658,15 @@ class OpenAICompatibleModel(LLMBaseModel):
             if explicit_max_completion is not None:
                 params["max_completion_tokens"] = explicit_max_completion
             if explicit_max_tokens is None and explicit_max_completion is None:
-                spec_max_tokens = self.max_tokens()
-                if isinstance(spec_max_tokens, int) and spec_max_tokens > 0:
+                default_max_tokens = self.request_capacity().request_output_limit()
+                if isinstance(default_max_tokens, int) and default_max_tokens > 0:
                     uses_completion = (
                         hasattr(self, "_uses_completion_tokens_parameter") and self._uses_completion_tokens_parameter()
                     )
                     if uses_completion:
-                        params["max_completion_tokens"] = spec_max_tokens
+                        params["max_completion_tokens"] = default_max_tokens
                     else:
-                        params["max_tokens"] = spec_max_tokens
+                        params["max_tokens"] = default_max_tokens
 
             # Filter out handled parameters from remaining kwargs
             excluded_params = ["temperature", "top_p", "max_tokens", "max_completion_tokens"]
@@ -1078,8 +1080,8 @@ class OpenAICompatibleModel(LLMBaseModel):
         if not suppress_sampling_params and self.model_config.top_p is not None:
             model_settings_kwargs["top_p"] = self.model_config.top_p
 
-        # Send the same resolved output cap that the capacity check reserves.
-        model_settings_kwargs["max_tokens"] = self.request_capacity().output_limit(max_tokens)
+        # Unknown custom endpoints choose their wire default; planning retains the reservation.
+        model_settings_kwargs["max_tokens"] = self.request_capacity().request_output_limit(max_tokens)
 
         if self.default_headers:
             model_settings_kwargs["extra_headers"] = self.default_headers
@@ -1991,6 +1993,18 @@ class OpenAICompatibleModel(LLMBaseModel):
         """Automatically resolved model specifications, with bundled fallbacks."""
         return _load_model_specs()
 
+    def _lookup_litellm_spec(self, field: str) -> Optional[int]:
+        """Read optional registry limits independently of the provider catalog."""
+        try:
+            info = litellm.model_cost.get(
+                self.litellm_adapter.litellm_model_name, litellm.model_cost.get(self.model_name, {})
+            )
+            value = info.get({"context_length": "max_input_tokens", "max_tokens": "max_output_tokens"}.get(field))
+            return value if type(value) is int and value > 0 else None
+        except Exception as exc:
+            logger.debug("Registry metadata unavailable for %s: %s", self.model_name, type(exc).__name__)
+            return None
+
     def _lookup_spec(self, field: str) -> Optional[int]:
         """Prefer exact catalog entries, then the longest hyphen-delimited prefix."""
         from datus.cli.provider_model_catalog import model_spec_prefix_matches
@@ -1999,11 +2013,8 @@ class OpenAICompatibleModel(LLMBaseModel):
         exact = specs.get(self.model_name)
         if isinstance(exact, dict) and isinstance(exact.get(field), int):
             return exact[field]
-        info = litellm.model_cost.get(
-            self.litellm_adapter.litellm_model_name, litellm.model_cost.get(self.model_name, {})
-        )
-        value = info.get({"context_length": "max_input_tokens", "max_tokens": "max_output_tokens"}.get(field))
-        if type(value) is int and value > 0:
+        value = self._lookup_litellm_spec(field)
+        if value is not None:
             return value
         best_key: Optional[str] = None
         for spec_model, spec in specs.items():
@@ -2021,12 +2032,24 @@ class OpenAICompatibleModel(LLMBaseModel):
         """Configured output limit or a model default that leaves input headroom."""
         if self.model_config.max_tokens:
             return self.model_config.max_tokens
-        default = self.model_specs.get(self.model_name, {}).get("default_max_tokens")
-        return self._default_output_limit(default or self._lookup_spec("max_tokens") or DEFAULT_MAX_TOKENS)
+        try:
+            default = self.model_specs.get(self.model_name, {}).get("default_max_tokens")
+            limit = default or self._lookup_spec("max_tokens")
+        except Exception as exc:
+            logger.debug("Output metadata unavailable for %s: %s", self.model_name, type(exc).__name__)
+            limit = None
+        return self._default_output_limit(limit or self._lookup_litellm_spec("max_tokens") or DEFAULT_MAX_TOKENS)
 
     def context_length(self) -> Optional[int]:
         """Configured window, known model specification, or the default budget."""
-        return self.model_config.context_length or self._lookup_spec("context_length") or DEFAULT_CONTEXT_LENGTH
+        if self.model_config.context_length:
+            return self.model_config.context_length
+        try:
+            limit = self._lookup_spec("context_length")
+        except Exception as exc:
+            logger.debug("Context metadata unavailable for %s: %s", self.model_name, type(exc).__name__)
+            limit = None
+        return limit or self._lookup_litellm_spec("context_length") or DEFAULT_CONTEXT_LENGTH
 
     def token_count(self, prompt: str) -> int:
         """

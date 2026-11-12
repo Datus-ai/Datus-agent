@@ -850,7 +850,7 @@ class TestExplorerServicePreviewMetric:
         service = ExplorerService(agent_config=real_agent_config)
         monkeypatch.setattr(service, "_metric_is_in_scope", lambda _: True)
         result = await service.preview_metric(MetricPreviewInput(subject_path=["revenue"]), request_context)
-        assert result.success
+        assert result.success is True
         assert tools.kwargs["policy_context_provider"]() == request_context
         assert real_agent_config.policy_context is config_context
 
@@ -866,7 +866,7 @@ class TestExplorerServicePreviewMetric:
         )
         service = ExplorerService(agent_config=real_agent_config)
         result = await service.preview_metric(MetricPreviewInput(subject_path=["revenue"]))
-        assert result.success
+        assert result.success is True
         assert result.data.sql == "SELECT SUM(amount) FROM orders"
         tools.compile_metric_for_sql_execution.assert_called_once()
         tools.query_metrics.assert_not_called()
@@ -1575,7 +1575,7 @@ metrics:
         kb_deleted = await self._metric_under(svc, monkeypatch, ["operations", "daily"], "daily_order_count")
         node_id = svc.subject_tree_store.get_node_by_path(["operations", "daily"])["node_id"]
         # The metric exists in the datasource but is hidden by the sub-agent filter.
-        monkeypatch.setattr(svc.metric_rag, "_sub_agent_filter", object())
+        monkeypatch.setattr(type(svc.metric_rag), "_sub_agent_filter", property(lambda rag: object()))
         monkeypatch.setattr(
             svc.metric_rag.storage,
             "list_entries",

@@ -206,6 +206,11 @@
       "companion_of": null,
       "direct_call": true
     },
+    "db_tools.export_query": {
+      "access": "write",
+      "companion_of": null,
+      "direct_call": false
+    },
     "db_tools.get_datasource_identity": {
       "access": "read",
       "companion_of": null,

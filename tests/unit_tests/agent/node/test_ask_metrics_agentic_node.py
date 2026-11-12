@@ -4,6 +4,7 @@
 
 import inspect
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -259,6 +260,9 @@ class TestAskMetricsAgenticNode:
             "get_dataset",
             "query_metrics",
             "attribution_analyze",
+            "read_file",
+            "glob",
+            "grep",
         ]
         assert node.subject_tree_mode == "full"
         assert node.subject_tree_metric_entries == [
@@ -316,7 +320,7 @@ class TestAskMetricsAgenticNode:
         for rule, tool in (
             ("Do not pass limit just to preview data", "query_metrics"),
             ("also pass order_by", "query_metrics"),
-            ("full result is cached", "query_metrics"),
+            ("Full rows are cached", "query_metrics"),
             ("never the same start and end", "query_metrics"),
             ("never repeated in `where`", "query_metrics"),
             ("follow its `suggested_retry`", "query_metrics"),
@@ -556,6 +560,9 @@ class TestAskMetricsAgenticNode:
             "get_dataset",
             "query_metrics",
             "attribution_analyze",
+            "read_file",
+            "glob",
+            "grep",
         ]
 
     def test_update_context_defaults_to_last_query_metrics_result(
@@ -783,6 +790,9 @@ class TestAskMetricsAgenticNode:
             "get_dataset",
             "query_metrics",
             "attribution_analyze",
+            "read_file",
+            "glob",
+            "grep",
         ]
 
     def test_setup_tools_handles_semantic_setup_failure(self, real_agent_config, mock_llm_create):
@@ -925,7 +935,75 @@ class TestAskMetricsAgenticNode:
             "query_metrics",
             "attribution_analyze",
             "search_metrics",
+            "read_file",
+            "glob",
+            "grep",
         }
+
+    @pytest.mark.asyncio
+    async def test_default_file_tools_read_project_knowledge_without_write_tools(
+        self, real_agent_config, mock_llm_create
+    ):
+        from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+
+        knowledge_dir = Path(real_agent_config.project_root) / "knowledge"
+        knowledge_dir.mkdir()
+        source = knowledge_dir / "business.md"
+        source.write_text("Business context: the campaign targets managed accounts.\n", encoding="utf-8")
+        node = AskMetricsAgenticNode(
+            node_id="ask_metrics_business_files",
+            description="Read project business context",
+            node_type=NodeType.TYPE_ASK_METRICS,
+            agent_config=real_agent_config,
+            node_name="ask_metrics",
+        )
+        tools = {tool.name: tool for tool in node.tools}
+
+        assert {"read_file", "glob", "grep", "query_metrics", "attribution_analyze"} <= tools.keys()
+        assert not {"write_file", "edit_file", "delete_file", "bash", "execute_sql"} & tools.keys()
+        for name, args, expected in (
+            ("glob", {"pattern": "*.md", "path": "knowledge"}, "business.md"),
+            ("grep", {"pattern": "managed accounts", "path": "knowledge"}, "business.md"),
+            ("read_file", {"path": "knowledge/business.md"}, "the campaign targets managed accounts"),
+        ):
+            result = await tools[name].on_invoke_tool(None, json.dumps(args))
+            assert result["success"] == 1, result
+            assert expected in str(result["result"])
+            assert node.tool_registry.get(name) == "filesystem_tools"
+        assert source.read_text(encoding="utf-8") == "Business context: the campaign targets managed accounts.\n"
+
+    @pytest.mark.parametrize("file_tool", [None, "read_file", "glob", "grep"])
+    def test_explicit_tool_config_controls_file_access_and_prompt(self, real_agent_config, mock_llm_create, file_tool):
+        patterns = [
+            "semantic_tools.list_metrics",
+            "semantic_tools.get_metric",
+            "semantic_tools.query_metrics",
+            "semantic_tools.attribution_analyze",
+        ]
+        if file_tool:
+            patterns.append(f"filesystem_tools.{file_tool}")
+        node, _, _ = _make_node(real_agent_config, tree={}, node_config={"tools": ",".join(patterns)})
+        names = {tool.name for tool in node.tools}
+        assert names & {"read_file", "glob", "grep"} == ({file_tool} if file_tool else set())
+
+        prompt = node._get_system_prompt()
+        if file_tool is None:
+            assert "## Project Business Knowledge" not in prompt
+            assert "consider a targeted project-file lookup" not in prompt
+        else:
+            context = prompt.split("## Project Business Knowledge", 1)[1].split("## Attribution Playbook", 1)[0]
+            for name in ("read_file", "glob", "grep"):
+                assert (f"Use `{name}`" in context) == (name == file_tool)
+            assert (
+                "When they are sufficient, answer through the metric workflow without a file-discovery preflight"
+                in context
+            )
+            assert "File exploration is optional for any question" in context
+            assert "identify a specific missing fact" in context
+            assert "no need to re-read supplied background merely to repeat it" in context
+            assert ("skip clearly unrelated files" in context) == (file_tool == "glob")
+            assert "Stop once there is enough evidence to proceed" in context
+            assert "do not establish causation by themselves" in prompt
 
     @pytest.mark.parametrize("synced", [True, False])
     def test_semantic_object_search_is_mounted_only_with_objects_to_search(

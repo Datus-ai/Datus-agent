@@ -90,7 +90,11 @@ def create_proxy_tool(original: FunctionTool, channel: ToolResultChannel) -> Fun
 
 
 def apply_proxy_tools(
-    node: AgenticNode, proxy_patterns: List[str], channel: Optional[ToolResultChannel] = None
+    node: AgenticNode,
+    proxy_patterns: List[str],
+    channel: Optional[ToolResultChannel] = None,
+    *,
+    only_tool_names: Optional[Set[str]] = None,
 ) -> None:
     """Replace matching tools on the node with proxy wrappers.
 
@@ -101,9 +105,12 @@ def apply_proxy_tools(
                  falls back to ``node.tool_channel``.  Sub-agents pass the
                  parent's channel so that stdin dispatch can resolve their
                  proxy futures.
+        only_tool_names: When supplied, wrap only these newly mounted tools.
+                 Preserve all other tool objects and their proxy membership.
     """
     node.proxy_tool_patterns = proxy_patterns
     target_channel = channel or node.tool_channel
+    node._proxy_tool_channel = target_channel
     if getattr(getattr(node, "agent_config", None), "_client_source", None) == "web":
         # Descendants inherit the root session's result channel, including through native authoring nodes.
         node.tool_channel = target_channel
@@ -131,7 +138,13 @@ def apply_proxy_tools(
 
     new_tools = []
     proxied_names: Set[str] = set()
+    previous_proxied = set(getattr(node, "proxied_tool_names", None) or ())
     for tool in node.tools:
+        if only_tool_names is not None and getattr(tool, "name", None) not in only_tool_names:
+            new_tools.append(tool)
+            if getattr(tool, "name", None) in previous_proxied:
+                proxied_names.add(tool.name)
+            continue
         if isinstance(tool, FunctionTool) and _matches(tool.name, registry, parsed):
             if exclude_categories and (
                 registry.get(tool.name) in exclude_categories

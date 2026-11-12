@@ -13,6 +13,25 @@ from datus.schemas.agent_models import ScopedContext, SubAgentConfig, merge_scop
 
 
 @pytest.mark.ci
+class TestToolPatternsNormalization:
+    @pytest.mark.parametrize(
+        "tools",
+        [
+            [" semantic_tools.query_metrics ", "", "semantic_tools.get_metric"],
+            ("semantic_tools.query_metrics", "semantic_tools.get_metric"),
+        ],
+    )
+    def test_tool_list_is_usable_by_scoped_storage(self, tools):
+        cfg = SubAgentConfig(tools=tools)
+        assert cfg.tools == "semantic_tools.query_metrics,semantic_tools.get_metric"
+
+    def test_invalid_tool_list_is_rejected(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            SubAgentConfig(tools=[1])
+
+
 class TestSubAgentsFieldNormalization:
     """Tests for the ``subagents`` field validator / normalizer."""
 

@@ -1275,6 +1275,7 @@ class AgenticNode(Node):
             except Exception:
                 model_id = ""
         language = getattr(agent_config, "language", None) if agent_config is not None else None
+        from datus.prompts.collaboration_contract import COLLABORATION_CONTRACT
         from datus.schemas.database_context import execution_context_for_node
         from datus.utils.node_utils import build_datasource_prompt_context
 
@@ -1291,6 +1292,7 @@ class AgenticNode(Node):
             template_digest = ""
 
         return {
+            "collaboration_contract_sha256": hashlib.sha256(COLLABORATION_CONTRACT.encode()).hexdigest(),
             "datasource_catalog_sha256": hashlib.sha256(
                 json.dumps(datasource_catalog, sort_keys=True, default=str).encode()
             ).hexdigest(),
@@ -1521,6 +1523,9 @@ class AgenticNode(Node):
         # host-mandated (e.g. authoring format specs) and must not depend on
         # the LLM choosing to call ``load_skill``.
         base_prompt = self._inject_required_skills(base_prompt)
+        from datus.prompts.collaboration_contract import COLLABORATION_CONTRACT
+
+        base_prompt += "\n\n" + COLLABORATION_CONTRACT
 
         # Inject available skills XML into system prompt when skill_func_tool is active.
         if self.skill_func_tool:
@@ -4635,6 +4640,8 @@ class AgenticNode(Node):
                 non_interactive=non_interactive,
                 proxied_tool_names=self.proxied_tool_names,
                 project_root=getattr(self.agent_config, "project_root", None),
+                export_workspace_root=self._resolve_workspace_root(),
+                client_only_workspace=getattr(self.agent_config, "_client_source", None) == "vscode",
                 config_mutable=self._resolve_config_mutable(),
                 auto_reviewer=create_auto_reviewer(self.agent_config),
                 review_context_provider=self._build_permission_review_context,

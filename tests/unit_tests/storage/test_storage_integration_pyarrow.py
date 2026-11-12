@@ -87,7 +87,8 @@ class TestMetricRAGPyArrow:
         rag = MetricRAG.__new__(MetricRAG)
         rag.storage = metric_storage
         rag.datasource_id = metric_storage.datasource_id
-        rag._sub_agent_filter = None
+        rag.agent_config = None
+        rag.sub_agent_name = None
         rag._provenance_enabled = False
 
         result = rag.search_all_metrics()
@@ -140,7 +141,8 @@ class TestMetricRAGPyArrow:
         rag = MetricRAG.__new__(MetricRAG)
         rag.storage = metric_storage
         rag.datasource_id = ""
-        rag._sub_agent_filter = None
+        rag.agent_config = None
+        rag.sub_agent_name = None
 
         # Test the get_metrics_detail method functionality
         result = rag.get_metrics_detail(subject_path=["Sales", "Revenue", "Monthly"], name="monthly_revenue")

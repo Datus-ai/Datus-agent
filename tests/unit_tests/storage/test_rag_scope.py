@@ -108,6 +108,13 @@ class TestBuildSubAgentFilter:
         result = _build_sub_agent_filter(config, "team_a", _mock_storage(), "tables")
         assert result is None
 
+    def test_unresolved_metric_scope_rejects_strict_reads(self):
+        config = _mock_agent_config(sub_agent_configs={"team_a": {"scoped_context": {"metrics": "MissingSubject"}}})
+        storage = _mock_storage(has_subject_tree=True)
+        storage.subject_tree.get_matched_children_id.return_value = []
+        with pytest.raises(ValueError, match="scope"):
+            _build_sub_agent_filter(config, "team_a", storage, "metrics", fail_closed=True)
+
 
 class TestRuntimeOverrideIntegration:
     """Verify ``AgentConfig.sub_agent_config`` consults the ContextVar override.

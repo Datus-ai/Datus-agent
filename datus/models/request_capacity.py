@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import json
 import math
+from collections import OrderedDict
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from threading import Lock
+from time import monotonic
 from typing import Any
 
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -21,7 +24,12 @@ logger = get_logger(__name__)
 # Budget assumptions for models without published specifications, not detected
 # server limits. Explicit deployment settings and known model specs take priority.
 DEFAULT_CONTEXT_LENGTH = 1048576
-DEFAULT_MAX_TOKENS = 128000
+DEFAULT_MAX_TOKENS = 384000
+DEFAULT_MEDIA_TOKENS = 4096
+_TOKENIZER_CACHE_SIZE = 16
+_TOKENIZER_FAILURE_TTL_SECONDS = 300
+_tokenizer_failures: OrderedDict[str, tuple[float, str]] = OrderedDict()
+_tokenizer_failure_lock = Lock()
 
 
 class ContextCapacityError(DatusException):
@@ -33,7 +41,7 @@ class ContextCapacityError(DatusException):
         super().__init__(ErrorCode.MODEL_REQUEST_FAILED, message_args={"error_detail": f"{reason}: {detail}"})
 
 
-@lru_cache(maxsize=16)
+@lru_cache(maxsize=_TOKENIZER_CACHE_SIZE)
 def _tokenizer(reference: str):
     if reference.startswith("tiktoken:"):
         import tiktoken
@@ -45,8 +53,37 @@ def _tokenizer(reference: str):
     return Tokenizer.from_file(str(path)) if path.is_file() else Tokenizer.from_pretrained(reference)
 
 
+def _optional_tokenizer(reference: str) -> tuple[Any, str | None]:
+    """Bound repeated initialization failures while allowing recovery after five minutes."""
+    with _tokenizer_failure_lock:
+        failure = _tokenizer_failures.get(reference)
+        if failure is not None and monotonic() < failure[0]:
+            _tokenizer_failures.move_to_end(reference)
+            return None, failure[1]
+        _tokenizer_failures.pop(reference, None)
+    try:
+        return _tokenizer(reference), None
+    except Exception as exc:
+        reason = type(exc).__name__
+        with _tokenizer_failure_lock:
+            _tokenizer_failures[reference] = (monotonic() + _TOKENIZER_FAILURE_TTL_SECONDS, reason)
+            _tokenizer_failures.move_to_end(reference)
+            if len(_tokenizer_failures) > _TOKENIZER_CACHE_SIZE:
+                _tokenizer_failures.popitem(last=False)
+        return None, reason
+
+
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+@dataclass(frozen=True)
+class TokenEstimate:
+    tokens: int
+    source: str
+    estimated: bool
+    fallback_reasons: tuple[str, ...] = ()
+    trusted_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -57,6 +94,21 @@ class RequestCapacity:
     tokenizer_ref: str | None = None
     supports_output_limit: bool = True
     output_ceiling: int | None = None
+    context_source: str = "config"
+    output_source: str = "config"
+    enforce_catalog_limits: bool = True
+    allow_estimated_overflow: bool = True
+    send_default_output: bool = True
+
+    def __post_init__(self) -> None:
+        if self.context_length is None:
+            object.__setattr__(self, "context_length", DEFAULT_CONTEXT_LENGTH)
+            object.__setattr__(self, "context_source", "default")
+        if self.default_output is None:
+            usable = self.context_length - self.margin
+            output = min(DEFAULT_MAX_TOKENS, max(1, usable // 2)) if self.supports_output_limit else DEFAULT_MAX_TOKENS
+            object.__setattr__(self, "default_output", output)
+            object.__setattr__(self, "output_source", "default")
 
     @property
     def margin(self) -> int:
@@ -74,17 +126,27 @@ class RequestCapacity:
             # Subscription transports have no output-cap request field. A
             # requested smaller output cannot lower their service ceiling.
             return max(value, self.default_output or 0, self.output_ceiling or 0)
-        if self.output_ceiling is not None and value > self.output_ceiling:
+        if self.enforce_catalog_limits and self.output_ceiling is not None and value > self.output_ceiling:
             raise ContextCapacityError(
                 "OUTPUT_LIMIT_EXCEEDED",
                 f"Requested output {value} exceeds the known maximum {self.output_ceiling} for {self.model}.",
             )
         return value
 
+    def request_output_limit(self, explicit: Any = None) -> int | None:
+        """Keep an unknown output reservation local when the endpoint can choose its default."""
+        value = self.output_limit(explicit)
+        return value if explicit is not None or self.send_default_output else None
+
     def _counter_model(self) -> str | None:
         import litellm
 
-        return next((name for name in (self.model, self.model.split("/", 1)[-1]) if name in litellm.model_cost), None)
+        try:
+            return next(
+                (name for name in (self.model, self.model.split("/", 1)[-1]) if name in litellm.model_cost), None
+            )
+        except Exception:
+            return None
 
     @property
     def counter_source(self) -> str:
@@ -104,23 +166,22 @@ class RequestCapacity:
         return self.context_length - self.output_limit(output) - self.margin
 
     def count(self, payload: Any) -> int:
-        """Count the complete serialized input, including schemas and framing.
+        """Keep the integer counting API used by existing capacity consumers."""
+        return self.estimate(payload).tokens
 
-        Without a known tokenizer, reserve one token per UTF-8 byte. The
-        serialized representation deliberately includes field names and a
-        per-message framing allowance. Images are accounted for separately by
-        the matched provider counter, never by tokenizing their base64 bytes.
+    def estimate(self, payload: Any) -> TokenEstimate:
+        """Estimate input without requiring a provider catalog or optional tokenizer.
+
+        Count a text-only view and account for media separately. Binary bytes
+        never become text tokens, and the original request is not modified.
         """
         import litellm
 
-        if _has_opaque_file(payload):
-            raise ContextCapacityError(
-                "CONTEXT_COUNT_UNAVAILABLE", "File inputs need extracted text or a provider token count before sending."
-            )
+        payload_view, files = _file_count_view(payload)
         # The shared image walker accepts message/content envelopes, not a
         # whole API request. Preserve every other request field for text counting.
-        text_view = replace_images(payload)
-        if isinstance(payload, dict):
+        text_view = replace_images(payload_view)
+        if isinstance(payload_view, dict):
             text_view = {
                 key: replace_images(value) if key in {"messages", "input"} else value
                 for key, value in text_view.items()
@@ -129,41 +190,83 @@ class RequestCapacity:
         messages = payload.get("messages", payload.get("input", [])) if isinstance(payload, dict) else payload
         framing = 64 * (len(messages) if isinstance(messages, list) else 1) + 256
         counter_model = self._counter_model()
-        try:
-            if self.tokenizer_ref:
-                tokenizer = _tokenizer(self.tokenizer_ref)
-                encoded = (
-                    tokenizer.encode(text, disallowed_special=())
-                    if self.tokenizer_ref.startswith("tiktoken:")
-                    else tokenizer.encode(text)
-                )
-                count = len(encoded.ids) if hasattr(encoded, "ids") else len(encoded)
-            else:
-                # For unknown aliases and non-OpenAI models, reserve UTF-8 bytes
-                # rather than using LiteLLM's generic OpenAI tokenizer. This is
-                # conservative for byte-level provider tokenizers; configure
-                # tokenizer_ref to use the deployment's actual encoding.
-                count = (
-                    litellm.token_counter(model=counter_model, text=text)
-                    if self.counter_source == "litellm_serialized_request"
-                    else len(text.encode("utf-8"))
-                )
-            images = _image_messages(payload)
-            if images:
+        count = None
+        source = "utf8_byte_upper_bound"
+        estimated = True
+        reasons = []
+        if self.tokenizer_ref:
+            try:
+                tokenizer, failure = _optional_tokenizer(self.tokenizer_ref)
+                if failure is not None:
+                    reasons.append(f"tokenizer unavailable ({failure})")
+                else:
+                    encoded = (
+                        tokenizer.encode(text, disallowed_special=())
+                        if self.tokenizer_ref.startswith("tiktoken:")
+                        else tokenizer.encode(text)
+                    )
+                    count = len(encoded.ids) if hasattr(encoded, "ids") else len(encoded)
+                    if count <= 0:
+                        raise ValueError("invalid tokenizer count")
+                    source, estimated = self.tokenizer_ref, False
+            except Exception as exc:
+                count = None
+                reasons.append(f"tokenizer unavailable ({type(exc).__name__})")
+        if count is None and counter_model in litellm.open_ai_chat_completion_models:
+            try:
+                count = litellm.token_counter(model=counter_model, text=text)
+                if type(count) is not int or count <= 0:
+                    raise ValueError("invalid token count")
+                source = "litellm_serialized_request"
+                estimated = not self.enforce_catalog_limits or bool(reasons)
+            except Exception as exc:
+                count = None
+                reasons.append(f"text counter unavailable ({type(exc).__name__})")
+        if count is None:
+            count = len(text.encode("utf-8"))
+            source, estimated = "utf8_byte_upper_bound", True
+        trusted_tokens = count + framing if not estimated else 0
+
+        content = (
+            [payload[key] for key in ("messages", "input") if key in payload]
+            if isinstance(payload, dict) and any(key in payload for key in ("messages", "input"))
+            else payload
+        )
+        for block in image_blocks(content):
+            try:
                 if counter_model is None:
-                    raise ValueError("image counting requires a registered vision model")
-                count += litellm.token_counter(
-                    model=counter_model, messages=images, use_default_image_token_count=False
+                    raise ValueError("unknown image model")
+                image_tokens = litellm.token_counter(
+                    model=counter_model, messages=_image_messages(block), use_default_image_token_count=False
                 )
-        except ContextCapacityError:
-            raise
-        except Exception as exc:
-            raise ContextCapacityError("CONTEXT_COUNT_UNAVAILABLE", f"Cannot count {self.model}: {exc}") from exc
-        return count + framing
+                if type(image_tokens) is not int or image_tokens <= 0:
+                    raise ValueError("invalid image token count")
+                count += image_tokens
+                if self.enforce_catalog_limits:
+                    trusted_tokens += image_tokens
+                estimated |= not self.enforce_catalog_limits
+            except Exception as exc:
+                count += DEFAULT_MEDIA_TOKENS
+                estimated = True
+                reasons.append(f"image counter unavailable ({type(exc).__name__})")
+        if files:
+            count += files * DEFAULT_MEDIA_TOKENS
+            estimated = True
+            reasons.append("file content estimated")
+        fallback_reasons = tuple(dict.fromkeys(reasons))
+        if fallback_reasons:
+            logger.debug("Using estimated context tokens: model=%s reasons=%s", self.model, fallback_reasons)
+        return TokenEstimate(count + framing, source, estimated, fallback_reasons, trusted_tokens)
 
     def check(self, payload: Any, output: int | None = None) -> int:
         available = self.input_limit(output)
-        count = self.count(payload)
+        estimate = self.estimate(payload)
+        count = estimate.tokens
+        allow_estimated_overflow = self.allow_estimated_overflow
+        trusted_over_budget = estimate.trusted_tokens > 0 and estimate.trusted_tokens > available
+        enforce = (
+            self.context_source == "config" or (self.enforce_catalog_limits and self.context_source == "catalog")
+        ) and (available <= 0 or not estimate.estimated or not allow_estimated_overflow or trusted_over_budget)
         budget = {
             "model": self.model,
             "input_tokens": count,
@@ -171,7 +274,16 @@ class RequestCapacity:
             "context_length": self.context_length,
             "safety_margin": self.margin,
             "input_limit": available,
-            "counter": self.counter_source,
+            "counter": estimate.source,
+            "estimated": estimate.estimated,
+            "trusted_input_tokens": estimate.trusted_tokens,
+            "allow_estimated_overflow": allow_estimated_overflow,
+            "context_source": self.context_source,
+            "output_source": self.output_source,
+            "send_default_output": self.send_default_output,
+            "fallback_reasons": estimate.fallback_reasons,
+            "over_budget": count > available,
+            "enforced": enforce,
         }
         logger.debug("Context capacity check: %s", budget)
         from datus.observability.model_call import current_model_call
@@ -179,6 +291,9 @@ class RequestCapacity:
         if call := current_model_call():
             call.fields.update({f"capacity_{key}": value for key, value in budget.items()})
         if count > available:
+            if not enforce:
+                logger.debug("Allowing request above estimated context budget: %s", budget)
+                return count
             parts = (
                 {key: self.count({key: value}) for key, value in payload.items()} if isinstance(payload, dict) else {}
             )
@@ -255,14 +370,40 @@ def _image_messages(payload: Any) -> list[dict[str, Any]]:
     return [{"role": "user", "content": blocks}] if blocks else []
 
 
-def _has_opaque_file(value: Any) -> bool:
-    if isinstance(value, list):
-        return any(_has_opaque_file(item) for item in value)
-    if not isinstance(value, dict):
-        return False
-    kind = value.get("type")
-    if kind == "input_file" or (kind == "file" and "file" in value):
-        return True
-    if kind == "document" and isinstance(value.get("source"), dict) and value["source"].get("type") != "text":
-        return True
-    return any(_has_opaque_file(item) for item in value.values())
+def _file_count_view(payload: Any) -> tuple[Any, int]:
+    """Replace opaque file content only inside message/tool content envelopes."""
+    files = 0
+
+    def walk(value: Any) -> Any:
+        nonlocal files
+        if isinstance(value, (list, tuple)):
+            return [walk(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        kind = value.get("type")
+        if (
+            kind == "input_file"
+            or (kind == "file" and "file" in value)
+            or (kind == "document" and isinstance(value.get("source"), dict) and value["source"].get("type") != "text")
+        ):
+            files += 1
+            return {
+                "type": "text",
+                "text": "[File content estimated]",
+                **{k: value[k] for k in ("filename", "title") if k in value},
+            }
+        if kind == "function_call_output" and isinstance(value.get("call_id"), str):
+            field = "output"
+        elif value.get("role") in ("user", "assistant", "system", "developer", "tool") or (
+            kind == "tool_result" and isinstance(value.get("tool_use_id"), str)
+        ):
+            field = "content"
+        else:
+            return value
+        return {**value, field: walk(value[field])} if isinstance(value.get(field), (list, tuple)) else value
+
+    if isinstance(payload, dict) and any(key in payload for key in ("messages", "input")):
+        result = {key: walk(value) if key in {"messages", "input"} else value for key, value in payload.items()}
+    else:
+        result = walk(payload)
+    return result, files
