@@ -657,4 +657,6 @@ def test_local_path_treats_windows_drive_letters_as_local(uri):
     """
     from datus.storage.vector.lance_backend import _local_path
 
-    assert _local_path(uri) is not None
+    # A ``None`` would stringify as ``"None"`` and fail the suffix check too;
+    # the suffix pins the drive letter was kept, not stripped as a scheme.
+    assert str(_local_path(uri)).replace("\\", "/").endswith("/data/datus_db")
