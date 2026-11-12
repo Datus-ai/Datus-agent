@@ -55,12 +55,22 @@ from datus.tools.permission.permission_config import (
     PermissionRule,
     SqlStatementRules,
 )
+from datus.tools.registry.capabilities import TOOL_CAPABILITIES
 
 PROFILE_NAMES: tuple[str, ...] = ("normal", "auto", "dangerous")
 
 
 def _rule(tool: str, pattern: str, permission: PermissionLevel) -> PermissionRule:
     return PermissionRule(tool=tool, pattern=pattern, permission=permission)
+
+
+def _reader_rules() -> list[PermissionRule]:
+    """Derive default read grants from declarations; operator overrides still apply last."""
+    return [
+        _rule(*identity.split("."), PermissionLevel.ALLOW)
+        for identity, capability in sorted(TOOL_CAPABILITIES.items())
+        if capability.access == "read"
+    ]
 
 
 # --- Normal ------------------------------------------------------------------
@@ -72,12 +82,10 @@ _NORMAL_RULES = [
     # static SQL lineage read. ``upsert_lineage`` / ``delete_lineage`` write the project file
     # lineage/lineage.json (deleting sources, saving inline SQL), so they fall through to ASK.
     _rule("lineage_tools", "query_lineage", PermissionLevel.ALLOW),
-    _rule("tool_result_tools", "read_tool_result", PermissionLevel.ALLOW),
-    # db read. ``execute_sql`` is the unified SQL entry point; its gating is
-    # handled dynamically per statement class in
+    # SQL execution and exports use dynamic statement-class gating in
     # ``PermissionHooks._handle_sql_permission`` driven by each profile's
     # ``sql_statements`` ruleset (read auto-allow, write/destructive per
-    # profile), so it intentionally has no static rule here.
+    # profile), so neither tool has a static ALLOW rule here.
     _rule("db_tools", "verify_sql", PermissionLevel.ALLOW),
     _rule("db_tools", "list_*", PermissionLevel.ALLOW),
     _rule("db_tools", "search_*", PermissionLevel.ALLOW),
@@ -295,7 +303,7 @@ _AUTO_BASH_ALLOW = _NORMAL_BASH_ALLOW + [
 
 NORMAL = PermissionConfig(
     default_permission=PermissionLevel.ASK,
-    rules=_NORMAL_RULES,
+    rules=_NORMAL_RULES + _reader_rules(),
     bash_commands=BashCommandRules(allow=_NORMAL_BASH_ALLOW),
     # execute_sql statement classes: reads auto-allow, everything else ASK
     # (the SqlStatementRules defaults are exactly normal's posture).
@@ -352,7 +360,7 @@ _AUTO_EXTRA_RULES = [
 
 AUTO = PermissionConfig(
     default_permission=PermissionLevel.ASK,
-    rules=_NORMAL_RULES + _AUTO_EXTRA_RULES,
+    rules=_NORMAL_RULES + _AUTO_EXTRA_RULES + _reader_rules(),
     bash_commands=BashCommandRules(allow=_AUTO_BASH_ALLOW),
     # execute_sql statement classes: reads AND non-destructive writes (INSERT/
     # CREATE/benign DDL/USE) auto-allow; destructive statements (UPDATE/DELETE/

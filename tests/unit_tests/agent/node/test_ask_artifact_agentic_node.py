@@ -1912,6 +1912,42 @@ _NO_DB_WHITELIST = (
 
 
 class TestToolsWhitelist:
+    @pytest.mark.parametrize("make_node", [_make_ask_report_with_tools, _make_ask_dashboard_with_tools])
+    @pytest.mark.parametrize(
+        "tools,expected",
+        [
+            (None, set()),
+            ([], set()),
+            ("context_search_tools.search_metrics", {"search_metrics"}),
+            ("context_search_tools.list_subject_tree", {"list_subject_tree"}),
+            ("filesystem_tools.read_file", {"read_file"}),
+        ],
+    )
+    async def test_context_refresh_keeps_exact_artifact_whitelist(
+        self, real_agent_config, mock_llm_create, make_node, tools, expected
+    ):
+        from datus.storage.metric.store import MetricRAG
+
+        node = make_node(real_agent_config, tools)
+        context = node.context_search_tools
+        node._get_session_system_prompt()
+        assert "search_metrics" not in _tool_names(node)
+
+        MetricRAG(real_agent_config).store_batch(
+            [
+                {
+                    "name": "late_metric",
+                    "semantic_model_name": "scope_model",
+                    "subject_path": ["Finance", "Allowed"],
+                    "description": "Metric added after the artifact ask node was created",
+                }
+            ]
+        )
+        node._get_session_system_prompt()
+        assert node.context_search_tools is context
+        assert context.has_metrics is True
+        assert _tool_names(node) == expected
+
     """An ask_* agent's LLM tool surface is determined SOLELY by ``tools``.
 
     Nothing carries over from the ChatAgenticNode surface: only the groups the
@@ -2359,3 +2395,16 @@ async def test_skill_setup_uses_ask_node_identity(real_agent_config, mock_llm_cr
     result = await node.tools[0].on_invoke_tool(context, context.tool_arguments)
     assert result["success"] == 0
     assert "Private guidance" not in str(result)
+
+
+@pytest.mark.parametrize("factory", [_make_ask_report_node, _make_ask_dashboard_node])
+async def test_empty_artifact_readers_keep_only_the_session_channel(real_agent_config, mock_llm_create, factory):
+    """Empty resource selections still permit questions without granting file or database access."""
+    node = factory(real_agent_config)
+    node.node_config["tools"] = ""
+    for _ in range(2):
+        node._rebuild_tools()
+        captured_tools = node.tools
+        node._compose_hooks()
+        assert captured_tools is node.tools
+        assert [tool.name for tool in captured_tools] == ["ask_user"]

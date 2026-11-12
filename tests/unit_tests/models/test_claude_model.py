@@ -3660,7 +3660,7 @@ class TestNativeMidTurnCompaction:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("block_content", [False, True])
-    async def test_projection_preserves_raw_history_and_each_user_turn(self, tmp_path, block_content):
+    async def test_tool_history_is_not_generically_projected(self, tmp_path, block_content):
         from agents import SQLiteSession
 
         from datus.agent.node.context_rewriter import MidTurnCompactor
@@ -3700,7 +3700,8 @@ class TestNativeMidTurnCompaction:
             session.close()
 
         assert rewriter.compactions == 0
-        assert all(raw not in json.dumps(view) and "result_id" in json.dumps(view) for view in seen)
+        assert all(raw in json.dumps(view) for view in seen)
+        assert not store.root.exists()
         assert persisted[: len(history)] == history
         user_texts = [
             part["text"]

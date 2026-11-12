@@ -152,11 +152,11 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
     # LLM-facing tool surface is determined SOLELY by this whitelist: only the
     # groups listed here are eligible, and a tool is exposed only when a
     # whitelist pattern grants it. There is no chat-surface carryover and no
-    # always-on infrastructure — an empty/absent ``tools`` exposes nothing
+    # resource-tool carryover — an empty/absent ``tools`` grants no data access
     # (the agent answers from the inlined artifact context), and e.g.
     # ``filesystem_tools.*`` yields ONLY filesystem tools. ``filesystem_tools``
-    # is therefore gated like any other group; ``ask_user`` / ``task`` /
-    # plan-mode tools are not expressible here and are never exposed on ask_*.
+    # is therefore gated like any other group. Delegation stays unavailable;
+    # session channels are attached by AgenticNode at the shared run boundary.
     _WHITELIST_GROUP_ATTRS: ClassVar[Dict[str, str]] = {
         "db_tools": "db_func_tool",
         "context_search_tools": "context_search_tools",
@@ -190,8 +190,8 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         # template resolution + node_config lookup land on the right entry.
         self._configured_subagent_name = node_name or self.NODE_NAME
 
-        # ChatAgenticNode never builds semantic tools, but an ask_* ``tools``
-        # whitelist may request them (metric/dimension/attribution analysis).
+        # Artifact ask nodes build semantic tools only when their own ``tools``
+        # whitelist requests them (metric/dimension/attribution analysis).
         # Declare the slot before super().__init__() (which triggers
         # ``setup_tools``) so the whitelist pass can build it on demand and
         # ``_populate_tool_registry`` can pick it up safely.
@@ -269,9 +269,10 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         infrastructure that is NOT a tool (permission/skill managers,
         artifact-anchored filesystem instance, sessions, MCP) is built
         correctly, then replace ``self.tools`` with exactly the tools the
-        whitelist grants. An empty/absent ``tools`` exposes nothing (the agent
+        whitelist grants. An empty/absent ``tools`` grants no data access (the agent
         answers purely from the inlined artifact context); ``filesystem_tools.*``
-        exposes only filesystem tools; and so on.
+        exposes only filesystem tools; and so on. The shared run boundary
+        separately attaches session interaction channels after resource selection.
         """
         super().setup_tools()
         self._apply_tools_whitelist()
@@ -299,6 +300,16 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         self._ensure_whitelisted_groups_present(patterns)
         self._restrict_tools_to_whitelist(patterns)
 
+    def _available_context_search_tools(self) -> list:
+        if not self._group_whitelisted("context_search_tools"):
+            return []
+        patterns = self._parse_tool_whitelist(self.node_config.get("tools"))
+        return [
+            tool
+            for tool in super()._available_context_search_tools()
+            if self._tool_matches_whitelist("context_search_tools", tool.name, patterns)
+        ]
+
     @staticmethod
     def _parse_tool_whitelist(tools_value: Any) -> List[str]:
         """Split the comma-separated ``tools`` field into trimmed patterns."""
@@ -319,10 +330,10 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
     def _ensure_whitelisted_groups_present(self, patterns: List[str]) -> None:
         """Build + surface whitelisted capability groups the chat base omits.
 
-        Only ``semantic_tools`` falls in this bucket today — ChatAgenticNode
-        builds every other gated group. Built once, then re-surfaced into
+        ``semantic_tools`` is opt-in for artifact ask nodes, independently of
+        the main chat defaults. Built once, then re-surfaced into
         ``self.tools`` on every call so a post-rebuild whitelist pass does not
-        lose it (``_rebuild_tools`` never re-adds semantic tools itself).
+        lose it before the exact whitelist is applied.
         """
         wants_semantic = any(p == "semantic_tools" or p.startswith("semantic_tools.") for p in patterns)
         if not wants_semantic:
@@ -373,7 +384,8 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         A tool survives only when it maps to a selectable group AND a pattern
         grants it. Tools outside the selectable groups (``ask_user`` / ``task``
         / plan-mode) and every tool when ``patterns`` is empty are dropped, so
-        the surface equals exactly what ``tools`` requested. Idempotent — safe
+        the resource surface equals exactly what ``tools`` requested. Session
+        channels are reattached by the shared run boundary. Idempotent — safe
         to call on every rebuild.
         """
         name_to_group = self._whitelist_tool_groups()
@@ -437,6 +449,9 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         return any(p == group or p.startswith(f"{group}.") for p in patterns)
 
     # ── Lazy-injection gates (honor the whitelist post-setup_tools) ─────
+
+    def _ensure_memory_tool_in_tools(self) -> None:
+        """Artifact ask whitelists do not grant memory mutation tools."""
 
     def _ensure_bash_tool_in_tools(self) -> None:
         """Gate :class:`AgenticNode`'s lazy bash re-injection on the whitelist.

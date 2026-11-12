@@ -52,6 +52,7 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 from datus.utils.query_result_text import omitted_rows_line
+from datus.utils.result_pagination import native_pagination, validate_page
 
 logger = get_logger(__name__)
 
@@ -624,6 +625,8 @@ class SemanticTools:
         semantic_metric_names_provider: Optional[Callable[[], Optional[List[str]]]] = None,
         ontology_enabled: bool = False,
         policy_context_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
+        initialize_runtime: bool = True,
+        enforce_metric_scope: bool = False,
     ):
         """
         Initialize semantic function tool.
@@ -648,9 +651,14 @@ class SemanticTools:
                 bind them to this datasource's models and expose the ontology tools. Off for every agent that
                 does not ask for it. Mapping documents there say which model
                 each ontology binds.
+            initialize_runtime: Initialize native engines during construction. Authoring nodes
+                retain this default; chat can defer initialization until its first metric call.
+            enforce_metric_scope: Restrict executable metric names to the configured
+                metric subject scope, independently of native database policies.
         """
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
+        self._enforce_metric_scope = enforce_metric_scope
         self.generation_evidence = generation_evidence
         self._runtime_db_context_provider = runtime_db_context_provider
         self._warehouse_dry_run_provider = warehouse_dry_run_provider
@@ -666,19 +674,51 @@ class SemanticTools:
         # list_metrics reads the KB only for navigation paths shared with
         # ContextSearchTools.list_subject_tree; ContextSearchTools owns RAG discovery.
         self.metric_rag = MetricRAG(agent_config, sub_agent_name)
+        self._metric_scope_key = None
         # The token budget of an executed result's preview, and of a dry run's data.
         self._compressor: Optional[DataCompressor] = None
         self._query_metrics_result_cache: OrderedDict[str, dict] = OrderedDict()
-        self._evicted_query_metrics_scopes: OrderedDict[str, str] = OrderedDict()
+        self._evicted_query_metrics_scopes: OrderedDict[str, dict] = OrderedDict()
 
         # Lazy load runtime and attribution tool
         self._runtime: Optional[DosiRuntime] = None
         self._runtime_load_error: Optional[str] = None
         self._runtime_context_key: Optional[Tuple[str, ...]] = None
-        # The runtime initializes native engines before any model file tools run.
-        _ = self.runtime
+        # Authoring nodes need engines initialized before model file tools run.
+        # Chat only reads metrics and can wait until a metric tool needs them.
+        if initialize_runtime:
+            _ = self.runtime
 
     MODEL_FREE_READS_VERSION = 1
+
+    def _has_metric_scope(self) -> bool:
+        if not getattr(self, "_enforce_metric_scope", False) or not self.sub_agent_name:
+            return False
+        from datus.schemas.agent_models import SubAgentConfig
+
+        raw = self.agent_config.sub_agent_config(self.sub_agent_name)
+        config = SubAgentConfig.model_validate(raw) if raw else None
+        metrics = config.scoped_context.metrics if config and config.scoped_context else None
+        datasource = self._runtime_db_context().get("datasource") or self.agent_config.current_datasource
+        key = (datasource, metrics, config.scoped_kb_path if config else None)
+        if getattr(self, "_metric_scope_key", None) != key:
+            # RAG filters are constructed once; do not reuse a formerly unscoped
+            # projection after a host narrows the agent's scope.
+            self.metric_rag = MetricRAG(self.agent_config, self.sub_agent_name, datasource_id=datasource)
+            self._metric_scope_key = key
+        return bool(metrics)
+
+    def _check_metric_scope(self, names: List[str]) -> Optional[FuncToolResult]:
+        try:
+            if not self._has_metric_scope():
+                return None
+            allowed = set(self._metric_subject_paths(None))
+            if all(normalize_metric_name(name) in allowed for name in names):
+                return None
+            return FuncToolResult(success=0, error="Requested metric is outside this agent's configured metric scope.")
+        except Exception as exc:
+            logger.warning("Could not verify configured metric scope: %s", exc)
+            return FuncToolResult(success=0, error="Configured metric scope could not be verified.")
 
     @property
     def compressor(self) -> DataCompressor:
@@ -740,8 +780,30 @@ class SemanticTools:
             return "unprotected"
         return hashlib.sha256((bound.snapshot_json + bound.context_json).encode()).hexdigest()
 
+    def _query_cache_scope(self, native_scope: Optional[str]) -> Optional[str]:
+        """Bind chat's cached rows to the current policy, routing and metric scope."""
+        if not getattr(self, "_enforce_metric_scope", False):
+            return native_scope
+        from datus_storage_base.conditions import build_where
+
+        self._has_metric_scope()
+        condition = self.metric_rag._sub_agent_filter
+        identity = [
+            native_scope,
+            self._runtime_db_context(),
+            self._metric_scope_key,
+            build_where(condition) if condition is not None else "",
+        ]
+        return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+
     def _cache_query_metrics_result(
-        self, columns: List[str], data: Any, metadata: Optional[Mapping[str, Any]] = None
+        self,
+        columns: List[str],
+        data: Any,
+        metadata: Optional[Mapping[str, Any]] = None,
+        *,
+        authorized_scope: Optional[str] = None,
+        metric_names: Optional[List[str]] = None,
     ) -> Optional[str]:
         if data is None:
             return None
@@ -749,14 +811,19 @@ class SemanticTools:
         if not full_csv:
             return None
 
+        scope = self._query_cache_scope(
+            metadata["_policy_scope"] if metadata and "_policy_scope" in metadata else self._policy_cache_scope()
+        )
+        if authorized_scope is not None and scope != authorized_scope:
+            raise ValueError("Configured metric scope changed while the query was running; retry in the current scope.")
+
         # Random, not a counter: ``get_query_metrics_result`` hands a cached result
         # to whoever names its key, and on the agent's dynamic MCP server one
         # instance serves every client of a datasource.
         cache_key = f"query_metrics:{secrets.token_urlsafe(12)}"
         self._query_metrics_result_cache[cache_key] = {
-            "policy_scope": metadata["_policy_scope"]
-            if metadata and "_policy_scope" in metadata
-            else self._policy_cache_scope(),
+            "policy_scope": authorized_scope if authorized_scope is not None else scope,
+            "metric_names": tuple(metric_names or ()),
             "columns": list(columns),
             "csv": full_csv,
             "row_count": self._query_data_row_count(data),
@@ -771,30 +838,35 @@ class SemanticTools:
         }
         while len(self._query_metrics_result_cache) > self.MAX_QUERY_METRICS_RESULT_CACHE_SIZE:
             evicted_id, evicted = self._query_metrics_result_cache.popitem(last=False)
-            self._evicted_query_metrics_scopes[evicted_id] = evicted["policy_scope"]
+            self._evicted_query_metrics_scopes[evicted_id] = {
+                "policy_scope": evicted["policy_scope"],
+                "metric_names": evicted["metric_names"],
+            }
         while len(self._evicted_query_metrics_scopes) > self.MAX_QUERY_METRICS_RESULT_CACHE_SIZE:
             self._evicted_query_metrics_scopes.popitem(last=False)
         return cache_key
 
-    def can_use_query_metrics_preview(self, cache_key: str) -> bool:
-        """Permit an evicted preview only while its original scope is verified."""
-        scope = self._evicted_query_metrics_scopes.get(cache_key)
-        if scope is None:
-            return False
+    def _cached_query_scope_is_current(self, cached: Mapping[str, Any]) -> bool:
         try:
-            return scope == self._policy_cache_scope()
+            if cached.get("policy_scope", "unprotected") != self._query_cache_scope(self._policy_cache_scope()):
+                return False
+            if self._has_metric_scope():
+                names = list(cached.get("metric_names") or ())
+                return bool(names) and self._check_metric_scope(names) is None
+            return True
         except (DatusException, ValueError):
             return False
+
+    def can_use_query_metrics_preview(self, cache_key: str) -> bool:
+        """Permit an evicted preview only while its original metrics remain allowed."""
+        scope = self._evicted_query_metrics_scopes.get(cache_key)
+        return scope is not None and self._cached_query_scope_is_current(scope)
 
     def get_cached_query_metrics_result(self, cache_key: str) -> Optional[dict]:
         cached = self._query_metrics_result_cache.get(cache_key)
         if cached is None:
             return None
-        try:
-            scope = self._policy_cache_scope()
-        except (DatusException, ValueError):
-            return None
-        if cached.get("policy_scope", "unprotected") != scope:
+        if not self._cached_query_scope_is_current(cached):
             return None
         return cached
 
@@ -804,9 +876,8 @@ class SemanticTools:
     # any size. A page over this many characters is cut down to fewer rows.
     MAX_QUERY_METRICS_RESULT_PAGE_CHARS = 1_000_000
 
-    # MCP only, deliberately not in ``available_tools``: a node's model is told the
-    # full result is used for its final output, and paging it into the context
-    # would be the opposite of the compression.
+    # MCP and chat expose this bounded reader. Other nodes consume full cached
+    # rows through their structured output path instead of mounting another tool.
     @mcp_tool()
     @tool_contract(access="read", direct_call=True, companion_of="semantic_tools.query_metrics")
     def get_query_metrics_result(self, result_id: str, offset: int = 0, limit: int = 500) -> FuncToolResult:
@@ -868,6 +939,39 @@ class SemanticTools:
             }
         )
 
+    def _query_result_page(self, result_id: str, offset: int, page_size: int) -> FuncToolResult:
+        validate_page(page_size, offset)
+        cached = self.get_cached_query_metrics_result(result_id)
+        if cached is None:
+            return FuncToolResult(success=0, error=f"Unknown or expired query_metrics result_id: {result_id}")
+        total = cached["row_count"]
+        if offset > total:
+            raise ValueError("offset is beyond this query result")
+        rows = self._slice_query_data(cached["data"], offset, page_size)
+        returned = self._query_data_row_count(rows)
+        more = offset + returned < total
+        page = {
+            "offset": offset,
+            "returned": returned,
+            "has_more": more,
+            "next_offset": offset + returned if more else None,
+        }
+        metadata = cached.get("metadata") or {}
+        csv = self._query_data_to_csv(cached["columns"], rows)
+        text = self._render_query_result(
+            result_id,
+            cached["columns"],
+            cached["data"],
+            warnings=metadata.get("warnings"),
+            notes=metadata.get("page_notes"),
+            outputs=metadata.get("outputs"),
+            execution_info=metadata.get("execution_info"),
+            row_cap=metadata.get("row_cap"),
+            page=page,
+            page_csv=csv,
+        )
+        return FuncToolResult(result=text, execution_context=metadata.get("execution_context"))
+
     @staticmethod
     def _slice_query_data(data: Any, offset: int, limit: int) -> Any:
         """Rows ``[offset, offset + limit)`` of a query result, in its own shape."""
@@ -896,13 +1000,18 @@ class SemanticTools:
         outputs: Optional[List[Any]] = None,
         execution_info: Optional[List[Dict[str, Any]]] = None,
         row_cap: Optional[int] = None,
+        page: Optional[dict] = None,
+        page_csv: Optional[str] = None,
     ) -> str:
         """An executed result as the agent reads it (``datus.utils.query_result_text``
         has the layout). Only what there is to report gets a line: the compiled
         SQL runs to tens of thousands of characters beside rows that are already
         here, and a column named after its metric needs no ``column`` line."""
         total = self._query_data_row_count(data)
-        preview, cut = self._preview_csv(columns, data, total)
+        if page is None:
+            preview, cut = self._preview_csv(columns, data, total)
+        else:
+            preview, cut = page_csv or "", None
         rows = f"rows: {total}"
         if row_cap is not None and total >= row_cap:
             rows += f" (reached the {row_cap}-row cap; there may be more)"
@@ -910,6 +1019,8 @@ class SemanticTools:
             rows += f"; text values longer than {cut} characters are cut and end in …"
         lines = [f"result_id: {result_id}"] if result_id else []
         lines.append(rows)
+        if page is not None:
+            lines.append("page: " + json.dumps(page))
         if execution_info:
             lines.append(f"execution_info: {json.dumps(execution_info, ensure_ascii=False)}")
         lines.extend(_render_query_warning(warning) for warning in warnings or [])
@@ -1431,13 +1542,17 @@ class SemanticTools:
 
     @tool_schema(strict_mode=False)
     @tool_contract(access="read", direct_call=True)
+    @native_pagination()
     def select_records(
         self,
-        from_concept: str,
-        fields: List[str],
+        from_concept: Optional[str] = None,
+        fields: Optional[List[str]] = None,
         where: Optional[str] = None,
         order_by: Optional[List[str]] = None,
         limit: Optional[int] = None,
+        page_size: Optional[int] = None,
+        offset: int = 0,
+        result_id: Optional[str] = None,
     ) -> FuncToolResult:
         """
         Read individual records (not aggregates) of one concept.
@@ -1461,12 +1576,28 @@ class SemanticTools:
                 result column name; prefix with '-' for descending.
             limit: Optional maximum number of rows (default 200).
 
+        Pagination:
+            Agent calls show 200 continuous rows by default. Continue with result_id,
+            offset and page_size; no SQL is repeated and page_size has no hard cap.
+            The existing query limit defaults to 200 independently of the page size.
+
         Returns:
             FuncToolResult with text laid out like query_metrics': a ``result_id``
             line, a ``rows`` line, then the rows as CSV with columns named by the
             requested field paths (the full result is cached and used for the
             final output).
         """
+        try:
+            if result_id:
+                if any((from_concept, fields, where, order_by, limit is not None)):
+                    raise ValueError("Use only result_id, offset and page_size when continuing a result")
+                return self._query_result_page(result_id, offset, 200 if page_size is None else page_size)
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with result_id")
+            if page_size is not None:
+                validate_page(page_size, offset)
+        except (ValueError, TypeError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
         from_concept = str(from_concept or "").strip()
         fields = _normalize_name_list(fields)
         order_by = _normalize_name_list(order_by)
@@ -1490,7 +1621,12 @@ class SemanticTools:
         except Exception as exc:  # noqa: BLE001 - surfaced as a failed tool call
             return self._semantic_failure("select_records", exc)
 
-        metadata = result.metadata or {}
+        metadata = dict(result.metadata or {})
+        if page_size is not None:
+            if limit is None:
+                metadata["row_cap"] = self.SELECT_RECORDS_DEFAULT_LIMIT
+            cached_id = self._cache_query_metrics_result(result.columns, result.data, metadata)
+            return self._query_result_page(cached_id, 0, page_size)
         return FuncToolResult(
             result=self._render_query_result(
                 self._cache_query_metrics_result(result.columns, result.data, metadata),
@@ -1534,17 +1670,18 @@ class SemanticTools:
             return error
 
         try:
+            scoped = self._has_metric_scope()
             try:
                 kb_paths = self._metric_subject_paths(path)
             except Exception as exc:
-                if path:
+                if path or scoped:
                     raise
                 logger.warning(
                     "Could not load KB metric subject paths; returning the runtime catalog without paths: %s",
                     exc,
                 )
                 kb_paths = {}
-            if path:
+            if path or scoped:
                 if not kb_paths:
                     return self._metric_list_result([], total=0, offset=offset, limit=limit)
 
@@ -1702,6 +1839,9 @@ class SemanticTools:
         name = str(normalize_null(name) or "").strip()
         path = _normalize_optional_path(path)
         logger.debug(f"get_metric called: name={name}, path={path}")
+        scope_error = self._check_metric_scope([name])
+        if scope_error is not None:
+            return scope_error
         runtime, error = self._require_runtime("get_metric")
         if error:
             return error
@@ -1846,9 +1986,10 @@ class SemanticTools:
     @tool_schema(strict_mode=False)
     @mcp_tool()
     @tool_contract(access="read", direct_call=True)
+    @native_pagination()
     def query_metrics(
         self,
-        metrics: List[str],
+        metrics: Optional[List[str]] = None,
         dimensions: Optional[List[str]] = None,
         time_start: Optional[str] = None,
         time_end: Optional[str] = None,
@@ -1859,14 +2000,19 @@ class SemanticTools:
         params: Optional[Dict[str, Any]] = None,
         dry_run: bool = False,
         context_filter: Optional[str] = None,
+        page_size: Optional[int] = None,
+        offset: int = 0,
+        result_id: Optional[str] = None,
     ) -> FuncToolResult:
         """
         Query metrics data (requires runtime).
 
         Return complete metric results by default. Do not pass limit just to
-        preview data, reduce output size, or be conservative; the full result
-        is cached and used for the final output, so a cut preview is never a
-        reason to query again. Use limit only when the user explicitly asks for
+        preview data, reduce output size, or be conservative. Full rows are
+        cached under result_id for structured output consumers or the available
+        get_query_metrics_result reader. Use that reader for omitted rows instead
+        of rerunning the query; do not invent values missing from the preview.
+        Use limit only when the user explicitly asks for
         Top N, first N, maximum N rows, a preview, or another row-count
         restriction. When using limit for Top N/Bottom N, also pass order_by so
         the truncation has stable business meaning.
@@ -1964,9 +2110,50 @@ class SemanticTools:
                 the SQL itself: an executed result carries the same warnings, just
                 not its SQL, so a dry run before executing only repeats the query.
 
+        Pagination:
+            Agent calls default to 200 continuous rows. page_size has no hard cap.
+            Continue with result_id, offset and page_size only; this reads the cached
+            result and never executes the query again. limit still means business Top N.
+            Direct calls without page_size keep the existing compressed preview.
+
         Returns:
             FuncToolResult with the result text, or the compiled SQL of a dry run
         """
+        try:
+            if result_id:
+                if any(
+                    (
+                        metrics,
+                        dimensions,
+                        time_start,
+                        time_end,
+                        time_granularity,
+                        where,
+                        limit is not None,
+                        order_by,
+                        params,
+                        dry_run,
+                        context_filter,
+                    )
+                ):
+                    raise ValueError("Use only result_id, offset and page_size when continuing a result")
+                return self._query_result_page(result_id, offset, 200 if page_size is None else page_size)
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with result_id")
+            if page_size is not None:
+                validate_page(page_size, offset)
+        except (ValueError, TypeError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+        authorized_scope = None
+        if self._enforce_metric_scope:
+            try:
+                authorized_scope = self._query_cache_scope(self._policy_cache_scope())
+            except Exception as exc:
+                logger.warning("Could not capture configured metric scope: %s", exc)
+                return FuncToolResult(success=0, error="Configured metric scope could not be verified.")
+        scope_error = self._check_metric_scope(_normalize_name_list(metrics))
+        if scope_error is not None:
+            return scope_error
         return self._query_metrics(
             metrics=metrics,
             dimensions=dimensions,
@@ -1978,6 +2165,8 @@ class SemanticTools:
             order_by=order_by,
             params=params,
             dry_run=dry_run,
+            result_page_size=page_size,
+            authorized_scope=authorized_scope,
             context_filter=context_filter,
         )
 
@@ -2002,6 +2191,8 @@ class SemanticTools:
         context_filter: Optional[str] = None,
         *,
         external_sql_execution: bool = False,
+        result_page_size: Optional[int] = None,
+        authorized_scope: Optional[str] = None,
     ) -> FuncToolResult:
         metrics = _normalize_name_list(metrics)
         dimensions = _normalize_name_list(dimensions)
@@ -2060,12 +2251,33 @@ class SemanticTools:
             execution_context = self._query_execution_context(runtime)
             compile_or_query = runtime.compile_for_sql_execution if external_sql_execution else runtime.query_metrics
             result = _run_async(compile_or_query(**runtime_query_kwargs))
+            if authorized_scope is not None and self._query_cache_scope(self._policy_cache_scope()) != authorized_scope:
+                return FuncToolResult(
+                    success=0,
+                    error="Configured metric scope changed while the query was running; retry in the current scope.",
+                )
+            scope_error = self._check_metric_scope(metrics)
+            if scope_error is not None:
+                return scope_error
             if not dry_run:
-                metadata = result.metadata or {}
+                metadata = dict(result.metadata or {})
+                if result_page_size is not None:
+                    metadata["page_notes"] = self._query_hints(runtime, runtime_query_kwargs, result)
+                    metadata["execution_context"] = execution_context
+                    cached_id = self._cache_query_metrics_result(
+                        result.columns, result.data, metadata, authorized_scope=authorized_scope, metric_names=metrics
+                    )
+                    return self._query_result_page(cached_id, 0, result_page_size)
                 return FuncToolResult(
                     execution_context=execution_context,
                     result=self._render_query_result(
-                        self._cache_query_metrics_result(result.columns, result.data, metadata),
+                        self._cache_query_metrics_result(
+                            result.columns,
+                            result.data,
+                            metadata,
+                            authorized_scope=authorized_scope,
+                            metric_names=metrics,
+                        ),
                         list(result.columns),
                         result.data,
                         warnings=metadata.get("warnings"),
@@ -2451,6 +2663,9 @@ class SemanticTools:
             - total_change: Baseline, current, and delta values
             - per_dimension: Per-dimension contribution details
         """
+        scope_error = self._check_metric_scope([metric_name])
+        if scope_error is not None:
+            return scope_error
         runtime, error = self._require_runtime("attribution_analyze")
         if error:
             return error

@@ -680,7 +680,6 @@ class MetricRAG:
         sub_agent_name: Optional[str] = None,
         datasource_id: Optional[str] = None,
     ):
-        from datus.storage.rag_scope import _build_sub_agent_filter
         from datus.storage.registry import get_storage
 
         self.agent_config = agent_config
@@ -693,13 +692,24 @@ class MetricRAG:
             project=agent_config.project_name,
             datasource_id=self.datasource_id,
         )
-        self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.storage, "metrics")
+
+    @property
+    def _sub_agent_filter(self) -> Optional[WhereExpr]:
+        """Resolve a fresh filter without publishing mutable authorization state."""
+        from datus.storage.rag_scope import _build_sub_agent_filter
+
+        return _build_sub_agent_filter(
+            self.agent_config, self.sub_agent_name, self.storage, "metrics", fail_closed=True
+        )
 
     def _sub_agent_conditions(self) -> List:
         """Build datasource and sub-agent filter conditions."""
         conditions = [datasource_condition(self.datasource_id)]
-        if self._sub_agent_filter:
-            conditions.append(self._sub_agent_filter)
+        # Keep this invocation's condition local. A concurrent taxonomy refresh
+        # must never replace it with an unfiltered shared value.
+        condition = self._sub_agent_filter
+        if condition is not None:
+            conditions.append(condition)
         return conditions
 
     def _selected_fields_with_provenance_id(

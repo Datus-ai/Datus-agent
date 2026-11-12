@@ -90,8 +90,8 @@ def build_continuation_message(
         from datus.utils.tool_result_store import RESULT_REFERENCES_CLOSE, RESULT_REFERENCES_OPEN, json_text
 
         body += (
-            "\n\nExact recent tool-result references retained by the runtime. Copy identifiers and cursors verbatim; "
-            "use read_tool_result to continue, or the history below for older results.\n"
+            "\n\nExact recent result references retained by the runtime. Copy native tool names and continuation arguments; "
+            "continue with the recorded tool, or use read_file for archived content and older history.\n"
             + RESULT_REFERENCES_OPEN
             + "\n"
             + json_text(result_references)

@@ -148,6 +148,22 @@ class TestGetSessionSystemPrompt:
         # The expensive builder ran exactly once across both turns.
         assert node.build_count == 1
 
+    def test_collaboration_guidance_change_refreshes_resumed_session(self, session_manager, monkeypatch):
+        from datus.prompts import collaboration_contract
+
+        node = _SnapshotNode(session_manager, _agent_config())
+        assert node._get_session_system_prompt(prompt_version="1.2") == "SYS#1"
+        monkeypatch.setattr(
+            collaboration_contract,
+            "COLLABORATION_CONTRACT",
+            collaboration_contract.COLLABORATION_CONTRACT + "\nUpdated continuation guidance.",
+        )
+
+        assert node._get_session_system_prompt(prompt_version="1.2") == "SYS#2"
+        resumed = _SnapshotNode(session_manager, _agent_config())
+        assert resumed._get_session_system_prompt(prompt_version="1.2") == "SYS#2"
+        assert resumed.build_count == 0
+
     def test_new_node_instance_replays_snapshot(self, session_manager):
         """API per-request nodes and /resume reuse the snapshot of the session."""
         node1 = _SnapshotNode(session_manager, _agent_config())

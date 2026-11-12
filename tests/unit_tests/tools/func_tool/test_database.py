@@ -5,6 +5,7 @@ Test cases for DBFuncTool compressor model_name initialization and execute_ddl.
 import json
 import re
 from collections import OrderedDict
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -1406,6 +1407,10 @@ class TestGetConnectorRouting:
 class TestTransferQueryResult:
     """Tests for DBFuncTool.transfer_query_result method."""
 
+    @pytest.fixture(autouse=True)
+    def diagnostic_root(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(DBFuncTool, "_bulk_root", lambda self: tmp_path)
+
     def _make_multi_tool(self, source_connector, target_connector, default_db="source_db"):
         """Create a DBFuncTool with mocked _get_connector for multi-db routing."""
         with (
@@ -1659,7 +1664,8 @@ class TestTransferQueryResult:
         assert result.success == 1
         assert result.result["rows_transferred"] == 0
         assert result.result["target_table_created"] is True
-        assert result.result["target_table_create_sql"].startswith("CREATE TABLE tgt.users")
+        assert "target_table_create_sql" not in result.result
+        assert target.execute_ddl.call_args.args[0].startswith("CREATE TABLE tgt.users")
         target.execute_insert.assert_not_called()
 
     def test_transfer_append_mode_no_truncate(self):
@@ -1926,6 +1932,155 @@ class TestTransferQueryResult:
 
         assert result.success == 0
         assert "target" in result.error.lower()
+
+    @pytest.mark.parametrize("batch_size", [True, 1.5, 10_001])
+    def test_transfer_rejects_oversized_or_noninteger_batches_before_execution(self, batch_size):
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame({"id": [1]}))
+        target, insert = self._make_target_connector()
+        tool = self._make_multi_tool(source, target)
+        result = tool.transfer_query_result(
+            "SELECT id FROM users", "source_db", "orders", "target_db", batch_size=batch_size
+        )
+        assert result.success == 0
+        assert "batch_size" in result.error
+        source.execute_pandas.assert_not_called()
+        target.execute_ddl.assert_not_called()
+        insert.assert_not_called()
+
+    def test_transfer_checks_all_insert_byte_limits_before_replace(self):
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame({"payload": ["ok", "数据'" * 10]}))
+        target, insert = self._make_target_connector()
+        tool = self._make_multi_tool(source, target)
+        tool._TRANSFER_MAX_SQL_BYTES = 100
+        result = tool.transfer_query_result(
+            "SELECT payload FROM users", "source_db", "orders", "target_db", batch_size=1
+        )
+        assert result.success == 0
+        assert "SQL limit" in result.error
+        source.execute_pandas.assert_called_once()
+        target.execute_ddl.assert_not_called()
+        insert.assert_not_called()
+
+    def test_native_transfer_checks_oversized_identifiers_before_replace(self):
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame({"a" * (1024 * 1024 + 1): [1]}))
+        target, insert = self._make_target_connector()
+        operations = Mock()
+        operations.quote_identifier.side_effect = lambda name: '"' + name.upper().replace('"', '""') + '"'
+        tool = self._make_multi_tool(source, target)
+        with patch(
+            "datus.tools.func_tool.database.get_dialect_operations",
+            side_effect=lambda **kwargs: operations if kwargs.get("connector") is target else None,
+        ):
+            result = tool.transfer_query_result("SELECT value FROM users", "source_db", "orders", "target_db")
+        assert result.success == 0
+        assert "SQL limit" in result.error
+        source.execute_pandas.assert_called_once()
+        target.execute_ddl.assert_not_called()
+        operations.write_dataframe.assert_not_called()
+        insert.assert_not_called()
+
+    def test_native_empty_replace_keeps_existing_clear_behavior_without_an_insert(self):
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame(columns=["a" * (1024 * 1024 + 1)]))
+        target, _ = self._make_target_connector()
+        operations = Mock()
+        tool = self._make_multi_tool(source, target)
+        with patch(
+            "datus.tools.func_tool.database.get_dialect_operations",
+            side_effect=lambda **kwargs: operations if kwargs.get("connector") is target else None,
+        ):
+            result = tool.transfer_query_result("SELECT value FROM users", "source_db", "orders", "target_db")
+        assert result.success == 1, result.error
+        assert result.result["rows_transferred"] == 0
+        target.execute_ddl.assert_called_once_with("TRUNCATE TABLE orders")
+        operations.write_dataframe.assert_not_called()
+
+    @pytest.mark.parametrize("sql_limit,allowed", [(54, True), (53, False)])
+    def test_native_transfer_checks_bind_sql_size_without_counting_bound_values(self, sql_limit, allowed):
+        import pandas as pd
+
+        payload = "x" * (1024 * 1024 + 1)
+        source = self._make_source_connector(pd.DataFrame({"id": [1], "payload": [payload]}))
+        target, _ = self._make_target_connector()
+        operations = Mock()
+        operations.quote_identifier.side_effect = lambda name: f'"{name.upper()}"'
+        operations.write_dataframe.return_value = 1
+        tool = self._make_multi_tool(source, target)
+        tool._TRANSFER_MAX_SQL_BYTES = sql_limit
+        with patch(
+            "datus.tools.func_tool.database.get_dialect_operations",
+            side_effect=lambda **kwargs: operations if kwargs.get("connector") is target else None,
+        ):
+            result = tool.transfer_query_result("SELECT id, payload FROM users", "source_db", "orders", "target_db")
+        if allowed:
+            assert result.success == 1, result.error
+            target.execute_ddl.assert_called_once_with("TRUNCATE TABLE orders")
+            operations.write_dataframe.assert_called_once()
+            assert operations.write_dataframe.call_args.args[2]["payload"].tolist() == [payload]
+        else:
+            assert result.success == 0
+            assert "SQL limit" in result.error
+            target.execute_ddl.assert_not_called()
+            operations.write_dataframe.assert_not_called()
+
+    def test_transfer_never_echoes_large_source_sql(self):
+        import hashlib
+        import json
+
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame({"id": [1]}))
+        target, _ = self._make_target_connector()
+        tool = self._make_multi_tool(source, target)
+        sql = "SELECT id FROM users /*" + "sensitive query data " * 10_000 + "*/"
+        result = tool.transfer_query_result(sql, "source_db", "orders", "target_db")
+        assert result.success == 1, result.error
+        assert result.result["rows_transferred"] == 1
+        assert result.result["source_sql_sha256"] == hashlib.sha256(sql.encode()).hexdigest()
+        assert "source_sql" not in result.result
+        assert "target_table_create_sql" not in result.result
+        assert len(json.dumps(result.model_dump()).encode()) <= 16_384
+        source.execute_pandas.assert_called_once_with(sql)
+
+    @pytest.mark.parametrize("phase", ["source", "insert_result", "insert_exception"])
+    def test_transfer_large_database_errors_stay_out_of_tool_results(self, tmp_path, phase):
+        import gzip
+        import json
+
+        import pandas as pd
+
+        source = self._make_source_connector(pd.DataFrame({"id": range(4)}))
+        target, insert = self._make_target_connector()
+        tool = self._make_multi_tool(source, target)
+        payload = "private row 数据" * 300_000
+        error = "database failure [SQL: INSERT INTO orders VALUES ('" + payload + "')]"
+        if phase == "source":
+            source.execute_pandas.return_value = Mock(success=False, error=error)
+        else:
+            failure = RuntimeError(error) if phase == "insert_exception" else Mock(success=False, error=error)
+            insert.side_effect = [Mock(success=True), failure]
+        result = tool.transfer_query_result("SELECT id FROM users", "source_db", "orders", "target_db", batch_size=2)
+        assert result.success == 0
+        assert "database failure" in result.error
+        wire = json.dumps(result.model_dump(), ensure_ascii=False).encode()
+        assert len(result.error.encode()) <= 2048
+        assert len(wire) <= 16_384
+        assert b"private row" not in wire
+        with gzip.open(tmp_path / result.result["diagnostic_ref"], "rt") as diagnostic:
+            assert payload in diagnostic.read()
+        if phase == "source":
+            target.execute_ddl.assert_not_called()
+            insert.assert_not_called()
+        else:
+            assert "after writing 2 rows" in result.error
+            assert insert.call_count == 2
 
 
 class TestPathTraversalGuard:
@@ -3838,6 +3993,16 @@ class TestDatasourceTableScopes:
             "pg": Mock(dialect="postgresql", catalog_name="", database_name="warehouse", schema_name="public"),
             "unrelated": Mock(dialect="mysql", catalog_name="", database_name="private", schema_name=""),
         }
+        # Mock connectors must declare their namespace contract without relying
+        # on optional adapters being installed in the test environment.
+        capabilities = {
+            "sr": {"catalog", "database"},
+            "mysql": {"database"},
+            "pg": {"database", "schema"},
+            "unrelated": {"database"},
+        }
+        for source, connector in connectors.items():
+            connector.get_effective_capabilities.return_value = capabilities[source]
         scopes = {"sr": "default_catalog.analytics.*", "mysql": "sales.*", "pg": "warehouse.reporting.*"}
         config = _mock_agent_config(current_datasource="unrelated", project_name="scope-test")
         config.current_db_configs.return_value = {
@@ -4041,3 +4206,93 @@ def test_read_validation_returns_scope_failures_before_explain(scope_failure):
     assert guard_failure.success == 0
     assert guard_failure.error == expected_error
     connector.execute_query.assert_not_called()
+
+
+class TestNativeCatalogPagination:
+    @pytest.fixture
+    def catalog(self):
+        connector = Mock()
+        connector.dialect = "sqlite"
+        connector.get_databases.return_value = [f"db_{i:04d}" for i in range(1600)]
+        connector.get_schemas.return_value = [f"schema_{i:04d}" for i in range(1600)]
+        connector.get_tables.return_value = [f"t_{i:04d}" for i in range(1600)]
+        connector.get_views.return_value = ["v"]
+        connector.get_materialized_views.return_value = ["mv"]
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG"),
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG"),
+        ):
+            tool = DBFuncTool(connector)
+        connector.reset_mock()
+        return tool, connector
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "name,provider",
+        [("list_tables", "get_tables"), ("list_databases", "get_databases"), ("list_schemas", "get_schemas")],
+    )
+    async def test_model_defaults_and_snapshot_continuation(self, catalog, name, provider):
+        from datus.tools.func_tool.base import trans_to_function_tool
+
+        tool, connector = catalog
+        method = getattr(tool, name)
+        legacy = method()
+        assert legacy.success == 1 and isinstance(legacy.result, list)
+        connector.reset_mock()
+        first = await trans_to_function_tool(method).on_invoke_tool(None, "{}")
+        assert first["success"] == 1, first
+        page = first["result"]
+        assert len(page["items"]) == 200 and page["has_more"]
+        rid = page["extra"]["snapshot_id"]
+        second = method(snapshot_id=rid, offset=200, page_size=1800)
+        assert second.success == 1, second.error
+        assert len(second.result["items"]) == page["total"] - 200
+        assert not second.result["has_more"]
+        assert getattr(connector, provider).call_count == 1
+        expected = sorted(legacy.result, key=lambda x: (x["type"], x["qualified_name"]) if isinstance(x, dict) else x)
+        combined = page["items"] + second.result["items"]
+        assert combined == [{"name": v} if isinstance(v, str) else v for v in expected]
+        flag = {"include_views": True} if name == "list_tables" else {"include_sys": False}
+        continued = method(snapshot_id=rid, **flag)
+        assert continued.success == 1
+        assert len(continued.result["items"]) == 200
+        flag = {key: not value for key, value in flag.items()}
+        assert method(snapshot_id=rid, **flag).success == 0
+
+    def test_scope_changes_and_invalid_arguments_do_not_query(self, catalog):
+        from datus.tools.func_tool.database import ScopedTablePattern
+
+        tool, connector = catalog
+        assert tool.list_tables(page_size=0).success == 0
+        assert tool.list_tables(offset=1).success == 0
+        connector.get_tables.assert_not_called()
+        page = tool.list_tables(page_size=10).result
+        tool._scoped_patterns = [ScopedTablePattern(raw="only", table="only")]
+        assert tool.list_tables(snapshot_id=page["extra"]["snapshot_id"]).success == 0
+        assert connector.get_tables.call_count == 1
+
+    @pytest.mark.parametrize(
+        "name,provider",
+        [("list_tables", "get_tables"), ("list_databases", "get_databases"), ("list_schemas", "get_schemas")],
+    )
+    def test_returned_page_mutations_do_not_change_memory_snapshot(self, catalog, name, provider):
+        from datus.utils.tool_result_store import ACTIVE_RESULT_STORE
+
+        tool, connector = catalog
+        method = getattr(tool, name)
+        token = ACTIVE_RESULT_STORE.set(None)
+        try:
+            first = method(page_size=1)
+            assert first.success == 1, first.error
+            snapshot_id = first.result["extra"]["snapshot_id"]
+            page = method(snapshot_id=snapshot_id, offset=1, page_size=1)
+            assert page.success == 1, page.error
+            expected = deepcopy(page.result)
+            page.result["items"][0].clear()
+            page.result["extra"]["offset"] = -1
+            reread = method(snapshot_id=snapshot_id, offset=1, page_size=1)
+            assert reread.success == 1, reread.error
+            assert reread.result == expected
+            assert getattr(connector, provider).call_count == 1
+        finally:
+            ACTIVE_RESULT_STORE.reset(token)

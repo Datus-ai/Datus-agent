@@ -3,11 +3,13 @@ import copy
 import io
 import json
 from itertools import product
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+import litellm
 import pytest
 from agents import ModelSettings
 from agents.models.interface import ModelTracing
+from PIL import Image
 
 from datus.configuration.agent_config import ModelConfig, load_model_config
 from datus.models.openai_model import OpenAIModel
@@ -23,6 +25,59 @@ from datus.tools.registry.contracts import tool_contract
 pytestmark = pytest.mark.component
 
 
+@pytest.mark.parametrize(
+    "attachment",
+    [
+        {"type": "image_url", "image_url": {"url": "https://example.invalid/chart.png"}},
+        {"type": "input_image", "file_id": "file-image"},
+        {"type": "input_file", "file_id": "file-report"},
+    ],
+)
+def test_estimated_attachment_does_not_disable_trusted_text_limit(attachment):
+    model = OpenAIModel(
+        ModelConfig(
+            type="openai",
+            model="private-vision",
+            api_key="test",
+            base_url="https://private.example/v1",
+            context_length=8192,
+            max_tokens=1024,
+            tokenizer_ref="tiktoken:cl100k_base",
+        )
+    )
+    text = {"type": "input_text", "text": "word " * 12000}
+    payload = {"input": [{"role": "user", "content": [text, attachment]}]}
+    with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+        model.check_request(payload)
+
+
+def test_estimated_media_can_exceed_budget_when_trusted_text_fits():
+    model = OpenAIModel(
+        ModelConfig(
+            type="openai",
+            model="private-vision",
+            api_key="test",
+            base_url="https://private.example/v1",
+            context_length=4096,
+            max_tokens=1024,
+            tokenizer_ref="tiktoken:cl100k_base",
+        )
+    )
+    payload = {
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Read this image"},
+                    {"type": "input_image", "file_id": "file-image"},
+                ],
+            }
+        ]
+    }
+    capacity = model.request_capacity()
+    assert capacity.check(payload) > capacity.input_limit()
+
+
 def test_budget_uses_actual_output_and_complete_request():
     capacity = RequestCapacity("gpt-4o", 262144, 8192)
     assert capacity.input_limit() == 240844
@@ -34,11 +89,47 @@ def test_budget_uses_actual_output_and_complete_request():
     assert error.value.budget["max_output_tokens"] == 1024
 
 
-def test_unresolved_capacity_is_invalid_but_unknown_tokenizers_have_a_default():
-    with pytest.raises(ContextCapacityError, match="CONTEXT_SPEC_MISSING"):
-        RequestCapacity("unknown", None, 100).check({"input": "hello"})
+def test_unresolved_capacity_and_unknown_tokenizers_have_defaults():
+    assert RequestCapacity("unknown", None, 100).check({"input": "hello"}) > 0
     assert RequestCapacity("unknown-proxy-name", 262144, 100).check({"input": "hello"}) > 0
     assert RequestCapacity("unknown-proxy-name", 262144, 100, "tiktoken:o200k_base").check({"input": "hello"}) > 0
+
+
+def test_custom_model_keeps_fallback_output_reservation_off_wire():
+    model = OpenAIModel(
+        ModelConfig(type="openai", model="private-deployment", api_key="test", base_url="https://private.example/v1")
+    )
+    capacity = model.request_capacity()
+    assert capacity.default_output == model.max_tokens() == DEFAULT_MAX_TOKENS
+    assert capacity.input_limit() == capacity.context_length - DEFAULT_MAX_TOKENS - capacity.margin
+    assert "max_tokens" not in model.check_request({"input": "hello"})
+    assert model._build_agent("", str, False, {}, []).model_settings.max_tokens is None
+    assert model.check_request({"input": "hello", "max_tokens": 512})["max_tokens"] == 512
+    assert model._build_agent("", str, False, {}, [], max_tokens=512).model_settings.max_tokens == 512
+
+
+def test_custom_model_sends_known_output_default(monkeypatch):
+    monkeypatch.setitem(
+        litellm.model_cost,
+        "openai/catalogued-custom-output",
+        {"max_input_tokens": 128000, "max_output_tokens": 8192},
+    )
+    model = OpenAIModel(
+        ModelConfig(
+            type="openai", model="catalogued-custom-output", api_key="test", base_url="https://private.example/v1"
+        )
+    )
+    assert model.check_request({"input": "hello"})["max_tokens"] == 8192
+    assert model._build_agent("", str, False, {}, []).model_settings.max_tokens == 8192
+
+
+def test_native_anthropic_keeps_required_output_parameter():
+    from datus.models.claude_model import ClaudeModel
+
+    model = ClaudeModel(
+        ModelConfig(type="claude", model="private-deployment", api_key="test", base_url="https://private.example")
+    )
+    assert model.check_request({"messages": [{"role": "user", "content": "hello"}]})["max_tokens"] > 0
 
 
 @pytest.mark.parametrize("context,output,tokenizer", product([None, 4096], [None, 512], [None, "tiktoken:o200k_base"]))
@@ -64,8 +155,8 @@ def test_custom_model_capacity_settings_are_independently_optional(context, outp
     assert model.model_config.max_tokens == output
     assert model.model_config.tokenizer_ref == tokenizer
     request = {"messages": [{"role": "user", "content": "Describe the order schema"}]}
-    assert model.check_request(request)["max_tokens"] == expected_output
-    assert model._build_agent("Follow the task", str, False, {}, []).model_settings.max_tokens == expected_output
+    assert model.check_request(request).get("max_tokens") == output
+    assert model._build_agent("Follow the task", str, False, {}, []).model_settings.max_tokens == output
     assert model.check_request({**request, "max_tokens": 256})["max_tokens"] == 256
 
 
@@ -122,19 +213,23 @@ def test_tool_schema_with_type_parameter_is_counted_as_text():
     }
     assert capacity.check(request) > capacity.check({"messages": request["messages"]})
     with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
-        capacity.check({**request, "tools": request["tools"] * 10000})
+        RequestCapacity("deepseek/deepseek-v4-flash", 262144, 8192, allow_estimated_overflow=False).check(
+            {**request, "tools": request["tools"] * 10000}
+        )
 
 
-def test_explicit_broken_tokenizer_does_not_silently_fall_back():
+def test_explicit_broken_tokenizer_falls_back_with_provenance():
     capacity = RequestCapacity("private-deployment", 128000, 8192, "/missing/tokenizer.json")
     with patch("datus.models.request_capacity._tokenizer", side_effect=OSError("Cannot read tokenizer")):
-        with pytest.raises(ContextCapacityError, match="Cannot read tokenizer"):
-            capacity.check({"input": "hello"})
+        estimate = capacity.estimate({"input": "hello"})
+        assert estimate.tokens > 0
+        assert estimate.estimated
+        assert estimate.fallback_reasons == ("tokenizer unavailable (OSError)",)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model_name", ["private-deployment", "z-ai/yumcode-pro"])
-async def test_custom_model_without_new_settings_reaches_transport_and_retains_capacity_guard(model_name):
+async def test_custom_model_without_new_settings_reaches_transport_despite_estimated_overflow(model_name):
     import litellm
 
     model = OpenAIModel(
@@ -150,11 +245,11 @@ async def test_custom_model_without_new_settings_reaches_transport_and_retains_c
         prompt = "Inspect the schema.\n" + "column_name " * 25000
         result = await model.generate_with_tools(prompt, max_turns=1)
         assert result["content"] == "done"
-        assert send.await_args.kwargs["max_tokens"] == 128000
+        assert send.await_args.kwargs["max_tokens"] is None
         send.reset_mock()
-        with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
-            await model.generate_with_tools("\N{EURO SIGN}" * DEFAULT_CONTEXT_LENGTH, max_turns=1)
-        send.assert_not_awaited()
+        result = await model.generate_with_tools("\N{EURO SIGN}" * DEFAULT_CONTEXT_LENGTH, max_turns=1)
+        assert result["content"] == "done"
+        send.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -206,7 +301,7 @@ def test_inline_image_budget_depends_on_pixels_not_base64_size(model, field, kin
 
     from datus.utils.image_content import IMAGE_OMITTED
 
-    capacity = RequestCapacity(model, 8192, 1024)
+    capacity = RequestCapacity(model, 8192, 1024, allow_estimated_overflow=False)
     screenshot = Image.new("RGB", (512, 512), "blue")
 
     def request(compression):
@@ -316,8 +411,7 @@ def test_known_output_ceiling_is_not_silently_clamped():
     ],
 )
 def test_opaque_media_is_not_counted_as_a_short_identifier(block):
-    with pytest.raises(ContextCapacityError, match="CONTEXT_COUNT_UNAVAILABLE"):
-        RequestCapacity("gpt-4o", 8192, 1024).check({"input": [{"role": "user", "content": [block]}]})
+    assert RequestCapacity("gpt-4o", 8192, 1024).check({"input": [{"role": "user", "content": [block]}]}) >= 4096
 
 
 def test_extra_body_effective_output_is_counted():
@@ -358,6 +452,7 @@ def model():
             base_url="https://proxy.example/v1",
             context_length=8192,
             max_tokens=1024,
+            tokenizer_ref="tiktoken:o200k_base",
         )
     )
 
@@ -578,9 +673,8 @@ async def test_final_guard_survives_soft_compaction_failure(model):
 
 
 @pytest.mark.asyncio
-async def test_real_sdk_receives_page_but_tool_event_retains_full_result(model, tmp_path, two_turn_agents_model):
-    """Page model-visible results while retaining complete results in tool events."""
-    import json
+async def test_real_sdk_receives_native_page_without_reader(model, tmp_path, two_turn_agents_model):
+    """The producer returns a page to both the model and tool events."""
     from types import SimpleNamespace
 
     from agents import Agent, Runner
@@ -588,16 +682,18 @@ async def test_real_sdk_receives_page_but_tool_event_retains_full_result(model, 
     from datus.agent.node.context_rewriter import MidTurnCompactor
     from datus.models.base import LLMBaseModel
     from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
-    from datus.tools.func_tool.tool_result_tools import ToolResultFuncTool
+    from datus.utils.result_pagination import SnapshotStore, list_page, native_pagination
     from datus.utils.tool_archive import ToolArchive
-    from datus.utils.tool_result_store import ToolResultStore
+    from datus.utils.tool_result_store import ToolResultStore, parse_result
 
     tables = [{"name": f"table_{i}"} for i in range(30000)]
 
     @tool_contract(access="read", direct_call=True, category="db_tools")
-    def list_tables():
-        """Return the complete table inventory."""
-        return FuncToolResult(result=tables)
+    @native_pagination()
+    def list_tables(page_size: int | None = None):
+        """Return a table inventory page, default 200, with no hard size cap."""
+        rid = SnapshotStore().save("list_tables", tables, {}, {})
+        return FuncToolResult(result=list_page(tables, rid, page_size, 0))
 
     store = ToolResultStore(ToolArchive("p", "s", base_dir=tmp_path), model.request_capacity().count)
     node = SimpleNamespace(
@@ -609,19 +705,341 @@ async def test_real_sdk_receives_page_but_tool_event_retains_full_result(model, 
     )
     rewriter = MidTurnCompactor(node)
     scripted = two_turn_agents_model(tool_name="list_tables")
-    reader = ToolResultFuncTool(lambda: store)
-    agent = Agent(name="paging", model=scripted, tools=[trans_to_function_tool(list_tables), *reader.available_tools()])
+    agent = Agent(name="paging", model=scripted, tools=[trans_to_function_tool(list_tables)])
     config = LLMBaseModel._build_run_config(model, context_rewriter=rewriter, agent_name="paging")
     config.tracing_disabled = True
     run = Runner.run_streamed(agent, input="inspect tables", run_config=config)
     events = [event async for event in run.stream_events()]
     assert scripted.turn == 2
     output = next(item for item in scripted.inputs[1] if item.get("type") == "function_call_output")
-    page = json.loads(output["output"])
+    page = parse_result(output["output"])
     assert page["result"]["has_more"] is True
-    assert len(page["result"]["items"]) <= 200
+    assert len(page["result"]["items"]) == 200
     raw_event = next(
         event.item for event in events if getattr(getattr(event, "item", None), "type", None) == "tool_call_output_item"
     )
-    assert raw_event.output["result"] == tables
+    assert raw_event.output == page
     assert len(tables) == 30000
+
+
+def _provider_model(provider, custom):
+    from datus.models.claude_model import ClaudeModel
+    from datus.models.deepseek_model import DeepSeekModel
+
+    model_class, model_name, official_url = (
+        (ClaudeModel, "claude-sonnet-4-5", "https://api.anthropic.com")
+        if provider == "claude"
+        else (DeepSeekModel, "deepseek-v4-flash", "https://api.deepseek.com")
+    )
+    return model_class(
+        ModelConfig(
+            type=provider,
+            model=model_name,
+            api_key="test",
+            context_length=8192,
+            max_tokens=1024,
+            base_url="https://private.example/v1" if custom else official_url,
+        )
+    )
+
+
+@pytest.mark.parametrize("provider", ["claude", "deepseek"])
+def test_known_provider_preserves_standard_context_guard(provider):
+    model = _provider_model(provider, custom=False)
+    payload = {"messages": [{"role": "user", "content": "word " * 20000}]}
+    with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+        model.check_request(payload)
+
+
+@pytest.mark.parametrize("provider", ["claude", "deepseek"])
+def test_known_provider_private_endpoint_allows_estimated_overflow(provider):
+    model = _provider_model(provider, custom=True)
+    payload = {"messages": [{"role": "user", "content": "word " * 20000}]}
+    assert model.request_capacity().check(payload) > model.request_capacity().input_limit()
+
+
+def test_unknown_model_keeps_estimation_fallback_with_explicit_window():
+    model = OpenAIModel(
+        ModelConfig(
+            type="openai",
+            model="unpublished-deployment",
+            api_key="test",
+            context_length=8192,
+            max_tokens=1024,
+        )
+    )
+    payload = {"messages": [{"role": "user", "content": "word " * 20000}]}
+    assert model.request_capacity().check(payload) > model.request_capacity().input_limit()
+
+
+@pytest.mark.parametrize(
+    "setting,output",
+    [("config", 16384), ("max_tokens", 16384), ("max_completion_tokens", 8192), ("max_output_tokens", 6144)],
+)
+def test_explicit_output_reservation_must_fit_configured_window(setting, output):
+    model = OpenAIModel(
+        ModelConfig(
+            type="openai",
+            model="private-deployment",
+            api_key="test",
+            base_url="https://private.example/v1",
+            context_length=8192,
+            max_tokens=output if setting == "config" else 1024,
+        )
+    )
+    payload = {"messages": [{"role": "user", "content": "hello"}]}
+    if setting != "config":
+        payload[setting] = output
+    with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+        model.check_request(payload)
+
+
+@pytest.mark.parametrize("name", ["gpt-4o", "private-deployment"])
+def test_inferred_custom_window_does_not_reject_explicit_output_reservation(name):
+    model = OpenAIModel(
+        ModelConfig(
+            type="openai", model=name, api_key="test", base_url="https://private.example/v1", max_tokens=2000000
+        )
+    )
+    assert model.check_request({"input": "hello"})["max_tokens"] == 2000000
+
+
+@pytest.fixture
+def image_url():
+    output = io.BytesIO()
+    Image.new("RGB", (32, 32), "red").save(output, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(output.getvalue()).decode("ascii")
+
+
+@pytest.mark.parametrize("kind", ["image_url", "input_image", "image"])
+def test_unregistered_vision_alias_keeps_image_input(image_url, kind):
+    block = {
+        "image_url": {"type": "image_url", "image_url": {"url": image_url}},
+        "input_image": {"type": "input_image", "image_url": image_url},
+        "image": {
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/png", "data": image_url.split(",", 1)[1]},
+        },
+    }[kind]
+    payload = {"input": [{"role": "user", "content": [{"type": "input_text", "text": "Read this"}, block]}]}
+    original = copy.deepcopy(payload)
+    capacity = RequestCapacity("openai/private-vision", 262144, 8192)
+
+    assert capacity.check(payload) >= 4096
+    assert payload == original
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        {"type": "image_url", "image_url": {"url": "https://images.example/chart.png"}},
+        {"type": "input_image", "file_id": "file-image"},
+        {"type": "image", "source": {"type": "url", "url": "https://images.example/chart.png"}},
+        {"type": "input_file", "file_id": "file-report"},
+        {"type": "input_file", "filename": "report.pdf", "file_data": "data:application/pdf;base64," + "A" * 50000},
+        {"type": "file", "file": {"file_data": "A" * 50000, "filename": "report.pdf"}},
+        {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": "A" * 50000}},
+    ],
+)
+def test_unmeasurable_attachments_are_estimated_without_changing_payload(block):
+    capacity = RequestCapacity("gpt-4o", 8192, 1024)
+    payload = {"messages": [{"role": "user", "content": [block]}]}
+    original = copy.deepcopy(payload)
+
+    assert 4096 <= capacity.check(payload) < 8192
+    assert payload == original
+
+
+def test_tokenizer_failure_uses_available_counter_then_byte_estimate(monkeypatch):
+    monkeypatch.setattr("datus.models.request_capacity._tokenizer", Mock(side_effect=OSError("unavailable")))
+    payload = {"input": "Explain the orders table"}
+    for model in ("gpt-4o", "openai/private-deployment"):
+        capacity = RequestCapacity(model, 8192, 1024, tokenizer_ref="/missing/tokenizer.json")
+        assert capacity.check(payload) > 0
+
+    monkeypatch.setattr(litellm, "token_counter", Mock(side_effect=ValueError("counter unavailable")))
+    assert RequestCapacity("gpt-4o", 8192, 1024).check(payload) > 0
+
+
+def test_failed_tokenizer_load_is_reused_across_capacity_instances(monkeypatch):
+    from datus.models import request_capacity
+
+    loader = Mock(side_effect=OSError("Hub unavailable"))
+    monkeypatch.setattr(request_capacity, "_tokenizer", loader)
+    monkeypatch.setattr(request_capacity, "monotonic", lambda: 1000.0, raising=False)
+    model = OpenAIModel(
+        ModelConfig(
+            type="openai",
+            model="private-deployment",
+            api_key="test",
+            tokenizer_ref="tests/unavailable-tokenizer-reuse",
+        )
+    )
+    for _ in range(10):
+        assert model.check_request({"input": "hello"})["max_tokens"] > 0
+    loader.assert_called_once()
+
+
+def test_failed_tokenizer_can_recover_after_failure_cache_expires(monkeypatch):
+    from datus.models import request_capacity
+
+    tokenizer = Mock()
+    tokenizer.encode.return_value = [1, 2, 3]
+    loader = Mock(side_effect=[OSError("Hub unavailable"), tokenizer])
+    now = [1000.0]
+    monkeypatch.setattr(request_capacity, "_tokenizer", loader)
+    monkeypatch.setattr(request_capacity, "monotonic", lambda: now[0], raising=False)
+    capacity = RequestCapacity("private-deployment", 8192, 1024, tokenizer_ref="tests/unavailable-tokenizer-recover")
+    assert capacity.estimate({"input": "hello"}).estimated
+    assert capacity.estimate({"input": "hello"}).estimated
+    loader.assert_called_once()
+    now[0] += 3600
+    estimate = capacity.estimate({"input": "hello"})
+    assert not estimate.estimated
+    assert estimate.source == capacity.tokenizer_ref
+    assert loader.call_count == 2
+
+
+def test_failed_tokenizer_does_not_block_other_references(monkeypatch):
+    from datus.models import request_capacity
+
+    tokenizer = Mock()
+    tokenizer.encode.return_value = [1, 2, 3]
+    monkeypatch.setattr(request_capacity, "_tokenizer", Mock(side_effect=[OSError("Hub unavailable"), tokenizer]))
+    failed = RequestCapacity("private-deployment", 8192, 1024, tokenizer_ref="tests/unavailable-tokenizer-isolated")
+    available = RequestCapacity("private-deployment", 8192, 1024, tokenizer_ref="tests/available-tokenizer")
+    assert failed.estimate({"input": "hello"}).estimated
+    assert not available.estimate({"input": "hello"}).estimated
+
+
+@pytest.mark.parametrize("name", ["gpt-4o", "private-deployment"])
+def test_empty_tokenizer_encoding_uses_estimates_and_preserves_endpoint_policy(monkeypatch, name):
+    tokenizer = Mock()
+    tokenizer.encode.return_value = []
+    monkeypatch.setattr("datus.models.request_capacity._tokenizer", Mock(return_value=tokenizer))
+    model = OpenAIModel(
+        ModelConfig(
+            type="openai",
+            model=name,
+            api_key="test",
+            context_length=8192,
+            max_tokens=1024,
+            tokenizer_ref="tests/empty-tokenizer-encoding",
+        )
+    )
+    payload = {"input": "word " * 20000}
+    capacity = model.request_capacity()
+    estimate = capacity.estimate(payload)
+    assert estimate.estimated
+    assert estimate.trusted_tokens == 0
+    assert estimate.tokens > capacity.input_limit()
+    if name == "gpt-4o":
+        assert estimate.source == "litellm_serialized_request"
+        with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+            model.check_request(payload)
+    else:
+        assert estimate.source == "utf8_byte_upper_bound"
+        assert model.check_request(payload)["max_tokens"] == 1024
+
+
+def test_failed_image_counter_keeps_successful_text_count(monkeypatch, image_url):
+    def counter(*, text=None, **kwargs):
+        if text is not None:
+            return 123
+        raise ValueError("vision metadata unavailable")
+
+    monkeypatch.setattr(litellm, "token_counter", counter)
+    capacity = RequestCapacity("gpt-4o", 8192, 1024)
+    payload = {"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": image_url}}]}]}
+
+    assert capacity.check(payload) == 123 + 4096 + 64 + 256
+
+
+def test_estimated_text_over_budget_is_allowed_but_known_count_is_enforced():
+    payload = {"input": "\N{CJK UNIFIED IDEOGRAPH-8868}" * 5000}
+    estimated = RequestCapacity("openai/private-deployment", 8192, 1024)
+    assert estimated.check(payload) > estimated.input_limit()
+
+    precise = RequestCapacity("gpt-4o", 8192, 1024, tokenizer_ref="tiktoken:cl100k_base")
+    with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+        precise.check({"input": "word " * 20000})
+
+
+@pytest.mark.parametrize("name", ["gpt-4o", "gpt-4o-selfhost"])
+def test_custom_endpoint_explicit_output_overrides_catalog_ceiling(name):
+    model = OpenAIModel(
+        ModelConfig(type="openai", model=name, api_key="test", base_url="https://private.example/v1", max_tokens=32768)
+    )
+    request = model.check_request({"messages": [{"role": "user", "content": "hello"}]})
+    assert request["max_tokens"] == 32768
+    assert model._build_agent("", str, False, {}, []).model_settings.max_tokens == 32768
+
+
+def test_custom_catalog_window_is_a_hint_even_with_configured_tokenizer():
+    model = OpenAIModel(
+        ModelConfig(
+            type="openai",
+            model="gpt-4o",
+            api_key="test",
+            base_url="https://private.example/v1",
+            tokenizer_ref="tiktoken:cl100k_base",
+        )
+    )
+    payload = {"input": "word " * 140000}
+    assert model.request_capacity().check(payload) > model.request_capacity().input_limit()
+
+
+def test_missing_limits_use_flash_budget_and_leave_room_for_input():
+    model = OpenAIModel(
+        ModelConfig(type="openai", model="private-deployment", api_key="test", base_url="https://private.example/v1")
+    )
+    assert model.context_length() == 1048576
+    assert model.max_tokens() == 384000
+    assert "max_tokens" not in model.check_request({"input": "hello"})
+
+    small = OpenAIModel(ModelConfig(type="openai", model="private-deployment", api_key="test", context_length=32768))
+    assert 0 < small.max_tokens() < small.context_length() // 2
+
+    missing = RequestCapacity("private-deployment", None, None)
+    assert missing.check({"input": "hello"}) > 0
+
+
+def test_metadata_lookup_failure_uses_defaults(monkeypatch):
+    model = OpenAIModel(
+        ModelConfig(type="openai", model="private-deployment", api_key="test", base_url="https://private.example/v1")
+    )
+    monkeypatch.setattr(model, "_lookup_spec", Mock(side_effect=OSError("catalog unavailable")))
+    capacity = model.request_capacity()
+    assert capacity.context_length == 1048576
+    assert capacity.default_output == 384000
+    assert "max_tokens" not in model.check_request({"input": "hello"})
+    assert model.max_tokens() == 384000
+    assert model.context_length() == 1048576
+
+
+@pytest.mark.parametrize("result", [None, 0, -1, True, "unknown"])
+def test_invalid_counter_result_falls_back_without_invalidating_request(monkeypatch, result):
+    monkeypatch.setattr(litellm, "token_counter", lambda **kwargs: result)
+    capacity = RequestCapacity("gpt-4o", 8192, 1024)
+    estimate = capacity.estimate({"input": "hello"})
+    assert estimate.tokens > 0
+    assert estimate.estimated
+    assert estimate.source == "utf8_byte_upper_bound"
+
+
+def test_disabled_litellm_counter_estimates_text_and_images(monkeypatch, image_url):
+    monkeypatch.setattr(litellm, "disable_token_counter", True)
+    capacity = RequestCapacity("gpt-4o", 8192, 1024)
+    payload = {"input": [{"role": "user", "content": [{"type": "input_image", "image_url": image_url}]}]}
+    estimate = capacity.estimate(payload)
+    assert estimate.estimated
+    assert estimate.source == "utf8_byte_upper_bound"
+    assert estimate.tokens >= 4096
+    assert estimate.trusted_tokens == 0
+
+
+def test_file_estimation_preserves_tool_schemas_and_business_data():
+    capacity = RequestCapacity("private-deployment", 8192, 1024)
+    business = {"type": "input_file", "file_data": "A" * 10000}
+    payload = {"messages": [{"role": "tool", "content": business}], "tools": [{"parameters": business}]}
+    assert capacity.count(payload) > 20000

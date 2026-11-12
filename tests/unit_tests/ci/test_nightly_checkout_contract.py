@@ -281,7 +281,59 @@ def test_nightly_installs_p0_plugins_only_through_managed_store():
 
 
 @pytest.mark.component
+@pytest.mark.parametrize("selected_rust", [None, "1.80.0"])
+def test_nightly_sets_up_shared_rust_toolchain_before_native_builds(tmp_path, selected_rust):
+    """Use the workflow's Rust pin even when the tested Agent lacks the resolver or has an older pin."""
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["run-nightly"]["steps"]
+    setup = next(step for step in steps if step.get("uses", "").startswith("dtolnay/rust-toolchain@"))
+    resolver = next(step for step in steps if step.get("id") == "policy_rust")
+    assert setup["with"]["toolchain"] == "${{ steps.policy_rust.outputs.rust_toolchain }}"
+    checkout = next(
+        step
+        for step in steps
+        if step.get("uses", "").startswith("actions/checkout@")
+        and step["with"].get("path") == resolver["working-directory"]
+    )
+    assert checkout["with"]["ref"] == "${{ github.workflow_sha }}"
+    assert checkout["with"]["sparse-checkout"] == "ci/harness/sql-policy-host.json"
+    assert checkout["with"]["sparse-checkout-cone-mode"] is False
+    assert steps.index(checkout) < steps.index(resolver) < steps.index(setup)
+    for name in ("Fetch SQL policy native build dependencies", "Build SQL policy native source wheel cache"):
+        native_step = next(step for step in steps if step.get("name") == name)
+        assert steps.index(setup) < steps.index(native_step)
+
+    config_path = Path("ci/harness/sql-policy-host.json")
+    config = json.loads((REPO_ROOT / config_path).read_text())
+    if selected_rust is not None:
+        selected_config = tmp_path / config_path
+        selected_config.parent.mkdir(parents=True)
+        selected_config.write_text(json.dumps({**config, "rust_toolchain": selected_rust}))
+        (tmp_path / "ci/sql_policy_gate.py").write_text(
+            "raise AssertionError('Selected Agent resolver was imported')\n"
+        )
+    workflow_checkout = tmp_path / checkout["with"]["path"]
+    workflow_config = workflow_checkout / config_path
+    workflow_config.parent.mkdir(parents=True)
+    workflow_config.write_text(json.dumps(config))
+
+    script = resolver["run"].split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    output = tmp_path / "github-output"
+    subprocess.run(
+        [sys.executable, "-S", "-c", script],
+        cwd=tmp_path / resolver["working-directory"],
+        env={**os.environ, "GITHUB_OUTPUT": str(output)},
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert output.read_text() == f"rust_toolchain={config['rust_toolchain']}\n"
+
+
+@pytest.mark.component
 def test_nightly_prepares_native_builds_with_scoped_ephemeral_auth(tmp_path):
+    """Fetch private native sources with scoped credentials and keep wheel builds credential-free."""
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["run-nightly"]["steps"]
     step = next(step for step in steps if step["name"] == "Fetch SQL policy native build dependencies")
@@ -295,6 +347,7 @@ def test_nightly_prepares_native_builds_with_scoped_ephemeral_auth(tmp_path):
         f"#!{sys.executable}\n"
         "import json, os, subprocess, sys\n"
         "from pathlib import Path\n"
+        "if sys.argv[1:] == ['--version']: sys.exit(0)\n"
         "def credentials(path):\n"
         "    return subprocess.run(['git', 'credential', 'fill'], "
         "input=f'protocol=https\\nhost=github.com\\npath={path}\\n\\n', "

@@ -423,6 +423,22 @@ class AgenticNode(Node):
         self._session_manager = None
         self._session = None
         self._archive = None
+        # Constructors may mount tools before task() nests the subagent session.
+        # Move their read-only anchor too, revoking access to the old directory.
+        from dataclasses import replace
+
+        from datus.tools.func_tool import FilesystemFuncTool
+        from datus.tools.permission.permission_hooks import FilesystemPolicy
+
+        data_dir = self._resolve_session_data_dir()
+        data_path = Path(data_dir).expanduser().resolve(strict=False) if data_dir else None
+        for group in self._iter_tool_groups():
+            if isinstance(group, FilesystemFuncTool):
+                group._session_data_dir = data_path
+        hooks = getattr(self, "permission_hooks", None)
+        policy = getattr(hooks, "fs_policy", None)
+        if isinstance(policy, FilesystemPolicy):
+            hooks.fs_policy = replace(policy, session_data_dir=data_path)
         try:
             self.restore_plan_mode_state()
         except Exception as exc:  # noqa: BLE001 — same contract as ``__init__``
@@ -1259,6 +1275,7 @@ class AgenticNode(Node):
             except Exception:
                 model_id = ""
         language = getattr(agent_config, "language", None) if agent_config is not None else None
+        from datus.prompts.collaboration_contract import COLLABORATION_CONTRACT
         from datus.schemas.database_context import execution_context_for_node
         from datus.utils.node_utils import build_datasource_prompt_context
 
@@ -1275,6 +1292,7 @@ class AgenticNode(Node):
             template_digest = ""
 
         return {
+            "collaboration_contract_sha256": hashlib.sha256(COLLABORATION_CONTRACT.encode()).hexdigest(),
             "datasource_catalog_sha256": hashlib.sha256(
                 json.dumps(datasource_catalog, sort_keys=True, default=str).encode()
             ).hexdigest(),
@@ -1505,6 +1523,9 @@ class AgenticNode(Node):
         # host-mandated (e.g. authoring format specs) and must not depend on
         # the LLM choosing to call ``load_skill``.
         base_prompt = self._inject_required_skills(base_prompt)
+        from datus.prompts.collaboration_contract import COLLABORATION_CONTRACT
+
+        base_prompt += "\n\n" + COLLABORATION_CONTRACT
 
         # Inject available skills XML into system prompt when skill_func_tool is active.
         if self.skill_func_tool:
@@ -2606,7 +2627,7 @@ class AgenticNode(Node):
         )
 
     def _get_tool_result_store(self):
-        """Reuse the resolved, writable session archive for indexed result pages."""
+        """Reuse the session directory for native snapshots and legacy recovery."""
         from datus.utils.tool_result_store import ToolResultStore
 
         archive = self._get_archive()
@@ -2631,14 +2652,6 @@ class AgenticNode(Node):
 
         store = self._get_tool_result_store()
         return store.recovery_references(items) if isinstance(store, ToolResultStore) else []
-
-    def _ensure_tool_result_reader(self) -> None:
-        from datus.tools.func_tool.tool_result_tools import ToolResultFuncTool
-
-        if not any(getattr(tool, "name", None) == "read_tool_result" for tool in self.tools or []):
-            self.tool_result_func_tool = ToolResultFuncTool(self._get_tool_result_store)
-            self.tools = [*(self.tools or []), *self.tool_result_func_tool.available_tools()]
-            self.tool_registry.register_tools("tool_result_tools", ["read_tool_result"])
 
     def _apply_init_tool_scope(self) -> None:
         """Reapply invocation-local restrictions after prompt/tool refreshes."""
@@ -3138,7 +3151,9 @@ class AgenticNode(Node):
         try:
             from datus.tools.func_tool.ask_user_tools import AskUserTool
 
-            broker = self._get_or_create_broker()
+            # The owning run already binds the queue. A delegated child must
+            # retain it while the parent collector is listening.
+            broker = self.interaction_broker
             self.ask_user_tool = AskUserTool(broker=broker)
             if self.tools is not None:
                 self.tools.extend(self.ask_user_tool.available_tools())
@@ -3165,36 +3180,10 @@ class AgenticNode(Node):
             self.task_result_tool = TaskResultTool()
             if self.tools is not None:
                 self.tools.extend(self.task_result_tool.available_tools())
-            self._allow_task_result_tool()
             logger.debug("Setup submit_task_result tool")
         except Exception as e:
             logger.error(f"Failed to setup task result tool: {e}")
             self.task_result_tool = None
-
-    def _allow_task_result_tool(self) -> None:
-        """Exempt ``submit_task_result`` from the permission prompt.
-
-        Same reasoning as ``ask_user``: this is the channel the run reports
-        through, not a resource it touches. Under ``normal`` / ``auto`` it
-        matches no ALLOW rule and lands on ``default=ASK``, so a finished
-        dispatch stopped to ask permission to say it had finished — and the
-        card sat in the thread waiting for a human.
-
-        Declared here rather than in ``profiles.py`` because the tool itself is
-        injected here, only for orchestrator origins. A rule in the shared
-        profiles would outlive the tool and name it for every other caller.
-        ``add_persistent_rule`` so a later ``/profile`` switch, which rebuilds
-        ``global_config``, does not drop it.
-        """
-        if self.permission_manager is None:
-            return
-
-        from datus.tools.permission.permission_config import PermissionLevel, PermissionRule
-
-        category = getattr(self.task_result_tool, "permission_category", "tools")
-        self.permission_manager.add_persistent_rule(
-            PermissionRule(tool=category, pattern="submit_task_result", permission=PermissionLevel.ALLOW)
-        )
 
     def _setup_sub_agent_task_tool(self):
         """Setup SubAgentTaskTool based on subagents config or node default.
@@ -3345,22 +3334,14 @@ class AgenticNode(Node):
     def _bash_output_dir(self) -> Optional[Path]:
         """Session data dir for bash output offload, or None if unavailable.
 
-        Reused directory convention as the compact archive
-        (``path_manager.session_data_dir(session_id)``). Returns None before a
-        session id is allocated, when there is no ``agent_config`` (mirrors
-        ``_resolve_session_data_dir`` — otherwise ``get_path_manager`` would fall
-        back to a process-wide default rooted at ``~/.datus``), or when the path
-        manager can't be built, so the bash tool degrades to in-memory truncation.
+        Share the filesystem policy's resolved session archive directory,
+        including custom roots, tenant scope and subagent nesting. Without a
+        configured session directory, bash keeps its in-memory fallback.
         """
         if not self.agent_config or not self.session_id:
             return None
-        try:
-            from datus.utils.path_manager import get_path_manager
-
-            return get_path_manager(agent_config=self.agent_config).session_data_dir(self.session_id)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("Failed to resolve bash output dir: %s", exc)
-            return None
+        data_dir = self._resolve_session_data_dir()
+        return Path(data_dir) if data_dir else None
 
     def _ensure_bash_tool_in_tools(self) -> None:
         """Ensure the BashTool's ``bash`` is in ``self.tools``.
@@ -3947,8 +3928,8 @@ class AgenticNode(Node):
         # captures ``self.tools``: call arguments evaluate left to right, so
         # deferring to ``hooks=self._compose_run_hooks(ctx)`` would be one
         # argument too late and the first run would execute unwrapped tools.
-        self._ensure_tool_result_reader()
         self._apply_init_tool_scope()
+        self._ensure_interaction_channel()
         self._ensure_tool_transformers()
         self._current_action_history = ctx.action_history_manager
         # Per-run mid-turn compactor. Created before ``_compose_run_hooks`` so
@@ -4478,20 +4459,18 @@ class AgenticNode(Node):
     def _resolve_session_data_dir(self) -> Optional[str]:
         """Resolve the compact-archive data dir for this node's current session.
 
-        Returns ``None`` when the node has no agent_config / path_manager (used
-        by lightweight bootstrap tests), no session_id yet, or when the
-        path manager rejects the segment (e.g. missing project_name). The
-        caller falls back to leaving the FS policy without a session anchor,
-        which keeps archived paths EXTERNAL — safe but the LLM will be
-        prompted before it can ``read_file`` them.
+        Use the same resolved SessionManager directory as ``_get_archive`` so
+        custom session roots, tenant scope and subagent nesting remain aligned.
+        Without a session or a resolvable manager, leave the FS policy without
+        an archive anchor; unrelated session directories remain EXTERNAL.
         """
-        if not self.agent_config:
-            return None
-        path_manager = getattr(self.agent_config, "path_manager", None)
-        if path_manager is None or not getattr(self, "session_id", ""):
+        if not getattr(self, "session_id", ""):
             return None
         try:
-            return str(path_manager.session_data_dir(self.session_id))
+            from datus.utils.path_manager import DatusPathManager
+
+            DatusPathManager._validate_session_id(self.session_id)
+            return str(Path(self.session_manager.session_dir) / self.session_id / "data")
         except Exception as exc:
             logger.debug("Failed to resolve session_data_dir for fs policy: %s", exc)
             return None
@@ -4661,6 +4640,8 @@ class AgenticNode(Node):
                 non_interactive=non_interactive,
                 proxied_tool_names=self.proxied_tool_names,
                 project_root=getattr(self.agent_config, "project_root", None),
+                export_workspace_root=self._resolve_workspace_root(),
+                client_only_workspace=getattr(self.agent_config, "_client_source", None) == "vscode",
                 config_mutable=self._resolve_config_mutable(),
                 auto_reviewer=create_auto_reviewer(self.agent_config),
                 review_context_provider=self._build_permission_review_context,
@@ -4750,7 +4731,8 @@ class AgenticNode(Node):
         self._populate_tool_registry()
         visible = []
         for tool in self.tools:
-            if PermissionHooks.is_permission_exempt_tool(tool.name):
+            category = self.tool_registry.get(tool.name, "tools")
+            if PermissionHooks.is_permission_exempt_tool(tool.name, category):
                 visible.append(tool)
                 continue
             # Like PermissionHooks, resolve load_skill by its target Skill, not
@@ -4768,17 +4750,17 @@ class AgenticNode(Node):
                     if manager.filter_available_skills(skills, self.get_node_name()):
                         visible.append(tool)
                 continue
-            category = self.tool_registry.get(tool.name, "tools")
             visible.extend(manager.filter_available_tools([tool], self.get_node_name(), category))
         self.tools[:] = visible
 
-    def _ensure_tool_transformers(self) -> None:
+    def _ensure_tool_transformers(self, *, added_tools: Optional[list] = None) -> None:
         """Wrap ``self.tools`` with plugin-declared argument transformers, once.
 
         Invoked lazily from :meth:`_compose_hooks` so wrapping happens after
         ``setup_tools`` and any ``apply_proxy_tools`` rewrite (proxied tools
         are skipped — they execute client-side). Idempotent via a flag so a
-        node reused across turns never double-wraps.
+        node reused across turns never double-wraps. ``added_tools`` limits a
+        late-mount pass to tools not yet wrapped by init scoping.
 
         Gated by ``agent.plugins_enabled`` like every other plugin surface.
         Collection failures are swallowed inside the registry (a broken plugin
@@ -4788,16 +4770,16 @@ class AgenticNode(Node):
         """
         from datus.tools.registry.contracts import validate_registered_tools
 
-        validate_registered_tools(self.tools)
+        validate_registered_tools(self.tools if added_tools is None else added_tools)
         if getattr(getattr(self, "agent_config", None), "restrict_tool_visibility", False) is True:
             self._filter_permission_denied_tools()
         # Defensive getattr: test doubles that bypass ``AgenticNode.__init__``
         # may carry neither the flag nor an agent_config (same rationale as the
         # ``interaction_broker`` getattr in ``_stream_once``).
-        if getattr(self, "_tool_transformers_applied", False):
+        if added_tools is None and getattr(self, "_tool_transformers_applied", False):
             return
         if not getattr(getattr(self, "agent_config", None), "plugins_enabled", True):
-            self._tool_transformers_applied = True
+            self._tool_transformers_applied = added_tools is None or getattr(self, "_tool_transformers_applied", False)
             return
         from datus.plugins.registry import collect_plugin_tool_transformers
 
@@ -4805,12 +4787,12 @@ class AgenticNode(Node):
         active_names = agent_config.active_plugin_names() if hasattr(agent_config, "active_plugin_names") else None
         transformers_by_pattern = collect_plugin_tool_transformers(active_names)
         if not transformers_by_pattern:
-            self._tool_transformers_applied = True
+            self._tool_transformers_applied = added_tools is None or getattr(self, "_tool_transformers_applied", False)
             return
         try:
             from datus.tools.middleware import apply_tool_transformers
 
-            wrapped = apply_tool_transformers(self, transformers_by_pattern)
+            wrapped = apply_tool_transformers(self, transformers_by_pattern, tools=added_tools)
             logger.debug(
                 "Applied plugin tool transformers on node '%s': %d tool(s) wrapped",
                 self.get_node_name(),
@@ -4820,7 +4802,7 @@ class AgenticNode(Node):
             # attempt would turn the fail-closed raise below into fail-open
             # on the next turn (the early return above would skip wrapping
             # entirely and matched tools would run unenforced).
-            self._tool_transformers_applied = True
+            self._tool_transformers_applied = added_tools is None or getattr(self, "_tool_transformers_applied", False)
         except Exception as e:
             # Fail closed: a declared transformer that cannot be applied means
             # policy enforcement would silently vanish for matched tools.
@@ -4901,6 +4883,33 @@ class AgenticNode(Node):
             return f"[{exc.code}] {exc}"
         return model_error_message(exc) or str(exc)
 
+    def _ensure_interaction_channel(self) -> None:
+        """Mount the interactive session channel after resource-tool selection and rebuilds.
+
+        Query nodes and artifact consultants may replace the entire tool list.
+        A resource whitelist must not remove their channel for asking the user.
+        Keep the list identity because callers may already have captured it.
+        Workflow nodes deliberately have no human interaction channel.
+        """
+        if getattr(self, "execution_mode", None) != "interactive":
+            return
+        if any(getattr(tool, "name", None) == "ask_user" for tool in self.tools or []):
+            return
+        previous_count = len(self.tools or [])
+        if getattr(self, "ask_user_tool", None) is None:
+            self._setup_ask_user_tool()
+        elif self.tools is not None:
+            self.tools.extend(self.ask_user_tool.available_tools())
+        if getattr(self, "_tool_transformers_applied", False) and len(self.tools or []) > previous_count:
+            added = self.tools[previous_count:]
+            try:
+                self._ensure_tool_transformers(added_tools=added)
+            except BaseException:
+                # Retry the mount next turn; an unwrapped channel must not survive a failed policy pass.
+                del self.tools[previous_count:]
+                raise
+            self.tools[previous_count:] = added
+
     def _compose_hooks(self, extra: Any = None) -> Any:
         """Combine permission hooks with an optional per-node hook.
 
@@ -4922,6 +4931,7 @@ class AgenticNode(Node):
         publishes a ``token_usage`` action mid-turn (see
         ``datus/agent/node/token_usage_hook.py``).
         """
+        self._ensure_interaction_channel()
         self._ensure_permission_hooks()
         self._ensure_tool_transformers()
         context_rewriter = getattr(self, "_active_context_rewriter", None)

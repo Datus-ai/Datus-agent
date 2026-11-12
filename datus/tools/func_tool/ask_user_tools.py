@@ -73,7 +73,7 @@ class AskUserTool:
     def set_tool_context(self, ctx: Any) -> None:
         self._tool_context = ctx
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="session", direct_call=False)
     async def ask_user(
         self,
         questions: List[QuestionItem],

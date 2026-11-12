@@ -32,11 +32,13 @@ def _build_sub_agent_filter(
     storage: "BaseEmbeddingStore",
     check_scope_attr: str,
     table_column: str = "table_name",
+    fail_closed: bool = False,
 ) -> Optional[Node]:
     """Build scope filter from sub-agent's scoped context.
 
     ``table_column`` names the column holding the physical table name in the
     target store, and only applies to the ``tables`` scope.
+    ``fail_closed`` rejects a declared subject scope that resolves to no nodes.
     """
     if not sub_agent_name:
         return None
@@ -89,6 +91,9 @@ def _build_sub_agent_filter(
                     "Refusing to return unscoped storage."
                 ),
             )
-        return ScopedFilterBuilder.build_subject_filter(scope_value, subject_tree)
+        condition = ScopedFilterBuilder.build_subject_filter(scope_value, subject_tree)
+        if fail_closed and condition is None:
+            raise ValueError(f"Configured {check_scope_attr} scope does not resolve to an existing subject.")
+        return condition
 
     return None

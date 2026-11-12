@@ -90,6 +90,85 @@ def _make_model(model_config=None):
         return model
 
 
+@pytest.fixture
+def catalog_unavailable_model(monkeypatch):
+    import litellm
+
+    from datus.configuration.agent_config import ModelConfig
+    from datus.models.openai_model import OpenAIModel
+
+    model = OpenAIModel(ModelConfig(type="openai", model="gpt-4o", api_key="test"))
+
+    def unavailable(_model):
+        raise OSError("catalog unavailable")
+
+    monkeypatch.setattr(OpenAICompatibleModel, "model_specs", property(unavailable))
+    monkeypatch.setattr(litellm, "model_cost", {"gpt-4o": {"max_input_tokens": 128000, "max_output_tokens": 16384}})
+    return model
+
+
+def test_catalog_failure_preserves_available_context_metadata(catalog_unavailable_model, monkeypatch):
+    import litellm
+
+    from datus.models.request_capacity import ContextCapacityError
+
+    model = catalog_unavailable_model
+    monkeypatch.setattr(litellm, "model_cost", {"gpt-4o": {"max_input_tokens": 8192, "max_output_tokens": 1024}})
+    model.model_config.max_tokens = 1024
+    with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+        model.check_request({"input": "word " * 20000})
+    assert model.request_capacity().context_length == 8192
+
+
+def test_catalog_failure_keeps_automatic_output_within_known_ceiling(catalog_unavailable_model):
+    model = catalog_unavailable_model
+    request = model.check_request({"input": "hello"})
+    assert 0 < request["max_tokens"] <= model.request_capacity().output_ceiling
+
+
+def test_catalog_failure_getters_use_surviving_capacity_metadata(catalog_unavailable_model):
+    assert catalog_unavailable_model.context_length() == 128000
+    assert catalog_unavailable_model.max_tokens() == 16384
+
+
+@pytest.mark.parametrize("output", [None, 512])
+def test_direct_generation_uses_surviving_capacity_metadata(catalog_unavailable_model, monkeypatch, output):
+    import litellm
+
+    response = litellm.ModelResponse(
+        model="gpt-4o",
+        choices=[{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+    )
+    completion = MagicMock(return_value=response)
+    monkeypatch.setattr(litellm, "completion", completion)
+    kwargs = {} if output is None else {"max_tokens": output}
+    assert catalog_unavailable_model.generate("hello", **kwargs) == "ok"
+    assert completion.call_args.kwargs["max_tokens"] == (16384 if output is None else output)
+    completion.assert_called_once()
+
+
+def test_catalog_failure_preserves_smaller_output_default(catalog_unavailable_model, monkeypatch):
+    model = catalog_unavailable_model
+    monkeypatch.setattr(model, "max_tokens", lambda: 512)
+    assert model.check_request({"input": "hello"})["max_tokens"] == 512
+
+
+def test_catalog_failure_does_not_clamp_explicit_output(catalog_unavailable_model):
+    from datus.models.request_capacity import ContextCapacityError
+
+    model = catalog_unavailable_model
+    model.model_config.max_tokens = 32768
+    with pytest.raises(ContextCapacityError, match="OUTPUT_LIMIT_EXCEEDED"):
+        model.check_request({"input": "hello"})
+
+
+def test_catalog_failure_keeps_custom_output_ceiling_advisory(catalog_unavailable_model):
+    model = catalog_unavailable_model
+    model.litellm_adapter.base_url = "https://private.example/v1"
+    model.model_config.max_tokens = 32768
+    assert model.check_request({"input": "hello"})["max_tokens"] == 32768
+
+
 class _FakeObservabilityManager:
     def __init__(self, enabled_fields=None):
         self.enabled_fields = set(enabled_fields or [])
@@ -464,7 +543,7 @@ class TestGenerate:
         assert call_kwargs["max_tokens"] == 512
 
     def test_max_tokens_fallback_from_model_specs(self):
-        """When kwargs lacks max_tokens, fall back to model_specs."""
+        """A model-spec output default still leaves input headroom."""
         model = _make_model()
         mock_resp = self._mock_litellm_response("ok")
         with (
@@ -473,7 +552,7 @@ class TestGenerate:
         ):
             model.generate("prompt")
         call_kwargs = mock_lit.call_args[1]
-        assert call_kwargs["max_tokens"] == 4096
+        assert call_kwargs["max_tokens"] == 3072
         assert "max_completion_tokens" not in call_kwargs
 
     def test_max_tokens_falls_back_to_registered_provider_limit(self):
@@ -1352,7 +1431,7 @@ class TestModelSpecsAndTokenLimits:
     def test_unknown_model_has_default_max_tokens(self):
         cfg = _make_model_config(model="unknown-model-xyz")
         model = _make_model(cfg)
-        assert model.max_tokens() == 128000
+        assert model.max_tokens() == 384000
 
     def test_unknown_model_has_default_context_length(self):
         cfg = _make_model_config(model="unknown-model-xyz")
@@ -1397,8 +1476,8 @@ class TestModelSpecsOpenRouterCacheMerge:
             cfg = _make_model_config(model="brand-new-model")
             model = _make_model(cfg)
             assert model.context_length() == 777000
-            # Cache entries have no output limit, so use the default budget.
-            assert model.max_tokens() == 128000
+            # Unknown output limits use the fallback while leaving input headroom.
+            assert model.max_tokens() == (777000 - model.request_capacity().margin) // 2
         assert "brand-new-model" in oc._MODEL_SPECS_CACHE
         assert oc._MODEL_SPECS_CACHE["brand-new-model"]["context_length"] == 777000
 

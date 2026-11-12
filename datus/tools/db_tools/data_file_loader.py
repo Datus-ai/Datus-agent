@@ -301,16 +301,27 @@ def column_letter(index: int) -> str:
 def find_file_reading_functions(sql: str) -> List[str]:
     """Names from :data:`FILE_READING_FUNCTIONS` that appear called in ``sql``.
 
-    A regex rather than a parse on purpose: this runs on every statement, and
-    the question is only "does a file-reading table function appear here". Over-
-    matching (a column literally named ``glob(``) fails closed with a clear
-    message; under-matching would be a policy bypass, so the bias is deliberate.
+    Keep the conservative textual check, then inspect parsed identifiers so
+    quoted names and comments cannot hide a reader. Parse failures are still
+    rejected by the caller's registered-relation check.
     """
     found: List[str] = []
     for match in _FUNCTION_CALL_RE.finditer(sql):
         name = match.group(1).lower()
         if name in FILE_READING_FUNCTIONS and name not in found:
             found.append(name)
+    import sqlglot
+    from sqlglot import exp
+
+    try:
+        tree = sqlglot.parse_one(sql, dialect="duckdb")
+    except sqlglot.errors.ParseError:
+        return found
+    if tree is not None:
+        for function in tree.find_all(exp.Func):
+            name = (function.name if isinstance(function, exp.Anonymous) else function.sql_name()).lower()
+            if name in FILE_READING_FUNCTIONS and name not in found:
+                found.append(name)
     return found
 
 
@@ -347,20 +358,16 @@ def unresolved_table_references(sql: str, known: Sequence[str]) -> List[str]:
 
     offenders: List[str] = []
     for table in tree.find_all(exp.Table):
-        name = table.name
-        if not name:
-            # A table *function* (``read_csv_auto(...)``, ``duckdb_views()``)
-            # carries its name on the inner node, not on the Table. Treating it
-            # as unnamed would exempt exactly the constructs this is here to
-            # catch, including any reader DuckDB adds later.
-            inner = table.this
-            name = getattr(inner, "name", "") or ""
-            if not name:
-                if "<unnamed table expression>" not in offenders:
-                    offenders.append("<unnamed table expression>")
-                continue
+        # A function invocation is never a registered relation or a CTE,
+        # including when a quoted function shares the CTE's name.
+        if not isinstance(table.this, exp.Identifier):
+            name = getattr(table.this, "name", "") or "<unnamed table expression>"
             name = f"{name}()"
-        if name.lower().removesuffix("()") not in allowed and name not in offenders:
+            if name not in offenders:
+                offenders.append(name)
+            continue
+        name = table.name
+        if name.lower() not in allowed and name not in offenders:
             offenders.append(name)
     return offenders
 

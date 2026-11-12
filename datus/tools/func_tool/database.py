@@ -4,12 +4,14 @@
 # -*- coding: utf-8 -*-
 import asyncio
 import csv
+import hashlib
 import io
 import ipaddress
 import json
 import os
 import re
 from collections import OrderedDict
+from copy import deepcopy
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -50,6 +52,7 @@ from datus.tools.db_tools.datasource_plan import DatasourcePlanError, plan_from_
 from datus.tools.db_tools.datasource_quality import QualityChecker, summarize
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.bulk_query_tools import BulkQueryTools
 from datus.tools.registry.contracts import tool_contract
 from datus.utils.compress_utils import DataCompressor
 from datus.utils.config_utils import coerce_bool
@@ -57,6 +60,7 @@ from datus.utils.constants import DBType, SQLType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
+from datus.utils.result_pagination import SnapshotStore, list_page, native_pagination, validate_page
 from datus.utils.sql_utils import parse_dialect, parse_table_name_parts
 
 logger = get_logger(__name__)
@@ -138,7 +142,7 @@ def _pattern_matches(pattern: str, value: str) -> bool:
     name="db_tool",
     availability_property="has_db_tools",
 )
-class DBFuncTool:
+class DBFuncTool(BulkQueryTools):
     """
     Database function tool that supports dynamic connector switching.
 
@@ -1467,6 +1471,7 @@ class DBFuncTool:
             methods_to_convert.append(self.search_table)
 
         methods_to_convert.append(self.execute_sql)
+        methods_to_convert.append(self.export_query)
         if self.agent_config is not None:
             methods_to_convert.append(self.get_datasource_identity)
 
@@ -1712,10 +1717,60 @@ class DBFuncTool:
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
+    def _catalog_snapshot_scope(self) -> dict:
+        return {
+            "datasource": self._default_datasource,
+            "database": self._default_database,
+            "policy": self.policy_context,
+            "tables": [vars(pattern) for pattern in self._scoped_patterns],
+            "grouped_tables": getattr(self, "_tables_by_datasource", None),
+            "context": getattr(self, "_execution_context", {}),
+        }
+
+    def _catalog_snapshot_store(self) -> SnapshotStore:
+        if "_catalog_pages" not in self.__dict__:
+            self._catalog_pages = SnapshotStore()
+        return self._catalog_pages
+
+    def _catalog_page(
+        self,
+        name: str,
+        items: Optional[list],
+        page_size: Optional[int],
+        offset: int,
+        snapshot_id: Optional[str],
+        query: dict,
+    ) -> FuncToolResult:
+        if page_size is None and snapshot_id is None and offset == 0:
+            return FuncToolResult(result=items)
+        size = 200 if page_size is None else page_size
+        validate_page(size, offset)
+        store = self._catalog_snapshot_store()
+        scope = self._catalog_snapshot_scope()
+        if snapshot_id:
+            items = store.read(snapshot_id, name, scope, query)
+        else:
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with snapshot_id")
+            items = sorted(
+                items, key=lambda x: (x.get("type", ""), x.get("qualified_name", "")) if isinstance(x, dict) else x
+            )
+            snapshot_id = store.save(name, items, scope, query)
+        rows = [{"name": item} if isinstance(item, str) else item for item in items]
+        page = list_page(rows, snapshot_id, size, offset)
+        return FuncToolResult(result=deepcopy(page))
+
     @mcp_tool()
     @tool_contract(access="read", direct_call=True)
+    @native_pagination()
     def list_databases(
-        self, catalog: Optional[str] = "", datasource: Optional[str] = "", include_sys: Optional[bool] = False
+        self,
+        catalog: Optional[str] = "",
+        datasource: Optional[str] = "",
+        include_sys: Optional[bool] = None,
+        page_size: Optional[int] = None,
+        offset: int = 0,
+        snapshot_id: Optional[str] = None,
     ) -> FuncToolResult:
         """
         Enumerate databases accessible through the current connection.
@@ -1727,10 +1782,28 @@ class DBFuncTool:
             datasource: Optional datasource to route the query to. Defaults to the current datasource.
             include_sys: Set True to include system databases; defaults to False.
 
+        Pagination:
+            Agent calls default to 200 records. Use page_size, offset and the returned
+            snapshot_id to continue without another catalog read. No page-size hard cap.
+            Direct calls without pagination arguments retain the complete list.
+
         Returns:
             FuncToolResult with result as a list of database names ordered by the connector. On failure success=0 with
             an explanatory error message.
         """
+        query = {"catalog": catalog, "datasource": datasource, "include_sys": include_sys}
+        try:
+            if page_size is not None:
+                validate_page(page_size, offset)
+            if snapshot_id:
+                return self._catalog_page("list_databases", None, page_size, offset, snapshot_id, query)
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with snapshot_id")
+        except (OSError, ValueError, TypeError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+        include_sys = False if include_sys is None else include_sys
+        query["include_sys"] = include_sys
+
         if self._is_multi_connector and datasource and datasource not in self._datasources:
             return FuncToolResult(
                 success=0, error=f"Datasource '{datasource}' not found. Available: {list(self._datasources)}"
@@ -1747,27 +1820,31 @@ class DBFuncTool:
                 if cfg is not None and getattr(cfg, "path_pattern", ""):
                     databases = self.agent_config.list_databases(source)
                     if getattr(self, "_tables_by_datasource", None) is None:
-                        return FuncToolResult(result=databases)
+                        return self._catalog_page("list_databases", databases, page_size, offset, None, query)
                     catalog, _, _ = self._normalize_namespace_args(catalog, "", "", datasource)
                     connector = self._get_connector(source)
                     filtered = [db for db in databases if self._database_matches_scope(catalog, db, connector)]
-                    return FuncToolResult(result=filtered)
+                    return self._catalog_page("list_databases", filtered, page_size, offset, None, query)
             catalog, _, _ = self._normalize_namespace_args(catalog, "", "", datasource)
             connector = self._get_connector(source)
             databases = connector.get_databases(catalog, include_sys=include_sys)
             filtered = [db for db in databases if self._database_matches_scope(catalog, db, connector)]
-            return FuncToolResult(result=filtered)
+            return self._catalog_page("list_databases", filtered, page_size, offset, None, query)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool()
     @tool_contract(access="read", direct_call=True)
+    @native_pagination()
     def list_schemas(
         self,
         catalog: Optional[str] = "",
         database: Optional[str] = "",
         datasource: Optional[str] = "",
-        include_sys: bool = False,
+        include_sys: Optional[bool] = None,
+        page_size: Optional[int] = None,
+        offset: int = 0,
+        snapshot_id: Optional[str] = None,
     ) -> FuncToolResult:
         """
         List schema names under the supplied catalog/database coordinate.
@@ -1780,31 +1857,53 @@ class DBFuncTool:
             datasource: Optional datasource to route the query to. Defaults to the current datasource.
             include_sys: Set True to include system schemas; defaults to False.
 
+        Pagination:
+            Agent calls default to 200 records. Use page_size, offset and the returned
+            snapshot_id to continue without another catalog read. No page-size hard cap.
+            Direct calls without pagination arguments retain the complete list.
+
         Returns:
             FuncToolResult with result holding the schema name list. On failure success=0 with an explanatory message.
         """
+        query = {"catalog": catalog, "database": database, "datasource": datasource, "include_sys": include_sys}
+        try:
+            if page_size is not None:
+                validate_page(page_size, offset)
+            if snapshot_id:
+                return self._catalog_page("list_schemas", None, page_size, offset, snapshot_id, query)
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with snapshot_id")
+        except (OSError, ValueError, TypeError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+        include_sys = False if include_sys is None else include_sys
+        query["include_sys"] = include_sys
+
         try:
             catalog, database, _ = self._normalize_namespace_args(catalog, database, "", datasource)
             connector = self._get_connector(datasource, database)
             if database and not self._database_matches_scope(catalog, database, connector):
-                return FuncToolResult(result=[])
+                return self._catalog_page("list_schemas", [], page_size, offset, None, query)
             schemas = connector.get_schemas(catalog, database, include_sys=include_sys)
             filtered = [
                 schema for schema in schemas if self._schema_matches_scope(catalog, database, schema, connector)
             ]
-            return FuncToolResult(result=filtered)
+            return self._catalog_page("list_schemas", filtered, page_size, offset, None, query)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool()
     @tool_contract(access="read", direct_call=True)
+    @native_pagination()
     def list_tables(
         self,
         catalog: Optional[str] = "",
         database: Optional[str] = "",
         schema_name: Optional[str] = "",
         datasource: Optional[str] = "",
-        include_views: Optional[bool] = True,
+        include_views: Optional[bool] = None,
+        page_size: Optional[int] = None,
+        offset: int = 0,
+        snapshot_id: Optional[str] = None,
     ) -> FuncToolResult:
         """
         Return table-like objects (tables, views, materialized views) visible to the connector.
@@ -1816,12 +1915,36 @@ class DBFuncTool:
             datasource: Optional datasource to route the query to. Defaults to the current datasource.
             include_views: When True (default) also include views and materialized views.
 
+        Pagination:
+            Agent calls default to 200 records. Use page_size, offset and the returned
+            snapshot_id to continue without another catalog read. No page-size hard cap.
+            Direct calls without pagination arguments retain the complete list.
+
         Returns:
             FuncToolResult with result=[{"type": "table|view|materialized_view", "qualified_name": str}, ...].
             ``qualified_name`` is ``[db.][schema.]table``, prefixing only the levels the caller did not pass
             (e.g. pass ``database`` but not ``schema`` and each entry carries its resolved ``schema.table``).
             On failure success=0 with an explanatory error message.
         """
+        query = {
+            "catalog": catalog,
+            "database": database,
+            "schema_name": schema_name,
+            "datasource": datasource,
+            "include_views": include_views,
+        }
+        try:
+            if page_size is not None:
+                validate_page(page_size, offset)
+            if snapshot_id:
+                return self._catalog_page("list_tables", None, page_size, offset, snapshot_id, query)
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with snapshot_id")
+        except (OSError, ValueError, TypeError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+        include_views = True if include_views is None else include_views
+        query["include_views"] = include_views
+
         try:
             catalog, database, schema_name = self._normalize_namespace_args(
                 catalog,
@@ -1856,7 +1979,7 @@ class DBFuncTool:
                     logger.debug(f"get_materialized_views unavailable on {connector.dialect}: {e}")
 
             filtered_result = self._filter_table_entries(result, catalog, database, schema_name, connector)
-            return FuncToolResult(result=filtered_result)
+            return self._catalog_page("list_tables", filtered_result, page_size, offset, None, query)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
@@ -2027,7 +2150,9 @@ class DBFuncTool:
 
     # ------------------------------------------------- uploaded data files
 
-    def _reject_unsafe_uploads_sql(self, sql: str, datasource: Optional[str]) -> Optional[FuncToolResult]:
+    def _reject_unsafe_uploads_sql(
+        self, sql: str, datasource: Optional[str], *, connector: Optional[BaseSqlConnector] = None
+    ) -> Optional[FuncToolResult]:
         """Confine model-authored SQL on the uploads catalog to reads of its own tables.
 
         The catalog is a DuckDB datasource with external file access enabled —
@@ -2096,7 +2221,7 @@ class DBFuncTool:
             )
 
         try:
-            registered = list(self._registered_uploads())
+            registered = list(self._registered_uploads() if connector is None else self._registered_uploads(connector))
         except Exception as exc:
             # No catalog reading means no way to authorise a reference, and this
             # gate is the boundary — so refuse rather than skip it.
@@ -2114,7 +2239,7 @@ class DBFuncTool:
             )
         return None
 
-    def _registered_uploads(self) -> Dict[str, Optional[str]]:
+    def _registered_uploads(self, connector: Optional[BaseSqlConnector] = None) -> Dict[str, Optional[str]]:
         """Names the uploads catalog holds, read while holding the connector lock.
 
         The read has to happen *inside* ``exclusive_connection``. Handing the
@@ -2126,7 +2251,8 @@ class DBFuncTool:
         a short read looks like an empty catalog, which this gate then reports
         as "table is not registered" about a table that is registered.
         """
-        connector = self._get_connector(LOCAL_FILES_DATASOURCE, "")
+        if connector is None:
+            connector = self._get_connector(LOCAL_FILES_DATASOURCE, "")
         exclusive = getattr(connector, "exclusive_connection", None)
         if exclusive is None:
             raise DatusException(
@@ -2402,7 +2528,7 @@ class DBFuncTool:
         return exclusive, None
 
     @mcp_tool()
-    @tool_contract(access="restricted", direct_call=True)
+    @tool_contract(access="read", direct_call=True)
     def plan_datasource(
         self,
         ddl: str,
@@ -2663,20 +2789,14 @@ class DBFuncTool:
             return None
         names = sorted({str((a or {}).get("name") or "") for a in (config.get("assertions") or []) if a})
         names = [n for n in names if n]
-        # Dot-prefixed, like the generator's own `.{stem}.meta.json`: this file lives in the
-        # workspace the project publishes, and a visible `checks.seen.json` would ship with it.
-        cfg = Path(config_file)
-        side = cfg.with_name(f".{cfg.stem}.seen.json")
-        previous = []
-        try:
-            if side.exists():
-                previous = [str(x) for x in (json.loads(side.read_text(encoding="utf-8")) or [])]
-        except Exception:
-            previous = []
-        try:
-            side.write_text(json.dumps(names, ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            pass  # a read-only workspace must not fail the check
+        # Keep drift observations local to this tool instance: a reader must not
+        # create or overwrite a sidecar in the published workspace.
+        snapshots = getattr(self, "_assertion_snapshots", None)
+        if snapshots is None:
+            self._assertion_snapshots = snapshots = {}
+        key = str(Path(config_file).resolve())
+        previous = snapshots.get(key, [])
+        snapshots[key] = names
         if not previous:
             return None
         removed = [n for n in previous if n not in names]
@@ -2725,6 +2845,15 @@ class DBFuncTool:
                     status and a one-line explanation.
         """
         try:
+            # QualityChecker uses raw DuckDB queries, not the bound SQL read
+            # surface. Refuse contexts requiring row filters or column masks.
+            from datus.tools.policy_runtime import PolicyRuntime
+
+            if PolicyRuntime(self.agent_config).requires_bound_read(self.policy_context):
+                return FuncToolResult(
+                    success=0,
+                    error="Quality checks are unavailable when a bound SQL read policy is required.",
+                )
             config: Dict[str, Any] = {}
             if config_path:
                 resolved = self._resolve_data_file(config_path)
@@ -2751,6 +2880,10 @@ class DBFuncTool:
                     # _validate_read_sql assumes a string; a number or a list would raise and the
                     # caller would see an opaque "Quality check failed" instead of the real cause.
                     offending.append(f"{name}: 'sql' must be a non-empty string")
+                    continue
+                guard_error = self._reject_unsafe_uploads_sql(sql, datasource)
+                if guard_error is not None:
+                    offending.append(f"{name}: {guard_error.error}")
                     continue
                 # The same validator the read path uses. Classifying the statement kind alone is
                 # not enough: it looks at the FIRST statement only, so `SELECT 1; DROP TABLE t`
@@ -3129,16 +3262,36 @@ class DBFuncTool:
             dialect=connector.dialect,
             sql=enforced_sql,
         )
-        result = connector.execute_query(enforced_sql, result_format=result_format)
+        # CSV and empty row lists lose database type/schema information. Fetch
+        # typed rows once and preserve it for batch-only policy enforcement.
+        typed_policy_result = (
+            result_format in {"csv", "pandas", "list"}
+            and getattr(runtime, "has_batch_only_result_hooks", False) is True
+        )
+        result = connector.execute_query(enforced_sql, result_format="arrow" if typed_policy_result else result_format)
         if not result.success:
             return result
         try:
+            policy_options = {}
+            if typed_policy_result:
+                import pyarrow as pa
+
+                if not isinstance(result.sql_return, pa.Table):
+                    raise DatusException(
+                        ErrorCode.TOOL_INVALID_INPUT, message="Batch-only result policies require typed Arrow results"
+                    )
+                if result_format == "list":
+                    # Whole-result hooks keep their ordinary row-list input.
+                    # An empty list still carries its database schema to batch hooks.
+                    policy_options["batch_schema"] = result.sql_return.schema
+                    result.sql_return = result.sql_return.to_pylist()
             result_decision = runtime.after_read_result(
                 result.sql_return,
                 sql=enforced_sql,
                 datasource=effective_datasource,
                 dialect=connector.dialect,
                 policy_context=effective_policy_context,
+                **policy_options,
             )
             if not result_decision.allowed:
                 raise DatusException(
@@ -3154,6 +3307,22 @@ class DBFuncTool:
                     sql_query=enforced_sql,
                 )
             result.sql_return = result_decision.result
+            if typed_policy_result and result_format in {"csv", "pandas"}:
+                import pandas as pd
+                import pyarrow as pa
+
+                if not isinstance(result.sql_return, pa.Table):
+                    raise DatusException(
+                        ErrorCode.TOOL_INVALID_INPUT,
+                        message="Batch-only result policies must return an Arrow table before serialization",
+                    )
+                # Nullable integer IDs must not pass through pandas float64.
+                frame = result.sql_return.to_pandas(types_mapper=pd.ArrowDtype)
+                result.sql_return = frame.to_csv(index=False) if result_format == "csv" else frame
+            if typed_policy_result:
+                if result_format == "list" and isinstance(result.sql_return, pa.Table):
+                    result.sql_return = result.sql_return.to_pylist()
+                result.result_format = result_format
             if result_decision.applied_policies:
                 logger.info(
                     "Applied result policies",
@@ -3314,7 +3483,7 @@ class DBFuncTool:
             )
         return None, sql_type
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def get_table_ddl(
         self,
         table_name: str,
@@ -3644,8 +3813,38 @@ class DBFuncTool:
         except Exception as e:
             return FuncToolResult(success=0, error=f"Write execution failed: {str(e)}")
 
-    # Maximum rows allowed in a single transfer (v1 memory constraint)
     _TRANSFER_MAX_ROWS = 1_000_000
+    _TRANSFER_MAX_BATCH_ROWS = 10_000
+    _TRANSFER_MAX_SQL_BYTES = 1024 * 1024
+
+    def _transfer_insert_batches(self, df, target_table: str, dialect: str, batch_size: int):
+        """Render the existing INSERT format, refusing oversized statements."""
+        columns = ", ".join(self._quote_column_identifier(column, dialect) for column in df.columns)
+        prefix = f"INSERT INTO {target_table} ({columns}) VALUES "
+        for start in range(0, len(df), batch_size):
+            rows = []
+            size = len(prefix.encode("utf-8"))
+            for _, row in df.iloc[start : start + batch_size].iterrows():
+                values = []
+                for value in row:
+                    if value is None:
+                        values.append("NULL")
+                    elif isinstance(value, bool):
+                        values.append("TRUE" if value else "FALSE")
+                    elif isinstance(value, (int, float)):
+                        values.append(str(value))
+                    else:
+                        escaped = str(value).replace("'", "''")
+                        values.append(f"'{escaped}'")
+                literal = f"({', '.join(values)})"
+                size += len(literal.encode("utf-8")) + (2 if rows else 0)
+                if size > self._TRANSFER_MAX_SQL_BYTES:
+                    raise ValueError(
+                        f"Transfer INSERT exceeds the {self._TRANSFER_MAX_SQL_BYTES:,}-byte SQL limit. "
+                        "Reduce batch_size or transfer smaller values."
+                    )
+                rows.append(literal)
+            yield prefix + ", ".join(rows), len(rows)
 
     @staticmethod
     def _identifier_quote_char(dialect: str) -> str:
@@ -3788,6 +3987,43 @@ class DBFuncTool:
         mode: str = "replace",
         batch_size: int = 5000,
     ) -> FuncToolResult:
+        """Transfer query results using the existing datasource write paths.
+
+        Keeps replace/append behavior and the existing one-million-row limit.
+        batch_size must be 1..10000; generated INSERTs must fit within 1 MiB.
+        Returns bounded metadata and short error summaries without echoing
+        full SQL or query result sets.
+        For a file deliverable, use export_query instead.
+        """
+        from datus.utils.bounded_tool_output import bound_data_tool_result
+
+        try:
+            result = self._transfer_query_result(
+                source_sql, source_datasource, target_table, target_datasource, mode, batch_size
+            )
+        except Exception as exc:
+            result = self._bulk_failure(exc)
+        else:
+            if not result.success:
+                result = self._bulk_failure(
+                    RuntimeError(result.error or "Transfer failed"),
+                    **(result.result if isinstance(result.result, dict) else {}),
+                )
+            elif isinstance(result.result, dict):
+                result.result.pop("source_sql", None)
+                result.result.pop("target_table_create_sql", None)
+                result.result["source_sql_sha256"] = hashlib.sha256(source_sql.encode("utf-8")).hexdigest()
+        return FuncToolResult.model_validate(bound_data_tool_result(result.model_dump(mode="json")))
+
+    def _transfer_query_result(
+        self,
+        source_sql: str,
+        source_datasource: Optional[str] = "",
+        target_table: str = "",
+        target_datasource: Optional[str] = "",
+        mode: str = "replace",
+        batch_size: int = 5000,
+    ) -> FuncToolResult:
         """
         Transfer query results from a source datasource to a target table in another datasource.
 
@@ -3816,8 +4052,14 @@ class DBFuncTool:
             return refusal
 
         # Validate batch_size
-        if batch_size <= 0:
-            return FuncToolResult(success=0, error="batch_size must be a positive integer.")
+        if (
+            isinstance(batch_size, bool)
+            or not isinstance(batch_size, int)
+            or not 1 <= batch_size <= self._TRANSFER_MAX_BATCH_ROWS
+        ):
+            return FuncToolResult(
+                success=0, error=f"batch_size must be a positive integer between 1 and {self._TRANSFER_MAX_BATCH_ROWS}."
+            )
 
         # Validate target_table identifier
         if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$", target_table):
@@ -3929,6 +4171,29 @@ class DBFuncTool:
                 "Please add WHERE conditions to transfer in smaller batches.",
             )
 
+        # Keep the existing conversion and writer selection. Validate generated
+        # INSERT sizes before replace can clear any existing target rows.
+        normalized_df = df.where(df.notna(), other=None)
+        normalized_df = normalized_df.astype(object).where(normalized_df.notna(), other=None)
+        dialect = str(getattr(target_conn, "dialect", "") or "").lower()
+        try:
+            if target_operations is None:
+                for _ in self._transfer_insert_batches(normalized_df, target_table, dialect, batch_size):
+                    pass
+            elif row_count:
+                # The registered bound writer uses this quoted-column/named-bind
+                # template. Row values are parameters, not part of the SQL text.
+                columns = ", ".join(target_operations.quote_identifier(column) for column in normalized_df.columns)
+                binds = ", ".join(f":p{index}" for index in range(len(normalized_df.columns)))
+                insert_sql = f"INSERT INTO {target_table} ({columns}) VALUES ({binds})"
+                if len(insert_sql.encode("utf-8")) > self._TRANSFER_MAX_SQL_BYTES:
+                    raise ValueError(
+                        f"Transfer INSERT exceeds the {self._TRANSFER_MAX_SQL_BYTES:,}-byte SQL limit. "
+                        "Use fewer or shorter source column aliases."
+                    )
+        except Exception as exc:
+            return FuncToolResult(success=0, error=str(exc))
+
         # TRUNCATE for replace mode BEFORE empty check - mode="replace" must clear old data.
         # If the target table does not exist yet, create it from the source result schema so
         # first-time transfers do not require a separate hand-written DDL step.
@@ -3996,11 +4261,7 @@ class DBFuncTool:
                 }
             )
 
-        # Convert pandas NaT/NaN to Python None for DBAPI2 compatibility
-        df = df.where(df.notna(), other=None)
-        # Also convert numpy types to native Python types
-        df = df.astype(object).where(df.notna(), other=None)
-
+        df = normalized_df
         rows_written = 0
         try:
             if target_operations is not None:
@@ -4013,37 +4274,14 @@ class DBFuncTool:
                     )
                 )
             else:
-                # Legacy adapters keep the existing inline multi-row INSERT path.
-                columns = list(df.columns)
-                dialect = str(getattr(target_conn, "dialect", "") or "").lower()
-                col_names = ", ".join(self._quote_column_identifier(c, dialect) for c in columns)
-                for batch_start in range(0, row_count, batch_size):
-                    batch_end = min(batch_start + batch_size, row_count)
-                    batch_df = df.iloc[batch_start:batch_end]
-
-                    value_rows = []
-                    for _, row in batch_df.iterrows():
-                        values = []
-                        for val in row:
-                            if val is None:
-                                values.append("NULL")
-                            elif isinstance(val, bool):
-                                values.append("TRUE" if val else "FALSE")
-                            elif isinstance(val, (int, float)):
-                                values.append(str(val))
-                            else:
-                                escaped = str(val).replace("'", "''")
-                                values.append(f"'{escaped}'")
-                        value_rows.append(f"({', '.join(values)})")
-
-                    insert_sql = f"INSERT INTO {target_table} ({col_names}) VALUES {', '.join(value_rows)}"
+                for insert_sql, batch_rows in self._transfer_insert_batches(df, target_table, dialect, batch_size):
                     result = target_conn.execute_insert(insert_sql)
                     if not result.success:
                         return FuncToolResult(
                             success=0,
                             error=f"Transfer failed after writing {rows_written} rows: {result.error}",
                         )
-                    rows_written += len(batch_df)
+                    rows_written += batch_rows
 
                 # Commit the transaction to release locks (critical for SQLAlchemy-based connectors)
                 if hasattr(target_conn, "connection") and hasattr(target_conn.connection, "commit"):
@@ -4147,7 +4385,7 @@ class DBFuncTool:
     # can continue in pure-LLM mode.
 
     @mcp_tool()
-    @tool_contract(access="restricted", direct_call=True)
+    @tool_contract(access="read", direct_call=True)
     def get_migration_capabilities(self, datasource: Optional[str] = "") -> FuncToolResult:
         """
         Get migration target hints (dialect_family, requires, forbids, type_hints,
@@ -4193,7 +4431,7 @@ class DBFuncTool:
         return FuncToolResult(result=capabilities)
 
     @mcp_tool()
-    @tool_contract(access="restricted", direct_call=True)
+    @tool_contract(access="read", direct_call=True)
     def suggest_table_layout(self, datasource: Optional[str] = "", columns_json: str = "[]") -> FuncToolResult:
         """
         Suggest dialect-specific table layout (distribution/partition/order) for

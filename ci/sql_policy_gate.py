@@ -1,4 +1,4 @@
-"""Build and validate one immutable Agent/policy/engine combination before merge."""
+"""Build and validate one immutable Agent/policy/engine combination on a native host."""
 
 from __future__ import annotations
 

@@ -49,13 +49,6 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-TOOL_RESULT_READ_INSTRUCTIONS = (
-    "\nTool results may be bounded views of immutable session archives. "
-    "Use read_tool_result with result_id, section and next_cursor to read more. "
-    "A record_ref reads a large record in text segments. has_more only describes captured content; "
-    "source_truncated, source_has_more=true or source_complete=false means the source itself is incomplete. "
-    "Do not claim complete coverage from a preview or a single page."
-)
 
 ItemFormat = Literal["responses", "anthropic"]
 
@@ -376,23 +369,17 @@ class MidTurnCompactor(AgentHooks):
             init_context.prompt_context(self._node._get_tool_result_store()) if init_context is not None else ""
         )
         self._system_instruction += self._init_instruction
-        if any(isinstance(tool, dict) and tool.get("name") == "read_tool_result" for tool in self._request_tools):
-            if TOOL_RESULT_READ_INSTRUCTIONS not in self._system_instruction:
-                self._system_instruction += TOOL_RESULT_READ_INSTRUCTIONS
 
-    def _prepare_tool_results(self, view: List[Any], *, force: bool = False) -> List[Any]:
+    def _prepare_tool_results(self, view: List[Any]) -> List[Any]:
         from datus.utils.tool_result_store import ACTIVE_RESULT_STORE, ToolResultStore
-        from datus.utils.tool_result_view import project_tool_results
+        from datus.utils.tool_result_view import restore_legacy_tool_results
 
         getter = getattr(self._node, "_get_tool_result_store", None)
         store = getter() if callable(getter) else None
         if not isinstance(store, ToolResultStore):
-            capacity = self._capacity()
-            return (
-                project_tool_results(view, None, force=force, counter=capacity.count) if capacity is not None else view
-            )
+            return view
         ACTIVE_RESULT_STORE.set(store)
-        return project_tool_results(view, store, force=force)
+        return restore_legacy_tool_results(view, store)
 
     def _capacity(self) -> Optional[RequestCapacity]:
         from datus.models.base import LLMBaseModel
@@ -401,25 +388,24 @@ class MidTurnCompactor(AgentHooks):
         capacity = model.request_capacity() if isinstance(model, LLMBaseModel) else None
         return capacity if isinstance(capacity, RequestCapacity) else None
 
-    def _check(self, view: List[Any]) -> None:
+    def _check(self, view: List[Any]) -> Optional[int]:
         capacity = self._capacity()
         if capacity is not None:
-            capacity.check(
+            return capacity.check(
                 {"instructions": self._system_instruction, "input": view, "tools": self._request_tools},
                 self._output_tokens,
             )
+        return None
 
     async def _prepare(self, view: List[Any], item_format: ItemFormat) -> Optional[List[Any]]:
         projected = self._prepare_tool_results(view)
-        try:
-            self._check(projected)
-        except ContextCapacityError as exc:
-            if exc.reason != "CONTEXT_LIMIT_EXCEEDED":
-                raise
-            projected = self._prepare_tool_results(projected, force=True)
+        capacity = self._capacity()
+        available = capacity.input_limit(self._output_tokens) if capacity is not None else None
         self._capacity_pressure = None
         try:
-            self._check(projected)
+            measured = self._check(projected)
+            if measured is not None and available is not None and measured > available:
+                self._capacity_pressure = measured
         except ContextCapacityError as exc:
             if exc.reason != "CONTEXT_LIMIT_EXCEEDED":
                 raise

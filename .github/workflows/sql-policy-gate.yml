@@ -66,7 +66,7 @@ jobs:
 
   host:
     needs: sources
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, osi-engine]
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -96,16 +96,19 @@ jobs:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@v5
         with:
-          # This job builds private artifacts. Keep its cache on this ephemeral
+          # This job builds private artifacts. Keep its cache on the self-hosted
           # runner rather than publishing private wheels through public caches.
           enable-cache: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ needs.sources.outputs.rust_toolchain }}
-      - name: Prepare native prerequisites and locked Agent environment
+      - name: Verify preinstalled native prerequisites
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y patchelf unixodbc-dev
+          cc --version
+          patchelf --version
+          pkg-config --modversion odbc
+      - name: Prepare locked Agent environment
+        run: |
           uv sync --locked --group ci
           uv pip install 'maturin==1.16.0' 'auditwheel==6.8.2'
       - name: Build, install and verify the frozen combination

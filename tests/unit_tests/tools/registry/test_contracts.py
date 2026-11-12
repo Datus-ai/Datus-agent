@@ -32,7 +32,7 @@ def test_declaration_requires_both_fields(options):
         ToolDefinition("custom_tools.inspect", **options)
 
 
-@pytest.mark.parametrize("access,direct", [("reader", True), ("read", "yes"), ("read", 1)])
+@pytest.mark.parametrize("access,direct", [("reader", True), ("read", "yes"), ("read", 1), ("session", True)])
 def test_declaration_rejects_invalid_contracts(access, direct):
     """Invalid effect values and truthy non-booleans are definition errors."""
     with pytest.raises(ToolDefinitionError):

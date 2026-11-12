@@ -57,6 +57,9 @@ class AskMetricsAgenticNode(AgenticNode):
         "semantic_tools.query_metrics",
         "semantic_tools.attribution_analyze",
         "context_search_tools.list_subject_tree",
+        "filesystem_tools.read_file",
+        "filesystem_tools.glob",
+        "filesystem_tools.grep",
     )
 
     def __init__(
@@ -423,7 +426,7 @@ class AskMetricsAgenticNode(AgenticNode):
             }
         )
 
-    @tool_contract(access="restricted", direct_call=False, category="tools")
+    @tool_contract(access="session", direct_call=False, category="tools")
     def select_final_metric_result(self, result_id: str) -> FuncToolResult:
         """
         Select the query_metrics result that should be stored as the final structured result.

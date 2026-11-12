@@ -12,6 +12,7 @@ import pytest
 from datus.cli import provider_model_catalog as catalog
 from datus.configuration.agent_config import ModelConfig
 from datus.models.openai_model import OpenAIModel
+from datus.models.request_capacity import DEFAULT_MAX_TOKENS
 
 
 def _model(**overrides):
@@ -29,7 +30,7 @@ async def test_event_loop_capacity_uses_cache_after_threaded_refresh(monkeypatch
     monkeypatch.setattr(catalog, "fetch_openrouter_models", fetch)
     model = _model()
     assert model.context_length() == 1048576
-    assert model.max_tokens() == 128000
+    assert model.max_tokens() == DEFAULT_MAX_TOKENS
     fetch.assert_not_called()
 
     await asyncio.to_thread(catalog.resolve_model_details)
@@ -45,10 +46,10 @@ def test_empty_home_fetches_both_limits_without_opening_model_picker(monkeypatch
     model = _model(tokenizer_ref="tiktoken:cl100k_base")
     capacity = model.request_capacity()
     assert capacity.context_length == 1048576
-    assert capacity.default_output == 128000
+    assert capacity.default_output == 131072
     assert capacity.output_ceiling == 131072
-    assert model.check_request({"messages": [{"role": "user", "content": "Review the skill"}]})["max_tokens"] == 128000
-    assert model._build_agent("Review the skill", str, False, {}, []).model_settings.max_tokens == 128000
+    assert model.check_request({"messages": [{"role": "user", "content": "Review the skill"}]})["max_tokens"] == 131072
+    assert model._build_agent("Review the skill", str, False, {}, []).model_settings.max_tokens == 131072
     fetch.assert_called_once()
     assert catalog.load_cached_model_details() == _glm_details()
 
@@ -75,7 +76,7 @@ def test_existing_model_observes_disk_cache_refresh(monkeypatch):
     monkeypatch.setattr(litellm, "model_cost", {})
     model = _model()
     assert model.context_length() == 1048576  # Unknown numeric version uses the fallback.
-    assert model.max_tokens() == 128000
+    assert model.max_tokens() == DEFAULT_MAX_TOKENS
     catalog.save_cached_models(_glm_details(context=524288, output=65536))
     assert model.context_length() == 524288
     assert model.max_tokens() == 65536
@@ -90,7 +91,7 @@ def test_switching_agent_homes_does_not_reuse_another_homes_specs(monkeypatch, t
     path[0] = tmp_path / "second" / catalog.CACHE_FILE_NAME
     catalog.save_cached_models(_glm_details())
     assert model.context_length() == 1048576
-    assert model.max_tokens() == 128000
+    assert model.max_tokens() == 131072
     path[0] = tmp_path / "first" / catalog.CACHE_FILE_NAME
     assert model.context_length() == 524288
     assert model.max_tokens() == 65536
@@ -101,7 +102,7 @@ def test_new_numeric_version_does_not_inherit_glm5_specs(monkeypatch, model_name
     monkeypatch.setattr(litellm, "model_cost", {})
     model = OpenAIModel(ModelConfig(type="openai", model=model_name, api_key="test"))
     assert model.context_length() == 1048576
-    assert model.max_tokens() == 128000
+    assert model.max_tokens() == DEFAULT_MAX_TOKENS
 
 
 def test_exact_litellm_metadata_beats_family_prefix(monkeypatch):
@@ -143,9 +144,12 @@ def test_large_gateway_output_ceiling_does_not_expand_default_budget(monkeypatch
     model = _model(tokenizer_ref="tiktoken:cl100k_base")
     capacity = model.request_capacity()
     assert capacity.context_length == 1048576
-    assert capacity.default_output == 128000
+    assert capacity.default_output == DEFAULT_MAX_TOKENS
     assert capacity.output_ceiling == 943718
-    assert model.check_request({"messages": [{"role": "user", "content": "Review the skill"}]})["max_tokens"] == 128000
+    assert (
+        model.check_request({"messages": [{"role": "user", "content": "Review the skill"}]})["max_tokens"]
+        == DEFAULT_MAX_TOKENS
+    )
 
 
 def test_known_output_default_is_preserved_when_gateway_advertises_more(monkeypatch):
@@ -158,7 +162,7 @@ def test_known_output_default_is_preserved_when_gateway_advertises_more(monkeypa
     assert model.max_tokens() == 384000
 
 
-@pytest.mark.parametrize("model_name,expected", [("glm-5.3", 128000), ("gpt-4o", 16384)])
+@pytest.mark.parametrize("model_name,expected", [("glm-5.3", 256000), ("gpt-4o", 16384)])
 @pytest.mark.parametrize("reverse", [False, True])
 def test_duplicate_catalog_slugs_do_not_raise_output_defaults(monkeypatch, model_name, expected, reverse):
     monkeypatch.setattr(litellm, "model_cost", {})

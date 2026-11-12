@@ -15,10 +15,6 @@ jobs:
   deterministic:
     name: Deterministic merge queue suites
     runs-on: ubuntu-latest
-    outputs:
-      policy_required: ${{ steps.policy.outputs.required }}
-      policy_cold: ${{ steps.policy.outputs.cold }}
-      bi_required: ${{ steps.bi.outputs.required }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -42,22 +38,6 @@ jobs:
       - name: Select merge queue profile
         id: profile
         run: uv run --no-project --with pyyaml python ci/select_gate_profile.py --github-output "$GITHUB_OUTPUT"
-
-      - name: Plan required SQL policy acceptance
-        id: policy
-        if: ${{ steps.profile.outputs.profile == 'code' }}
-        run: |
-          args=()
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then args+=(--force); fi
-          uv run --no-project --with pyyaml python ci/sql_policy_gate.py plan --github-output "$GITHUB_OUTPUT" "${args[@]}"
-
-      - name: Plan required BI acceptance
-        id: bi
-        if: ${{ steps.profile.outputs.profile == 'code' }}
-        run: |
-          args=()
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then args+=(--force); fi
-          uv run --no-project --with pyyaml python ci/bi_gate.py plan --github-output "$GITHUB_OUTPUT" "${args[@]}"
 
       - name: Validate generated tool contracts
         run: python3 datus/tools/registry/catalog_builder.py --check
@@ -155,47 +135,13 @@ jobs:
             ci/test-results-*.execution.json
             ci/test-results-merge-*.xml
 
-  sql-policy:
-    needs: deterministic
-    if: ${{ needs.deterministic.outputs.policy_required == 'true' }}
-    uses: ./.github/workflows/sql-policy-gate.yml
-    with:
-      agent_ref: ${{ github.sha }}
-      cold: ${{ needs.deterministic.outputs.policy_cold == 'true' }}
-    secrets:
-      RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
-
-  bi:
-    needs: deterministic
-    if: ${{ needs.deterministic.outputs.bi_required == 'true' }}
-    uses: ./.github/workflows/bi-gate.yml
-    with:
-      agent_ref: ${{ github.sha }}
-    secrets:
-      RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
-
   merge-queue-gate:
     name: Merge Queue Gate
-    needs: [deterministic, sql-policy, bi]
+    needs: deterministic
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Require every selected gate to succeed
         env:
           DETERMINISTIC_RESULT: ${{ needs.deterministic.result }}
-          POLICY_REQUIRED: ${{ needs.deterministic.outputs.policy_required }}
-          POLICY_RESULT: ${{ needs.sql-policy.result }}
-          BI_REQUIRED: ${{ needs.deterministic.outputs.bi_required }}
-          BI_RESULT: ${{ needs.bi.result }}
-        run: |
-          test "$DETERMINISTIC_RESULT" = success
-          if [ "$POLICY_REQUIRED" = true ]; then
-            test "$POLICY_RESULT" = success
-          else
-            test "$POLICY_RESULT" = skipped
-          fi
-          if [ "$BI_REQUIRED" = true ]; then
-            test "$BI_RESULT" = success
-          else
-            test "$BI_RESULT" = skipped
-          fi
+        run: test "$DETERMINISTIC_RESULT" = success

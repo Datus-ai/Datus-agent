@@ -16,6 +16,7 @@ when prompting users for permission confirmation.
 """
 
 import asyncio
+import hashlib
 import json
 import re
 import weakref
@@ -301,6 +302,8 @@ class PermissionHooks(AgentHooks):
         non_interactive: bool = False,
         proxied_tool_names: Optional[Set[str]] = None,
         project_root: Optional[str] = None,
+        export_workspace_root: Optional[str] = None,
+        client_only_workspace: bool = False,
         config_mutable: bool = True,
         bash_classifier: Optional["BashCommandClassifier"] = None,
         auto_reviewer: Optional["AutoReviewer"] = None,
@@ -351,6 +354,10 @@ class PermissionHooks(AgentHooks):
                 prompts omit the project-level choice while retaining once and
                 session approvals. Existing project grants supplied through
                 ``AgentConfig`` still apply.
+            export_workspace_root: Effective DB tool filesystem root for export
+                SQL files. Does not change project-level permission grants.
+            client_only_workspace: Files live on the client rather than the
+                server, so export permissions must not inspect server files.
             bash_classifier: Optional LLM classifier for bash commands (reserved
                 seam, see ``bash_classifier.py``). Consulted only when the
                 static bash rules yield ASK with ``safety_forced=False``; a
@@ -375,6 +382,8 @@ class PermissionHooks(AgentHooks):
         self.bash_classifier = bash_classifier
         self.auto_reviewer = auto_reviewer
         self.review_context_provider = review_context_provider
+        self.export_workspace_root = export_workspace_root
+        self.client_only_workspace = client_only_workspace
 
     def _auto_review_config(self, action_type: str, effective: Any, bash_rules: Any = None) -> Any:
         """Resolve the current profile's reviewer config plus legacy bash overrides."""
@@ -494,15 +503,18 @@ class PermissionHooks(AgentHooks):
             )
         review_registry.record(getattr(context, "tool_call_id", None), payload)
 
-    # Plan-mode tooling is always allowed regardless of permission profile:
-    # ``confirm_plan`` already runs its own user interaction, and ``todo_*``
-    # are local-only state helpers that never touch the filesystem or DB.
-    _PLAN_MODE_BYPASS_TOOLS = frozenset({"confirm_plan", "todo_list", "todo_read", "todo_write", "todo_update"})
-
     @classmethod
-    def is_permission_exempt_tool(cls, tool_name: str) -> bool:
-        """Identify session planning helpers exempt from generic permission rules."""
-        return tool_name in cls._PLAN_MODE_BYPASS_TOOLS
+    def is_permission_exempt_tool(cls, tool_name: str, category: str = "tools") -> bool:
+        """Identify declared session channels shared by visibility and invocation checks.
+
+        These tools only ask the user, manage the in-memory plan or return the
+        current run's result. They authorize their own interaction and result
+        identities and cannot touch project resources or expose direct endpoints.
+        """
+        from datus.tools.registry.capabilities import TOOL_CAPABILITIES
+
+        capability = TOOL_CAPABILITIES.get(f"{category}.{tool_name}")
+        return capability is not None and capability.access == "session"
 
     async def on_tool_start(self, context, agent, tool) -> None:
         """Recheck pending gates when this run's permission profile changes."""
@@ -548,9 +560,19 @@ class PermissionHooks(AgentHooks):
         """
         tool_name = getattr(tool, "name", str(tool))
 
-        # Session planning helpers retain their own UX and permission exemption
+        # Session channels retain their own UX and permission exemption
         # on restricted hosts as well as ordinary CLI hosts.
-        if self.is_permission_exempt_tool(tool_name):
+        from datus.tools.registry.contracts import ToolDefinitionError, tool_definition
+
+        try:
+            definition = tool_definition(tool)
+        except ToolDefinitionError:
+            definition = None
+        if (
+            definition is not None
+            and self.tool_registry.get(tool_name, definition.category) == definition.category
+            and self.is_permission_exempt_tool(tool_name, definition.category)
+        ):
             return
 
         # Restricted hosts narrow nodes to concrete methods. A zone/profile or
@@ -580,6 +602,17 @@ class PermissionHooks(AgentHooks):
 
         logger.debug(f"Permission check for tool '{tool_name}': category='{category}', pattern='{pattern_name}'")
 
+        # Delegated Skill reads need both the validator's method permission
+        # and the same path confirmation as a direct filesystem read.
+        if category == "tools" and tool_name == "validate_skill" and self.fs_policy is not None:
+            if self.permission_manager.check_permission(category, pattern_name, self.node_name) == PermissionLevel.DENY:
+                raise PermissionDeniedException(
+                    "PERMISSION_DENIED: Skill validation is blocked by method permissions",
+                    tool_category=category,
+                    tool_name=pattern_name,
+                )
+            await self._handle_filesystem_zone(context, tool_name, pattern_name, path_arg_name="skill_path")
+
         # Filesystem tools: zone-based policy overrides rules.
         #   INTERNAL/WHITELIST → bypass, HIDDEN → bypass (tool returns not-found),
         #   EXTERNAL → force ASK with a path-keyed session cache so approving
@@ -594,7 +627,7 @@ class PermissionHooks(AgentHooks):
             if handled:
                 return
 
-        # db_tools.execute_sql: statement-class gating overrides rules.
+        # SQL execution and file export share the SQL permission boundary.
         #   The statement is classified into a fine-grained kind (insert/
         #   create/drop/...) whose class (read/write/destructive/unknown) is
         #   resolved against the profile's ``sql_statements`` ruleset: read
@@ -603,7 +636,7 @@ class PermissionHooks(AgentHooks):
         #   via ``.datus/config.yml`` sql_allow), dangerous bypass,
         #   non-interactive raise. A ``.sql`` file is resolved first; an
         #   unreadable file or unparseable text falls to unknown → ASK.
-        if category == "db_tools" and tool_name == "execute_sql":
+        if category == "db_tools" and tool_name in {"execute_sql", "export_query"}:
             handled = await self._handle_sql_permission(context, tool_name, pattern_name)
             if handled:
                 return
@@ -718,7 +751,9 @@ class PermissionHooks(AgentHooks):
     # without dragging the schema dep into this hook.
     _ARTIFACT_AUTOALLOW_PATH_RE = re.compile(r"^(?:reports|dashboards)/[^/]+/")
 
-    async def _handle_filesystem_zone(self, context: Any, tool_name: str, pattern_name: str) -> bool:
+    async def _handle_filesystem_zone(
+        self, context: Any, tool_name: str, pattern_name: str, *, path_arg_name: str = "path"
+    ) -> bool:
         """Zone × profile × capability gating for filesystem access and semantic file edits.
 
         Returns ``True`` when the call has been fully handled (either allowed
@@ -770,7 +805,7 @@ class PermissionHooks(AgentHooks):
                 args,
             )
             return False
-        path_arg = args.get("path", "")
+        path_arg = args.get(path_arg_name, "")
         try:
             resolved = classify_path(
                 path_arg,
@@ -973,7 +1008,7 @@ class PermissionHooks(AgentHooks):
     }
 
     async def _handle_sql_permission(self, context: Any, tool_name: str, pattern_name: str) -> bool:
-        """Statement-class gating for ``db_tools.execute_sql`` calls.
+        """Shared SQL permission gating for execution and read-only file exports.
 
         ``execute_sql`` is the unified SQL entry point, so a single static rule
         cannot express "reads auto-allow, writes ask, destructive statements
@@ -1013,6 +1048,13 @@ class PermissionHooks(AgentHooks):
         """
         from datus.utils.sql_utils import looks_like_sql_file_ref, parse_sql_statement_kind, read_workspace_sql_file
 
+        if tool_name == "export_query" and self.client_only_workspace:
+            raise PermissionDeniedException(
+                "export_query requires server-side project files; this workspace lives on the client.",
+                tool_category="db_tools",
+                tool_name=tool_name,
+            )
+
         raw_args = getattr(context, "tool_arguments", "{}")
         if isinstance(raw_args, str):
             try:
@@ -1032,12 +1074,34 @@ class PermissionHooks(AgentHooks):
         if not isinstance(args, dict):
             return False
         sql = args.get("sql", "")
+        if tool_name == "export_query":
+            context._datus_export_sql_approval = None
         # Resolve a ``.sql`` file reference to its real (single) statement so the
         # kind detection below sees the SQL, not the path. On any read failure,
         # leave ``sql`` as-is → unknown → ASK (fail safe).
-        if isinstance(sql, str) and looks_like_sql_file_ref(sql):
+        if isinstance(sql, str) and looks_like_sql_file_ref(sql.lower() if tool_name == "export_query" else sql):
             try:
-                sql = read_workspace_sql_file(sql.strip(), self.project_root or ".")
+                if tool_name == "export_query":
+                    from datus.utils.project_files import MAX_SQL_FILE_BYTES, ProjectFiles
+
+                    root = str(Path(self.export_workspace_root or self.project_root or ".").resolve())
+                    source_sql = sql
+                    # An unreadable file cannot become an approved query merely
+                    # by appearing after the gate returns.
+                    context._datus_export_sql_approval = (root, source_sql, None)
+
+                    def read_export_sql(path):
+                        with ProjectFiles(Path(root)) as files:
+                            return files.read_sql(path, MAX_SQL_FILE_BYTES)[0]
+
+                    sql = await asyncio.to_thread(read_export_sql, sql.strip())
+                    context._datus_export_sql_approval = (
+                        root,
+                        source_sql,
+                        hashlib.sha256(sql.encode("utf-8")).hexdigest(),
+                    )
+                else:
+                    sql = read_workspace_sql_file(sql.strip(), self.project_root or ".")
             except Exception as e:
                 logger.debug("execute_sql gate: could not resolve .sql file (%s); treating as UNKNOWN", e)
         # No dialect available at the hook layer; the keyword fallback in
@@ -1045,9 +1109,29 @@ class PermissionHooks(AgentHooks):
         kind = parse_sql_statement_kind(sql, "") if isinstance(sql, str) else SQLType.UNKNOWN.value
         sql_class = classify_sql_kind(kind)
 
+        if tool_name == "export_query":
+            # Exports always consume read permission; the tool also verifies
+            # the approved file digest and rejects non-read SQL.
+            if sql_class != "read":
+                kind, sql_class = SQLType.SELECT.value, "read"
+            if (
+                self.permission_manager.check_permission("db_tools", pattern_name, self.node_name)
+                == PermissionLevel.DENY
+            ):
+                return False
+            # An explicit execute_sql deny also covers this alternate read
+            # entry point. Keep existing SQL grants and ASK behavior shared.
+            pattern_name = "execute_sql"
+
         # Honour explicit coarse rules first — they are the escape hatches.
         permission = self.permission_manager.check_permission("db_tools", pattern_name, self.node_name)
         if permission == PermissionLevel.DENY:
+            if tool_name == "export_query":
+                raise PermissionDeniedException(
+                    "PERMISSION_DENIED: SQL execution is denied; exporting query results is also denied.",
+                    tool_category="db_tools",
+                    tool_name=tool_name,
+                )
             # Surface the standardized DENY raise via the main flow.
             return False
         if permission == PermissionLevel.ALLOW:
@@ -1076,7 +1160,7 @@ class PermissionHooks(AgentHooks):
                     f"`permissions.sql_statements` in agent.yml."
                 ),
                 tool_category="db_tools",
-                tool_name="execute_sql",
+                tool_name=tool_name,
             )
 
         # ASK. A project-scope grant (``.datus/config.yml`` sql_allow or an
@@ -1139,7 +1223,7 @@ class PermissionHooks(AgentHooks):
                     "STOP retrying — surface the failure to the caller."
                 ),
                 tool_category="db_tools",
-                tool_name="execute_sql",
+                tool_name=tool_name,
             )
 
         async with _get_permission_prompt_lock(self.broker):
@@ -1180,9 +1264,9 @@ class PermissionHooks(AgentHooks):
                 return True
             logger.info("User rejected execute_sql (%s)", kind)
             raise PermissionDeniedException(
-                "User rejected execution of 'execute_sql'",
+                f"User rejected execution of '{tool_name}'",
                 tool_category="db_tools",
-                tool_name="execute_sql",
+                tool_name=tool_name,
             )
 
     async def _handle_sql_permission_legacy(self, context: Any, kind: str) -> bool:
