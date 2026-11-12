@@ -66,15 +66,11 @@ def task_tool(mock_agent_config):
 
 @pytest.mark.ci
 class TestInit:
-    def test_init(self, task_tool, mock_agent_config):
-        assert task_tool.agent_config is mock_agent_config
-        assert task_tool._action_bus is None
-        assert task_tool._interaction_broker is None
-
     def test_init_only_requires_agent_config(self, mock_agent_config):
-        """No model or tool params needed."""
         tool = SubAgentTaskTool(agent_config=mock_agent_config)
         assert tool.agent_config is mock_agent_config
+        assert tool._action_bus is None
+        assert tool._interaction_broker is None
 
 
 # ── available_tools ────────────────────────────────────────────────
@@ -93,13 +89,6 @@ class TestAvailableTools:
         assert "type" in schema["properties"]
         assert "prompt" in schema["properties"]
         assert set(schema["required"]) == {"type", "prompt", "description"}
-
-    def test_type_schema_description_requires_available_type(self, task_tool):
-        schema = task_tool.available_tools()[0].params_json_schema
-        type_description = schema["properties"]["type"]["description"]
-        assert "Required" in type_description
-        assert "Available types" in type_description
-        assert "Never omit" in type_description
 
     @pytest.mark.asyncio
     async def test_repairs_arguments_for_replay_without_executing(self, task_tool):

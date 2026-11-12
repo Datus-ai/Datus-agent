@@ -85,33 +85,6 @@ def test_bi_gate_keeps_real_p0_regression():
     assert any("test_bi_chart_lifecycle.py" in n for n in load_profile()["groups"][GROUP]["nodeids"])
 
 
-@pytest.mark.parametrize(
-    "result,expected",
-    [
-        ("success", 0),
-        ("failure", 1),
-        ("cancelled", 1),
-        ("skipped", 1),
-    ],
-)
-def test_final_required_context_checks_deterministic_result(result, expected):
-    import os
-    import subprocess
-
-    root = Path(__file__).resolve().parents[3]
-    workflow = yaml.safe_load((root / ".github/workflows/merge-queue.yml").read_text())
-    command = workflow["jobs"]["merge-queue-gate"]["steps"][0]["run"]
-    completed = subprocess.run(
-        ["bash", "-e", "-c", command],
-        capture_output=True,
-        env={
-            **os.environ,
-            "DETERMINISTIC_RESULT": result,
-        },
-    )
-    assert completed.returncode == expected
-
-
 def test_privileged_pr_context_cannot_call_product_gate_workflows():
     root = Path(__file__).resolve().parents[3]
     queue = yaml.load((root / ".github/workflows/merge-queue.yml").read_text(), Loader=yaml.BaseLoader)

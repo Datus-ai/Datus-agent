@@ -1,248 +1,52 @@
-from __future__ import annotations
+"""Merged-tree consistency failures must reach the required queue check."""
 
 import importlib.util
 import json
-import os
+import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
-MODULE_PATH = Path(__file__).resolve().parents[3] / "ci" / "run-merge-queue-tests.py"
-
-
-@pytest.fixture()
-def run_merge_queue_tests():
-    module_spec = importlib.util.spec_from_file_location("_test_run_merge_queue_tests", MODULE_PATH)
-    if module_spec is None or module_spec.loader is None:
-        raise AssertionError(f"Unable to load run-merge-queue-tests from {MODULE_PATH}")
-    module = importlib.util.module_from_spec(module_spec)
-    module_spec.loader.exec_module(module)
-    return module
+ROOT = Path(__file__).resolve().parents[3]
+SPEC = importlib.util.spec_from_file_location("merge_queue_tests", ROOT / "ci/run-merge-queue-tests.py")
+runner = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(runner)
 
 
-def test_acceptance_integration_targets_filters_unit_targets(run_merge_queue_tests):
-    targets = [
-        "tests/unit_tests/agent/node/test_chat_agentic_node.py",
-        "tests/integration/api/test_api.py",
-        "tests/integration/cli/test_cli_commands.py",
-    ]
-
-    assert run_merge_queue_tests.acceptance_integration_targets(targets) == [
-        "tests/integration/api/test_api.py",
-        "tests/integration/cli/test_cli_commands.py",
-    ]
-
-
-def test_acceptance_unit_targets_filters_integration_targets(run_merge_queue_tests):
-    targets = [
-        "tests/unit_tests/agent/node/test_chat_agentic_node.py",
-        "tests/integration/api/test_api.py",
-        "tests/integration/cli/test_cli_commands.py",
-    ]
-
-    assert run_merge_queue_tests.acceptance_unit_targets(targets) == [
-        "tests/unit_tests/agent/node/test_chat_agentic_node.py",
+@pytest.mark.parametrize("catalog_exit,map_exit", [(0, 0), (1, 0), (0, 1)])
+def test_consistency_runs_both_checks_and_reports_failures(tmp_path, monkeypatch, catalog_exit, map_exit):
+    for path, code in [
+        ("datus/tools/registry/catalog_builder.py", catalog_exit),
+        ("ci/harness/validate_coverage_map.py", map_exit),
+    ]:
+        script = tmp_path / path
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(f"raise SystemExit({code})\n")
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    report = tmp_path / "result.json"
+    assert runner.main(["--report", str(report)]) == int(bool(catalog_exit or map_exit))
+    result = json.loads(report.read_text())
+    assert result["checks"] == [
+        {"name": "generated-catalog", "exit_code": catalog_exit},
+        {"name": "coverage-map", "exit_code": map_exit},
     ]
 
 
-def test_merge_group_expands_fixed_suites_with_shared_impact_selection(run_merge_queue_tests):
-    fixed = run_merge_queue_tests.suite_definitions()
-    changed = ["datus/models/base.py", "datus/validation/hook.py"]
-    suites = run_merge_queue_tests.suite_definitions(changed)
-    for name, suite in fixed.items():
-        assert suites[name] == suite
-    targets = set(suites["impacted-unit"]["targets"])
-    assert {"tests/unit_tests/models/", "tests/unit_tests/observability/", "tests/unit_tests/validation/"} <= targets
+def test_timeout_fails_the_consistency_gate(tmp_path, monkeypatch):
+    def timeout(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(runner.subprocess, "run", timeout)
+    result = runner.run_checks(tmp_path, 3)
+    assert result["status"] == "failure"
+    assert len(result["checks"]) == 2
+    assert all(check["exit_code"] == 1 for check in result["checks"])
 
 
-def test_merge_group_uses_the_same_leaf_owners_as_prs(run_merge_queue_tests):
-    from ci.harness.test_plan import unit_test_plan
-
-    changed = ["datus/mcp_server.py", "datus/cli/language_commands.py"]
-    suite = run_merge_queue_tests.suite_definitions(changed)["impacted-unit"]
-    assert suite["targets"] == unit_test_plan(changed)["targets"]
-
-
-def test_build_pytest_command_includes_marker_junit_and_extra_args(tmp_path, run_merge_queue_tests):
-    junit_xml = tmp_path / "results.xml"
-
-    command = run_merge_queue_tests.build_pytest_command(
-        ["tests/unit_tests/"],
-        mark_expr="not nightly",
-        junit_xml=junit_xml,
-        extra_args=["--timeout=120", "-n", "auto"],
-        basetemp=tmp_path / "pytest-temp" / "unit",
-    )
-
-    assert command[:4] == [run_merge_queue_tests.sys.executable, "-m", "pytest", "tests/unit_tests/"]
-    assert command[4] == f"--basetemp={tmp_path / 'pytest-temp' / 'unit'}"
-    assert command[5:7] == ["-m", "not nightly"]
-    assert f"--junitxml={junit_xml}" in command
-    assert ["--timeout=120", "-n", "auto"] == command[-3:]
-
-
-def test_run_suite_fails_loudly_on_missing_target(tmp_path, monkeypatch, run_merge_queue_tests):
-    monkeypatch.setattr(run_merge_queue_tests, "REPO_ROOT", tmp_path)
-    suite = {
-        "targets": ["tests/unit_tests/gone.py"],
-        "mark_expr": "acceptance",
-        "junit_xml": tmp_path / "results.xml",
-        "extra_args": [],
-    }
-
-    result = run_merge_queue_tests.run_suite("acceptance-unit", suite, timeout=10)
-
-    assert result["exit_code"] == 1
-    assert result["missing"] == ["tests/unit_tests/gone.py"]
-    assert result["targets"] == []
-
-
-def test_merge_queue_selects_local_storage_even_with_external_backends_configured(monkeypatch, run_merge_queue_tests):
-    calls = []
-
-    def run(command, **kwargs):
-        calls.append(kwargs["env"])
-        return run_merge_queue_tests.subprocess.CompletedProcess(command, 0)
-
-    monkeypatch.setenv("DATUS_TEST_STORAGE_BACKENDS", "postgresql+postgresql")
-    monkeypatch.setattr(run_merge_queue_tests.subprocess, "run", run)
-    assert run_merge_queue_tests.run_command(["pytest"], suite_name="acceptance-unit", timeout=10) == 0
-    assert calls[0]["DATUS_TEST_STORAGE_BACKENDS"] == "sqlite+lance"
-
-
-@pytest.mark.parametrize("name,expected", [("impacted-unit", 0), ("acceptance-unit", 5)])
-def test_empty_collection_is_allowed_only_for_additional_tests(
-    name, expected, tmp_path, monkeypatch, run_merge_queue_tests
-):
-    monkeypatch.setattr(run_merge_queue_tests, "run_command", lambda *args, **kwargs: 5)
-    monkeypatch.setattr(run_merge_queue_tests, "PYTEST_BASETEMP", tmp_path / "pytest-temp")
-    suite = {
-        "targets": ["tests/unit_tests/models/test_request_capacity.py"],
-        "mark_expr": "not component",
-        "junit_xml": run_merge_queue_tests.OUT_DIR / "test-results-empty.xml",
-        "extra_args": [],
-    }
-    assert run_merge_queue_tests.run_suite(name, suite, timeout=10)["exit_code"] == expected
-
-
-@pytest.mark.component
-def test_nested_runner_preserves_outer_pytest_temp_in_a_merge_group(tmp_path, monkeypatch, run_merge_queue_tests):
-    """Run the real runner self-test with the same inherited env as merge queue."""
-    outer = tmp_path / "outer-runner"
-    outer.mkdir()
-    sentinel = outer / "parent-owned.txt"
-    sentinel.write_text("outer runner remains active")
-    event = tmp_path / "merge-group.json"
-    event.write_text(json.dumps({"merge_group": {"base_sha": "HEAD"}}))
-    monkeypatch.setenv("GITHUB_EVENT_NAME", "merge_group")
-    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
-    monkeypatch.setenv(run_merge_queue_tests.PYTEST_BASETEMP_ENV, str(outer))
-    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
-    monkeypatch.setattr(run_merge_queue_tests, "PYTEST_BASETEMP", outer)
-    suite = "impacted-unit"
-    command = [
-        run_merge_queue_tests.sys.executable,
-        "-m",
-        "pytest",
-        "tests/unit_tests/ci/test_run_merge_queue_tests.py::test_main_runs_selected_suite_and_writes_report",
-        f"--basetemp={run_merge_queue_tests.suite_pytest_basetemp(suite)}",
-        "-n",
-        "2",
-        "--dist=loadfile",
-        "-q",
-        "--no-showlocals",
-        "-o",
-        "log_cli=false",
-    ]
-    result = run_merge_queue_tests.run_command(command, suite_name=suite, timeout=60)
-    assert result == 0
-    assert sentinel.read_text() == "outer runner remains active"
-    assert os.environ[run_merge_queue_tests.PYTEST_BASETEMP_ENV] == str(outer)
-
-
-def test_main_runs_selected_suite_and_writes_report(tmp_path, monkeypatch, run_merge_queue_tests):
-    repo_root = tmp_path
-    out_dir = repo_root / "ci"
-    tests_dir = repo_root / "tests" / "unit_tests"
-    out_dir.mkdir(parents=True)
-    tests_dir.mkdir(parents=True)
-    calls = []
-
-    class CompletedProcess:
-        returncode = 0
-
-    def fake_run(command, **kwargs):
-        calls.append({"command": command, "cwd": kwargs["cwd"], "timeout": kwargs["timeout"]})
-        return CompletedProcess()
-
-    monkeypatch.setattr(run_merge_queue_tests, "REPO_ROOT", repo_root)
-    monkeypatch.setattr(run_merge_queue_tests, "OUT_DIR", out_dir)
-    monkeypatch.setattr(run_merge_queue_tests, "DEFAULT_REPORT", out_dir / "merge-queue-results.json")
-    monkeypatch.setattr(run_merge_queue_tests.subprocess, "run", fake_run)
-    monkeypatch.setattr(
-        run_merge_queue_tests,
-        "load_pr_harness_config",
-        lambda: (["tests/unit_tests/"], "acceptance or component or llm_harness"),
-    )
-
-    assert run_merge_queue_tests.main(["--suite", "acceptance-unit", "--timeout", "10"]) == 0
-
-    assert calls == [
-        {
-            "command": run_merge_queue_tests.build_pytest_command(
-                ["tests/unit_tests/"],
-                mark_expr="acceptance or component or llm_harness",
-                junit_xml=out_dir / "test-results-merge-acceptance-unit.xml",
-                extra_args=["--timeout=120", "--dist=loadscope", "-n", "auto"],
-                basetemp=run_merge_queue_tests.suite_pytest_basetemp("acceptance-unit"),
-            ),
-            "cwd": repo_root,
-            "timeout": 10,
-        }
-    ]
-    assert '"status": "success"' in (out_dir / "merge-queue-results.json").read_text(encoding="utf-8")
-
-
-@pytest.mark.component
-@pytest.mark.parametrize("ci_tests,docs_exit", [(False, 0), (True, 0), (False, 1)])
-@pytest.mark.parametrize("trigger", ["explicit-base", "merge_group", "workflow_dispatch"])
-def test_documentation_gate_runs_and_records_its_required_checks(
-    ci_tests, docs_exit, trigger, tmp_path, monkeypatch, run_merge_queue_tests
-):
-    real_root = run_merge_queue_tests.REPO_ROOT
-    out = tmp_path / "ci"
-    out.mkdir()
-    (out / "check_docs.py").write_text(
-        f"from pathlib import Path\nPath('docs-built.txt').write_text('en,zh')\nraise SystemExit({docs_exit})\n"
-    )
-    tests = tmp_path / "tests/unit_tests/ci"
-    tests.mkdir(parents=True)
-    (tests / "test_docs_contract.py").write_text(
-        "from pathlib import Path\ndef test_ci_contract():\n"
-        "    Path('ci-executed.txt').write_text('passed')\n"
-        "    assert Path('docs-built.txt').read_text() == 'en,zh'\n"
-    )
-    (tmp_path / "pytest.ini").write_text("[pytest]\n")
-    monkeypatch.setattr(run_merge_queue_tests, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(run_merge_queue_tests, "OUT_DIR", out)
-    monkeypatch.setattr(run_merge_queue_tests, "DEFAULT_REPORT", out / "merge-queue-results.json")
-    monkeypatch.setattr(run_merge_queue_tests, "PYTEST_BASETEMP", tmp_path / "pytest-temp")
-    monkeypatch.setattr(run_merge_queue_tests, "changed_files", lambda *_: ["docs/index.md"])
-    monkeypatch.setattr(
-        run_merge_queue_tests,
-        "repository_profile",
-        lambda *_: {"profile": "docs", "ci_tests": ci_tests, "reason": "documentation registration"},
-    )
-    monkeypatch.setenv("PYTHONPATH", str(real_root))
-    monkeypatch.setenv("PYTEST_XDIST_AUTO_NUM_WORKERS", "2")
-    monkeypatch.setenv("GITHUB_EVENT_NAME", trigger)
-    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
-    arguments = ["--base-ref", "HEAD"] if trigger == "explicit-base" else []
-    assert run_merge_queue_tests.main(arguments) == docs_exit
-    report = json.loads((out / "gate-coverage.json").read_text())
-    assert report["required_checks"] == ["docs-build", *(["docs-ci"] if ci_tests else [])]
-    assert report["status"] == ("success" if docs_exit == 0 else "failure")
-    assert (tmp_path / "docs-built.txt").read_text() == "en,zh"
-    assert {path.name: path.read_text() for path in tmp_path.glob("ci-executed.txt")} == (
-        {"ci-executed.txt": "passed"} if ci_tests else {}
-    )
+@pytest.mark.parametrize("status,expected", [("success", 0), ("failure", 1), ("skipped", 1), ("cancelled", 1)])
+def test_required_context_propagates_consistency_result(status, expected):
+    workflow = yaml.safe_load((ROOT / ".github/workflows/merge-queue.yml").read_text())
+    command = workflow["jobs"]["merge-queue-gate"]["steps"][0]["run"]
+    result = subprocess.run(["bash", "-c", command], env={"DETERMINISTIC_RESULT": status}, timeout=5)
+    assert result.returncode == expected

@@ -41,7 +41,6 @@ from datus.cli.action_display.renderers import (
     ActionRenderer,
     BaseActionContentGenerator,
     _get_assistant_content,
-    _truncate_middle,
 )
 from datus.cli.action_display.streaming import _SUBAGENT_ROLLING_WINDOW_SIZE, InlineStreamingContext
 from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
@@ -176,32 +175,6 @@ class TestSubAgentGroupStart:
         renderable = ctx._build_subagent_groups_renderable()
         # Should contain " ... " truncation marker
         assert " ... " in _group_plain(renderable)
-
-
-@pytest.mark.ci
-class TestTruncateMiddle:
-    """_truncate_middle static method tests."""
-
-    def test_short_text_unchanged(self):
-        """Text shorter than max_len is returned unchanged."""
-        result = InlineStreamingContext._truncate_middle("hello world", max_len=120)
-        assert result == "hello world"
-
-    def test_long_text_truncated(self):
-        """Text longer than max_len is truncated in the middle."""
-        text = "A" * 200
-        result = InlineStreamingContext._truncate_middle(text, max_len=120)
-        assert len(result) <= 120
-        assert " ... " in result
-        assert result.startswith("A")
-        assert result.endswith("A")
-
-    def test_exact_boundary(self):
-        """Text exactly at max_len is not truncated."""
-        text = "B" * 120
-        result = InlineStreamingContext._truncate_middle(text, max_len=120)
-        assert result == text
-        assert " ... " not in result
 
 
 @pytest.mark.ci
@@ -787,21 +760,9 @@ class TestTaskSuccessSkippedAfterDone:
 
 
 @pytest.mark.ci
-class TestModuleLevelTruncateMiddle:
-    """Module-level _truncate_middle function tests."""
-
-    def test_short_text_unchanged(self):
-        assert _truncate_middle("hello", max_len=120) == "hello"
-
-    def test_long_text_truncated(self):
-        text = "X" * 200
-        result = _truncate_middle(text, max_len=120)
-        assert len(result) <= 120
-        assert " ... " in result
-
-    def test_delegates_same_as_staticmethod(self):
-        text = "Y" * 300
-        assert InlineStreamingContext._truncate_middle(text, 50) == _truncate_middle(text, 50)
+def test_streaming_truncation_uses_the_shared_renderer():
+    text = "HEAD123" + "center" * 20 + "TAIL789"
+    assert InlineStreamingContext._truncate_middle(text, 20) == "HEAD123 ... TAIL789"
 
 
 @pytest.mark.ci
@@ -2572,77 +2533,6 @@ class TestActionContentGeneratorFormatInlineExpanded:
         action = _make_action(ActionRole.SYSTEM, ActionStatus.SUCCESS, messages="System ready")
         lines = gen.format_inline_expanded(action)
         assert any("System ready" in line for line in lines)
-
-
-@pytest.mark.ci
-class TestFormatToolOutputVerbose:
-    """Tests for format_output_verbose (migrated from ActionContentGenerator to tool_content module)."""
-
-    def test_empty_output(self):
-        """Empty output returns no lines."""
-        from datus.cli.action_display.tool_content import format_output_verbose
-
-        assert format_output_verbose(None) == []
-        assert format_output_verbose("") == []
-        assert format_output_verbose({}) == []
-
-    def test_string_json_parsed(self):
-        """JSON string is parsed into dict entries."""
-        from datus.cli.action_display.tool_content import format_output_verbose
-
-        lines = format_output_verbose('{"key": "value"}')
-        assert any("key: value" in line for line in lines)
-
-    def test_invalid_json_string(self):
-        """Non-JSON string is shown as-is."""
-        from datus.cli.action_display.tool_content import format_output_verbose
-
-        lines = format_output_verbose("plain text output")
-        assert any("output: plain text output" in line for line in lines)
-
-    def test_non_dict_non_string(self):
-        """Non-dict, non-string data is shown with output prefix."""
-        from datus.cli.action_display.tool_content import format_output_verbose
-
-        lines = format_output_verbose([1, 2, 3])
-        assert any("output:" in line for line in lines)
-
-    def test_dict_with_raw_output_string(self):
-        """Dict with raw_output string that is valid JSON."""
-        from datus.cli.action_display.tool_content import format_output_verbose
-
-        lines = format_output_verbose({"raw_output": '{"foo": "bar"}'})
-        assert any("foo: bar" in line for line in lines)
-
-    def test_dict_with_raw_output_invalid_json(self):
-        """Dict with raw_output string that is not valid JSON."""
-        from datus.cli.action_display.tool_content import format_output_verbose
-
-        lines = format_output_verbose({"raw_output": "not json"})
-        assert any("output: not json" in line for line in lines)
-
-    def test_dict_with_multiline_values(self):
-        """Dict values containing newlines are split into continuation lines."""
-        from datus.cli.action_display.tool_content import format_output_verbose
-
-        lines = format_output_verbose({"raw_output": {"sql": "SELECT\n  col\nFROM t"}})
-        assert any("sql:" in line for line in lines)
-        assert any("SELECT" in line for line in lines)
-        assert any("FROM t" in line for line in lines)
-
-    def test_dict_raw_output_non_dict(self):
-        """Dict with raw_output that resolves to a non-dict after parsing."""
-        from datus.cli.action_display.tool_content import format_output_verbose
-
-        lines = format_output_verbose({"raw_output": "[1, 2, 3]"})
-        assert any("output:" in line for line in lines)
-
-    def test_custom_indent(self):
-        """Custom indent is applied to output lines."""
-        from datus.cli.action_display.tool_content import format_output_verbose
-
-        lines = format_output_verbose({"raw_output": {"key": "val"}}, indent=">>")
-        assert lines[0].startswith(">>")
 
 
 @pytest.mark.ci

@@ -7,12 +7,11 @@ source:
 layers:
   pr_acceptance:
     description: >
-      Fast deterministic PR signal for documented core flows. Only nodeids whose
-      file is listed in PR_ACCEPTANCE_TARGETS (ci/run-pr-tests.py) run on every
-      PR; other nodeids run through the diff-driven impacted unit suite and only
-      execute when the PR touches their mapped source tree.
+      Mandatory core_nodeids run on every code PR. Unit ownership and domain
+      integration groups select other deterministic tests from changed paths.
+      Partial claims include useful references that are not fixed PR requirements.
   merge_queue:
-    description: Deterministic pre-merge signal on the merge-group commit.
+    description: Generated catalog and strict coverage-map consistency on the merged tree; product tests run in PR CI.
   nightly:
     description: Full product and integration signal with real services, adapters, and provider health.
   weekly_benchmark:
@@ -61,17 +60,13 @@ flow_groups:
           - Quickstart workspace initialization remains available from the CLI.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
               - tests/integration/agent/test_core_acceptance.py::test_chat_stream_reaches_model_and_completes
               - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_quickstart_documented_repl_entrypoints_stay_routable
               - tests/unit_tests/cli/test_interactive_init.py
           merge_queue:
-            status: covered
-            nodeids:
-              - tests/integration/agent/test_core_acceptance.py::test_chat_stream_reaches_model_and_completes
-              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_quickstart_documented_repl_entrypoints_stay_routable
-              - tests/unit_tests/cli/test_interactive_init.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -112,12 +107,7 @@ flow_groups:
               - tests/unit_tests/tools/skill_tools/test_create_subagent_skill.py
               - tests/unit_tests/tools/func_tool/test_bi_tools.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_routes_to_dashboard_bootstrap_skill
-              - tests/unit_tests/tools/skill_tools/test_dashboard_bootstrap_skill.py
-              - tests/unit_tests/tools/skill_tools/test_create_subagent_skill.py
-              - tests/unit_tests/tools/func_tool/test_bi_tools.py
+            status: not_applicable
           nightly:
             status: partial
             nodeids:
@@ -159,17 +149,13 @@ flow_groups:
           - Query-time context retrieval can use historical SQL and knowledge artifacts.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
               - tests/integration/agent/test_core_acceptance.py::test_init_metadata_and_knowledge_are_reusable
               - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_semantic_modeling_stream_orchestrates_unified_helper
               - tests/integration/storage/test_storage_layout.py
           merge_queue:
-            status: covered
-            nodeids:
-              - tests/integration/agent/test_core_acceptance.py::test_init_metadata_and_knowledge_are_reusable
-              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_semantic_modeling_stream_orchestrates_unified_helper
-              - tests/integration/storage/test_storage_layout.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -209,12 +195,7 @@ flow_groups:
               - tests/unit_tests/cli/test_language_commands.py
               - tests/unit_tests/cli/test_effort_commands.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py
-              - tests/unit_tests/cli/test_model_commands.py
-              - tests/unit_tests/cli/test_language_commands.py
-              - tests/unit_tests/cli/test_effort_commands.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -247,12 +228,7 @@ flow_groups:
               - tests/unit_tests/api/services/test_chat_task_manager.py
               - tests/integration/api/test_api.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/integration/api/test_chat_acceptance.py
-              - tests/unit_tests/api/routes/test_chat_routes.py
-              - tests/unit_tests/api/services/test_chat_task_manager.py
-              - tests/integration/api/test_api.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -281,10 +257,7 @@ flow_groups:
               - tests/unit_tests/cli/web/test_chatbot.py
               - tests/unit_tests/api/services/test_success_story_service.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/unit_tests/cli/web/test_chatbot.py
-              - tests/unit_tests/api/services/test_success_story_service.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -317,11 +290,7 @@ flow_groups:
               - tests/unit_tests/gateway/adapters/test_feishu.py
               - tests/unit_tests/gateway/adapters/test_slack.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/unit_tests/gateway/test_runtime.py
-              - tests/unit_tests/gateway/adapters/test_feishu.py
-              - tests/unit_tests/gateway/adapters/test_slack.py
+            status: not_applicable
           nightly:
             status: manual
             notes: >
@@ -383,11 +352,7 @@ flow_groups:
               - tests/integration/tools/db_tools/test_connector_duckdb.py
               - tests/unit_tests/tools/db_tools/test_db_func_tools.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/integration/tools/test_func_tools_db.py
-              - tests/integration/tools/db_tools/test_connector_duckdb.py
-              - tests/unit_tests/tools/db_tools/test_db_func_tools.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -430,11 +395,7 @@ flow_groups:
               - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatPolicyContextPreCheck
               - tests/unit_tests/tools/test_policy_runtime.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/unit_tests/api/auth/test_header_context_provider.py
-              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatPolicyContextPreCheck
-              - tests/unit_tests/tools/test_policy_runtime.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -474,12 +435,7 @@ flow_groups:
               - tests/unit_tests/tools/func_tool/test_bi_tools.py
               - tests/unit_tests/tools/func_tool/test_scheduler_tools.py
           merge_queue:
-            status: partial
-            notes: Adapter repos run merge-queue integration checks for Docker-backed contracts.
-            nodeids:
-              - tests/unit_tests/tools/db_tools/test_registry.py
-              - tests/unit_tests/tools/func_tool/test_bi_tools.py
-              - tests/unit_tests/tools/func_tool/test_scheduler_tools.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -518,10 +474,7 @@ flow_groups:
               - tests/unit_tests/tools/func_tool/test_context_search.py
               - tests/integration/tools/test_context_search.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/unit_tests/tools/func_tool/test_context_search.py
-              - tests/integration/tools/test_context_search.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -569,11 +522,7 @@ flow_groups:
               - tests/unit_tests/storage/schema_metadata/test_store.py
               - tests/unit_tests/api/routes/test_kb_routes.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/integration/storage/test_storage_layout.py
-              - tests/unit_tests/storage/schema_metadata/test_store.py
-              - tests/unit_tests/api/routes/test_kb_routes.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -626,16 +575,7 @@ flow_groups:
               - tests/unit_tests/configuration/test_agent_config.py::TestDosiDbProfile::test_runtime_context_overlay_uses_generic_aliases
               - tests/unit_tests/tools/func_tool/test_semantic_tools.py::TestRuntimeDbContext::test_runtime_change_rebuilds_dosi_runtime
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm
-              - tests/unit_tests/agent/node/test_semantic_modeling_agentic_node.py
-              - tests/unit_tests/agent/node/test_ask_metrics_agentic_node.py
-              - tests/unit_tests/agent/node/test_ontology_analyst_agentic_node.py
-              - tests/unit_tests/tools/semantic_tools/test_dosi_ontology.py
-              - tests/unit_tests/tools/func_tool/test_context_search.py
-              - tests/unit_tests/configuration/test_agent_config.py::TestDosiDbProfile::test_runtime_context_overlay_uses_generic_aliases
-              - tests/unit_tests/tools/func_tool/test_semantic_tools.py::TestRuntimeDbContext::test_runtime_change_rebuilds_dosi_runtime
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -678,11 +618,7 @@ flow_groups:
               - tests/unit_tests/tools/func_tool/test_reference_template_tools.py
               - tests/unit_tests/tools/func_tool/test_context_search.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/unit_tests/agent/node/test_sql_summary_agentic_node.py
-              - tests/unit_tests/tools/func_tool/test_reference_template_tools.py
-              - tests/unit_tests/tools/func_tool/test_context_search.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -715,10 +651,7 @@ flow_groups:
               - tests/integration/storage/test_platform_doc_acceptance.py
               - tests/unit_tests/tools/func_tool/test_platform_doc_search.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/integration/storage/test_platform_doc_acceptance.py
-              - tests/unit_tests/tools/func_tool/test_platform_doc_search.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -749,7 +682,7 @@ flow_groups:
           - Skill creator and feedback flows remain callable from documented subagent paths.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
               - tests/integration/agent/test_core_acceptance.py::test_sql_result_reaches_followup_request
               - tests/integration/agent/test_core_acceptance.py::test_multiturn_retains_question_and_tool_results
@@ -761,17 +694,7 @@ flow_groups:
               - tests/unit_tests/agent/node/test_feedback_agentic_node.py
               - tests/unit_tests/agent/node/test_skill_creator_agentic_node.py
           merge_queue:
-            status: covered
-            nodeids:
-              - tests/integration/agent/test_core_acceptance.py::test_sql_result_reaches_followup_request
-              - tests/integration/agent/test_core_acceptance.py::test_multiturn_retains_question_and_tool_results
-              - tests/integration/agent/test_core_acceptance.py::test_tool_error_can_be_corrected
-              - tests/unit_tests/agent/node/test_chat_agentic_node.py
-              - tests/unit_tests/agent/node/test_gen_sql_agentic_node.py
-              - tests/unit_tests/agent/node/test_compare_agentic_node.py
-              - tests/unit_tests/agent/node/test_explore_agentic_node.py
-              - tests/unit_tests/agent/node/test_feedback_agentic_node.py
-              - tests/unit_tests/agent/node/test_skill_creator_agentic_node.py
+            status: not_applicable
           nightly:
             status: partial
             nodeids:
@@ -816,15 +739,7 @@ flow_groups:
               - tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py
               - tests/unit_tests/agent/node/test_gen_visual_dashboard_agentic_node.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/integration/agent/test_core_acceptance.py::test_table_node_creates_a_queryable_data_product
-              - tests/unit_tests/agent/node/test_gen_dashboard_agentic_node.py
-              - tests/unit_tests/agent/node/test_scheduler_agentic_node.py
-              - tests/unit_tests/agent/node/test_gen_job_agentic_node.py
-              - tests/unit_tests/agent/node/test_gen_table_agentic_node.py
-              - tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py
-              - tests/unit_tests/agent/node/test_gen_visual_dashboard_agentic_node.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -874,10 +789,7 @@ flow_groups:
               - tests/unit_tests/agent/test_workflow.py
               - tests/unit_tests/agent/node/test_node_factory.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/unit_tests/agent/test_workflow.py
-              - tests/unit_tests/agent/node/test_node_factory.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -918,11 +830,7 @@ flow_groups:
               - tests/unit_tests/cli/test_mcp_commands.py
               - tests/unit_tests/tools/mcp_tools/test_mcp_manager.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/integration/tools/test_mcp_acceptance.py
-              - tests/unit_tests/cli/test_mcp_commands.py
-              - tests/unit_tests/tools/mcp_tools/test_mcp_manager.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -961,11 +869,7 @@ flow_groups:
               - tests/unit_tests/cli/test_skill_commands.py
               - tests/unit_tests/tools/permission/test_profiles.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/unit_tests/tools/skill_tools/test_skill.py
-              - tests/unit_tests/cli/test_skill_commands.py
-              - tests/unit_tests/tools/permission/test_profiles.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -1014,11 +918,7 @@ flow_groups:
               - tests/unit_tests/cli/test_plugin_dispatch.py
               - tests/unit_tests/tools/middleware/test_tool_middleware.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/unit_tests/plugins/test_registry.py
-              - tests/unit_tests/cli/test_plugin_dispatch.py
-              - tests/unit_tests/tools/middleware/test_tool_middleware.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -1055,12 +955,7 @@ flow_groups:
               - tests/unit_tests/agent/node/test_agentic_node_inherited_memory.py
               - tests/unit_tests/tools/func_tool/test_memory_filesystem_tools.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/integration/agent/test_core_acceptance.py::test_memory_written_in_one_session_is_loaded_in_another
-              - tests/unit_tests/utils/test_memory_loader.py
-              - tests/unit_tests/agent/node/test_agentic_node_inherited_memory.py
-              - tests/unit_tests/tools/func_tool/test_memory_filesystem_tools.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -1102,11 +997,7 @@ flow_groups:
               - tests/unit_tests/agent/test_workflow_runner.py
               - tests/integration/api/test_api.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/unit_tests/agent/test_workflow.py
-              - tests/unit_tests/agent/test_workflow_runner.py
-              - tests/integration/api/test_api.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -1137,8 +1028,7 @@ flow_groups:
             status: external
             notes: VSCode integration is driven by a remote IDE front-end that owns its own runtime.
           merge_queue:
-            status: external
-            notes: VSCode integration is driven by a remote IDE front-end that owns its own runtime.
+            status: not_applicable
           nightly:
             status: external
             notes: >
@@ -1171,10 +1061,7 @@ flow_groups:
               - tests/unit_tests/cli/test_package_builder.py
               - tests/unit_tests/cli/test_package_cli.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/unit_tests/cli/test_package_builder.py
-              - tests/unit_tests/cli/test_package_cli.py
+            status: not_applicable
           nightly:
             status: not_applicable
             notes: >
@@ -1204,11 +1091,7 @@ flow_groups:
               - tests/unit_tests/schemas/test_web_result.py
               - tests/unit_tests/agent/node/test_agentic_node_web_tools.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/unit_tests/tools/func_tool/test_web_tool.py
-              - tests/unit_tests/schemas/test_web_result.py
-              - tests/unit_tests/agent/node/test_agentic_node_web_tools.py
+            status: not_applicable
           nightly:
             status: external
             notes: >
@@ -1238,10 +1121,7 @@ flow_groups:
               - tests/unit_tests/tools/func_tool/test_read_image.py
               - tests/unit_tests/models/test_image_model_roundtrip.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/unit_tests/tools/func_tool/test_read_image.py
-              - tests/unit_tests/models/test_image_model_roundtrip.py
+            status: not_applicable
           nightly:
             status: external
             notes: Live image interpretation depends on provider credentials and network access.
@@ -1273,11 +1153,7 @@ flow_groups:
               - tests/unit_tests/validation/test_report.py
               - tests/unit_tests/validation/test_target_extractor.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/unit_tests/validation/test_builtin_checks.py
-              - tests/unit_tests/validation/test_report.py
-              - tests/unit_tests/validation/test_target_extractor.py
+            status: not_applicable
           nightly:
             status: not_applicable
           weekly_benchmark:
@@ -1306,11 +1182,7 @@ flow_groups:
               - tests/unit_tests/utils/test_benchmark_utils.py
               - tests/unit_tests/utils/test_benchmark_evaluation.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/unit_tests/test_multi_round_benchmark.py
-              - tests/unit_tests/utils/test_benchmark_utils.py
-              - tests/unit_tests/utils/test_benchmark_evaluation.py
+            status: not_applicable
           nightly:
             status: external
             notes: datus-benchmark weekly/manual workflow owns full benchmark execution.
@@ -1343,11 +1215,7 @@ flow_groups:
               - tests/unit_tests/observability/test_openai_agents.py
               - tests/unit_tests/ci/test_nightly_tracing_boundaries.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/unit_tests/observability/test_manager.py
-              - tests/unit_tests/observability/test_openai_agents.py
-              - tests/unit_tests/ci/test_nightly_tracing_boundaries.py
+            status: not_applicable
           nightly:
             status: covered
             notes: Nightly sets the tracing environment and uploads trace-aware artifacts.
@@ -1380,11 +1248,7 @@ flow_groups:
               - tests/unit_tests/models/test_openai_compatible.py
               - tests/unit_tests/models/test_litellm_adapter.py
           merge_queue:
-            status: partial
-            nodeids:
-              - tests/unit_tests/cli/test_provider_model_catalog.py
-              - tests/unit_tests/models/test_openai_compatible.py
-              - tests/unit_tests/models/test_litellm_adapter.py
+            status: not_applicable
           nightly:
             status: covered
             nodeids:
@@ -1400,7 +1264,7 @@ flow_groups:
 execution:
   description: >
     core_nodeids are mandatory executed tests for code profiles, independent of impact selection.
-    PR and merge-queue runners check collected nodeids and successful outcomes;
+    The PR runner checks collected nodeids and successful outcomes;
     missing, skipped, xfailed, crashed or unexecuted core cases fail the gate.
     A flow marked partial retains useful test references outside the fixed gate;
     their existence is not evidence that the full flow ran for this change.
@@ -1421,6 +1285,96 @@ execution:
     - tests/integration/api/test_chat_acceptance.py::test_chat_http_sql_multiturn_history_and_delete
     - tests/integration/api/test_chat_acceptance.py::test_chat_history_is_isolated_by_user
     - tests/integration/api/test_chat_acceptance.py::test_stop_releases_session_for_the_next_request
+  integration_rules:
+    - id: api
+      paths:
+        - datus/api/
+      targets:
+        - tests/integration/api/test_api.py
+    - id: cli
+      paths:
+        - datus/cli/
+        - datus/entrypoints.py
+        - datus/tools/db_tools/
+      targets:
+        - tests/integration/cli/test_cli_commands.py
+        - tests/integration/cli/test_cli_textual.py
+    - id: storage
+      paths:
+        - datus/plugins/
+        - datus/storage/
+        - datus/tools/func_tool/context_search.py
+        - datus/tools/func_tool/platform_doc_search.py
+        - datus/tools/search_tools/
+        - datus/utils/loggings.py
+      targets:
+        - tests/integration/storage/test_storage_layout.py
+        - tests/integration/storage/test_doc_search.py
+        - tests/integration/storage/test_platform_doc_acceptance.py
+        - tests/integration/storage/test_platform_doc.py
+    - id: database
+      paths:
+        - datus/tools/db_tools/
+        - datus/tools/func_tool/database.py
+        - datus/tools/registry/
+        - datus/utils/mcp_decorators.py
+        - datus/utils/tool_result_store.py
+      targets:
+        - tests/integration/tools/test_func_tools_db.py
+        - tests/integration/tools/db_tools/test_connector_duckdb.py
+        - tests/integration/tools/db_tools/test_data_file_loader_excel.py
+    - id: semantic
+      paths:
+        - datus/api/__init__.py
+        - datus/api/models/__init__.py
+        - datus/api/services/__init__.py
+        - datus/tools/func_tool/database.py
+        - datus/api/models/base_models.py
+        - datus/api/models/explorer_models.py
+        - datus/api/services/dashboard_service.py
+        - datus/api/services/explorer_service.py
+        - datus/storage/__init__.py
+        - datus/storage/embedding_models.py
+        - datus/storage/semantic_dataset/
+        - datus/storage/semantic_model/
+        - datus/tools/func_tool/_artifact_filesystem_base.py
+        - datus/tools/func_tool/dashboard_artifact_tools.py
+        - datus/tools/func_tool/generation_evidence.py
+        - datus/tools/func_tool/generation_tools.py
+        - datus/tools/func_tool/metric_artifact_tools.py
+        - datus/tools/func_tool/report_artifact_tools.py
+        - datus/tools/func_tool/semantic_plan_file_tools.py
+        - datus/tools/func_tool/semantic_tools.py
+        - datus/tools/func_tool/semantic_verification_tools.py
+        - datus/tools/semantic_tools/
+        - datus/utils/artifact_files.py
+        - datus/utils/async_utils.py
+        - datus/utils/metric_artifact_models.py
+        - datus/utils/query_result_text.py
+      targets:
+        - tests/integration/tools/test_dosi_attribution.py
+        - tests/integration/tools/test_dosi_catalog_alignment.py
+        - tests/integration/tools/test_dosi_metric_requirements.py
+        - tests/integration/tools/test_dosi_query_filters.py
+        - tests/integration/tools/test_dosi_ontology.py
+    - id: mcp
+      paths:
+        - datus/mcp_server.py
+        - datus/models/mcp_utils.py
+        - datus/tools/func_tool/context_search.py
+        - datus/tools/func_tool/database.py
+        - datus/tools/func_tool/date_parsing_tools.py
+        - datus/tools/func_tool/filesystem_tools.py
+        - datus/tools/func_tool/platform_doc_search.py
+        - datus/tools/func_tool/reference_template_tools.py
+        - datus/tools/func_tool/semantic_tools.py
+        - datus/tools/mcp_tools/
+        - datus/tools/registry/
+        - datus/utils/image_content.py
+        - datus/utils/mcp_decorators.py
+        - datus/utils/mcp_execution.py
+      targets:
+        - tests/integration/tools/test_mcp_acceptance.py
   unit_rules:
     - id: datus-agent-node
       paths:
@@ -2093,6 +2047,487 @@ execution:
         - tests/unit_tests/storage/
         - tests/unit_tests/test_saas_adaptation.py
         - tests/unit_tests/tools/func_tool/
+    - id: leaf-models-accepted-turn
+      paths:
+        - datus/models/accepted_turn.py
+      targets:
+        - tests/unit_tests/models/test_accepted_turn.py
+      rationale: Retain direct consumers and reviewed caller-family contracts; shared factories, base classes and configuration
+        keep their broader owners.
+    - id: leaf-models-text-completion
+      paths:
+        - datus/models/text_completion.py
+      targets:
+        - tests/unit_tests/cli/test_model_commands.py
+        - tests/unit_tests/cli/test_provider_model_catalog.py
+        - tests/unit_tests/models/
+        - tests/unit_tests/observability/
+      rationale: Retain direct consumers and reviewed caller-family contracts; shared factories, base classes and configuration
+        keep their broader owners.
+    - id: leaf-models-output-truncation
+      paths:
+        - datus/models/output_truncation.py
+      targets:
+        - tests/unit_tests/agent/node/test_agentic_node.py
+        - tests/unit_tests/agent/node/test_build_success_result_fallbacks.py
+        - tests/unit_tests/api/utils/test_stream_errors.py
+        - tests/unit_tests/cli/test_chat_commands.py
+        - tests/unit_tests/models/
+        - tests/unit_tests/observability/
+      rationale: Retain direct consumers and reviewed caller-family contracts; shared factories, base classes and configuration
+        keep their broader owners.
+    - id: leaf-models-reasoning-replay
+      paths:
+        - datus/models/reasoning_replay.py
+      targets:
+        - tests/unit_tests/models/
+        - tests/unit_tests/observability/
+      rationale: Retain direct consumers and reviewed caller-family contracts; shared factories, base classes and configuration
+        keep their broader owners.
+    - id: leaf-models-model-error
+      paths:
+        - datus/models/model_error.py
+      targets:
+        - tests/unit_tests/agent/node/test_agentic_node.py
+        - tests/unit_tests/api/services/test_chat_task_manager.py
+        - tests/unit_tests/api/utils/test_stream_errors.py
+        - tests/unit_tests/cli/test_chat_commands.py
+        - tests/unit_tests/models/
+      rationale: Retain direct consumers and reviewed caller-family contracts; shared factories, base classes and configuration
+        keep their broader owners.
+    - id: leaf-models-summary-chunks
+      paths:
+        - datus/models/summary_chunks.py
+      targets:
+        - tests/unit_tests/agent/node/test_agentic_node.py
+        - tests/unit_tests/agent/node/test_compact_helpers.py
+        - tests/unit_tests/agent/node/test_compact_minor.py
+        - tests/unit_tests/agent/node/test_compact_prompts.py
+        - tests/unit_tests/agent/node/test_context_rewriter.py
+        - tests/unit_tests/cli/test_chat_commands.py
+        - tests/unit_tests/cli/test_init_context.py
+        - tests/unit_tests/models/
+        - tests/unit_tests/utils/test_tool_result_store.py
+      rationale: Retain direct consumers and reviewed caller-family contracts; shared factories, base classes and configuration
+        keep their broader owners.
+    - id: leaf-agent-node-feedback-agentic-node
+      paths:
+        - datus/agent/node/feedback_agentic_node.py
+      targets:
+        - tests/unit_tests/agent/node/test_build_success_result_fallbacks.py
+        - tests/unit_tests/agent/node/test_feedback_agentic_node.py
+        - tests/unit_tests/agent/node/test_node.py
+        - tests/unit_tests/agent/node/test_node_factory.py
+        - tests/unit_tests/agent/node/test_tool_category_maps.py
+        - tests/unit_tests/api/services/test_chat_service.py
+        - tests/unit_tests/api/services/test_chat_task_manager.py
+        - tests/unit_tests/api/test_service.py
+        - tests/unit_tests/cli/test_chat_commands.py
+        - tests/unit_tests/cli/test_print_mode.py
+      rationale: Retain direct consumers and reviewed caller-family contracts; shared factories, base classes and configuration
+        keep their broader owners.
+    - id: leaf-agent-node-visual-artifact-dashboard-html-renderer
+      paths:
+        - datus/agent/node/visual_artifact/dashboard_html_renderer.py
+      targets:
+        - tests/unit_tests/agent/node/test_dashboard_html_renderer.py
+        - tests/unit_tests/agent/node/test_gen_visual_dashboard_agentic_node.py
+        - tests/unit_tests/cli/test_package_builder.py
+        - tests/unit_tests/cli/test_package_cli.py
+        - tests/unit_tests/tools/func_tool/test_metric_artifact_tools.py
+      rationale: Retain direct consumers and reviewed caller-family contracts; shared factories, base classes and configuration
+        keep their broader owners.
+    - id: leaf-agent-node-visual-artifact-report-html-renderer
+      paths:
+        - datus/agent/node/visual_artifact/report_html_renderer.py
+      targets:
+        - tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py
+        - tests/unit_tests/agent/node/test_report_html_renderer.py
+        - tests/unit_tests/cli/test_package_builder.py
+        - tests/unit_tests/cli/test_package_cli.py
+        - tests/unit_tests/tools/func_tool/test_metric_artifact_tools.py
+      rationale: Retain direct consumers and reviewed caller-family contracts; shared factories, base classes and configuration
+        keep their broader owners.
+    - id: leaf-agent-node-visual-artifact--artifact-html-renderer
+      paths:
+        - datus/agent/node/visual_artifact/_artifact_html_renderer.py
+      targets:
+        - tests/unit_tests/agent/node/test_dashboard_html_renderer.py
+        - tests/unit_tests/agent/node/test_gen_visual_dashboard_agentic_node.py
+        - tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py
+        - tests/unit_tests/agent/node/test_report_html_renderer.py
+        - tests/unit_tests/agent/node/test_visual_artifact_finalize.py
+        - tests/unit_tests/agent/node/visual_artifact/test_insight_snapshot.py
+        - tests/unit_tests/cli/test_package_builder.py
+        - tests/unit_tests/cli/test_package_cli.py
+        - tests/unit_tests/tools/func_tool/test_metric_artifact_tools.py
+      rationale: Retain direct consumers and reviewed caller-family contracts; shared factories, base classes and configuration
+        keep their broader owners.
+    - id: leaf-agent-node-visual-artifact--insight-snapshot
+      paths:
+        - datus/agent/node/visual_artifact/_insight_snapshot.py
+      targets:
+        - tests/unit_tests/agent/node/test_gen_visual_dashboard_agentic_node.py
+        - tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py
+        - tests/unit_tests/agent/node/test_visual_artifact_finalize.py
+        - tests/unit_tests/agent/node/visual_artifact/test_insight_snapshot.py
+        - tests/unit_tests/tools/func_tool/test_metric_artifact_tools.py
+      rationale: Retain direct consumers and reviewed caller-family contracts; shared factories, base classes and configuration
+        keep their broader owners.
+    - id: leaf-agent-node-visual-artifact--visual-artifact-finalize
+      paths:
+        - datus/agent/node/visual_artifact/_visual_artifact_finalize.py
+      targets:
+        - tests/unit_tests/agent/node/test_gen_visual_dashboard_agentic_node.py
+        - tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py
+        - tests/unit_tests/agent/node/test_visual_artifact_finalize.py
+        - tests/unit_tests/agent/node/visual_artifact/test_insight_snapshot.py
+        - tests/unit_tests/api/services/test_dashboard_service.py
+        - tests/unit_tests/api/services/test_report_service.py
+        - tests/unit_tests/tools/func_tool/test_metric_artifact_tools.py
+      rationale: Retain direct consumers and reviewed caller-family contracts; shared factories, base classes and configuration
+        keep their broader owners.
+    - id: leaf-agent-node-compact-prompts
+      paths:
+        - datus/agent/node/compact_prompts.py
+      targets:
+        - tests/unit_tests/agent/node/
+        - tests/unit_tests/cli/test_chat_commands.py
+        - tests/unit_tests/cli/test_init_context.py
+        - tests/unit_tests/models/
+        - tests/unit_tests/utils/test_tool_result_store.py
+      rationale: Retain direct consumers and reviewed caller-family contracts; shared factories, base classes and configuration
+        keep their broader owners.
+    - id: leaf-agent-node-token-usage-hook
+      paths:
+        - datus/agent/node/token_usage_hook.py
+      targets:
+        - tests/unit_tests/agent/node/
+        - tests/unit_tests/models/
+        - tests/unit_tests/observability/
+      rationale: Retain direct consumers and reviewed caller-family contracts; shared factories, base classes and configuration
+        keep their broader owners.
+    - id: leaf-agent-node-retry-policy
+      paths:
+        - datus/agent/node/retry_policy.py
+      targets:
+        - tests/unit_tests/agent/node/
+      rationale: Retain direct consumers and reviewed caller-family contracts; shared factories, base classes and configuration
+        keep their broader owners.
+    - id: leaf-models-litellm-model
+      paths:
+        - datus/models/litellm_model.py
+        - datus/models/responses_model.py
+        - datus/models/tool_result_stream.py
+      targets:
+        - tests/unit_tests/agent/node/
+        - tests/unit_tests/models/
+        - tests/unit_tests/observability/
+        - tests/unit_tests/tools/
+      rationale: Retain model, observability, node and API callers within the existing model-runtime consumer boundary.
+    - id: leaf-tools-func-tool-semantic-tools
+      paths:
+        - datus/tools/func_tool/semantic_tools.py
+        - datus/tools/func_tool/generation_tools.py
+      targets:
+        - tests/unit_tests/agent/node/
+        - tests/unit_tests/api/hooks/test_metric_hooks.py
+        - tests/unit_tests/api/services/test_agent_service.py
+        - tests/unit_tests/api/services/test_dashboard_service.py
+        - tests/unit_tests/api/services/test_database_service.py
+        - tests/unit_tests/api/services/test_explorer_service.py
+        - tests/unit_tests/api/services/test_semantic_model_diff.py
+        - tests/unit_tests/cli/test_bootstrap_app.py
+        - tests/unit_tests/cli/test_bootstrap_bi_app.py
+        - tests/unit_tests/cli/test_bootstrap_bi_commands.py
+        - tests/unit_tests/cli/test_bootstrap_bi_picker.py
+        - tests/unit_tests/cli/test_bootstrap_bi_streams.py
+        - tests/unit_tests/cli/test_bootstrap_bi_subagents.py
+        - tests/unit_tests/cli/test_bootstrap_streams.py
+        - tests/unit_tests/cli/test_bootstrap_subagent.py
+        - tests/unit_tests/cli/test_core_entrypoint_acceptance.py
+        - tests/unit_tests/cli/test_interactive_init.py
+        - tests/unit_tests/cli/test_package_builder.py
+        - tests/unit_tests/cli/test_package_cli.py
+        - tests/unit_tests/cli/test_repl.py
+        - tests/unit_tests/cli/test_service_bootstrap.py
+        - tests/unit_tests/configuration/test_agent_config.py
+        - tests/unit_tests/storage/metric/
+        - tests/unit_tests/storage/semantic_dataset/
+        - tests/unit_tests/storage/semantic_model/
+        - tests/unit_tests/test_mcp_server.py
+        - tests/unit_tests/tools/func_tool/test_filesystem_tools.py
+        - tests/unit_tests/tools/func_tool/test_generation_tools.py
+        - tests/unit_tests/tools/func_tool/test_metric_artifact_tools.py
+        - tests/unit_tests/tools/func_tool/test_osi_target_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_discovery_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_model_editing_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_model_filesystem_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_model_workspace.py
+        - tests/unit_tests/tools/func_tool/test_semantic_plan_file_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_verification_tools.py
+        - tests/unit_tests/tools/mcp_tools/
+        - tests/unit_tests/tools/permission/
+        - tests/unit_tests/tools/proxy/
+        - tests/unit_tests/tools/registry/
+        - tests/unit_tests/tools/semantic_tools/
+        - tests/unit_tests/utils/test_metric_artifact_models.py
+      rationale: Retain all nodes, Dosi/OSI tools, authoring/reconcile stores, MCP/registry, API services, bootstrap
+        and permission/review callers.
+    - id: leaf-tools-func-tool-semantic-plan-file-tools
+      paths:
+        - datus/tools/func_tool/semantic_plan_file_tools.py
+      targets:
+        - tests/unit_tests/agent/node/
+        - tests/unit_tests/api/hooks/test_metric_hooks.py
+        - tests/unit_tests/api/routes/test_chat_routes.py
+        - tests/unit_tests/api/services/test_agent_service.py
+        - tests/unit_tests/api/services/test_dashboard_service.py
+        - tests/unit_tests/api/services/test_database_service.py
+        - tests/unit_tests/api/services/test_explorer_service.py
+        - tests/unit_tests/api/services/test_semantic_model_diff.py
+        - tests/unit_tests/cli/test_bootstrap_app.py
+        - tests/unit_tests/cli/test_bootstrap_bi_app.py
+        - tests/unit_tests/cli/test_bootstrap_bi_commands.py
+        - tests/unit_tests/cli/test_bootstrap_bi_picker.py
+        - tests/unit_tests/cli/test_bootstrap_bi_streams.py
+        - tests/unit_tests/cli/test_bootstrap_bi_subagents.py
+        - tests/unit_tests/cli/test_bootstrap_streams.py
+        - tests/unit_tests/cli/test_bootstrap_subagent.py
+        - tests/unit_tests/cli/test_core_entrypoint_acceptance.py
+        - tests/unit_tests/cli/test_interactive_init.py
+        - tests/unit_tests/cli/test_package_builder.py
+        - tests/unit_tests/cli/test_package_cli.py
+        - tests/unit_tests/cli/test_repl.py
+        - tests/unit_tests/cli/test_service_bootstrap.py
+        - tests/unit_tests/configuration/test_agent_config.py
+        - tests/unit_tests/storage/metric/
+        - tests/unit_tests/storage/semantic_dataset/
+        - tests/unit_tests/storage/semantic_model/
+        - tests/unit_tests/test_mcp_server.py
+        - tests/unit_tests/tools/func_tool/test_filesystem_tools.py
+        - tests/unit_tests/tools/func_tool/test_generation_tools.py
+        - tests/unit_tests/tools/func_tool/test_metric_artifact_tools.py
+        - tests/unit_tests/tools/func_tool/test_osi_target_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_discovery_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_model_editing_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_model_filesystem_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_model_workspace.py
+        - tests/unit_tests/tools/func_tool/test_semantic_plan_file_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_verification_tools.py
+        - tests/unit_tests/tools/func_tool/test_sub_agent_task_tool.py
+        - tests/unit_tests/tools/mcp_tools/
+        - tests/unit_tests/tools/permission/
+        - tests/unit_tests/tools/proxy/
+        - tests/unit_tests/tools/registry/
+        - tests/unit_tests/tools/semantic_tools/
+        - tests/unit_tests/utils/test_metric_artifact_models.py
+      rationale: Retain all nodes, Dosi/OSI tools, authoring/reconcile stores, MCP/registry, API services, bootstrap
+        and permission/review callers.
+    - id: leaf-tools-semantic-tools-dosi-runtime
+      paths:
+        - datus/tools/semantic_tools/dosi/runtime.py
+        - datus/tools/semantic_tools/dosi/engine.py
+        - datus/tools/semantic_tools/policy_executor.py
+      targets:
+        - tests/unit_tests/agent/node/
+        - tests/unit_tests/api/hooks/test_metric_hooks.py
+        - tests/unit_tests/api/routes/test_chat_routes.py
+        - tests/unit_tests/api/services/test_agent_service.py
+        - tests/unit_tests/api/services/test_cli_service.py
+        - tests/unit_tests/api/services/test_cli_service_policy.py
+        - tests/unit_tests/api/services/test_dashboard_service.py
+        - tests/unit_tests/api/services/test_database_service.py
+        - tests/unit_tests/api/services/test_explorer_service.py
+        - tests/unit_tests/api/services/test_semantic_model_diff.py
+        - tests/unit_tests/cli/test_bash_mode.py
+        - tests/unit_tests/cli/test_bootstrap_app.py
+        - tests/unit_tests/cli/test_bootstrap_bi_app.py
+        - tests/unit_tests/cli/test_bootstrap_bi_commands.py
+        - tests/unit_tests/cli/test_bootstrap_bi_picker.py
+        - tests/unit_tests/cli/test_bootstrap_bi_streams.py
+        - tests/unit_tests/cli/test_bootstrap_bi_subagents.py
+        - tests/unit_tests/cli/test_bootstrap_streams.py
+        - tests/unit_tests/cli/test_bootstrap_subagent.py
+        - tests/unit_tests/cli/test_core_entrypoint_acceptance.py
+        - tests/unit_tests/cli/test_interactive_init.py
+        - tests/unit_tests/cli/test_package_builder.py
+        - tests/unit_tests/cli/test_package_cli.py
+        - tests/unit_tests/cli/test_repl.py
+        - tests/unit_tests/cli/test_service_bootstrap.py
+        - tests/unit_tests/configuration/test_agent_config.py
+        - tests/unit_tests/models/test_session_manager.py
+        - tests/unit_tests/models/test_sqlite_session.py
+        - tests/unit_tests/storage/metric/
+        - tests/unit_tests/storage/semantic_dataset/
+        - tests/unit_tests/storage/semantic_model/
+        - tests/unit_tests/test_mcp_server.py
+        - tests/unit_tests/tools/func_tool/test_dashboard_artifact_tools.py
+        - tests/unit_tests/tools/func_tool/test_database.py
+        - tests/unit_tests/tools/func_tool/test_filesystem_tools.py
+        - tests/unit_tests/tools/func_tool/test_generation_tools.py
+        - tests/unit_tests/tools/func_tool/test_hana_adapter.py
+        - tests/unit_tests/tools/func_tool/test_metric_artifact_tools.py
+        - tests/unit_tests/tools/func_tool/test_osi_target_tools.py
+        - tests/unit_tests/tools/func_tool/test_report_artifact_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_discovery_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_model_editing_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_model_filesystem_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_model_workspace.py
+        - tests/unit_tests/tools/func_tool/test_semantic_plan_file_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_verification_tools.py
+        - tests/unit_tests/tools/mcp_tools/
+        - tests/unit_tests/tools/permission/
+        - tests/unit_tests/tools/proxy/
+        - tests/unit_tests/tools/registry/
+        - tests/unit_tests/tools/semantic_tools/
+        - tests/unit_tests/tools/test_policy_runtime.py
+        - tests/unit_tests/tools/test_read_observer.py
+        - tests/unit_tests/tools/test_sql_read_context.py
+        - tests/unit_tests/utils/test_adapter_sql_analysis.py
+        - tests/unit_tests/utils/test_metric_artifact_models.py
+      rationale: Retain native engine reuse, all nodes, semantic tools, model/profile config, database services and
+        policy execution contracts.
+    - id: leaf-tools-func-tool-metric-artifact-tools
+      paths:
+        - datus/tools/func_tool/metric_artifact_tools.py
+        - datus/tools/func_tool/dashboard_artifact_tools.py
+        - datus/tools/func_tool/report_artifact_tools.py
+        - datus/tools/func_tool/_artifact_filesystem_base.py
+      targets:
+        - tests/unit_tests/agent/node/test_ask_artifact_agentic_node.py
+        - tests/unit_tests/agent/node/test_dashboard_html_renderer.py
+        - tests/unit_tests/agent/node/test_gen_visual_dashboard_agentic_node.py
+        - tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py
+        - tests/unit_tests/agent/node/test_report_html_renderer.py
+        - tests/unit_tests/agent/node/test_tool_category_maps.py
+        - tests/unit_tests/agent/node/test_visual_artifact_finalize.py
+        - tests/unit_tests/agent/node/visual_artifact/
+        - tests/unit_tests/api/routes/test_dashboard_routes.py
+        - tests/unit_tests/api/services/test_dashboard_service.py
+        - tests/unit_tests/api/services/test_explorer_service.py
+        - tests/unit_tests/api/services/test_report_service.py
+        - tests/unit_tests/cli/test_package_builder.py
+        - tests/unit_tests/cli/test_package_cli.py
+        - tests/unit_tests/tools/func_tool/test_dashboard_artifact_tools.py
+        - tests/unit_tests/tools/func_tool/test_filesystem_tools.py
+        - tests/unit_tests/tools/func_tool/test_fs_path_policy.py
+        - tests/unit_tests/tools/func_tool/test_metric_artifact_tools.py
+        - tests/unit_tests/tools/func_tool/test_report_artifact_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_tools.py
+        - tests/unit_tests/tools/func_tool/test_visual_artifact_cards.py
+        - tests/unit_tests/tools/func_tool/test_visual_artifact_helpers.py
+        - tests/unit_tests/tools/registry/
+        - tests/unit_tests/utils/test_artifact_insight.py
+        - tests/unit_tests/utils/test_artifact_metadata.py
+        - tests/unit_tests/utils/test_metric_artifact_models.py
+      rationale: Retain mixin subclasses, report/dashboard nodes, published API query path, scoped filesystem and packaging
+        callers.
+    - id: leaf-cli-bootstrap-bi-streams
+      paths:
+        - datus/cli/bootstrap_bi_streams.py
+        - datus/cli/bootstrap_bi_commands.py
+      targets:
+        - tests/unit_tests/agent/node/test_gen_dashboard_agentic_node.py
+        - tests/unit_tests/agent/node/test_skill_creator_agentic_node.py
+        - tests/unit_tests/cli/test_bootstrap_app.py
+        - tests/unit_tests/cli/test_bootstrap_bi_app.py
+        - tests/unit_tests/cli/test_bootstrap_bi_commands.py
+        - tests/unit_tests/cli/test_bootstrap_bi_picker.py
+        - tests/unit_tests/cli/test_bootstrap_bi_streams.py
+        - tests/unit_tests/cli/test_bootstrap_bi_subagents.py
+        - tests/unit_tests/cli/test_bootstrap_streams.py
+        - tests/unit_tests/cli/test_bootstrap_subagent.py
+        - tests/unit_tests/cli/test_core_entrypoint_acceptance.py
+        - tests/unit_tests/cli/test_interactive_init.py
+        - tests/unit_tests/cli/test_repl.py
+        - tests/unit_tests/cli/test_service_bootstrap.py
+        - tests/unit_tests/storage/semantic_model/
+        - tests/unit_tests/tools/func_tool/test_semantic_tools.py
+        - tests/unit_tests/tools/skill_tools/test_dashboard_bootstrap_skill.py
+      rationale: Retain bootstrap commands/streams/UI/subagents, REPL dispatch, helper nodes and semantic synchronization.
+    - id: leaf-cli-bootstrap-bi-subagents
+      paths:
+        - datus/cli/bootstrap_bi_subagents.py
+      targets:
+        - tests/unit_tests/agent/node/test_gen_dashboard_agentic_node.py
+        - tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py
+        - tests/unit_tests/agent/node/test_skill_creator_agentic_node.py
+        - tests/unit_tests/cli/test_bootstrap_app.py
+        - tests/unit_tests/cli/test_bootstrap_bi_app.py
+        - tests/unit_tests/cli/test_bootstrap_bi_commands.py
+        - tests/unit_tests/cli/test_bootstrap_bi_picker.py
+        - tests/unit_tests/cli/test_bootstrap_bi_streams.py
+        - tests/unit_tests/cli/test_bootstrap_bi_subagents.py
+        - tests/unit_tests/cli/test_bootstrap_streams.py
+        - tests/unit_tests/cli/test_bootstrap_subagent.py
+        - tests/unit_tests/cli/test_core_entrypoint_acceptance.py
+        - tests/unit_tests/cli/test_interactive_init.py
+        - tests/unit_tests/cli/test_repl.py
+        - tests/unit_tests/cli/test_service_bootstrap.py
+        - tests/unit_tests/storage/semantic_model/
+        - tests/unit_tests/tools/func_tool/test_semantic_tools.py
+        - tests/unit_tests/tools/skill_tools/test_dashboard_bootstrap_skill.py
+      rationale: Retain bootstrap commands/streams/UI/subagents, REPL dispatch, helper nodes and semantic synchronization.
+    - id: leaf-utils-sql-lineage
+      paths:
+        - datus/utils/sql_lineage.py
+      targets:
+        - tests/unit_tests/agent/node/test_tool_category_maps.py
+        - tests/unit_tests/storage/lineage/
+        - tests/unit_tests/tools/func_tool/test_fs_path_policy.py
+        - tests/unit_tests/tools/func_tool/test_lineage_tools.py
+        - tests/unit_tests/tools/registry/
+        - tests/unit_tests/utils/test_sql_lineage.py
+      rationale: Retain parser, storage analysis/graph/cache, tool wrapper, path policy and registry callers.
+    - id: leaf-tools-func-tool-lineage-tools
+      paths:
+        - datus/tools/func_tool/lineage_tools.py
+      targets:
+        - tests/unit_tests/agent/node/test_tool_category_maps.py
+        - tests/unit_tests/storage/lineage/
+        - tests/unit_tests/tools/func_tool/test_fs_path_policy.py
+        - tests/unit_tests/tools/func_tool/test_hana_adapter.py
+        - tests/unit_tests/tools/func_tool/test_lineage_tools.py
+        - tests/unit_tests/tools/registry/
+        - tests/unit_tests/utils/test_adapter_sql_analysis.py
+        - tests/unit_tests/utils/test_sql_lineage.py
+      rationale: Retain parser, storage analysis/graph/cache, tool wrapper, path policy and registry callers.
+    - id: leaf-utils-artifact-metadata
+      paths:
+        - datus/utils/artifact_metadata.py
+        - datus/utils/artifact_insight.py
+      targets:
+        - tests/unit_tests/agent/node/test_ask_artifact_agentic_node.py
+        - tests/unit_tests/agent/node/test_dashboard_html_renderer.py
+        - tests/unit_tests/agent/node/test_gen_visual_dashboard_agentic_node.py
+        - tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py
+        - tests/unit_tests/agent/node/test_report_html_renderer.py
+        - tests/unit_tests/agent/node/test_tool_category_maps.py
+        - tests/unit_tests/agent/node/test_visual_artifact_finalize.py
+        - tests/unit_tests/agent/node/visual_artifact/
+        - tests/unit_tests/api/routes/test_dashboard_routes.py
+        - tests/unit_tests/api/services/test_dashboard_service.py
+        - tests/unit_tests/api/services/test_explorer_service.py
+        - tests/unit_tests/api/services/test_report_service.py
+        - tests/unit_tests/cli/test_package_builder.py
+        - tests/unit_tests/cli/test_package_cli.py
+        - tests/unit_tests/tools/func_tool/test_dashboard_artifact_tools.py
+        - tests/unit_tests/tools/func_tool/test_filesystem_tools.py
+        - tests/unit_tests/tools/func_tool/test_fs_path_policy.py
+        - tests/unit_tests/tools/func_tool/test_metric_artifact_tools.py
+        - tests/unit_tests/tools/func_tool/test_report_artifact_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_tools.py
+        - tests/unit_tests/tools/func_tool/test_visual_artifact_cards.py
+        - tests/unit_tests/tools/func_tool/test_visual_artifact_helpers.py
+        - tests/unit_tests/tools/registry/
+        - tests/unit_tests/utils/test_artifact_insight.py
+        - tests/unit_tests/utils/test_artifact_metadata.py
+        - tests/unit_tests/utils/test_metric_artifact_models.py
+      rationale: Retain report/dashboard finalization, insight snapshots, artifact tools and API query consumers.
   impact_rules:
     - id: sql-policy-host
       paths:

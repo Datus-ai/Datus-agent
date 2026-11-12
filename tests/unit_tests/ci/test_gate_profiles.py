@@ -129,3 +129,36 @@ def test_renames_classify_the_removed_path_as_well_as_the_destination(tmp_path, 
     changed = test_plan.changed_files(base)
     assert set(changed) == {source, destination}
     assert repository_profile(changed, base, root=tmp_path)["profile"] == expected
+
+
+@pytest.mark.parametrize(
+    "changed,expected_runtime,expected_excel",
+    [
+        (["docs/index.md"], "false", "false"),
+        (["datus/models/accepted_turn.py"], "true", "false"),
+        (["datus/configuration/agent_config.py"], "true", "true"),
+        (["datus/tools/db_tools/data_file_loader.py"], "true", "true"),
+        (["tests/integration/tools/db_tools/test_data_file_loader_excel.py"], "true", "true"),
+    ],
+)
+def test_profile_cli_prepares_excel_only_for_selected_tests(
+    changed, expected_runtime, expected_excel, tmp_path, monkeypatch
+):
+    from ci import select_gate_profile
+
+    output = tmp_path / "github-output"
+    monkeypatch.setattr(select_gate_profile, "changed_files", lambda base: changed)
+    monkeypatch.setattr(select_gate_profile.sys, "argv", ["select_gate_profile.py", "--github-output", str(output)])
+    select_gate_profile.main()
+    values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    assert values["run_tests"] == expected_runtime
+    assert values["needs_excel"] == expected_excel
+
+
+def test_extension_preparation_uses_the_profile_selection():
+    from ci.harness.test_plan import ROOT
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/run-ut-and-coverage.yml").read_text())
+    steps = workflow["jobs"]["coverage"]["steps"]
+    preparation = next(step for step in steps if step.get("name") == "Pre-install the DuckDB excel extension")
+    assert preparation["if"] == "steps.profile.outputs.needs_excel == 'true'"

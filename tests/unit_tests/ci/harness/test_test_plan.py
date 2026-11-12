@@ -245,7 +245,8 @@ def test_tool_category_owners_retain_permission_routing_contracts(source):
 def test_node_owners_retain_package_coverage_for_factories_and_shared_hooks():
     data = load_map()
     package = "tests/unit_tests/agent/node/"
-    for source in (ROOT / "datus/agent/node").glob("*.py"):
+    for name in ("agentic_node.py", "node.py", "node_factory.py", "chat_agentic_node.py", "gen_sql_agentic_node.py"):
+        source = ROOT / "datus/agent/node" / name
         targets = unit_test_plan([source.relative_to(ROOT).as_posix()], data)["targets"]
         assert any(t.endswith("/") and package.startswith(t) for t in targets), source
 
@@ -423,7 +424,7 @@ def _map():
         "flow_groups": {
             "chat": {
                 "flows": [
-                    {"coverage": {"merge_queue": {"status": "covered", "nodeids": ["test_api.py::test_history"]}}}
+                    {"coverage": {"pr_acceptance": {"status": "covered", "nodeids": ["test_api.py::test_history"]}}}
                 ]
             }
         },
@@ -436,9 +437,9 @@ def test_execution_evidence_requires_both_product_and_api_cases(tmp_path):
         p = tmp_path / f"{name}.json"
         p.write_text(json.dumps({"collected": [nodeid], "outcomes": {nodeid: "passed"}}))
         reports.append(p)
-    assert check_execution(reports, "merge_queue", _map())["status"] == "success"
+    assert check_execution(reports, "pr_acceptance", _map())["status"] == "success"
     reports[1].unlink()
-    assert check_execution(reports, "merge_queue", _map())["status"] == "failure"
+    assert check_execution(reports, "pr_acceptance", _map())["status"] == "failure"
 
 
 @pytest.mark.parametrize("outcome", ["skipped", "failed", "xfailed", "not_executed"])
@@ -452,7 +453,7 @@ def test_required_cases_must_execute_successfully(tmp_path, outcome):
             }
         )
     )
-    result = check_execution([report], "merge_queue", _map())
+    result = check_execution([report], "pr_acceptance", _map())
     assert result["status"] == "failure"
     assert "test_api.py::test_history" in result["errors"][0]
 

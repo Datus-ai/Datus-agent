@@ -64,11 +64,15 @@ def normalize_path(path: str) -> str:
 
 
 def collapse_targets(targets: Iterable[str]) -> list[str]:
-    """Keep parent directories without narrowing pytest collection to explicit children."""
+    """Collect each file once when a directory or whole-file target subsumes it."""
     unique = list(dict.fromkeys(targets))
     directories = [target for target in unique if target.endswith("/")]
+    files = {target for target in unique if "::" not in target and not target.endswith("/")}
     return [
-        target for target in unique if not any(target != parent and target.startswith(parent) for parent in directories)
+        target
+        for target in unique
+        if not any(target != parent and target.startswith(parent) for parent in directories)
+        and not ("::" in target and target.split("::", 1)[0] in files)
     ]
 
 
