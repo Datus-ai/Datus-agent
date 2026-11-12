@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from ci.harness.test_plan import ROOT, collapse_targets, load_map, normalize_path, unit_test_plan
+from ci.harness.test_plan import ROOT, collapse_targets, load_map, normalize_path, unit_owner, unit_test_plan
 
 SHARED_PATHS = (
     "pyproject.toml",
@@ -91,7 +91,10 @@ def validate_integration_consumers(data: dict, root: Path = ROOT) -> list[str]:
     for source, tests in consumers.items():
         if not tests:
             continue
-        groups = integration_groups([source], rules, unit_test_plan([source], data)["targets"])
+        # The caller already validated these owners against the requested root.
+        owner = unit_owner(source, data["execution"]["unit_rules"])
+        unit_targets = owner[1]["targets"] if owner else []
+        groups = integration_groups([source], rules, unit_targets)
         selected = {target for rule in rules if rule["id"] in groups for target in rule["targets"]}
         for test in sorted(tests - selected):
             errors.append(f"integration_rules: uncovered source/test reference: {source} -> {test}")

@@ -8,8 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from ci.harness.pr_test_plan import SHARED_PATHS, pr_test_plan, validate_integration_consumers
-from ci.harness.test_plan import ROOT, collapse_targets, load_map
+from ci.harness.pr_test_plan import (
+    SHARED_PATHS,
+    pr_test_plan,
+    validate_integration_consumers,
+    validate_integration_rules,
+)
+from ci.harness.test_plan import ROOT, collapse_targets, load_map, validate_unit_rules
 
 pytestmark = pytest.mark.acceptance
 
@@ -59,6 +64,46 @@ def test_integration_rule_audit_rejects_omitted_cross_package_consumer():
     assert any(
         "dashboard_service.py -> tests/integration/tools/test_dosi_query_filters.py" in error for error in errors
     )
+
+
+@pytest.mark.parametrize("full_unit_fallback", [False, True])
+def test_integration_consumer_audit_honors_another_checkout(tmp_path, full_unit_fallback):
+    unit_target = "tests/unit_tests/test_external_checkout_only.py"
+    integration_target = "tests/integration/test_external_contract.py"
+    assert not (ROOT / unit_target).exists()
+    files = {
+        "datus/external.py": "VALUE = 42\nraise RuntimeError('must not import application code')\n",
+        "datus/unused.py": "VALUE = 0\n",
+        unit_target: "def test_external_unit(): pass\n",
+        integration_target: "from datus.external import VALUE\ndef test_contract(): assert VALUE == 42\n",
+    }
+    for name, source in files.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source)
+    data = {
+        "execution": {
+            "unit_rules": [
+                {
+                    "id": "default",
+                    "paths": ["datus/"],
+                    "targets": ["tests/unit_tests/"] if full_unit_fallback else [unit_target],
+                    "rationale": "Shared boundary in this checkout.",
+                },
+                {"id": "unused-leaf", "paths": ["datus/unused.py"], "targets": [unit_target]},
+            ],
+            "integration_rules": [
+                {
+                    "id": "external-contract",
+                    "paths": ["datus/unused.py" if full_unit_fallback else "datus/external.py"],
+                    "targets": [integration_target],
+                }
+            ],
+        }
+    }
+    assert validate_unit_rules(data, tmp_path) == []
+    assert validate_integration_rules(data, tmp_path) == []
+    assert validate_integration_consumers(data, tmp_path) == []
 
 
 @pytest.mark.parametrize(
