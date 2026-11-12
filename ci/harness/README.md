@@ -143,13 +143,17 @@ code gate, regardless of the PR title. PR validation always publishes the stable
 `format-check / format-check` and `run-coverage / coverage` contexts, including on
 title/body edits and base-branch changes. Metadata-only edits keep both contexts
 but run a read-only evidence check instead of installing dependencies or running
-Ruff/pytest again. The verifier requires the same head SHA, PR number and base
-branch, selects the latest real Code Quality validation run, and accepts only
-the matching job's successful outcome. Pending results are awaited; missing,
+Ruff/pytest again. The verifier requires the same head SHA, PR number, base
+branch and base commit SHA. It selects the latest real Code Quality validation
+run and accepts only the matching job's successful outcome. Pending results are awaited; missing,
 failed, cancelled or skipped validation cannot become green. The evidence wait
 is bounded to the existing one-hour test-command budget. Code pushes and
-base-branch changes always run real validation. Metadata-only events never
-cancel that validation.
+base-branch changes always run real validation. Test selection, diff coverage
+and the product-test plan all use the base commit SHA recorded in that run,
+rather than a moving branch tip. If the base advances, metadata edits cannot
+reuse evidence from the old base; they await real validation for the new base,
+which a code push starts. Missing or invalid base SHAs fail closed.
+Metadata-only events never cancel that validation.
 Merge-queue context publication lives in a separate merge-group-only workflow,
 so skipped jobs cannot compete with the real PR check contexts.
 

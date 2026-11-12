@@ -29,12 +29,31 @@ jobs:
             const { reuseValidation } = require('./ci/reuse-pr-validation.js');
             await reuseValidation({ github, context, core, checkName: 'run-coverage / coverage' });
 
-      - name: Fetch base branch
+      - name: Pin comparison base
         if: ${{ !inputs.reuse_validation }}
+        id: comparison
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref || github.ref_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          BASE_REF="${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref || github.ref_name }}"
-          BASE_REF="${BASE_REF#refs/heads/}"
-          git fetch origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
+          if [ -n "$PR_NUMBER" ] && [ -z "$BASE_SHA" ]; then
+            echo "PR validation requires a base commit SHA" >&2
+            exit 1
+          fi
+          if [ -n "$BASE_SHA" ]; then
+            if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "Invalid base commit SHA" >&2
+              exit 1
+            fi
+            git fetch origin "$BASE_SHA"
+            git cat-file -e "${BASE_SHA}^{commit}"
+            echo "ref=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          else
+            BASE_REF="${BASE_REF#refs/heads/}"
+            git fetch origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
+            echo "ref=origin/$BASE_REF" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Set up Python
         if: ${{ !inputs.reuse_validation }}
@@ -55,11 +74,10 @@ jobs:
         if: ${{ !inputs.reuse_validation }}
         id: profile
         env:
-          BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref || github.ref_name }}
+          COMPARE_REF: ${{ steps.comparison.outputs.ref }}
         run: |
-          BASE_REF="${BASE_REF#refs/heads/}"
           uv run --no-project --with pyyaml python ci/select_gate_profile.py \
-            --base-ref "origin/${BASE_REF}" --github-output "$GITHUB_OUTPUT"
+            --base-ref "$COMPARE_REF" --github-output "$GITHUB_OUTPUT"
 
       - name: Documentation-only summary
         if: ${{ !inputs.reuse_validation && (steps.profile.outputs.run_tests != 'true') }}
@@ -162,18 +180,16 @@ jobs:
         id: metrics
         env:
           DATUS_CI_PYTEST_BASETEMP: ${{ runner.temp }}/datus-agent-pytest-${{ github.run_id }}-${{ github.run_attempt }}
+          COMPARE_REF: ${{ steps.comparison.outputs.ref }}
         run: |
-          BASE_REF="${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref || github.ref_name }}"
-          BASE_REF="${BASE_REF#refs/heads/}"
-          python3 ci/run-pr-tests.py "$BASE_REF"
+          python3 ci/run-pr-tests.py "$COMPARE_REF"
 
       - name: Plan affected real-model product validation
         if: ${{ !inputs.reuse_validation && (always() && steps.profile.outputs.run_tests == 'true') }}
         env:
-          BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref || github.ref_name }}
+          COMPARE_REF: ${{ steps.comparison.outputs.ref }}
         run: |
-          BASE_REF="${BASE_REF#refs/heads/}"
-          python3 ci/plan-product-tests.py --base-ref "origin/${BASE_REF}"
+          python3 ci/plan-product-tests.py --base-ref "$COMPARE_REF"
 
       - name: Cleanup pytest temp
         if: ${{ !inputs.reuse_validation && (always()) }}

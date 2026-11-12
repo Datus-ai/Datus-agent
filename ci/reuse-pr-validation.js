@@ -2,12 +2,16 @@
 const { setTimeout: delay } = require('node:timers/promises');
 
 function validationTitle(pr) {
-  return `Validate PR #${pr.number} ${pr.head.sha} base:${pr.base.ref}`;
+  if (!/^[0-9a-f]{40}$/.test(pr.base?.sha || '')) {
+    throw new Error('Validation reuse requires a base commit SHA');
+  }
+  return `Validate PR #${pr.number} ${pr.head.sha} base:${pr.base.ref}@${pr.base.sha}`;
 }
 
 async function priorCheckState({ github, context, checkName }) {
   const pr = context.payload.pull_request;
   if (!pr) throw new Error('Validation reuse requires a pull_request event');
+  const title = validationTitle(pr);
   const repo = context.repo;
   let source;
   for (let page = 1; !source; page += 1) {
@@ -17,14 +21,14 @@ async function priorCheckState({ github, context, checkName }) {
     const runs = response.data.workflow_runs;
     source = runs
       .filter(run => run.id !== context.runId && run.event === 'pull_request'
-        && run.head_sha === pr.head.sha && run.display_title === validationTitle(pr))
+        && run.head_sha === pr.head.sha && run.display_title === title)
       .sort((a, b) => b.run_number - a.run_number)[0];
     if (source || runs.length < 100) break;
   }
-  if (!source) return { state: 'pending', reason: 'Waiting for a real validation run for this SHA and base branch' };
+  if (!source) return { state: 'pending', reason: 'Waiting for a real validation run for this head SHA and base commit' };
   const jobs = await github.rest.actions.listJobsForWorkflowRun({ ...repo, run_id: source.id, filter: 'latest', per_page: 100 });
   const job = jobs.data.jobs.find(item => item.name === checkName);
-  const evidence = { url: source.html_url, runId: source.id, sha: pr.head.sha, base: pr.base.ref, checkName };
+  const evidence = { url: source.html_url, runId: source.id, sha: pr.head.sha, base: pr.base.ref, baseSha: pr.base.sha, checkName };
   if (job?.status === 'completed') {
     return { ...evidence, state: job.conclusion === 'success' ? 'success' : 'failure', reason: `${checkName}: ${job.conclusion}` };
   }
@@ -37,7 +41,7 @@ async function reuseValidation({ github, context, core, checkName, timeoutMs = 6
   while (true) {
     const result = await priorCheckState({ github, context, checkName });
     if (result.state === 'success') {
-      core.notice(`Reused ${checkName} for ${result.sha}, base ${result.base}: ${result.url}`);
+      core.notice(`Reused ${checkName} for ${result.sha}, base ${result.base}@${result.baseSha}: ${result.url}`);
       return result;
     }
     if (result.state === 'failure') throw new Error(`${result.reason}: ${result.url}`);

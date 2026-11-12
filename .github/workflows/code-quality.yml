@@ -1,6 +1,6 @@
 name: "Code Quality"
 run-name: >-
-  ${{ github.event.action == 'edited' && !github.event.changes.base && 'Metadata' || 'Validate' }} PR #${{ github.event.pull_request.number }} ${{ github.event.pull_request.head.sha }} base:${{ github.event.pull_request.base.ref }}
+  ${{ github.event.action == 'edited' && !github.event.changes.base && 'Metadata' || 'Validate' }} PR #${{ github.event.pull_request.number }} ${{ github.event.pull_request.head.sha }} base:${{ github.event.pull_request.base.ref }}@${{ github.event.pull_request.base.sha }}
 
 on:
   pull_request:

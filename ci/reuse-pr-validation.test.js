@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { validationTitle, priorCheckState, reuseValidation } = require('./reuse-pr-validation');
 
-const pr = { number: 1619, head: { sha: 'head-sha' }, base: { ref: 'main' } };
+const pr = { number: 1619, head: { sha: 'head-sha' }, base: { ref: 'main', sha: 'a'.repeat(40) } };
 const context = { repo: { owner: 'Datus-ai', repo: 'Datus-agent' }, payload: { pull_request: pr }, runId: 100 };
 const checkName = 'run-coverage / coverage';
 const run = (id, overrides = {}) => ({
@@ -30,13 +30,34 @@ const state = github => priorCheckState({ github, context, checkName });
 test('uses an exact-SHA/base real validation, excluding metadata and the current run', async () => {
   const github = client([
     run(100), run(90, { display_title: 'Metadata PR 1619' }), run(80, { head_sha: 'different-head' }),
-    run(70, { display_title: validationTitle({ ...pr, base: { ref: 'release' } }) }),
+    run(70, { display_title: validationTitle({ ...pr, base: { ...pr.base, ref: 'release' } }) }),
     run(60, { event: 'workflow_dispatch' }), run(50, { display_title: validationTitle({ ...pr, number: 123 }) }), run(40),
   ], [job('success')]);
   const result = await state(github);
   assert.equal(result.state, 'success');
   assert.equal(result.runId, 40);
+  assert.equal(result.baseSha, pr.base.sha);
   assert.deepEqual(github.calls, [40]);
+});
+
+test('does not reuse successful coverage after the base commit advances', async () => {
+  const oldBase = { ...pr, base: { ...pr.base, sha: 'b'.repeat(40) } };
+  const github = client([
+    run(30, { display_title: `Validate PR #${pr.number} ${pr.head.sha} base:${pr.base.ref}` }),
+    run(20, { display_title: validationTitle(oldBase) }),
+  ], [job('success')]);
+  assert.equal((await state(github)).state, 'pending');
+  assert.deepEqual(github.calls, []);
+});
+
+test('fails closed before looking for evidence when the base SHA is missing or invalid', async () => {
+  const github = client([], []);
+  github.rest.actions.listWorkflowRuns = async () => { throw new Error('must not query unknown base'); };
+  for (const sha of [undefined, '', 'main', 'a'.repeat(39)]) {
+    const unknownBase = { ...pr, base: { ...pr.base, sha } };
+    await assert.rejects(priorCheckState({ github, context: { ...context, payload: { pull_request: unknownBase } }, checkName }),
+      /requires a base commit SHA/);
+  }
 });
 
 test('does not replace the latest real failure with an older successful run', async () => {
