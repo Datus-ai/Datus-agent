@@ -161,4 +161,7 @@ def test_extension_preparation_uses_the_profile_selection():
     workflow = yaml.safe_load((ROOT / ".github/workflows/run-ut-and-coverage.yml").read_text())
     steps = workflow["jobs"]["coverage"]["steps"]
     preparation = next(step for step in steps if step.get("name") == "Pre-install the DuckDB excel extension")
-    assert preparation["if"] == "${{ !inputs.reuse_validation && (steps.profile.outputs.needs_excel == 'true') }}"
+    assert (
+        preparation["if"]
+        == "${{ steps.reuse.outputs.reused != 'true' && (steps.profile.outputs.needs_excel == 'true') }}"
+    )

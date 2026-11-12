@@ -43,7 +43,7 @@ def test_merge_group_contexts_are_isolated_from_pr_events():
     assert all("if" not in job for job in config["jobs"].values())
 
 
-def test_metadata_mode_checks_evidence_without_installing_or_running_tests():
+def test_metadata_mode_runs_tests_only_when_successful_evidence_is_not_reused():
     config = workflow("code-quality.yml")
     assert "github.event.pull_request.head.sha" in config["run-name"]
     assert "github.event.pull_request.base.ref" in config["run-name"]
@@ -55,12 +55,14 @@ def test_metadata_mode_checks_evidence_without_installing_or_running_tests():
             assert "if" not in job
             steps = job["steps"]
             verifier = next(step for step in steps if step.get("name") == "Reuse verified validation")
+            assert verifier["id"] == "reuse"
             assert verifier["if"] == "inputs.reuse_validation"
             assert "reuseValidation" in verifier["with"]["script"]
+            assert "core.setOutput('reused', result.state === 'success')" in verifier["with"]["script"]
             for step in steps:
                 if step is verifier or step.get("name") == "Checkout code":
                     continue
-                assert "!inputs.reuse_validation" in step["if"], step["name"]
+                assert "steps.reuse.outputs.reused != 'true'" in step["if"], step["name"]
 
 
 def coverage_steps():

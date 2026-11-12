@@ -46,8 +46,52 @@ test('does not reuse successful coverage after the base commit advances', async 
     run(30, { display_title: `Validate PR #${pr.number} ${pr.head.sha} base:${pr.base.ref}` }),
     run(20, { display_title: validationTitle(oldBase) }),
   ], [job('success')]);
-  assert.equal((await state(github)).state, 'pending');
+  assert.equal((await state(github)).state, 'missing');
   assert.deepEqual(github.calls, []);
+});
+
+test('reuses fresh metadata fallback validation, but never evidence-only copies', async () => {
+  const metadata = id => run(id, { display_title: validationTitle(pr).replace(/^Validate /, 'Metadata ') });
+  const github = client([metadata(90), metadata(80), run(70)], id => [
+    { ...job(id === 70 ? 'failure' : 'success'), steps: [
+      { name: 'Pin comparison base', status: 'completed', conclusion: id === 90 ? 'skipped' : 'success' },
+    ] },
+  ]);
+  const result = await state(github);
+  assert.equal(result.state, 'success');
+  assert.equal(result.runId, 80);
+  assert.deepEqual(github.calls, [90, 80]);
+  github.rest.actions.listJobsForWorkflowRun = async ({ run_id }) => ({ data: { jobs: [
+    { ...job(run_id === 90 ? 'success' : 'failure'), steps: [
+      { name: 'Pin comparison base', status: 'completed', conclusion: run_id === 90 ? 'skipped' : 'success' },
+    ] },
+  ] } });
+  assert.equal((await state(github)).state, 'failure');
+});
+
+test('waits for real fallback validation and propagates its failure', async () => {
+  const fallback = run(80, { display_title: validationTitle(pr).replace(/^Validate /, 'Metadata '), status: 'in_progress' });
+  const jobs = [
+    { name: 'format-check / format-check', status: 'completed', conclusion: 'success', steps: [
+      { name: 'Debug - Show current commit', status: 'completed', conclusion: 'success' },
+    ] },
+    job(null, 'queued'),
+  ];
+  assert.equal((await state(client([fallback], jobs))).state, 'pending');
+  jobs[1] = job('failure');
+  assert.equal((await state(client([{ ...fallback, status: 'completed' }], jobs))).state, 'failure');
+});
+
+test('does not wait on metadata copies that are themselves waiting for evidence', async () => {
+  const metadata = run(90, { display_title: validationTitle(pr).replace(/^Validate /, 'Metadata '), status: 'in_progress' });
+  const github = client([metadata, run(20, { status: 'in_progress' })], () => [
+    { ...job(null, 'in_progress'), steps: [
+      { name: 'Pin comparison base', status: 'pending', conclusion: null },
+    ] },
+  ]);
+  const result = await state(github);
+  assert.equal(result.state, 'pending');
+  assert.equal(result.runId, 20);
 });
 
 test('fails closed before looking for evidence when the base SHA is missing or invalid', async () => {
@@ -72,8 +116,8 @@ for (const conclusion of ['cancelled', 'skipped', 'neutral']) {
   });
 }
 
-test('waits for missing/queued evidence and rejects an unexecuted completed check', async () => {
-  assert.equal((await state(client([], []))).state, 'pending');
+test('allows fresh validation when absent, waits for queued checks and rejects completed omissions', async () => {
+  assert.equal((await state(client([], []))).state, 'missing');
   assert.equal((await state(client([run(20, { status: 'in_progress' })], []))).state, 'pending');
   assert.equal((await state(client([run(20, { status: 'in_progress' })], [job(null, 'queued')]))).state, 'pending');
   assert.equal((await state(client([run(20)], []))).state, 'failure');
@@ -97,9 +141,17 @@ test('only publishes success after the real job finishes', async () => {
 });
 
 test('fails closed on API errors or timeout rather than reporting success', async () => {
-  const github = client([], []);
+  const github = client([run(20, { status: 'in_progress' })], [job(null, 'queued')]);
   await assert.rejects(reuseValidation({ github, context, checkName, timeoutMs: 0,
     core: { info() {}, notice() { throw new Error('must not publish success'); } } }), /Timed out/);
   github.rest.actions.listWorkflowRuns = async () => { throw new Error('permission denied'); };
   await assert.rejects(state(github), /permission denied/);
+});
+
+test('returns immediately to perform real validation when matching evidence is absent', async () => {
+  const notices = [];
+  const result = await reuseValidation({ github: client([], []), context, checkName, timeoutMs: 0,
+    core: { info() { throw new Error('must not wait'); }, notice: message => notices.push(message) } });
+  assert.equal(result.state, 'missing');
+  assert.match(notices[0], /running fresh validation/);
 });
