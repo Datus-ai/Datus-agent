@@ -10,7 +10,14 @@ SQL generation with support for limited context, enhanced template variables,
 and flexible configuration through agent.yml.
 """
 
+import json
 from typing import Any, Dict, Literal, Optional, Union
+
+import sqlglot
+from datus_db_core import BaseSqlConnector
+from sqlglot import expressions as exp
+from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
+from sqlglot.optimizer.scope import traverse_scope
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.stream_run_context import StreamRunContext
@@ -19,12 +26,16 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.agent_models import SubAgentConfig
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
+from datus.schemas.node_models import TableSchema
+from datus.schemas.tool_summary import detect_tool_failure
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
+from datus.tools.func_tool.database import TableCoordinate
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import metadata_identifier, parse_read_dialect
 
 logger = get_logger(__name__)
 
@@ -753,10 +764,228 @@ class GenSQLAgenticNode(AgenticNode):
                 )
                 workflow.context.sql_contexts.append(new_record)
 
+            try:
+                self._promote_verified_schemas(workflow)
+            except Exception as exc:
+                logger.warning("Could not promote runtime schemas (%s)", type(exc).__name__)
+
             return {"success": True, "message": "Updated SQL generation context"}
         except Exception as e:
             logger.error(f"Failed to update SQL generation context: {e}")
             return {"success": False, "message": str(e)}
+
+    def _promotion_coordinate(
+        self, name: str, connector: BaseSqlConnector, dialect: str, **namespaces: str
+    ) -> TableCoordinate:
+        """Resolve only complete coordinates using the DB tool's namespace rules."""
+        table = sqlglot.parse_one(name, read=dialect, into=exp.Table)
+        fields = self.db_func_tool._determine_field_order(connector)
+        if table.alias or not all(isinstance(part, exp.Identifier) for part in table.parts):
+            raise ValueError("Not a physical table identifier")
+        if len(table.parts) > len(fields):
+            raise ValueError("Unsupported table qualification")
+        coordinate = self.db_func_tool._build_table_coordinate(name, connector=connector, **namespaces)
+        if tuple(part.name for part in table.parts) != tuple(
+            getattr(coordinate, field) for field in fields[-len(table.parts) :]
+        ):
+            raise ValueError("Identifier does not round-trip through database tool resolution")
+        if any(not getattr(coordinate, field) for field in fields):
+            raise ValueError("Table namespace is not fully resolved")
+        if any("." in getattr(coordinate, field) for field in fields):
+            raise ValueError("Dotted identifier parts have an ambiguous metadata identifier")
+        return coordinate
+
+    @staticmethod
+    def _promotion_key(parts: tuple[str, ...], dialect: str) -> tuple[str, ...]:
+        # Metadata names are physical identifiers. Quoting preserves their case
+        # where it matters; DuckDB and SQLite fold even quoted identifiers.
+        return tuple(
+            normalize_identifiers(exp.to_identifier(part, quoted=True), dialect=dialect).name for part in parts
+        )
+
+    def _promote_verified_schemas(self, workflow: Workflow) -> None:
+        """Reuse successful database evidence without changing persistent metadata."""
+        tool = self.db_func_tool
+        if tool is None or not self.result.success or not self.result.sql or not self.result.action_history:
+            return
+        workflow_datasource = getattr(getattr(workflow, "task", None), "datasource", "")
+        if workflow_datasource and workflow_datasource != tool._default_datasource:
+            return
+        # Streaming workflows share a history manager across nodes and turns.
+        # Only the current GenSQL request can supply evidence for its SQL.
+        actions = []
+        for action in reversed(self.result.action_history):
+            if action.get("depth") or action.get("parent_action_id"):
+                continue
+            if action.get("role") == ActionRole.USER and action.get("action_type") == f"{self.get_node_name()}_request":
+                break
+            actions.append(action)
+        else:
+            return
+
+        connector = tool._get_connector()
+        dialect = parse_read_dialect(connector.dialect)
+        statements = sqlglot.parse(self.result.sql, read=dialect)
+        if len(statements) != 1 or not isinstance(statements[0], exp.Query):
+            return
+        query = normalize_identifiers(statements[0], dialect=dialect)
+        referenced = set()
+        has_schema_namespace = "schema" in tool._determine_field_order(connector)
+        for scope in traverse_scope(query):
+            for _, source in scope.selected_sources.values():
+                if isinstance(source, exp.Table):
+                    # A configured schema is not proof of how the server's
+                    # search path resolves an unqualified SQL reference.
+                    if has_schema_namespace and not source.db:
+                        continue
+                    table = source.copy()
+                    table.set("alias", None)
+                    try:
+                        coordinate = self._promotion_coordinate(table.sql(dialect=dialect), connector, dialect)
+                    except ValueError:
+                        continue
+                    referenced.add(
+                        self._promotion_key(
+                            (coordinate.catalog, coordinate.database, coordinate.schema, coordinate.table), dialect
+                        )
+                    )
+
+        candidates = {}
+        for action in reversed(actions):
+            if action.get("role") != ActionRole.TOOL or action.get("status") != ActionStatus.SUCCESS:
+                continue
+            call = action.get("input")
+            output = action.get("output")
+            if not isinstance(call, dict) or call.get("function_name") != "describe_table":
+                continue
+            if not isinstance(output, dict) or detect_tool_failure(output):
+                continue
+            try:
+                payload = output.get("raw_output", output)
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+                if not isinstance(payload, dict) or payload.get("success") != 1 or detect_tool_failure(payload):
+                    continue
+                described = payload.get("result")
+                columns = described.get("columns") if isinstance(described, dict) else None
+                if (
+                    not isinstance(columns, list)
+                    or not columns
+                    or any(
+                        not isinstance(column, dict) or not isinstance(column.get("name"), str) or not column["name"]
+                        for column in columns
+                    )
+                ):
+                    continue
+                arguments = call.get("arguments")
+                if isinstance(arguments, str):
+                    arguments = json.loads(arguments)
+                if not isinstance(arguments, dict) or not isinstance(arguments.get("table_name"), str):
+                    continue
+                # TableSchema has no datasource field: foreign evidence cannot be
+                # represented safely in this workflow's schema collection.
+                if arguments.get("datasource") not in (None, "", tool._default_datasource):
+                    continue
+                catalog, database, schema = tool._normalize_namespace_args(
+                    arguments.get("catalog"), arguments.get("database"), arguments.get("schema_name")
+                )
+                if database and database != connector.database_name:
+                    # An explicit database override can change the connector's
+                    # defaults before describe_table resolves the name.
+                    continue
+                coordinate = self._promotion_coordinate(
+                    arguments["table_name"], connector, dialect, catalog=catalog, database=database, schema=schema
+                )
+                key = self._promotion_key(
+                    (coordinate.catalog, coordinate.database, coordinate.schema, coordinate.table), dialect
+                )
+                if key in referenced:
+                    candidates[key] = (
+                        arguments["table_name"],
+                        coordinate,
+                        set(self._promotion_key(tuple(column["name"] for column in columns), dialect)),
+                    )
+            except (ValueError, TypeError, sqlglot.errors.ParseError):
+                continue
+
+        existing = {
+            self._promotion_key(
+                (schema.catalog_name, schema.database_name, schema.schema_name, schema.table_name), dialect
+            )
+            for schema in workflow.context.table_schemas
+        }
+        existing_identifiers = {schema.identifier for schema in workflow.context.table_schemas}
+        promoted = []
+        for key, (described_name, coordinate, described_columns) in candidates.items():
+            catalog, database, schema_name, table_name = (
+                coordinate.catalog,
+                coordinate.database,
+                coordinate.schema,
+                coordinate.table,
+            )
+            identifier = metadata_identifier(catalog, database, schema_name, table_name, dialect=connector.dialect)
+            if key in existing or identifier in existing_identifiers:
+                continue
+            try:
+                result = tool.get_table_ddl(
+                    table_name=described_name, catalog=catalog, database=database, schema_name=schema_name
+                )
+                if result.success != 1 or result.error or not isinstance(result.result, dict):
+                    raise ValueError("DDL lookup did not return successful metadata")
+                schema = TableSchema.model_validate(result.result)
+                schema_parts = (schema.catalog_name, schema.database_name, schema.schema_name, schema.table_name)
+                if (
+                    schema.identifier != metadata_identifier(*schema_parts, dialect=connector.dialect)
+                    or self._promotion_key(schema_parts, dialect) != key
+                ):
+                    raise ValueError("DDL metadata does not match the verified table")
+                ddl_statements = sqlglot.parse(schema.definition, read=dialect)
+                if len(ddl_statements) != 1:
+                    raise ValueError("DDL contains multiple statements")
+                ddl = normalize_identifiers(ddl_statements[0], dialect=dialect)
+                if not isinstance(ddl, exp.Create):
+                    raise ValueError("DDL is not a complete CREATE statement")
+                target = ddl.this.this if isinstance(ddl.this, exp.Schema) else ddl.this
+                ddl_columns = (
+                    {column.name for column in ddl.this.expressions if isinstance(column, exp.ColumnDef)}
+                    if isinstance(ddl.this, exp.Schema)
+                    else set()
+                )
+                if (
+                    not isinstance(target, exp.Table)
+                    or target.name != key[-1]
+                    or not (
+                        (ddl.kind == "TABLE" and described_columns <= ddl_columns)
+                        or (ddl.kind == "VIEW" and isinstance(ddl.expression, exp.Query))
+                    )
+                ):
+                    raise ValueError("DDL has no complete table or view definition")
+                ddl_coordinate = self._promotion_coordinate(
+                    target.sql(dialect=dialect),
+                    connector,
+                    dialect,
+                    catalog=catalog,
+                    database=database,
+                    schema=schema_name,
+                )
+                if (
+                    self._promotion_key(
+                        (ddl_coordinate.catalog, ddl_coordinate.database, ddl_coordinate.schema, ddl_coordinate.table),
+                        dialect,
+                    )
+                    != key
+                ):
+                    raise ValueError("DDL definition names a different table")
+                promoted.append(schema)
+                existing.add(key)
+                existing_identifiers.add(schema.identifier)
+            except Exception as exc:
+                reason = str(exc) if type(exc) is ValueError else type(exc).__name__
+                logger.warning("Could not promote verified schema %s: %s", identifier, reason)
+        if promoted:
+            # Context can be shallow-copied into subworkflows, and initial node
+            # inputs can share its list. Keep those earlier snapshots intact.
+            workflow.context.table_schemas = [*workflow.context.table_schemas, *promoted]
 
     def _extract_sql_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
         """
