@@ -2942,8 +2942,9 @@ def _db_config_to_dosi_profile(db_config: Optional[DbConfig]) -> Optional[Dict[s
         from datus.tools.semantic_tools.dosi.dialects import normalize_dialect
 
         dosi_db_config["type"] = normalize_dialect(dosi_db_config["type"])
-    if "schema" not in dosi_db_config and dosi_db_config.get("schema_name"):
-        dosi_db_config["schema"] = dosi_db_config["schema_name"]
+    schema_name = dosi_db_config.pop("schema_name", None)
+    if "schema" not in dosi_db_config and schema_name:
+        dosi_db_config["schema"] = schema_name
     if dosi_db_config.get("type") == "oracle" and dosi_db_config.get("service_name"):
         dosi_db_config["database"] = dosi_db_config["service_name"]
     return dosi_db_config
