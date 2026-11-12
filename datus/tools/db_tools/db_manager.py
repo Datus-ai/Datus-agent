@@ -297,8 +297,8 @@ class DBManager:
         """Connector for ``(datasource, database)``.
 
         Without ``context``, ``database`` empty selects the datasource default.
-        A resolved ``context`` is authoritative and requires a concrete database;
-        an empty one is rejected before opening or reusing a connection.
+        A resolved ``context`` is authoritative. Database namespaces and file
+        targets require a concrete database; schema-only adapters may leave it empty.
         For a glob (``path_pattern``)
         datasource each matched file is a database; for server DBs ``database`` overrides the
         configured one (cloned into the connection URI).
@@ -418,7 +418,16 @@ class DBManager:
         if context is not None:
             if context.datasource != datasource or (database and database != context.database):
                 raise ValueError("Connection context does not match its datasource/database")
-            if not context.database:
+            cfg = self._db_configs.get(datasource)
+            db_type = _normalize_dialect_name(getattr(cfg, "type", None))
+            # Oracle exposes schema only; its service/PDB is a connection target,
+            # not a SQL database namespace. Unknown adapters stay fail-closed.
+            requires_database = (
+                db_type == DBType.SQLITE
+                or not connector_registry.has_capabilities(db_type)
+                or connector_registry.support_database(db_type)
+            )
+            if not context.database and requires_database:
                 raise ValueError(
                     "Select a database explicitly; a resolved empty database cannot use a connection default"
                 )
