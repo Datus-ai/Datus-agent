@@ -2395,3 +2395,16 @@ async def test_skill_setup_uses_ask_node_identity(real_agent_config, mock_llm_cr
     result = await node.tools[0].on_invoke_tool(context, context.tool_arguments)
     assert result["success"] == 0
     assert "Private guidance" not in str(result)
+
+
+@pytest.mark.parametrize("factory", [_make_ask_report_node, _make_ask_dashboard_node])
+async def test_empty_artifact_readers_keep_only_the_session_channel(real_agent_config, mock_llm_create, factory):
+    """Empty resource selections still permit questions without granting file or database access."""
+    node = factory(real_agent_config)
+    node.node_config["tools"] = ""
+    for _ in range(2):
+        node._rebuild_tools()
+        captured_tools = node.tools
+        node._compose_hooks()
+        assert captured_tools is node.tools
+        assert [tool.name for tool in captured_tools] == ["ask_user"]

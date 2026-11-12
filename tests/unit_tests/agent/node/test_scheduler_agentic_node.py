@@ -114,7 +114,7 @@ class _ExecutableSchedulerTools:
         self.runs.setdefault(job_id, []).append(run)
         return FuncToolResult(result=run)
 
-    @tool_contract(access="restricted", direct_call=False, category="scheduler_tools")
+    @tool_contract(access="read", direct_call=False, category="scheduler_tools")
     def get_scheduler_job(self, job_id: str):
         from datus.tools.func_tool import FuncToolResult
 
@@ -123,7 +123,7 @@ class _ExecutableSchedulerTools:
             return FuncToolResult(result={"found": False, "job_id": job_id})
         return FuncToolResult(result={"found": True, **job})
 
-    @tool_contract(access="restricted", direct_call=False, category="scheduler_tools")
+    @tool_contract(access="read", direct_call=False, category="scheduler_tools")
     def list_job_runs(self, job_id: str, limit: int = 10, offset: int = 0):
         from datus.tools.func_tool import FuncToolResult
         from datus.tools.func_tool.base import FuncToolListResult
@@ -131,7 +131,7 @@ class _ExecutableSchedulerTools:
         rows = self.runs.get(job_id, [])[offset : offset + limit]
         return FuncToolResult(result=FuncToolListResult(items=rows, total=len(self.runs.get(job_id, []))).model_dump())
 
-    @tool_contract(access="restricted", direct_call=False, category="scheduler_tools")
+    @tool_contract(access="read", direct_call=False, category="scheduler_tools")
     def get_run_log(self, job_id: str, run_id: str):
         from datus.tools.func_tool import FuncToolResult
 

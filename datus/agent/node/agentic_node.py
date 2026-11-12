@@ -3151,7 +3151,9 @@ class AgenticNode(Node):
         try:
             from datus.tools.func_tool.ask_user_tools import AskUserTool
 
-            broker = self._get_or_create_broker()
+            # The owning run already binds the queue. A delegated child must
+            # retain it while the parent collector is listening.
+            broker = self.interaction_broker
             self.ask_user_tool = AskUserTool(broker=broker)
             if self.tools is not None:
                 self.tools.extend(self.ask_user_tool.available_tools())
@@ -3178,36 +3180,10 @@ class AgenticNode(Node):
             self.task_result_tool = TaskResultTool()
             if self.tools is not None:
                 self.tools.extend(self.task_result_tool.available_tools())
-            self._allow_task_result_tool()
             logger.debug("Setup submit_task_result tool")
         except Exception as e:
             logger.error(f"Failed to setup task result tool: {e}")
             self.task_result_tool = None
-
-    def _allow_task_result_tool(self) -> None:
-        """Exempt ``submit_task_result`` from the permission prompt.
-
-        Same reasoning as ``ask_user``: this is the channel the run reports
-        through, not a resource it touches. Under ``normal`` / ``auto`` it
-        matches no ALLOW rule and lands on ``default=ASK``, so a finished
-        dispatch stopped to ask permission to say it had finished — and the
-        card sat in the thread waiting for a human.
-
-        Declared here rather than in ``profiles.py`` because the tool itself is
-        injected here, only for orchestrator origins. A rule in the shared
-        profiles would outlive the tool and name it for every other caller.
-        ``add_persistent_rule`` so a later ``/profile`` switch, which rebuilds
-        ``global_config``, does not drop it.
-        """
-        if self.permission_manager is None:
-            return
-
-        from datus.tools.permission.permission_config import PermissionLevel, PermissionRule
-
-        category = getattr(self.task_result_tool, "permission_category", "tools")
-        self.permission_manager.add_persistent_rule(
-            PermissionRule(tool=category, pattern="submit_task_result", permission=PermissionLevel.ALLOW)
-        )
 
     def _setup_sub_agent_task_tool(self):
         """Setup SubAgentTaskTool based on subagents config or node default.
@@ -3953,6 +3929,7 @@ class AgenticNode(Node):
         # deferring to ``hooks=self._compose_run_hooks(ctx)`` would be one
         # argument too late and the first run would execute unwrapped tools.
         self._apply_init_tool_scope()
+        self._ensure_interaction_channel()
         self._ensure_tool_transformers()
         self._current_action_history = ctx.action_history_manager
         # Per-run mid-turn compactor. Created before ``_compose_run_hooks`` so
@@ -4754,7 +4731,8 @@ class AgenticNode(Node):
         self._populate_tool_registry()
         visible = []
         for tool in self.tools:
-            if PermissionHooks.is_permission_exempt_tool(tool.name):
+            category = self.tool_registry.get(tool.name, "tools")
+            if PermissionHooks.is_permission_exempt_tool(tool.name, category):
                 visible.append(tool)
                 continue
             # Like PermissionHooks, resolve load_skill by its target Skill, not
@@ -4772,17 +4750,17 @@ class AgenticNode(Node):
                     if manager.filter_available_skills(skills, self.get_node_name()):
                         visible.append(tool)
                 continue
-            category = self.tool_registry.get(tool.name, "tools")
             visible.extend(manager.filter_available_tools([tool], self.get_node_name(), category))
         self.tools[:] = visible
 
-    def _ensure_tool_transformers(self) -> None:
+    def _ensure_tool_transformers(self, *, added_tools: Optional[list] = None) -> None:
         """Wrap ``self.tools`` with plugin-declared argument transformers, once.
 
         Invoked lazily from :meth:`_compose_hooks` so wrapping happens after
         ``setup_tools`` and any ``apply_proxy_tools`` rewrite (proxied tools
         are skipped — they execute client-side). Idempotent via a flag so a
-        node reused across turns never double-wraps.
+        node reused across turns never double-wraps. ``added_tools`` limits a
+        late-mount pass to tools not yet wrapped by init scoping.
 
         Gated by ``agent.plugins_enabled`` like every other plugin surface.
         Collection failures are swallowed inside the registry (a broken plugin
@@ -4792,16 +4770,16 @@ class AgenticNode(Node):
         """
         from datus.tools.registry.contracts import validate_registered_tools
 
-        validate_registered_tools(self.tools)
+        validate_registered_tools(self.tools if added_tools is None else added_tools)
         if getattr(getattr(self, "agent_config", None), "restrict_tool_visibility", False) is True:
             self._filter_permission_denied_tools()
         # Defensive getattr: test doubles that bypass ``AgenticNode.__init__``
         # may carry neither the flag nor an agent_config (same rationale as the
         # ``interaction_broker`` getattr in ``_stream_once``).
-        if getattr(self, "_tool_transformers_applied", False):
+        if added_tools is None and getattr(self, "_tool_transformers_applied", False):
             return
         if not getattr(getattr(self, "agent_config", None), "plugins_enabled", True):
-            self._tool_transformers_applied = True
+            self._tool_transformers_applied = added_tools is None or getattr(self, "_tool_transformers_applied", False)
             return
         from datus.plugins.registry import collect_plugin_tool_transformers
 
@@ -4809,12 +4787,12 @@ class AgenticNode(Node):
         active_names = agent_config.active_plugin_names() if hasattr(agent_config, "active_plugin_names") else None
         transformers_by_pattern = collect_plugin_tool_transformers(active_names)
         if not transformers_by_pattern:
-            self._tool_transformers_applied = True
+            self._tool_transformers_applied = added_tools is None or getattr(self, "_tool_transformers_applied", False)
             return
         try:
             from datus.tools.middleware import apply_tool_transformers
 
-            wrapped = apply_tool_transformers(self, transformers_by_pattern)
+            wrapped = apply_tool_transformers(self, transformers_by_pattern, tools=added_tools)
             logger.debug(
                 "Applied plugin tool transformers on node '%s': %d tool(s) wrapped",
                 self.get_node_name(),
@@ -4824,7 +4802,7 @@ class AgenticNode(Node):
             # attempt would turn the fail-closed raise below into fail-open
             # on the next turn (the early return above would skip wrapping
             # entirely and matched tools would run unenforced).
-            self._tool_transformers_applied = True
+            self._tool_transformers_applied = added_tools is None or getattr(self, "_tool_transformers_applied", False)
         except Exception as e:
             # Fail closed: a declared transformer that cannot be applied means
             # policy enforcement would silently vanish for matched tools.
@@ -4905,6 +4883,33 @@ class AgenticNode(Node):
             return f"[{exc.code}] {exc}"
         return model_error_message(exc) or str(exc)
 
+    def _ensure_interaction_channel(self) -> None:
+        """Mount the interactive session channel after resource-tool selection and rebuilds.
+
+        Query nodes and artifact consultants may replace the entire tool list.
+        A resource whitelist must not remove their channel for asking the user.
+        Keep the list identity because callers may already have captured it.
+        Workflow nodes deliberately have no human interaction channel.
+        """
+        if getattr(self, "execution_mode", None) != "interactive":
+            return
+        if any(getattr(tool, "name", None) == "ask_user" for tool in self.tools or []):
+            return
+        previous_count = len(self.tools or [])
+        if getattr(self, "ask_user_tool", None) is None:
+            self._setup_ask_user_tool()
+        elif self.tools is not None:
+            self.tools.extend(self.ask_user_tool.available_tools())
+        if getattr(self, "_tool_transformers_applied", False) and len(self.tools or []) > previous_count:
+            added = self.tools[previous_count:]
+            try:
+                self._ensure_tool_transformers(added_tools=added)
+            except BaseException:
+                # Retry the mount next turn; an unwrapped channel must not survive a failed policy pass.
+                del self.tools[previous_count:]
+                raise
+            self.tools[previous_count:] = added
+
     def _compose_hooks(self, extra: Any = None) -> Any:
         """Combine permission hooks with an optional per-node hook.
 
@@ -4926,6 +4931,7 @@ class AgenticNode(Node):
         publishes a ``token_usage`` action mid-turn (see
         ``datus/agent/node/token_usage_hook.py``).
         """
+        self._ensure_interaction_channel()
         self._ensure_permission_hooks()
         self._ensure_tool_transformers()
         context_rewriter = getattr(self, "_active_context_rewriter", None)

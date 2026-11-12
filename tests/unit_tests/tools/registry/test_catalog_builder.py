@@ -110,7 +110,14 @@ class Dashboard(Shared):
 
 
 @pytest.mark.parametrize(
-    "arguments", ['access="read"', "direct_call=True", "access=calculate_access(), direct_call=True"]
+    "arguments",
+    [
+        'access="read"',
+        "direct_call=True",
+        "access=calculate_access(), direct_call=True",
+        'access="session", direct_call=True',
+        'access="session", direct_call=False, companion_of="tools.ask_user"',
+    ],
 )
 def test_required_metadata_is_literal_and_complete(package, arguments):
     """Build-time effects cannot depend on runtime state or implicit defaults."""

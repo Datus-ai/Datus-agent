@@ -208,7 +208,7 @@ class SemanticVerificationTools:
         return [trans_to_function_tool(self.verify_semantic_outputs)]
 
     @tool_schema(strict_mode=False)
-    @tool_contract(access="restricted", direct_call=True)
+    @tool_contract(access="read", direct_call=True)
     def verify_semantic_outputs(self, checks: list[SemanticOutputCheck]) -> FuncToolResult:
         """Compare each business output with an explicit reference SELECT.
 

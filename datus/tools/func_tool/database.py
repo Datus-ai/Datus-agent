@@ -2528,7 +2528,7 @@ class DBFuncTool(BulkQueryTools):
         return exclusive, None
 
     @mcp_tool()
-    @tool_contract(access="restricted", direct_call=True)
+    @tool_contract(access="read", direct_call=True)
     def plan_datasource(
         self,
         ddl: str,
@@ -2789,20 +2789,14 @@ class DBFuncTool(BulkQueryTools):
             return None
         names = sorted({str((a or {}).get("name") or "") for a in (config.get("assertions") or []) if a})
         names = [n for n in names if n]
-        # Dot-prefixed, like the generator's own `.{stem}.meta.json`: this file lives in the
-        # workspace the project publishes, and a visible `checks.seen.json` would ship with it.
-        cfg = Path(config_file)
-        side = cfg.with_name(f".{cfg.stem}.seen.json")
-        previous = []
-        try:
-            if side.exists():
-                previous = [str(x) for x in (json.loads(side.read_text(encoding="utf-8")) or [])]
-        except Exception:
-            previous = []
-        try:
-            side.write_text(json.dumps(names, ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            pass  # a read-only workspace must not fail the check
+        # Keep drift observations local to this tool instance: a reader must not
+        # create or overwrite a sidecar in the published workspace.
+        snapshots = getattr(self, "_assertion_snapshots", None)
+        if snapshots is None:
+            self._assertion_snapshots = snapshots = {}
+        key = str(Path(config_file).resolve())
+        previous = snapshots.get(key, [])
+        snapshots[key] = names
         if not previous:
             return None
         removed = [n for n in previous if n not in names]
@@ -2851,6 +2845,15 @@ class DBFuncTool(BulkQueryTools):
                     status and a one-line explanation.
         """
         try:
+            # QualityChecker uses raw DuckDB queries, not the bound SQL read
+            # surface. Refuse contexts requiring row filters or column masks.
+            from datus.tools.policy_runtime import PolicyRuntime
+
+            if PolicyRuntime(self.agent_config).requires_bound_read(self.policy_context):
+                return FuncToolResult(
+                    success=0,
+                    error="Quality checks are unavailable when a bound SQL read policy is required.",
+                )
             config: Dict[str, Any] = {}
             if config_path:
                 resolved = self._resolve_data_file(config_path)
@@ -2877,6 +2880,10 @@ class DBFuncTool(BulkQueryTools):
                     # _validate_read_sql assumes a string; a number or a list would raise and the
                     # caller would see an opaque "Quality check failed" instead of the real cause.
                     offending.append(f"{name}: 'sql' must be a non-empty string")
+                    continue
+                guard_error = self._reject_unsafe_uploads_sql(sql, datasource)
+                if guard_error is not None:
+                    offending.append(f"{name}: {guard_error.error}")
                     continue
                 # The same validator the read path uses. Classifying the statement kind alone is
                 # not enough: it looks at the FIRST statement only, so `SELECT 1; DROP TABLE t`
@@ -3476,7 +3483,7 @@ class DBFuncTool(BulkQueryTools):
             )
         return None, sql_type
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def get_table_ddl(
         self,
         table_name: str,
@@ -4378,7 +4385,7 @@ class DBFuncTool(BulkQueryTools):
     # can continue in pure-LLM mode.
 
     @mcp_tool()
-    @tool_contract(access="restricted", direct_call=True)
+    @tool_contract(access="read", direct_call=True)
     def get_migration_capabilities(self, datasource: Optional[str] = "") -> FuncToolResult:
         """
         Get migration target hints (dialect_family, requires, forbids, type_hints,
@@ -4424,7 +4431,7 @@ class DBFuncTool(BulkQueryTools):
         return FuncToolResult(result=capabilities)
 
     @mcp_tool()
-    @tool_contract(access="restricted", direct_call=True)
+    @tool_contract(access="read", direct_call=True)
     def suggest_table_layout(self, datasource: Optional[str] = "", columns_json: str = "[]") -> FuncToolResult:
         """
         Suggest dialect-specific table layout (distribution/partition/order) for

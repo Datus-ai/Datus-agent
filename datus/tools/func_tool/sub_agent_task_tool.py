@@ -422,6 +422,7 @@ class SubAgentTaskTool:
                 node_name=node_name,
                 is_subagent=True,
                 session_id=session_id,
+                execution_mode=self._resolve_execution_mode(),
             )
 
         self._inherit_permission_profile(node)

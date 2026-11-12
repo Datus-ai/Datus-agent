@@ -132,7 +132,7 @@ class TaskResultTool:
     def available_tools(self) -> List[FunctionTool]:
         return [trans_to_function_tool(self.submit_task_result, strict_mode=False)]
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="session", direct_call=False)
     def submit_task_result(
         self,
         outcome: TaskOutcome,

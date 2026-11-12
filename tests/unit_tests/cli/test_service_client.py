@@ -25,7 +25,7 @@ def _fake_agent_config(bi_platforms=None, schedulers=None):
 class _FakeBITool:
     """Stand-in for BIFuncTool that doesn't touch the adapter registry."""
 
-    @tool_contract(access="restricted", direct_call=False, category="bi_tools")
+    @tool_contract(access="read", direct_call=False, category="bi_tools")
     def list_dashboards(self, search: str = ""):
         """List BI dashboards."""
         return {"success": 1, "result": [{"id": 1, "search": search}]}
@@ -35,7 +35,7 @@ class _FakeBITool:
         """Write method — should be blocked by allow-list."""
         return {"success": 1, "result": {"id": 99, "title": title}}
 
-    @tool_contract(access="restricted", direct_call=False, category="bi_tools")
+    @tool_contract(access="read", direct_call=False, category="bi_tools")
     def get_dashboard(self, dashboard_id: str):
         """Get dashboard by id."""
         return {"success": 1, "result": {"id": dashboard_id}}
@@ -111,19 +111,19 @@ class _AvailableToolsFilteredTool:
     def __init__(self, advertised):
         self._advertised = advertised
 
-    @tool_contract(access="restricted", direct_call=False, category="bi_tools")
+    @tool_contract(access="read", direct_call=False, category="bi_tools")
     def list_dashboards(self):
         """List."""
 
-    @tool_contract(access="restricted", direct_call=False, category="bi_tools")
+    @tool_contract(access="read", direct_call=False, category="bi_tools")
     def get_dashboard(self):
         """Get."""
 
-    @tool_contract(access="restricted", direct_call=False, category="bi_tools")
+    @tool_contract(access="read", direct_call=False, category="bi_tools")
     def get_chart_data(self):
         """Chart data — may be hidden."""
 
-    @tool_contract(access="restricted", direct_call=False, category="bi_tools")
+    @tool_contract(access="read", direct_call=False, category="bi_tools")
     def list_bi_databases(self):
         """Databases — may be hidden."""
 
@@ -155,7 +155,7 @@ class TestServiceClientAvailableToolsFilter:
         """Tools without ``available_tools`` fall back to allow-list ∩ hasattr."""
 
         class _Plain:
-            @tool_contract(access="restricted", direct_call=False, category="bi_tools")
+            @tool_contract(access="read", direct_call=False, category="bi_tools")
             def list_dashboards(self):
                 """."""
 
@@ -171,7 +171,7 @@ class TestServiceClientAvailableToolsFilter:
 
     def test_available_tools_exception_falls_back(self):
         class _Broken:
-            @tool_contract(access="restricted", direct_call=False, category="bi_tools")
+            @tool_contract(access="read", direct_call=False, category="bi_tools")
             def list_dashboards(self):
                 """."""
 

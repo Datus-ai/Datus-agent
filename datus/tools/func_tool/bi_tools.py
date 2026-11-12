@@ -213,7 +213,7 @@ class BIFuncTool:
     # Read operations (available on all adapters)
     # ------------------------------------------------------------------ #
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def list_dashboards(self, search: str = "", limit: int = 50, offset: int = 0) -> FuncToolResult:
         """List dashboards in the BI platform. Optionally filter by search keyword.
 
@@ -237,7 +237,7 @@ class BIFuncTool:
             logger.warning(f"list_dashboards failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def get_dashboard(self, dashboard_id: str) -> FuncToolResult:
         """Get detailed information about a specific dashboard by its ID."""
         try:
@@ -249,7 +249,7 @@ class BIFuncTool:
             logger.warning(f"get_dashboard failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def list_charts(self, dashboard_id: str, limit: int = 50, offset: int = 0) -> FuncToolResult:
         """List all charts/panels in a dashboard.
 
@@ -262,7 +262,7 @@ class BIFuncTool:
             logger.warning(f"list_charts failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def get_chart(self, chart_id: str, dashboard_id: Optional[str] = "") -> FuncToolResult:
         """Get detailed information about a specific chart or panel by its ID.
 
@@ -279,7 +279,7 @@ class BIFuncTool:
             logger.warning(f"get_chart failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def get_chart_data(self, chart_id: str, dashboard_id: Optional[str] = "", limit: int = 0) -> FuncToolResult:
         """Get backend query results for a specific chart.
 
@@ -313,7 +313,7 @@ class BIFuncTool:
             logger.warning(f"get_chart_data failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def list_datasets(self, dashboard_id: str = "", limit: int = 50, offset: int = 0) -> FuncToolResult:
         """List datasets available in the BI platform.
 
@@ -601,7 +601,7 @@ class BIFuncTool:
             logger.warning(f"create_dataset failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def list_bi_databases(self) -> FuncToolResult:
         """List available database connections in the BI platform. Call this before create_dataset."""
         try:
@@ -621,7 +621,7 @@ class BIFuncTool:
             logger.warning(f"delete_dataset failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def get_bi_serving_target(self) -> FuncToolResult:
         """Expose the BI serving DB's identity for orchestrator hand-off.
 
@@ -642,7 +642,7 @@ class BIFuncTool:
             }
         )
 
-    @tool_contract(access="restricted", direct_call=False)
+    @tool_contract(access="read", direct_call=False)
     def get_dataset(self, dataset_id: str, dashboard_id: str = "") -> FuncToolResult:
         """Fetch a single dataset's metadata. Read-only; used by ValidationHook's
         Layer A ``dataset_exists`` check."""

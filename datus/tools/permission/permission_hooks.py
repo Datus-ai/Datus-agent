@@ -503,15 +503,18 @@ class PermissionHooks(AgentHooks):
             )
         review_registry.record(getattr(context, "tool_call_id", None), payload)
 
-    # Plan-mode tooling is always allowed regardless of permission profile:
-    # ``confirm_plan`` already runs its own user interaction, and ``todo_*``
-    # are local-only state helpers that never touch the filesystem or DB.
-    _PLAN_MODE_BYPASS_TOOLS = frozenset({"confirm_plan", "todo_list", "todo_read", "todo_write", "todo_update"})
-
     @classmethod
-    def is_permission_exempt_tool(cls, tool_name: str) -> bool:
-        """Identify session planning helpers exempt from generic permission rules."""
-        return tool_name in cls._PLAN_MODE_BYPASS_TOOLS
+    def is_permission_exempt_tool(cls, tool_name: str, category: str = "tools") -> bool:
+        """Identify declared session channels shared by visibility and invocation checks.
+
+        These tools only ask the user, manage the in-memory plan or return the
+        current run's result. They authorize their own interaction and result
+        identities and cannot touch project resources or expose direct endpoints.
+        """
+        from datus.tools.registry.capabilities import TOOL_CAPABILITIES
+
+        capability = TOOL_CAPABILITIES.get(f"{category}.{tool_name}")
+        return capability is not None and capability.access == "session"
 
     async def on_tool_start(self, context, agent, tool) -> None:
         """Recheck pending gates when this run's permission profile changes."""
@@ -557,9 +560,19 @@ class PermissionHooks(AgentHooks):
         """
         tool_name = getattr(tool, "name", str(tool))
 
-        # Session planning helpers retain their own UX and permission exemption
+        # Session channels retain their own UX and permission exemption
         # on restricted hosts as well as ordinary CLI hosts.
-        if self.is_permission_exempt_tool(tool_name):
+        from datus.tools.registry.contracts import ToolDefinitionError, tool_definition
+
+        try:
+            definition = tool_definition(tool)
+        except ToolDefinitionError:
+            definition = None
+        if (
+            definition is not None
+            and self.tool_registry.get(tool_name, definition.category) == definition.category
+            and self.is_permission_exempt_tool(tool_name, definition.category)
+        ):
             return
 
         # Restricted hosts narrow nodes to concrete methods. A zone/profile or
@@ -588,6 +601,17 @@ class PermissionHooks(AgentHooks):
         category, pattern_name = self._get_category_and_pattern(tool_name, context)
 
         logger.debug(f"Permission check for tool '{tool_name}': category='{category}', pattern='{pattern_name}'")
+
+        # Delegated Skill reads need both the validator's method permission
+        # and the same path confirmation as a direct filesystem read.
+        if category == "tools" and tool_name == "validate_skill" and self.fs_policy is not None:
+            if self.permission_manager.check_permission(category, pattern_name, self.node_name) == PermissionLevel.DENY:
+                raise PermissionDeniedException(
+                    "PERMISSION_DENIED: Skill validation is blocked by method permissions",
+                    tool_category=category,
+                    tool_name=pattern_name,
+                )
+            await self._handle_filesystem_zone(context, tool_name, pattern_name, path_arg_name="skill_path")
 
         # Filesystem tools: zone-based policy overrides rules.
         #   INTERNAL/WHITELIST → bypass, HIDDEN → bypass (tool returns not-found),
@@ -727,7 +751,9 @@ class PermissionHooks(AgentHooks):
     # without dragging the schema dep into this hook.
     _ARTIFACT_AUTOALLOW_PATH_RE = re.compile(r"^(?:reports|dashboards)/[^/]+/")
 
-    async def _handle_filesystem_zone(self, context: Any, tool_name: str, pattern_name: str) -> bool:
+    async def _handle_filesystem_zone(
+        self, context: Any, tool_name: str, pattern_name: str, *, path_arg_name: str = "path"
+    ) -> bool:
         """Zone × profile × capability gating for filesystem access and semantic file edits.
 
         Returns ``True`` when the call has been fully handled (either allowed
@@ -779,7 +805,7 @@ class PermissionHooks(AgentHooks):
                 args,
             )
             return False
-        path_arg = args.get("path", "")
+        path_arg = args.get(path_arg_name, "")
         try:
             resolved = classify_path(
                 path_arg,

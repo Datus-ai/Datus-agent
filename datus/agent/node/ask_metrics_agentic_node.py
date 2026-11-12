@@ -426,7 +426,7 @@ class AskMetricsAgenticNode(AgenticNode):
             }
         )
 
-    @tool_contract(access="restricted", direct_call=False, category="tools")
+    @tool_contract(access="session", direct_call=False, category="tools")
     def select_final_metric_result(self, result_id: str) -> FuncToolResult:
         """
         Select the query_metrics result that should be stored as the final structured result.

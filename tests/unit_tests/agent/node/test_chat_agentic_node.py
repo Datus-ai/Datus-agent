@@ -2352,16 +2352,9 @@ class TestChatAgenticNodeRebuildTools:
         assert "submit_task_result" in [t.name for t in node.tools]
 
     def test_submit_task_result_does_not_prompt(self, real_agent_config, mock_llm_create):
-        """It is the channel the run reports through, so it must never ASK.
-
-        The ``tools`` bucket has no ALLOW rule matching it, so without the
-        injected one it falls to ``default=ASK`` and a finished dispatch stops
-        to ask permission to say it finished. Asserting the resolved level, not
-        the rule's presence: rules are last-match-wins while the injection
-        inserts at the front, so "the rule is there" does not imply it decides.
-        """
+        """The real mounted result channel uses the shared session exemption."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
-        from datus.tools.permission.permission_config import PermissionLevel
+        from datus.tools.permission.permission_hooks import PermissionHooks
 
         real_agent_config._request_origin = "orchestrator"
         node = ChatAgenticNode(
@@ -2371,10 +2364,8 @@ class TestChatAgenticNodeRebuildTools:
             agent_config=real_agent_config,
         )
 
-        assert (
-            node.permission_manager.check_permission("tools", "submit_task_result", node.get_node_name())
-            == PermissionLevel.ALLOW
-        )
+        tool = next(tool for tool in node.tools if tool.name == "submit_task_result")
+        assert PermissionHooks.is_permission_exempt_tool(tool.name)
 
     def test_ordinary_chat_never_sees_submit_task_result(self, real_agent_config, mock_llm_create):
         from datus.agent.node.chat_agentic_node import ChatAgenticNode

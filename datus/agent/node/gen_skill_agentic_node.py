@@ -212,7 +212,7 @@ class SkillCreatorAgenticNode(AgenticNode):
         try:
             from datus.tools.func_tool.skill_validate_tool import SkillValidateTool
 
-            self.skill_validate_tool = SkillValidateTool()
+            self.skill_validate_tool = SkillValidateTool(filesystem_tool=self.filesystem_func_tool)
             self.tools.extend(self.skill_validate_tool.available_tools())
             logger.debug("Setup skill validate tool")
         except Exception as e:
@@ -223,18 +223,11 @@ class SkillCreatorAgenticNode(AgenticNode):
         try:
             from datus.tools.func_tool.session_search_tool import SessionSearchTool
 
-            sessions_dir = None
-            if self.agent_config:
-                try:
-                    from datus.utils.path_manager import get_path_manager
-
-                    pm = get_path_manager(agent_config=self.agent_config)
-                    sessions_dir = str(pm.sessions_dir)
-                except Exception:
-                    pass
-            self._session_search_tool = SessionSearchTool(sessions_dir=sessions_dir)
+            self._session_search_tool = SessionSearchTool(
+                sessions_dir_provider=lambda: self.session_manager.session_dir
+            )
             self.tools.extend(self._session_search_tool.available_tools())
-            logger.debug(f"Setup session search tool with sessions_dir: {sessions_dir}")
+            logger.debug("Setup session search tool with the node's scoped session manager")
         except Exception as e:
             logger.warning(f"Failed to setup session search tool, continuing without: {e}")
 
