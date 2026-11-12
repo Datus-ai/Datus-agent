@@ -117,6 +117,11 @@ def test_atlas_provider_catalog_is_packaged() -> None:
             "deepseek-ai/deepseek-v4-pro",
         ],
     }
+    for model in source_catalog["providers"]["atlas"]["models"]:
+        spec = source_catalog["model_specs"].get(model)
+        assert spec is not None, f"missing model_specs entry for {model}"
+        assert isinstance(spec["context_length"], int) and spec["context_length"] > 0
+        assert isinstance(spec["max_tokens"], int) and 0 < spec["max_tokens"] <= spec["context_length"]
     assert source_catalog["model_specs"]["deepseek-ai/deepseek-v4-flash"] == {
         "context_length": 1_000_000,
         "max_tokens": 384_000,
