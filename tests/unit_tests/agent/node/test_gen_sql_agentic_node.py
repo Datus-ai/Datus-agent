@@ -2639,3 +2639,368 @@ class TestGenSQLSystemPromptToolContext:
             tool_names = node._get_available_tool_names()
 
         assert tool_names == ["describe_table", "search_reference_template"]
+
+
+def _runtime_describe(arguments=None, *, status=ActionStatus.SUCCESS, payload=None):
+    from datus.schemas.action_history import ActionHistory
+    from datus.tools.func_tool.base import FuncToolResult
+
+    if payload is None:
+        payload = FuncToolResult(result={"columns": [{"name": "id", "type": "INT"}]}).model_dump()
+    return ActionHistory(
+        action_id="describe-assets",
+        role=ActionRole.TOOL,
+        action_type="describe_table",
+        input={"function_name": "describe_table", "arguments": arguments or {"table_name": "assets"}},
+        output={"success": True, "raw_output": payload},
+        status=status,
+    ).model_dump(mode="json")
+
+
+@pytest.fixture
+def runtime_promotion_case(monkeypatch):
+    """Real namespace resolution and Context models; only database I/O is mocked."""
+    from unittest.mock import Mock
+
+    from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+    from datus.schemas.node_models import Context, TableSchema
+    from datus.tools.db_tools import connector_registry
+    from datus.tools.func_tool.base import FuncToolResult
+    from datus.tools.func_tool.database import DBFuncTool
+    from datus.utils.sql_utils import metadata_identifier
+
+    def make_case(sql="SELECT * FROM public.assets", *, actions=None, dialect="postgres", schema="public"):
+        capabilities = {"database", "schema"} if dialect != "sqlite" else set()
+        monkeypatch.setitem(connector_registry._capabilities, connector_registry._resolve_key(dialect), capabilities)
+        connector = SimpleNamespace(
+            dialect=dialect,
+            database_name="warehouse",
+            schema_name=schema,
+            catalog_name="",
+            get_effective_capabilities=lambda: capabilities,
+        )
+        tool = DBFuncTool(connector)
+        tool._default_datasource = "analytics"
+        metadata = TableSchema(
+            identifier=metadata_identifier(
+                database_name="warehouse", schema_name=schema, table_name="assets", dialect=dialect
+            ),
+            database_name="warehouse",
+            schema_name=schema,
+            table_name="assets",
+            definition="CREATE TABLE assets (id INT)",
+        )
+        tool.get_table_ddl = Mock(return_value=FuncToolResult(result=metadata.model_dump()))
+        node = object.__new__(GenSQLAgenticNode)
+        node.db_func_tool = tool
+        node.configured_node_name = "gen_sql"
+        request = {"role": ActionRole.USER, "action_type": "gen_sql_request"}
+        node.result = GenSQLNodeResult(
+            success=True,
+            response="Generated SQL",
+            sql=sql,
+            action_history=[request, *([_runtime_describe()] if actions is None else actions)],
+        )
+        workflow = SimpleNamespace(context=Context())
+        return node, workflow, metadata
+
+    return make_case
+
+
+class TestRuntimeSchemaPromotion:
+    def test_promotes_verified_schema_and_preserves_sql_result(self, runtime_promotion_case):
+        node, workflow, metadata = runtime_promotion_case()
+        original_result = node.result
+        assert node.update_context(workflow)["success"] is True
+        assert workflow.context.table_schemas == [metadata]
+        assert workflow.context.sql_contexts[0].sql_query == original_result.sql
+        assert node.result is original_result
+        node.db_func_tool.get_table_ddl.assert_called_once_with(
+            table_name="assets", catalog="", database="warehouse", schema_name="public"
+        )
+        assert workflow.context.table_values == []
+
+    def test_duplicate_describes_and_sql_references_are_idempotent(self, runtime_promotion_case):
+        node, workflow, metadata = runtime_promotion_case(
+            "SELECT a.id FROM public.assets a JOIN public.assets b ON a.id=b.id",
+            actions=[_runtime_describe(), _runtime_describe({"table_name": "public.assets"})],
+        )
+        assert node.update_context(workflow)["success"] is True
+        assert node.update_context(workflow)["success"] is True
+        assert workflow.context.table_schemas == [metadata]
+        node.db_func_tool.get_table_ddl.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "WITH found AS (SELECT * FROM public.assets) SELECT * FROM found",
+            "SELECT * FROM (SELECT * FROM public.assets) a JOIN public.users u ON a.id=u.id",
+            "WITH assets AS (SELECT * FROM public.assets) SELECT * FROM assets",
+        ],
+    )
+    def test_resolves_physical_tables_in_ctes_and_joins(self, runtime_promotion_case, sql):
+        node, workflow, metadata = runtime_promotion_case(sql)
+        assert node.update_context(workflow)["success"] is True
+        assert workflow.context.table_schemas == [metadata]
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT * FROM private.assets",
+            "SELECT * FROM other_database.public.assets",
+            "WITH assets AS (SELECT 1 AS id) SELECT * FROM assets",
+            "SELECT * FROM public.users",
+            "SELECT 1; SELECT * FROM public.assets",
+            "SELECT * FROM (",
+        ],
+    )
+    def test_skips_unreferenced_ambiguous_or_invalid_sql(self, runtime_promotion_case, sql):
+        node, workflow, _ = runtime_promotion_case(sql)
+        assert node.update_context(workflow)["success"] is True
+        assert workflow.context.table_schemas == []
+        node.db_func_tool.get_table_ddl.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("status", "payload"),
+        [
+            (ActionStatus.FAILED, {"success": 1, "result": {"columns": [{"name": "id"}]}}),
+            (ActionStatus.PROCESSING, {"success": 1, "result": {"columns": [{"name": "id"}]}}),
+            (ActionStatus.SUCCESS, {"success": 0, "result": {"columns": [{"name": "id"}]}}),
+            (ActionStatus.SUCCESS, {"success": 1, "error": "not found", "result": {"columns": [{"name": "id"}]}}),
+            (ActionStatus.SUCCESS, {"result": {"columns": [{"name": "id"}]}}),
+            (ActionStatus.SUCCESS, {"success": 1, "result": {"columns": []}}),
+            (ActionStatus.SUCCESS, {"success": 1, "result": {"columns": "not column metadata"}}),
+            (ActionStatus.SUCCESS, {"success": 1, "result": {"columns": [{}]}}),
+            (ActionStatus.SUCCESS, "archived tool result"),
+        ],
+    )
+    def test_requires_actual_completed_successful_evidence(self, runtime_promotion_case, status, payload):
+        node, workflow, _ = runtime_promotion_case(actions=[_runtime_describe(status=status, payload=payload)])
+        assert node.update_context(workflow)["success"] is True
+        assert workflow.context.table_schemas == []
+        node.db_func_tool.get_table_ddl.assert_not_called()
+
+    def test_accepts_json_serialized_tool_arguments_and_result(self, runtime_promotion_case):
+        action = _runtime_describe(json.dumps({"table_name": "public.assets"}))
+        action["output"]["raw_output"] = json.dumps(action["output"]["raw_output"])
+        node, workflow, metadata = runtime_promotion_case(actions=[action])
+        assert node.update_context(workflow)["success"] is True
+        assert workflow.context.table_schemas == [metadata]
+
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            {"table_name": "assets", "datasource": "another_source"},
+            {"table_name": "assets", "database": "other_database"},
+            {"table_name": "assets", "schema_name": "private"},
+            {"table_name": "Assets"},
+            {"table_name": "assets extra_tokens"},
+            {"table_name": "a.b.c.assets"},
+            {"table_name": '"public.assets"'},
+            {"table_name": 123},
+            "not JSON",
+        ],
+    )
+    def test_rejects_foreign_or_malformed_descriptions(self, runtime_promotion_case, arguments):
+        node, workflow, _ = runtime_promotion_case(actions=[_runtime_describe(arguments)])
+        assert node.update_context(workflow)["success"] is True
+        assert workflow.context.table_schemas == []
+        node.db_func_tool.get_table_ddl.assert_not_called()
+
+    @pytest.mark.parametrize("schema", ["", "public"])
+    def test_unqualified_table_with_unproven_search_path_is_not_inferred(self, runtime_promotion_case, schema):
+        node, workflow, _ = runtime_promotion_case("SELECT * FROM assets", schema=schema)
+        assert node.update_context(workflow)["success"] is True
+        assert workflow.context.table_schemas == []
+        node.db_func_tool.get_table_ddl.assert_not_called()
+
+    @pytest.mark.parametrize("origin", ["prior_turn", "nested_agent", "no_request_boundary"])
+    def test_requires_evidence_from_the_current_gen_sql_turn(self, runtime_promotion_case, origin):
+        node, workflow, _ = runtime_promotion_case()
+        request, action = node.result.action_history
+        if origin == "prior_turn":
+            node.result.action_history = [request, action, request]
+        elif origin == "nested_agent":
+            action.update(depth=1, parent_action_id="subagent")
+        else:
+            node.result.action_history = [action]
+        assert node.update_context(workflow)["success"] is True
+        assert workflow.context.table_schemas == []
+        node.db_func_tool.get_table_ddl.assert_not_called()
+
+    def test_existing_schema_does_not_trigger_ddl_lookup(self, runtime_promotion_case):
+        node, workflow, metadata = runtime_promotion_case()
+        workflow.context.table_schemas = [metadata]
+        assert node.update_context(workflow)["success"] is True
+        assert workflow.context.table_schemas == [metadata]
+        node.db_func_tool.get_table_ddl.assert_not_called()
+
+    @pytest.mark.parametrize("first_lookup_fails", [False, True])
+    def test_same_table_name_in_distinct_schemas_is_independent(self, runtime_promotion_case, first_lookup_fails):
+        from datus.tools.func_tool.base import FuncToolResult
+
+        node, workflow, public = runtime_promotion_case(
+            "SELECT a.id FROM public.assets a JOIN private.assets b ON a.id = b.id",
+            actions=[_runtime_describe(), _runtime_describe({"table_name": "private.assets"})],
+        )
+        private = public.model_copy(update={"identifier": "warehouse.private.assets", "schema_name": "private"})
+        node.db_func_tool.get_table_ddl.side_effect = [
+            RuntimeError("first table unavailable")
+            if first_lookup_fails
+            else FuncToolResult(result=public.model_dump()),
+            FuncToolResult(result=private.model_dump()),
+        ]
+        assert node.update_context(workflow)["success"] is True
+        assert workflow.context.table_schemas == ([private] if first_lookup_fails else [public, private])
+        assert [call.kwargs["schema_name"] for call in node.db_func_tool.get_table_ddl.call_args_list] == [
+            "public",
+            "private",
+        ]
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            {"definition": ""},
+            {"definition": "CREATE TABLE assets"},
+            {"definition": "CREATE TABLE assets (unrelated INT)"},
+            {"definition": "not a DDL statement"},
+            {"definition": "SELECT 1"},
+            {"definition": "CREATE TABLE private.assets (id INT)"},
+            {"definition": "CREATE TABLE users (id INT)"},
+            {"definition": "CREATE TABLE assets (id INT); SELECT 1"},
+            {"identifier": "other.public.assets"},
+            {"schema_name": "private"},
+            {"table_name": None},
+        ],
+    )
+    def test_incomplete_or_mismatched_ddl_is_best_effort(self, runtime_promotion_case, change):
+        from datus.tools.func_tool.base import FuncToolResult
+
+        node, workflow, metadata = runtime_promotion_case()
+        node.db_func_tool.get_table_ddl.return_value = FuncToolResult(result={**metadata.model_dump(), **change})
+        assert node.update_context(workflow)["success"] is True
+        assert node.result.success is True
+        assert workflow.context.table_schemas == []
+        assert len(workflow.context.sql_contexts) == 1
+
+    @pytest.mark.parametrize("raises", [False, True])
+    def test_ddl_failure_preserves_original_success(self, runtime_promotion_case, raises):
+        from datus.tools.func_tool.base import FuncToolResult
+
+        node, workflow, _ = runtime_promotion_case()
+        if raises:
+            node.db_func_tool.get_table_ddl.side_effect = RuntimeError("database unavailable")
+        else:
+            node.db_func_tool.get_table_ddl.return_value = FuncToolResult(success=0, error="database unavailable")
+        assert node.update_context(workflow)["success"] is True
+        assert node.result.success is True
+        assert workflow.context.table_schemas == []
+        assert len(workflow.context.sql_contexts) == 1
+
+    def test_preserves_shared_schema_snapshots_and_other_contexts(self, runtime_promotion_case):
+        from datus.schemas.node_models import Context
+
+        node, workflow, metadata = runtime_promotion_case()
+        snapshot = workflow.context.table_schemas
+        sibling_context = workflow.context.model_copy()
+        unrelated_context = Context()
+        assert node.update_context(workflow)["success"] is True
+        assert workflow.context.table_schemas == [metadata]
+        assert snapshot == sibling_context.table_schemas == unrelated_context.table_schemas == []
+        assert Context.model_validate(workflow.context.model_dump()).table_schemas == [metadata]
+
+    @pytest.mark.parametrize("dialect", ["postgres", "duckdb", "snowflake", "sqlite"])
+    def test_dialect_identifiers(self, runtime_promotion_case, dialect):
+        from datus.tools.func_tool.base import FuncToolResult
+
+        schema = "Sales" if dialect != "sqlite" else ""
+        sql = 'SELECT * FROM "Sales"."assets"' if schema else 'SELECT * FROM "assets"'
+        arguments = {"table_name": '"Sales"."assets"'} if schema else {"table_name": '"assets"'}
+        column_name = "ID" if dialect == "snowflake" else "id"
+        evidence = _runtime_describe(arguments, payload={"success": 1, "result": {"columns": [{"name": column_name}]}})
+        node, workflow, metadata = runtime_promotion_case(sql, actions=[evidence], dialect=dialect, schema=schema)
+        metadata.definition = 'CREATE TABLE "assets" (id INT)'
+        node.db_func_tool.get_table_ddl.return_value = FuncToolResult(result=metadata.model_dump())
+        assert node.update_context(workflow)["success"] is True
+        assert workflow.context.table_schemas == [metadata]
+
+    def test_failed_generation_does_not_promote(self, runtime_promotion_case):
+        node, workflow, _ = runtime_promotion_case()
+        node.result.success = False
+        assert node.update_context(workflow)["success"] is True
+        assert workflow.context.table_schemas == []
+        node.db_func_tool.get_table_ddl.assert_not_called()
+
+    def test_workflow_datasource_must_match_tool_binding(self, runtime_promotion_case):
+        node, workflow, _ = runtime_promotion_case()
+        workflow.task = SimpleNamespace(datasource="another_source")
+        assert node.update_context(workflow)["success"] is True
+        assert workflow.context.table_schemas == []
+        node.db_func_tool.get_table_ddl.assert_not_called()
+
+    def test_complete_view_definition_is_supported(self, runtime_promotion_case):
+        from datus.tools.func_tool.base import FuncToolResult
+
+        node, workflow, metadata = runtime_promotion_case()
+        metadata.table_type = "view"
+        metadata.definition = "CREATE VIEW public.assets AS SELECT 1 AS id"
+        node.db_func_tool.get_table_ddl.return_value = FuncToolResult(result=metadata.model_dump())
+        assert node.update_context(workflow)["success"] is True
+        assert workflow.context.table_schemas == [metadata]
+
+    @pytest.mark.asyncio
+    async def test_scripted_discovery_reaches_next_fix_node(self, real_agent_config, mock_llm_create):
+        from datus.agent.evaluate import evaluate_result
+        from datus.agent.node.fix_node import FixNode
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.agent.node.schema_linking_node import SchemaLinkingNode
+        from datus.agent.workflow import Workflow
+        from datus.schemas.node_models import SqlTask, TableSchema
+        from datus.schemas.schema_linking_node_models import SchemaLinkingResult
+
+        sql = "SELECT cds FROM satscores"
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[MockToolCall(name="describe_table", arguments={"table_name": "satscores"})],
+                    content=json.dumps({"sql": sql, "output": "Verified the satscores table"}),
+                )
+            ]
+        )
+        workflow = Workflow(
+            "runtime-schema-promotion",
+            task=SqlTask(
+                task="List SAT school codes",
+                database_type="sqlite",
+                database_name="california_schools",
+                datasource="california_schools",
+            ),
+            agent_config=real_agent_config,
+        )
+        node = GenSQLAgenticNode(
+            "generate", "Generate SQL", NodeType.TYPE_GEN_SQL, agent_config=real_agent_config, node_name="gen_sql"
+        )
+        fix = FixNode("fix", "Fix SQL", NodeType.TYPE_FIX, agent_config=real_agent_config)
+        workflow.add_node(node)
+        workflow.add_node(fix)
+        initial_schema = TableSchema.model_validate(node.db_func_tool.get_table_ddl("schools").result)
+        linking = object.__new__(SchemaLinkingNode)
+        linking.result = SchemaLinkingResult(
+            success=True, table_schemas=[initial_schema], schema_count=1, value_count=0
+        )
+        assert linking.update_context(workflow)["success"] is True
+        node.setup_input(workflow)
+        initial_schemas = node.input.schemas
+        async for _ in node.execute_stream(ActionHistoryManager()):
+            pass
+        assert node.result.success is True
+        assert node.result.sql == sql
+        assert workflow.context.table_schemas == [initial_schema]
+        assert evaluate_result(node, workflow)["success"] is True
+        promoted = workflow.context.table_schemas
+        assert [schema.table_name for schema in promoted] == ["schools", "satscores"]
+        assert "CREATE TABLE" in promoted[1].definition.upper()
+        assert fix.input.schemas == promoted
+        assert initial_schemas == linking.result.table_schemas == [initial_schema]
+        assert len(mock_llm_create.tool_results) == 1
+        assert len(mock_llm_create.call_history) == 1
