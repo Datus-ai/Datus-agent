@@ -1,0 +1,24 @@
+name: "Merge Queue Code Quality Contexts"
+
+on:
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  format-check-context:
+    name: format-check / format-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish merge queue format context
+        run: echo "format-check / format-check is enforced on pull_request before merge queue entry."
+
+  coverage-context:
+    name: run-coverage / coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish merge queue coverage context
+        run: |
+          echo "run-coverage / coverage is enforced on pull_request before merge queue entry."
+          echo "Merge Queue Gate checks generated contracts and coverage-map consistency on the merged tree."

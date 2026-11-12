@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run PR acceptance plus impacted unit tests with coverage and diff reporting.
+"""Run core journeys and affected tests with coverage and diff reporting.
 
 Usage:
     python3 ci/run-pr-tests.py [base_ref]
@@ -16,7 +16,7 @@ Outputs (written to GITHUB_OUTPUT if available, otherwise stdout):
 Generated files (all written to ci/ directory):
     ci/coverage.xml             - Cobertura coverage report
     ci/test-results.xml         - Combined JUnit test results
-    ci/test-results-*.xml       - Per-suite JUnit results for acceptance / impacted unit suites
+    ci/test-results-pr.xml      - Core journeys and affected tests in one pytest session
     ci/diff-cover.json          - Diff coverage data
     ci/diff-cover-report.md     - Diff coverage markdown report
     ci/test-report.md           - Test failure markdown report
@@ -52,92 +52,15 @@ DEFAULT_COVERAGE_DB = os.path.join(OUT_DIR, ".coverage")
 DEFAULT_PYTEST_LOG = os.path.join(OUT_DIR, "pytest-coverage.txt")
 # Direct script execution starts with ci/ on sys.path.
 sys.path.insert(0, REPO_ROOT_DIR)
+from ci.harness.pr_test_plan import PR_MARK_EXPR, pr_test_plan  # noqa: E402
 from ci.harness.test_plan import (  # noqa: E402
     changed_files as changed_paths,
 )
 from ci.harness.test_plan import (  # noqa: E402
-    collapse_targets as _collapse_contained_test_targets,
-)
-from ci.harness.test_plan import (  # noqa: E402
-    core_targets,
-    load_map,
-    unit_test_plan,
     verify_gate,
 )
 
 PYTEST_BASETEMP_ENV = "DATUS_CI_PYTEST_BASETEMP"
-PR_HARNESS_MARK_EXPR = "(acceptance or component or llm_harness) and not quarantine"
-IMPACTED_UNIT_MARK_EXPR = "not acceptance and not component and not llm_harness and not nightly and not quarantine"
-PR_ACCEPTANCE_TARGETS = [
-    "tests/unit_tests/ci/test_bi_gate.py",
-    "tests/unit_tests/ci/test_bi_diagnostics.py",
-    "tests/unit_tests/models/test_request_capacity.py",
-    "tests/unit_tests/models/test_image_model_roundtrip.py",
-    "tests/unit_tests/models/test_output_limit_requests.py",
-    "tests/unit_tests/models/test_output_truncation.py",
-    "tests/unit_tests/plugins/test_managed_plugin_runtime.py",
-    "tests/unit_tests/models/test_reasoning_content_roundtrip.py",
-    "tests/unit_tests/observability/test_native_model_calls.py",
-    "tests/unit_tests/observability/test_model_call.py",
-    "tests/unit_tests/agent/node/test_chat_agentic_node.py",
-    "tests/unit_tests/agent/node/test_gen_sql_agentic_node.py",
-    "tests/unit_tests/agent/node/test_compare_agentic_node.py",
-    "tests/unit_tests/agent/node/test_explore_agentic_node.py",
-    "tests/unit_tests/agent/node/test_feedback_agentic_node.py",
-    "tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py",
-    "tests/unit_tests/agent/node/test_gen_table_agentic_node.py",
-    "tests/unit_tests/agent/node/test_sql_summary_agentic_node.py",
-    "tests/unit_tests/agent/node/test_skill_creator_agentic_node.py",
-    "tests/unit_tests/agent/node/test_gen_job_agentic_node.py",
-    "tests/unit_tests/agent/node/test_gen_dashboard_agentic_node.py",
-    "tests/unit_tests/agent/node/test_scheduler_agentic_node.py",
-    "tests/unit_tests/api/routes/test_chat_routes.py",
-    "tests/unit_tests/api/services/test_kb_service.py",
-    "tests/unit_tests/api/test_service.py",
-    "tests/unit_tests/cli/test_core_entrypoint_acceptance.py",
-    "tests/unit_tests/cli/test_interactive_init.py",
-    "tests/unit_tests/cli/web/test_chatbot.py",
-    "tests/unit_tests/ci/test_harness_alignment.py",
-    "tests/unit_tests/ci/test_run_merge_queue_tests.py",
-    "tests/unit_tests/ci/test_gate_profiles.py",
-    "tests/unit_tests/ci/test_p0_gate.py",
-    "tests/unit_tests/ci/test_sql_policy_gate.py",
-    "tests/unit_tests/ci/test_format_nightly_feishu_report.py",
-    "tests/unit_tests/ci/test_nightly_checkout_contract.py",
-    "tests/unit_tests/ci/harness/test_test_plan.py",
-    "tests/unit_tests/ci/test_prepare_ci_bird.py",
-    "tests/integration/api/test_api.py",
-    "tests/integration/cli/test_cli_commands.py",
-    "tests/integration/cli/test_cli_textual.py",
-    "tests/integration/storage/test_storage_layout.py",
-    "tests/integration/storage/test_doc_search.py",
-    "tests/integration/storage/test_platform_doc_acceptance.py",
-    "tests/integration/storage/test_platform_doc.py",
-    "tests/integration/tools/db_tools/test_data_file_loader_excel.py",
-    "tests/integration/tools/test_func_tools_db.py",
-    "tests/integration/tools/test_dosi_attribution.py",
-    "tests/integration/tools/test_dosi_catalog_alignment.py",
-    "tests/integration/tools/test_dosi_metric_requirements.py",
-    "tests/integration/tools/test_dosi_query_filters.py",
-    "tests/integration/tools/test_dosi_ontology.py",
-    "tests/integration/tools/test_mcp_acceptance.py",
-    "tests/integration/tools/db_tools/test_connector_duckdb.py",
-    "tests/unit_tests/storage/test_feedback_store.py",
-    "tests/unit_tests/tools/func_tool/test_bi_tools.py",
-    "tests/unit_tests/tools/func_tool/test_fs_path_policy.py",
-    "tests/unit_tests/tools/func_tool/test_reference_template_tools.py",
-    "tests/unit_tests/tools/func_tool/test_scheduler_tools.py",
-    "tests/unit_tests/tools/func_tool/test_sub_agent_task_tool.py",
-    "tests/unit_tests/tools/db_tools/test_database_import.py",
-    "tests/unit_tests/tools/db_tools/test_datasource_plan.py",
-    "tests/unit_tests/tools/db_tools/test_datasource_quality.py",
-    "tests/unit_tests/tools/skill_tools/test_gen_datasource_bundle.py",
-    "tests/unit_tests/tools/skill_tools/test_gen_datasource_engine.py",
-    "tests/unit_tests/tools/skill_tools/test_skill.py",
-    "tests/unit_tests/tools/skill_tools/test_skill_func_tool.py",
-    "tests/unit_tests/utils/test_memory_loader.py",
-]
-PR_ACCEPTANCE_TARGETS.extend(core_targets())
 
 
 def log(msg: str) -> None:
@@ -277,6 +200,9 @@ def _reset_report_outputs() -> None:
         DEFAULT_COVERAGE_HTML,
         DEFAULT_COVERAGE_DB,
         DEFAULT_JUNIT_XML,
+        os.path.join(OUT_DIR, "test-results-pr.xml"),
+        os.path.join(OUT_DIR, "test-results-pr.xml.execution.json"),
+        os.path.join(OUT_DIR, "gate-coverage.json"),
         os.path.join(OUT_DIR, "test-results-acceptance.xml"),
         os.path.join(OUT_DIR, "test-results-impacted-unit.xml"),
         os.path.join(OUT_DIR, "diff-cover.json"),
@@ -298,6 +224,7 @@ def _build_pytest_command(
     basetemp: str | None = None,
     parallel: bool = False,
     dist: str | None = None,
+    pr_gate: bool = False,
 ) -> list[str]:
     cmd = [
         sys.executable,
@@ -310,6 +237,8 @@ def _build_pytest_command(
 
     if mark_expr:
         cmd.extend(["-m", mark_expr])
+    if pr_gate:
+        cmd.append("--pr-gate")
 
     if parallel:
         # Distribute the suite across pytest-xdist workers so the suites stay
@@ -364,6 +293,7 @@ def _run_pytest_suite(
     emit_reports: bool = True,
     parallel: bool = False,
     dist: str | None = None,
+    pr_gate: bool = False,
 ) -> int:
     """Run one pytest suite and stream logs to stdout and the CI log file."""
     Path(junit_xml + ".execution.json").unlink(missing_ok=True)
@@ -378,6 +308,7 @@ def _run_pytest_suite(
         basetemp=basetemp,
         parallel=parallel,
         dist=dist,
+        pr_gate=pr_gate,
     )
     log(f"Running {suite_name}: {' '.join(cmd)}")
     log(f"{suite_name} pytest basetemp: {basetemp}")
@@ -439,41 +370,6 @@ def _run_pytest_suite(
         execution_path.write_text(json.dumps(report, indent=2) + "\n")
     log(f"{suite_name} exited with code {exit_code} in {elapsed:.3f}s")
     return exit_code
-
-
-def _normalize_suite_exit_code(
-    exit_code: int,
-    *,
-    suite_name: str,
-    allow_empty_collection: bool = False,
-) -> int:
-    if exit_code == 5 and allow_empty_collection:
-        log(f"{suite_name} collected no tests (pytest rc=5); treating as success")
-        return 0
-    return exit_code
-
-
-def select_impacted_unit_tests(changed_files: list[str]) -> list[str]:
-    """Use the shared unit ownership rules for PR and merge-queue changes."""
-    return unit_test_plan(changed_files)["targets"]
-
-
-def _filter_existing_paths(paths: list[str]) -> list[str]:
-    """Drop mapped test targets that no longer exist on disk.
-
-    The diff may reference files that were deleted in the PR. Passing a
-    non-existent path to pytest aborts the entire collection with
-    "file or directory not found", which masks real test results.
-    """
-    existing: list[str] = []
-    for path in paths:
-        absolute = Path(path) if Path(path).is_absolute() else Path(REPO_ROOT_DIR, path)
-        if path.endswith("/"):
-            if absolute.is_dir():
-                existing.append(path)
-        elif absolute.exists():
-            existing.append(path)
-    return _collapse_contained_test_targets(existing)
 
 
 def _git_ref_exists(ref: str) -> bool:
@@ -630,102 +526,40 @@ def list_changed_files(base_ref: str) -> list[str]:
     return changed
 
 
-def resolve_impacted_unit_tests(base_ref: str) -> list[str]:
-    changed_files = list_changed_files(base_ref)
-    data = load_map()
-    plan = unit_test_plan(changed_files, data)
-    impacted = _filter_existing_paths(plan["targets"])
-    plan["targets"] = impacted
+def resolve_pr_tests(base_ref: str) -> dict:
+    plan = pr_test_plan(list_changed_files(base_ref))
     Path(OUT_DIR, "unit-test-plan.json").write_text(json.dumps(plan, indent=2) + "\n")
     for selection in plan["selections"]:
-        rule = selection["rule"] or "no unit impact"
+        rule = selection["rule"] or "core only"
         if selection["fallback"]:
             rule += " (full-suite fallback)"
-        log(f"{selection['path']}: {rule} -> {', '.join(selection['targets']) or 'fixed acceptance only'}")
-    if impacted:
-        log(f"Impacted unit-test targets: {', '.join(impacted)}")
-    else:
-        log("No impacted unit-test targets selected")
-    return impacted
-
-
-def missing_acceptance_targets() -> list[str]:
-    """Return PR acceptance targets that do not exist in the checkout."""
-    return [target for target in PR_ACCEPTANCE_TARGETS if not os.path.exists(os.path.join(REPO_ROOT_DIR, target))]
+        log(f"{selection['path']}: {rule} -> {', '.join(selection['targets'])}")
+    log(f"Selected {len(plan['pytest_targets'])} pytest targets; integration groups: {plan['integration_groups']}")
+    return plan
 
 
 def run_tests(base_ref: str = "") -> tuple[int, list[str]]:
-    """Run PR acceptance plus impacted unit tests and return the exit code and JUnit XML paths."""
-    stale_targets = missing_acceptance_targets()
-    if stale_targets:
-        for target in stale_targets:
-            log(f"PR acceptance target missing from checkout: {target}")
-        log("Update PR_ACCEPTANCE_TARGETS in ci/run-pr-tests.py to match the tree")
-        return 1, []
-
+    """Collect core journeys and affected tests once, including harness-marked units."""
     _reset_report_outputs()
-
     try:
-        impacted_targets = resolve_impacted_unit_tests(base_ref)
-        junit_xml_paths: list[str] = []
-        exit_codes: list[int] = []
-
+        plan = resolve_pr_tests(base_ref)
+        junit = os.path.join(OUT_DIR, "test-results-pr.xml")
         with open(DEFAULT_PYTEST_LOG, "w", encoding="utf-8") as log_file:
-            acceptance_xml = os.path.join(OUT_DIR, "test-results-acceptance.xml")
-            acceptance_rc = _run_pytest_suite(
-                PR_ACCEPTANCE_TARGETS,
-                acceptance_xml,
+            code = _run_pytest_suite(
+                plan["pytest_targets"],
+                junit,
                 log_file,
-                suite_name="acceptance",
-                mark_expr=PR_HARNESS_MARK_EXPR,
-                emit_reports=not impacted_targets,
+                suite_name="PR tests",
+                mark_expr=PR_MARK_EXPR,
                 parallel=True,
-                # Per-file distribution: tests/integration/tools/test_func_tools_db.py
-                # opens the same on-disk DuckDB database from several test classes,
-                # and DuckDB allows only one process to hold the file lock. loadfile
-                # keeps every test of a file on one worker, so the lock is never
-                # contended across processes.
                 dist="loadfile",
+                pr_gate=True,
             )
-            exit_codes.append(acceptance_rc)
-            junit_xml_paths.append(acceptance_xml)
-
-            if impacted_targets:
-                impacted_xml = os.path.join(OUT_DIR, "test-results-impacted-unit.xml")
-                impacted_rc = _run_pytest_suite(
-                    impacted_targets,
-                    impacted_xml,
-                    log_file,
-                    suite_name="impacted unit tests",
-                    mark_expr=IMPACTED_UNIT_MARK_EXPR,
-                    append=True,
-                    emit_reports=True,
-                    parallel=True,
-                )
-                exit_codes.append(
-                    _normalize_suite_exit_code(
-                        impacted_rc,
-                        suite_name="impacted unit tests",
-                        allow_empty_collection=True,
-                    )
-                )
-                junit_xml_paths.append(impacted_xml)
-
-        exit_codes.append(
-            verify_gate(
-                [Path(p + ".execution.json") for p in junit_xml_paths],
-                "pr_acceptance",
-                Path(OUT_DIR) / "gate-coverage.json",
-            )
-        )
-        merge_junit_results(junit_xml_paths)
-
+        evidence = verify_gate([Path(junit + ".execution.json")], "pr_acceptance", Path(OUT_DIR) / "gate-coverage.json")
+        merge_junit_results([junit])
         if os.path.exists(DEFAULT_COVERAGE_DB):
             os.remove(DEFAULT_COVERAGE_DB)
-
-        exit_code = 0 if all(code == 0 for code in exit_codes) else 1
-        log(f"Overall pytest exit code: {exit_code}")
-        return exit_code, junit_xml_paths
+        return int(code != 0 or evidence != 0), [junit]
     finally:
         _cleanup_pytest_basetemp()
 
@@ -933,7 +767,7 @@ def extract_coverage(base_ref: str) -> tuple[float, float]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run PR acceptance plus impacted unit tests with coverage and diff reporting.",
+        description="Run core journeys and affected tests with coverage and diff reporting.",
     )
     parser.add_argument(
         "base_ref",

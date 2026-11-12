@@ -21,14 +21,13 @@ from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
 @pytest.mark.ci
 class TestTruncateMiddle:
-    def test_short_unchanged(self):
-        assert _truncate_middle("hello", 120) == "hello"
+    @pytest.mark.parametrize("text", ["short", "12345678901234567890"])
+    def test_within_limit_is_unchanged(self, text):
+        assert _truncate_middle(text, 20) == text
 
-    def test_long_truncated(self):
-        text = "A" * 200
-        result = _truncate_middle(text, 120)
-        assert len(result) <= 120
-        assert " ... " in result
+    def test_long_text_preserves_distinct_head_and_tail(self):
+        text = "HEAD123" + "center" * 20 + "TAIL789"
+        assert _truncate_middle(text, 20) == "HEAD123 ... TAIL789"
 
 
 @pytest.mark.ci

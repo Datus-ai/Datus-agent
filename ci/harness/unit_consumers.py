@@ -27,13 +27,8 @@ def _from_module(node: ast.ImportFrom, module: str, is_package: bool) -> str:
     return resolve_name("." * node.level + (node.module or ""), package)
 
 
-def audit_unit_consumers(data: dict, repo_root: Path = ROOT) -> dict:
-    """Report every test file whose visible source reference its owner omits.
-
-    Includes function-local imports, package re-exports, and literal module or
-    patch paths. Parents are included because importing a child executes its
-    package initializers. Non-literal dynamic imports are outside this audit.
-    """
+def find_test_consumers(repo_root: Path, test_files: list[Path]) -> dict[str, set[str]]:
+    """Resolve literal test imports/re-exports without importing application code."""
     modules = {_module_name(p, repo_root): p for p in (repo_root / "datus").rglob("*.py")}
     exports = defaultdict(lambda: defaultdict(set))
     for module, path in modules.items():
@@ -64,7 +59,6 @@ def audit_unit_consumers(data: dict, repo_root: Path = ROOT) -> dict:
         return result
 
     consumers = {p.relative_to(repo_root).as_posix(): set() for p in modules.values()}
-    test_files = sorted((repo_root / "tests/unit_tests").rglob("test_*.py"))
     for path in test_files:
         module = _module_name(path, repo_root)
         refs = set()
@@ -85,6 +79,13 @@ def audit_unit_consumers(data: dict, repo_root: Path = ROOT) -> dict:
                     consumers[modules[ref].relative_to(repo_root).as_posix()].add(test)
                 ref = ref.rpartition(".")[0]
 
+    return consumers
+
+
+def audit_unit_consumers(data: dict, repo_root: Path = ROOT) -> dict:
+    """Check unit owners against direct imports, re-exports and literal mock paths."""
+    test_files = sorted((repo_root / "tests/unit_tests").rglob("test_*.py"))
+    consumers = find_test_consumers(repo_root, test_files)
     missing = []
     for source, tests in sorted(consumers.items()):
         match = unit_owner(source, data["execution"]["unit_rules"])
@@ -96,7 +97,7 @@ def audit_unit_consumers(data: dict, repo_root: Path = ROOT) -> dict:
             if not any(test == t or (t.endswith("/") and test.startswith(t)) for t in rule["targets"]):
                 missing.append({"rule": rule["id"], "source": source, "test": test})
     return {
-        "source_modules": len(modules),
+        "source_modules": len(consumers),
         "test_files": len(test_files),
         "consumers": {s: sorted(t) for s, t in sorted(consumers.items())},
         "missing": missing,
