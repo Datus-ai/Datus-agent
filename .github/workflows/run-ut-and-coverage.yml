@@ -2,12 +2,17 @@ name: "Coverage Check"
 on:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      reuse_validation:
+        type: boolean
+        default: false
 
 jobs:
   coverage:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -16,18 +21,29 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Reuse verified validation
+        if: inputs.reuse_validation
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { reuseValidation } = require('./ci/reuse-pr-validation.js');
+            await reuseValidation({ github, context, core, checkName: 'run-coverage / coverage' });
+
       - name: Fetch base branch
+        if: ${{ !inputs.reuse_validation }}
         run: |
           BASE_REF="${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref || github.ref_name }}"
           BASE_REF="${BASE_REF#refs/heads/}"
           git fetch origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
 
       - name: Set up Python
+        if: ${{ !inputs.reuse_validation }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install uv
+        if: ${{ !inputs.reuse_validation }}
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
@@ -36,6 +52,7 @@ jobs:
             pyproject.toml
 
       - name: Select PR profile
+        if: ${{ !inputs.reuse_validation }}
         id: profile
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref || github.ref_name }}
@@ -45,33 +62,35 @@ jobs:
             --base-ref "origin/${BASE_REF}" --github-output "$GITHUB_OUTPUT"
 
       - name: Documentation-only summary
-        if: steps.profile.outputs.run_tests != 'true'
+        if: ${{ !inputs.reuse_validation && (steps.profile.outputs.run_tests != 'true') }}
         run: echo "Documentation-only change; documentation builds run in Deploy Docs." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Validate generated tool contracts
+        if: ${{ !inputs.reuse_validation }}
         run: python3 datus/tools/registry/catalog_builder.py --check
 
       - name: Install dependencies
-        if: steps.profile.outputs.run_tests == 'true'
+        if: ${{ !inputs.reuse_validation && (steps.profile.outputs.run_tests == 'true') }}
         run: |
           uv sync --locked --group ci
           echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Check release metadata
-        if: steps.profile.outputs.run_tests == 'true'
+        if: ${{ !inputs.reuse_validation && (steps.profile.outputs.run_tests == 'true') }}
         run: python3 ci/check_release_readiness.py
 
       - name: Set up Node.js
-        if: steps.profile.outputs.run_tests == 'true'
+        if: ${{ !inputs.reuse_validation && (steps.profile.outputs.run_tests == 'true') }}
         uses: actions/setup-node@v6
         with:
           node-version: '22'
 
       - name: Check CI comment boundaries
-        if: steps.profile.outputs.run_tests == 'true'
-        run: node --test ci/post-coverage-comment.test.js ci/merge-queue-ref.test.js
+        if: ${{ !inputs.reuse_validation && (steps.profile.outputs.run_tests == 'true') }}
+        run: node --test ci/post-coverage-comment.test.js ci/merge-queue-ref.test.js ci/reuse-pr-validation.test.js
 
       - name: Validate harness coverage map
+        if: ${{ !inputs.reuse_validation }}
         run: |
           set +e
           uv run --no-project --with pyyaml python ci/harness/validate_coverage_map.py \
@@ -86,16 +105,16 @@ jobs:
           exit "$validation_exit"
 
       - name: Setup config file
-        if: steps.profile.outputs.run_tests == 'true'
+        if: ${{ !inputs.reuse_validation && (steps.profile.outputs.run_tests == 'true') }}
         run: |
           cp conf/agent.yml.example conf/agent.yml
 
       - name: Restore tracked test config
-        if: steps.profile.outputs.run_tests == 'true'
+        if: ${{ !inputs.reuse_validation && (steps.profile.outputs.run_tests == 'true') }}
         run: git restore --source=HEAD --worktree --staged tests/conf/agent.yml
 
       - name: Isolate test data directory
-        if: steps.profile.outputs.run_tests == 'true'
+        if: ${{ !inputs.reuse_validation && (steps.profile.outputs.run_tests == 'true') }}
         run: |
           DATUS_TEST_HOME="${GITHUB_WORKSPACE}/.datus_test_data"
           echo "DATUS_TEST_HOME=$DATUS_TEST_HOME" >> "$GITHUB_ENV"
@@ -103,14 +122,14 @@ jobs:
           sed -i "s|project_root: .datus_test_data/workspace|project_root: $DATUS_TEST_HOME/workspace|g" tests/conf/agent.yml
 
       - name: Prepare small BIRD test fixtures
-        if: steps.profile.outputs.run_tests == 'true'
+        if: ${{ !inputs.reuse_validation && (steps.profile.outputs.run_tests == 'true') }}
         run: |
           DATUS_TEST_BIRD_ROOT="$RUNNER_TEMP/datus-ci-bird/dev_databases"
           python3 ci/prepare_ci_bird.py "$DATUS_TEST_BIRD_ROOT"
           echo "DATUS_TEST_BIRD_ROOT=$DATUS_TEST_BIRD_ROOT" >> "$GITHUB_ENV"
 
       - name: Pre-install the DuckDB excel extension
-        if: steps.profile.outputs.needs_excel == 'true'
+        if: ${{ !inputs.reuse_validation && (steps.profile.outputs.needs_excel == 'true') }}
         run: |
           # `read_xlsx` lives in an autoloadable extension DuckDB fetches over
           # HTTPS on first use. Fetching it from inside a test would make the
@@ -139,7 +158,7 @@ jobs:
           PY
 
       - name: Run tests and extract coverage
-        if: steps.profile.outputs.run_tests == 'true'
+        if: ${{ !inputs.reuse_validation && (steps.profile.outputs.run_tests == 'true') }}
         id: metrics
         env:
           DATUS_CI_PYTEST_BASETEMP: ${{ runner.temp }}/datus-agent-pytest-${{ github.run_id }}-${{ github.run_attempt }}
@@ -149,7 +168,7 @@ jobs:
           python3 ci/run-pr-tests.py "$BASE_REF"
 
       - name: Plan affected real-model product validation
-        if: always() && steps.profile.outputs.run_tests == 'true'
+        if: ${{ !inputs.reuse_validation && (always() && steps.profile.outputs.run_tests == 'true') }}
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref || github.ref_name }}
         run: |
@@ -157,7 +176,7 @@ jobs:
           python3 ci/plan-product-tests.py --base-ref "origin/${BASE_REF}"
 
       - name: Cleanup pytest temp
-        if: always()
+        if: ${{ !inputs.reuse_validation && (always()) }}
         env:
           DATUS_CI_PYTEST_BASETEMP: ${{ runner.temp }}/datus-agent-pytest-${{ github.run_id }}-${{ github.run_attempt }}
           RUNNER_TEMP_ROOT: ${{ runner.temp }}
@@ -180,7 +199,7 @@ jobs:
           rm -rf "$target"
 
       - name: Prepare coverage comment data
-        if: ${{ always() && github.event_name == 'pull_request' && steps.metrics.outputs.test_total != '' }}
+        if: ${{ !inputs.reuse_validation && (always() && github.event_name == 'pull_request' && steps.metrics.outputs.test_total != '') }}
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -196,7 +215,7 @@ jobs:
         run: python3 ci/write_coverage_comment_data.py
 
       - name: Upload coverage comment data
-        if: ${{ always() && github.event_name == 'pull_request' && steps.metrics.outputs.test_total != '' }}
+        if: ${{ !inputs.reuse_validation && (always() && github.event_name == 'pull_request' && steps.metrics.outputs.test_total != '') }}
         uses: actions/upload-artifact@v4
         with:
           name: coverage-comment-${{ github.run_id }}-${{ github.run_attempt }}
@@ -213,7 +232,7 @@ jobs:
           retention-days: 7
 
       - name: Check coverage thresholds
-        if: always() && steps.profile.outputs.run_tests == 'true' && steps.metrics.outcome != 'cancelled'
+        if: ${{ !inputs.reuse_validation && (always() && steps.profile.outputs.run_tests == 'true' && steps.metrics.outcome != 'cancelled') }}
         run: |
           python3 -c "
           import sys

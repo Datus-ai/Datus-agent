@@ -141,8 +141,15 @@ strictly on PRs. Coverage-map documentation registrations retain the runtime/CI
 checks. Runtime files, prompts, skills, dependency and workflow changes keep the
 code gate, regardless of the PR title. PR validation always publishes the stable
 `format-check / format-check` and `run-coverage / coverage` contexts, including on
-title/body edits and base-branch changes. Metadata-only edits do not cancel an
-in-flight code validation run, but currently revalidate instead of reusing status.
+title/body edits and base-branch changes. Metadata-only edits keep both contexts
+but run a read-only evidence check instead of installing dependencies or running
+Ruff/pytest again. The verifier requires the same head SHA, PR number and base
+branch, selects the latest real Code Quality validation run, and accepts only
+the matching job's successful outcome. Pending results are awaited; missing,
+failed, cancelled or skipped validation cannot become green. The evidence wait
+is bounded to the existing one-hour test-command budget. Code pushes and
+base-branch changes always run real validation. Metadata-only events never
+cancel that validation.
 Merge-queue context publication lives in a separate merge-group-only workflow,
 so skipped jobs cannot compete with the real PR check contexts.
 

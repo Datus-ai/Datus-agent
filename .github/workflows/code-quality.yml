@@ -1,4 +1,6 @@
 name: "Code Quality"
+run-name: >-
+  ${{ github.event.action == 'edited' && !github.event.changes.base && 'Metadata' || 'Validate' }} PR #${{ github.event.pull_request.number }} ${{ github.event.pull_request.head.sha }} base:${{ github.event.pull_request.base.ref }}
 
 on:
   pull_request:
@@ -9,17 +11,22 @@ on:
       - edited
 
 concurrency:
-  # Metadata edits retain real required checks and must not cancel in-flight validation.
+  # Metadata-only runs reuse verified results without cancelling real validation.
   group: code-quality-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
   cancel-in-progress: ${{ github.event.action != 'edited' || !!github.event.changes.base }}
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   format-check:
     uses: ./.github/workflows/python-format-check.yml
+    with:
+      reuse_validation: ${{ github.event.action == 'edited' && !github.event.changes.base }}
 
   run-coverage:
     needs: format-check
     uses: ./.github/workflows/run-ut-and-coverage.yml
+    with:
+      reuse_validation: ${{ github.event.action == 'edited' && !github.event.changes.base }}
