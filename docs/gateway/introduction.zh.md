@@ -110,6 +110,7 @@ channels:
     extra:
       app_id: ${FEISHU_APP_ID}
       app_secret: ${FEISHU_APP_SECRET}
+      domain: feishu                 # 国际版 Lark 请设为 lark
 ```
 
 !!! warning "请勿在配置文件中明文存储密钥"

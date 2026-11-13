@@ -144,6 +144,21 @@ export FEISHU_APP_SECRET="xxxxxxxxxxxxxxxxxxxxxxxx"
 |----|------|------|
 | `app_id` | 是 | 飞书开放平台的 App ID |
 | `app_secret` | 是 | 飞书开放平台的 App Secret |
+| `domain` | 否 | `feishu`（默认）或 `lark`（国际版），同时应用于 REST 和 WebSocket 客户端。 |
+
+国际版 Lark 使用相同适配器，并显式配置区域：
+
+```yaml
+channels:
+  lark-main:
+    adapter: feishu
+    extra:
+      app_id: ${LARK_APP_ID}
+      app_secret: ${LARK_APP_SECRET}
+      domain: lark
+```
+
+不支持的区域值会在连接前报错。出现 `Incorrect domain name` 时，请检查区域是否与应用凭证一致。
 
 ## 验证连接
 

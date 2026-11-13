@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from datus.gateway.models import OutboundMessage
+from datus.utils.exceptions import DatusException
 
 
 # ---------------------------------------------------------------------------
@@ -649,3 +650,55 @@ class TestFeishuSupportsStreaming:
     def test_supports_streaming_is_true(self):
         adapter = _make_adapter()
         assert adapter.supports_streaming is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "domain,expected",
+    [(None, "https://open.feishu.cn"), ("feishu", "https://open.feishu.cn"), ("lark", "https://open.larksuite.com")],
+)
+async def test_rest_and_ws_use_the_same_configured_domain(monkeypatch, domain, expected):
+    """Both directions must stay in the same tenant region."""
+    import asyncio
+
+    from datus.gateway.adapters.feishu import FeishuAdapter
+
+    lark = ModuleType("lark_oapi")
+    lark.FEISHU_DOMAIN = "https://open.feishu.cn"
+    lark.LARK_DOMAIN = "https://open.larksuite.com"
+    builder = MagicMock()
+    builder.app_id.return_value = builder
+    builder.app_secret.return_value = builder
+    builder.domain.return_value = builder
+    lark.Client = SimpleNamespace(builder=lambda: builder)
+    lark.LogLevel = SimpleNamespace(INFO=1)
+    ws = ModuleType("lark_oapi.ws")
+    ws.Client = MagicMock()
+    lark.ws = ws
+    ws_module = ModuleType("lark_oapi.ws.client")
+    monkeypatch.setitem(sys.modules, "lark_oapi", lark)
+    monkeypatch.setitem(sys.modules, "lark_oapi.ws", ws)
+    monkeypatch.setitem(sys.modules, "lark_oapi.ws.client", ws_module)
+    config = {"app_id": "id", "app_secret": "secret"}
+    if domain is not None:
+        config["domain"] = domain
+    adapter = FeishuAdapter("region-test", config, MagicMock())
+    monkeypatch.setattr(adapter, "_build_event_handler", lambda: object())
+    monkeypatch.setattr("datus.gateway.adapters.feishu.threading.Thread", MagicMock())
+    await adapter.start()
+    builder.domain.assert_called_once_with(expected)
+    # The SDK loop belongs to its worker thread; run the synchronous worker
+    # without starting a real thread or disturbing pytest's active event loop.
+    loop = MagicMock()
+    monkeypatch.setattr(asyncio, "new_event_loop", lambda: loop)
+    monkeypatch.setattr(asyncio, "set_event_loop", lambda value: None)
+    adapter._start_ws_in_new_loop(object())
+    assert ws.Client.call_args.kwargs["domain"] == expected
+
+
+@pytest.mark.parametrize("domain", ["unknown", "https://other.example", None, 123])
+def test_invalid_explicit_domain_is_rejected(domain):
+    from datus.gateway.adapters.feishu import FeishuAdapter
+
+    with pytest.raises(DatusException, match="domain"):
+        FeishuAdapter("invalid", {"app_id": "id", "app_secret": "secret", "domain": domain}, MagicMock())
