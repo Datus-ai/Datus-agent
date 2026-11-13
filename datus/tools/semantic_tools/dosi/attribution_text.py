@@ -17,6 +17,7 @@ module writes the tree one node per line, indented by level:
 
     <metric> = <formula> | <baseline> → <current> | <effect> (<share>)
       <input> [input] | <baseline> → <current> | <effect> (<share>)
+    <input> in all, <n> places | <effect> (<share>)
 
 and the dimension tree as ``- <group> | <baseline> → <current> | <effect>
 (<share>) | <n> below``. The tools' docstrings say how to read it; the two must
@@ -167,6 +168,22 @@ def _expression(node: Mapping[str, Any]) -> str:
     return text
 
 
+# A label that is a name, not a formula.
+_NAME = re.compile(r"[^\s()]+")
+
+
+def _input_name(node: Mapping[str, Any]) -> str:
+    """An input by its model metric: the one it can be queried as, else the
+    metric it is written as (a member with a fill of its own reads the bare
+    aggregate here), else the aggregate itself."""
+    if node.get("metric"):
+        return str(node["metric"])
+    label = str(node.get("label") or "")
+    if _NAME.fullmatch(label):
+        return label
+    return str(node["atom"])
+
+
 def _metric_head(node: Mapping[str, Any], *, root: bool = False) -> str:
     """``<metric> = <formula>``, ``(<formula>)`` without a metric, ``<input>
     [input]`` for an aggregate read from data. The top line always names its
@@ -177,7 +194,7 @@ def _metric_head(node: Mapping[str, Any], *, root: bool = False) -> str:
         tag = "input" + (f", filter {' AND '.join(filters)}" if filters else "")
         if root and node.get("metric"):
             return f"{node['metric']} = {_expression(node)} [{tag}]"
-        return f"{node['atom']} [{tag}]"
+        return f"{_input_name(node)} [{tag}]"
     if node.get("metric"):
         return f"{node['metric']} = {_expression(node)}"
     return f"({_expression(node)})"
@@ -219,7 +236,34 @@ def render_attribute_metrics(result: Mapping[str, Any], notes: Sequence[str] = (
             walk(child, depth + 1)
 
     walk(tree, 1)
+    lines.extend(_input_totals(tree))
     return "\n".join(lines)
+
+
+def _input_totals(tree: Mapping[str, Any]) -> List[str]:
+    """One line per input read in more than one place: its whole effect is the
+    sum of its lines, which the model is not to add up itself."""
+    reads: Dict[str, List[Mapping[str, Any]]] = {}
+
+    def collect(node: Mapping[str, Any]) -> None:
+        for child in node.get("children") or []:
+            if not isinstance(child, Mapping):
+                continue
+            if child.get("atom"):
+                reads.setdefault(str(child["atom"]), []).append(child)
+            collect(child)
+
+    collect(tree)
+    root_delta = tree.get("effect")
+    out: List[str] = []
+    for nodes in reads.values():
+        effects = [node.get("effect") for node in nodes]
+        if len(nodes) < 2 or any(not isinstance(e, (int, float)) for e in effects):
+            continue
+        total = float(sum(effects))
+        share = total / root_delta if isinstance(root_delta, (int, float)) and root_delta else None
+        out.append(f"{_input_name(nodes[0])} in all, {len(nodes)} places | {signed(total)} ({percent(share)})")
+    return out
 
 
 def render_attribute_dimensions(result: Mapping[str, Any], notes: Sequence[str] = ()) -> str:

@@ -2673,7 +2673,9 @@ class SemanticTools:
         """
         Explain a metric's change between two periods through its formula: which
         inputs moved it and by how much. Use it first when the metric is built
-        from other metrics (get_metric `expr`).
+        from other metrics (get_metric `expr`). A rank, a share of a total or a
+        change on the period before is explained the same way: call it on that
+        metric with group_by, and fix the row with where.
 
         The result is text: a `status` line, `issue` lines when something is
         missing or refused, then the formula tree, one node per line, indented
@@ -2683,12 +2685,13 @@ class SemanticTools:
           metric's unit. A parent's effect is the sum of its children's; share
           is effect over the top line's change. A node's own change is not its
           effect: a growing denominator has a negative effect.
-        - `[input]` is an aggregate read from data. One input can sit under
-          several parents (a ratio's numerator and denominator); its total
-          effect is the sum of its lines.
-        - A node written `<metric> = …` can be passed as `metric` to
-          attribute_dimensions with the same other arguments; a formula in
-          parentheses cannot.
+        - `[input]` is an aggregate read from data, named by its metric. One
+          input can sit under several parents (a ratio's numerator and
+          denominator); a last line `<input> in all, <n> places | <effect>`
+          then gives its whole effect. Quote that, not one of its lines.
+        - A node written `<metric> = …` or `<metric> [input]` can be passed as
+          `metric` to attribute_dimensions with the same other arguments; a
+          formula in parentheses cannot.
         - `row` is the row the top line reads, for a metric with group_by;
           `@ field=value` is the row or period a node reads where it differs
           (the month before, the row being ranked).
@@ -2764,9 +2767,10 @@ class SemanticTools:
 
         Args:
             metric: The metric to explain.
-            dimensions: What to split by, 1 to 3 fields as `dataset.field[:grain]`, from get_metric
-                `dimension_datasets`. Business categories, not ids and not the time field the
-                periods are cut on.
+            dimensions: What to split by, 1 to 3 fields as `dataset.field[:grain]` of the datasets
+                get_metric lists under `dimension_datasets`; a field that does not exist is
+                answered with the candidates. Business categories, not ids and not the time field
+                the periods are cut on.
             baseline_start: Start of the earlier period, YYYY-MM-DD, inclusive.
             baseline_end: End of the earlier period, exclusive.
             current_start: Start of the later period, inclusive. Make the two periods the same length.

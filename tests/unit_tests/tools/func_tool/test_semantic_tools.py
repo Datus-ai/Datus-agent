@@ -2408,7 +2408,8 @@ class TestAttributionTools:
         dimensions = " ".join(trans_to_function_tool(tool.attribute_dimensions).description.split())
 
         assert "A parent's effect is the sum of its children's" in metrics
-        assert "its total effect is the sum of its lines" in metrics
+        assert "`<input> in all, <n> places | <effect>` then gives its whole effect" in metrics
+        assert "call it on that metric with group_by, and fix the row with where" in metrics
         assert "can be passed as `metric` to attribute_dimensions" in metrics
         assert "one drill-down in the order given" in dimensions
         assert "call once per dimension" in dimensions
