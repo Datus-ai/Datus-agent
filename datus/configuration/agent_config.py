@@ -3124,6 +3124,7 @@ def load_model_config(data: dict) -> ModelConfig:
         context_length=data.get("context_length"),
         max_tokens=data.get("max_tokens"),
         tokenizer_ref=data.get("tokenizer_ref"),
+        supports_image_input=data.get("supports_image_input"),
     )
 
 

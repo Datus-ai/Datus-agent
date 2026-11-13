@@ -13,7 +13,7 @@ import pytest
 
 from datus.api.routes import models_routes
 from datus.api.routes.models_routes import list_models
-from datus.configuration.agent_config import ModelConfig
+from datus.configuration.agent_config import ModelConfig, load_model_config
 
 
 def _make_svc(
@@ -530,7 +530,9 @@ async def test_connection_image_capabilities_override_names_independently(monkey
     svc = _make_svc(
         catalog={},
         custom_models={
-            "private-vision": ModelConfig(type="openai", api_key="stub", model="YunCode", supports_image_input=True),
+            "private-vision": load_model_config(
+                {"type": "openai", "api_key": "stub", "model": "YunCode", "supports_image_input": True}
+            ),
             "private-text": ModelConfig(type="openai", api_key="stub", model="YunCode", supports_image_input=False),
             "disabled-vision": ModelConfig(type="openai", api_key="stub", model="gpt-4o", supports_image_input=False),
             "legacy": ModelConfig(type="openai", api_key="stub", model="YunCode"),
