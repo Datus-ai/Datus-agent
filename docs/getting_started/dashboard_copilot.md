@@ -419,8 +419,8 @@ The attribution subagent works against the generated metrics and semantic dimens
 An attribution report should include:
 
 - the overall population change;
-- regional and country-level contributors;
-- dimension-level contribution or importance;
+- the regions that contributed most, and the countries within them;
+- each contributor's share of the change;
 - the strongest drivers and relevant caveats;
 - a conclusion grounded in metric query results.
 

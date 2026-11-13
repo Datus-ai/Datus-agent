@@ -28,7 +28,7 @@ Execution belongs to the [Dosi](https://dosi.datus.ai/) engine: one semantic mod
 
 ### Metric Q&A and attribution
 
-[AskMetrics](subagent/ask_metrics.md) answers business questions from metric definitions instead of improvising SQL, and when a metric moves, `attribution_analyze` quantifies each dimension's contribution.
+[AskMetrics](subagent/ask_metrics.md) answers business questions from metric definitions instead of improvising SQL, and when a metric moves, `attribute_metrics` splits the change over the inputs of its formula and `attribute_dimensions` over the groups of its dimensions.
 
 ![A metric Q&A session: question, semantic-layer tool calls, attribution result](assets/metric_qa_session.svg)
 

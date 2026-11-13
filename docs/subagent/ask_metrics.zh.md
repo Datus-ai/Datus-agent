@@ -86,7 +86,7 @@ graph LR
 - 查询用到的每个数据集都先调用 `get_dataset`。数据集和字段的描述里写着查询它时要遵守的约定，比如快照取哪一天、编码值代表什么。
 - 分组和过滤的字段写成 `dataset.field`，字段名用 `get_dataset` 显示的名字。
 - `query_metrics` 是查询指标值的主要工具。
-- 变化解释和贡献分析问题使用 `attribution_analyze`。
+- 变化解释和贡献分析问题用 `attribute_metrics` 把变化分给指标公式里的各个输入，用 `attribute_dimensions` 把变化分给一个或几个维度的分组（比较不同维度时每个维度调用一次；一次给几个维度是按顺序逐层下钻）。
 - 默认工具面不包含原始 SQL 工具。
 
 ## 默认工具
@@ -99,7 +99,8 @@ graph LR
 | `semantic_tools.get_metric` | 描述单个指标：怎么算、读哪些数据集、可按哪些数据集分组、参数和时间粒度 |
 | `semantic_tools.get_dataset` | 描述单个数据集：字段及其定义、fixed 字段、时间字段和关联 |
 | `semantic_tools.query_metrics` | 查询指标值 |
-| `semantic_tools.attribution_analyze` | 按候选维度解释指标变化 |
+| `semantic_tools.attribute_metrics` | 按公式解释指标变化：每个输入贡献了多少 |
+| `semantic_tools.attribute_dimensions` | 按维度分组解释指标变化：每个分组贡献了多少 |
 | `filesystem_tools.read_file` | 读取相关的项目业务定义或背景 |
 | `filesystem_tools.glob` | 定位相关项目文件 |
 | `filesystem_tools.grep` | 在项目文件中搜索具体业务关键词 |
