@@ -212,6 +212,8 @@ class BulkQueryTools:
         sql accepts SQL text or a project .sql file path. output_file is a
         project-relative .csv/.parquet path; omitted paths use exports/<id>.csv.
         Returns only file/count/completion metadata, never rows or SQL text.
+        Each export is limited to 100,000 rows and 100 MB (100,000,000 bytes);
+        configured lower limits apply. Exceeding either limit fails the export.
         Stream when the adapter and policies support it; otherwise fetch the
         complete result into Agent memory and stage it in bounded batches.
         Inspect small query samples with execute_sql instead. Existing files

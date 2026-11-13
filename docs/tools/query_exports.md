@@ -65,12 +65,18 @@ instead of overwriting them or silently incorporating them into the merge.
 agent:
   bulk_query:
     batch_rows: 5000
-    max_rows: 1000000
-    max_bytes: 1073741824
+    max_rows: 100000
+    max_bytes: 100000000
     max_batch_bytes: 33554432
 ```
 
-These limits apply to file exports during source consumption and staging,
+Each export has hard ceilings of **100,000 rows** and **100 MB (100,000,000 bytes)**.
+Configuration may lower `max_rows` and `max_bytes`; values above these ceilings
+are rejected. Exceeding either limit fails the entire export without truncating
+the result. Size checks cover source Arrow data, staging data and the final
+CSV/Parquet file, so a compressed file below 100 MB can still exceed the data limit.
+
+These limits apply during source consumption, staging and output serialization,
 before output publication. For buffered reads, source row/byte limits can only
 be checked after the full result arrives; they do not cap the driver's peak
 memory allocation. Failed/cancelled exports do not publish a successful
