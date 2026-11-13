@@ -1,0 +1,123 @@
+{
+ "schema_version": 3,
+ "status": "complete",
+ "metric": "inventory_on_hand_variation_next_month",
+ "algorithm": "exact_subset",
+ "accuracy": "exact",
+ "tree": {
+  "label": "inventory_on_hand_variation_next_month",
+  "metric": "inventory_on_hand_variation_next_month",
+  "expression": "inventory_on_hand_variation 1 month later",
+  "coordinates": {
+   "baseline": {
+    "d_date__month": "2000-01-01 00:00:00",
+    "inv_item_sk": 265,
+    "inv_warehouse_sk": 1
+   },
+   "current": {
+    "d_date__month": "2001-01-01 00:00:00",
+    "inv_item_sk": 265,
+    "inv_warehouse_sk": 1
+   }
+  },
+  "baseline": 0.7435956053152525,
+  "current": 1.0151581328149208,
+  "delta": 0.27156252749966836,
+  "effect": 0.27156252749966836,
+  "share": 1.0,
+  "children": [
+   {
+    "label": "inventory_on_hand_variation",
+    "metric": null,
+    "expression": "inventory_on_hand_stddev * 1.000 / NULLIF(inventory_avg_on_hand, 0)",
+    "coordinates": {
+     "baseline": {
+      "d_date__month": "2000-02-01 00:00:00",
+      "inv_item_sk": 265,
+      "inv_warehouse_sk": 1
+     },
+     "current": {
+      "d_date__month": "2001-02-01 00:00:00",
+      "inv_item_sk": 265,
+      "inv_warehouse_sk": 1
+     }
+    },
+    "baseline": 0.7435956053152525,
+    "current": 1.0151581328149208,
+    "delta": 0.27156252749966836,
+    "effect": 0.27156252749966836,
+    "share": 1.0,
+    "children": [
+     {
+      "label": "inventory_on_hand_stddev",
+      "metric": null,
+      "expression": "STDDEV_SAMP(inv_quantity_on_hand)",
+      "atom": "inventory_on_hand_stddev",
+      "binding": {
+       "datasets": [
+        "inventory"
+       ],
+       "filters": [],
+       "time_dimension": "date_dim.d_date"
+      },
+      "coordinates": {
+       "baseline": {
+        "d_date__month": "2000-02-01 00:00:00",
+        "inv_item_sk": 265,
+        "inv_warehouse_sk": 1
+       },
+       "current": {
+        "d_date__month": "2001-02-01 00:00:00",
+        "inv_item_sk": 265,
+        "inv_warehouse_sk": 1
+       }
+      },
+      "baseline": 214.34143323212152,
+      "current": 333.98702569610896,
+      "delta": 119.64559246398744,
+      "effect": 0.3893700954475638,
+      "share": 1.4338137851071493
+     },
+     {
+      "label": "inventory_avg_on_hand",
+      "metric": null,
+      "expression": "AVG(inv_quantity_on_hand)",
+      "atom": "inventory_avg_on_hand",
+      "binding": {
+       "datasets": [
+        "inventory"
+       ],
+       "filters": [],
+       "time_dimension": "date_dim.d_date"
+      },
+      "coordinates": {
+       "baseline": {
+        "d_date__month": "2000-02-01 00:00:00",
+        "inv_item_sk": 265,
+        "inv_warehouse_sk": 1
+       },
+       "current": {
+        "d_date__month": "2001-02-01 00:00:00",
+        "inv_item_sk": 265,
+        "inv_warehouse_sk": 1
+       }
+      },
+      "baseline": 288.25,
+      "current": 329.0,
+      "delta": 40.75,
+      "effect": -0.11780756794789543,
+      "share": -0.43381378510714924
+     }
+    ]
+   }
+  ]
+ },
+ "issues": [],
+ "execution": {
+  "queries_executed": 6,
+  "rows_fetched": 6,
+  "evaluations_executed": 6,
+  "elapsed_ms": 57,
+  "budget_exhausted": []
+ }
+}

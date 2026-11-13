@@ -1,0 +1,120 @@
+{
+ "schema_version": 3,
+ "status": "complete",
+ "metric": "store_gross_margin_rank_in_category",
+ "dimensions": [
+  "store.s_store_name"
+ ],
+ "algorithm": "exact_subset",
+ "accuracy": "exact",
+ "tree": {
+  "label": "store_gross_margin_rank_in_category",
+  "metric": "store_gross_margin_rank_in_category",
+  "expression": "RANK() OVER (ORDER BY store_gross_margin ASC)",
+  "coordinates": {
+   "baseline": {
+    "i_category": "Books",
+    "i_class": "travel"
+   },
+   "current": {
+    "i_category": "Books",
+    "i_class": "travel"
+   }
+  },
+  "baseline": 13.0,
+  "current": 1.0,
+  "delta": -12.0,
+  "effect": -12.0,
+  "share": 1.0,
+  "groups_total": 6,
+  "others": null,
+  "children": [
+   {
+    "label": "ation",
+    "key": {
+     "s_store_name": "ation"
+    },
+    "baseline": null,
+    "current": null,
+    "delta": null,
+    "baseline_status": "not_defined",
+    "current_status": "not_defined",
+    "effect": -4.999999999999999,
+    "share": 0.4166666666666666
+   },
+   {
+    "label": "eing",
+    "key": {
+     "s_store_name": "eing"
+    },
+    "baseline": null,
+    "current": null,
+    "delta": null,
+    "baseline_status": "not_defined",
+    "current_status": "not_defined",
+    "effect": -3.683333333333334,
+    "share": 0.3069444444444445
+   },
+   {
+    "label": "able",
+    "key": {
+     "s_store_name": "able"
+    },
+    "baseline": null,
+    "current": null,
+    "delta": null,
+    "baseline_status": "not_defined",
+    "current_status": "not_defined",
+    "effect": -3.016666666666667,
+    "share": 0.25138888888888894
+   },
+   {
+    "label": "ought",
+    "key": {
+     "s_store_name": "ought"
+    },
+    "baseline": null,
+    "current": null,
+    "delta": null,
+    "baseline_status": "not_defined",
+    "current_status": "not_defined",
+    "effect": -0.6833333333333335,
+    "share": 0.05694444444444446
+   },
+   {
+    "label": "ese",
+    "key": {
+     "s_store_name": "ese"
+    },
+    "baseline": null,
+    "current": null,
+    "delta": null,
+    "baseline_status": "not_defined",
+    "current_status": "not_defined",
+    "effect": 0.2666666666666666,
+    "share": -0.022222222222222216
+   },
+   {
+    "label": "bar",
+    "key": {
+     "s_store_name": "bar"
+    },
+    "baseline": null,
+    "current": null,
+    "delta": null,
+    "baseline_status": "not_defined",
+    "current_status": "not_defined",
+    "effect": 0.11666666666666667,
+    "share": -0.009722222222222222
+   }
+  ]
+ },
+ "issues": [],
+ "execution": {
+  "queries_executed": 6,
+  "rows_fetched": 226,
+  "evaluations_executed": 66,
+  "elapsed_ms": 62,
+  "budget_exhausted": []
+ }
+}

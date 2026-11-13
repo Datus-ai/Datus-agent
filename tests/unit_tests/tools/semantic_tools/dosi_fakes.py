@@ -409,6 +409,164 @@ class FakeEngine:
             raise self.fail_with
         return copy.deepcopy(ATTRIBUTE_RESULT)
 
+    def _attribution_call(self, method, request, dialect, connection, timeout_secs, db_path, dry_run, dws_mode):
+        self.attribute_calls.append(
+            {
+                "method": method,
+                "request": request,
+                "dialect": dialect,
+                "connection": connection,
+                "timeout_secs": timeout_secs,
+                "db_path": db_path,
+                "dry_run": dry_run,
+                "dws_mode": dws_mode,
+            }
+        )
+        if self.fail_with is not None:
+            raise self.fail_with
+
+    def attribute_metrics(
+        self,
+        request,
+        dialect=None,
+        connection=None,
+        timeout_secs=None,
+        db_path=None,
+        *,
+        dry_run=False,
+        dws_mode=None,
+    ):
+        self._attribution_call(
+            "attribute_metrics", request, dialect, connection, timeout_secs, db_path, dry_run, dws_mode
+        )
+        return copy.deepcopy(ATTRIBUTE_METRICS_RESULT)
+
+    def attribute_dimensions(
+        self,
+        request,
+        dialect=None,
+        connection=None,
+        timeout_secs=None,
+        db_path=None,
+        *,
+        dry_run=False,
+        dws_mode=None,
+    ):
+        self._attribution_call(
+            "attribute_dimensions", request, dialect, connection, timeout_secs, db_path, dry_run, dws_mode
+        )
+        if not request.get("dimensions"):
+            raise QueryError(
+                "name at least one dimension to explain the metric's change by",
+                code="dimensions_required",
+                candidates=["orders.status", "customers.region"],
+                detail={"field_path": "dimensions"},
+            )
+        return copy.deepcopy(ATTRIBUTE_DIMENSIONS_RESULT)
+
+
+# ``schema_version: 3`` results of the two attribution tools, as the binding returns them.
+ATTRIBUTE_METRICS_RESULT = {
+    "schema_version": 3,
+    "status": "complete",
+    "metric": "avg_order_value",
+    "algorithm": "exact_subset",
+    "accuracy": "exact",
+    "tree": {
+        "label": "avg_order_value",
+        "metric": "avg_order_value",
+        "expression": "revenue / order_count",
+        "baseline": 50.0,
+        "current": 60.0,
+        "delta": 10.0,
+        "effect": 10.0,
+        "share": 1.0,
+        "children": [
+            {
+                "label": "revenue",
+                "metric": "revenue",
+                "expression": "SUM(amount)",
+                "atom": "revenue",
+                "binding": {"datasets": ["orders"], "filters": [], "time_dimension": "orders.order_date"},
+                "baseline": 1000.0,
+                "current": 1500.0,
+                "delta": 500.0,
+                "effect": 22.5,
+                "share": 2.25,
+            },
+            {
+                "label": "order_count",
+                "metric": "order_count",
+                "expression": "COUNT(*)",
+                "atom": "order_count",
+                "binding": {"datasets": ["orders"], "filters": [], "time_dimension": "orders.order_date"},
+                "baseline": 20.0,
+                "current": 25.0,
+                "delta": 5.0,
+                "effect": -12.5,
+                "share": -1.25,
+            },
+        ],
+    },
+    "issues": [],
+    "execution": {
+        "queries_executed": 2,
+        "rows_fetched": 2,
+        "evaluations_executed": 4,
+        "elapsed_ms": 3,
+        "budget_exhausted": [],
+    },
+}
+
+ATTRIBUTE_DIMENSIONS_RESULT = {
+    "schema_version": 3,
+    "status": "complete",
+    "metric": "revenue",
+    "dimensions": ["orders.status"],
+    "algorithm": "exact_linear",
+    "accuracy": "exact",
+    "tree": {
+        "label": "revenue",
+        "metric": "revenue",
+        "expression": "SUM(amount)",
+        "baseline": 100.0,
+        "current": 150.0,
+        "delta": 50.0,
+        "effect": 50.0,
+        "share": 1.0,
+        "groups_total": 2,
+        "others": None,
+        "children": [
+            {
+                "label": "paid",
+                "key": {"status": "paid"},
+                "baseline": 80.0,
+                "current": 140.0,
+                "delta": 60.0,
+                "effect": 60.0,
+                "share": 1.2,
+            },
+            {
+                "label": "refunded",
+                "key": {"status": "refunded"},
+                "baseline": 20.0,
+                "current": 10.0,
+                "delta": -10.0,
+                "effect": -10.0,
+                "share": -0.2,
+            },
+        ],
+    },
+    "issues": [],
+    "execution": {
+        "queries_executed": 2,
+        "rows_fetched": 4,
+        "evaluations_executed": 0,
+        "elapsed_ms": 2,
+        "budget_exhausted": [],
+    },
+}
+
 
 # Ontology payloads follow the Dosi MCP ``describe`` / ``paths`` JSON, which the
 # Python binding returns verbatim (aviation example, trimmed).

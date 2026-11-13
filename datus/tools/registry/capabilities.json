@@ -431,7 +431,12 @@
       "companion_of": null,
       "direct_call": false
     },
-    "semantic_tools.attribution_analyze": {
+    "semantic_tools.attribute_dimensions": {
+      "access": "read",
+      "companion_of": null,
+      "direct_call": true
+    },
+    "semantic_tools.attribute_metrics": {
       "access": "read",
       "companion_of": null,
       "direct_call": true
