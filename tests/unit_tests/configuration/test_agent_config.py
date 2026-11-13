@@ -41,6 +41,12 @@ from datus.utils.exceptions import DatusException, ErrorCode
 pytestmark = pytest.mark.ci
 
 
+@pytest.mark.parametrize("name, value", [("max_rows", 100_001), ("max_bytes", 100_000_001)])
+def test_agent_config_rejects_export_limits_above_hard_ceilings(name, value):
+    with pytest.raises(ValueError, match=rf"bulk_query\.{name} must not exceed {value - 1}"):
+        AgentConfig(nodes={}, bulk_query={name: value})
+
+
 class TestMCPExecutionConfig:
     @pytest.mark.parametrize("raw", [True, 8, "invalid", [1], [("max_workers", 2)]])
     def test_malformed_mcp_execution_shape_uses_defaults(self, tmp_path, raw):
