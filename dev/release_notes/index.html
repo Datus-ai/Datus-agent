@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/release_notes/">
       
       
         <link rel="prev" href="../vscode_extension/introduction/">
@@ -16,9 +16,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -55,13 +55,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/release_notes/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/release_notes/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/release_notes/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/release_notes/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -4910,6 +4904,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#045" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.4.5
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#044" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5309,6 +5314,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#045" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.4.5
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#044" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5688,6 +5704,28 @@
 
 <h1 id="release-notes">Release notes<a class="headerlink" href="#release-notes" title="Permanent link">&para;</a></h1>
 <h2 id="04">0.4<a class="headerlink" href="#04" title="Permanent link">&para;</a></h2>
+<h3 id="045">0.4.5<a class="headerlink" href="#045" title="Permanent link">&para;</a></h3>
+<p><strong>New Features</strong></p>
+<ul>
+<li><strong>Query Metrics, Trends, and Attribution Directly in Chat</strong> - Chat can analyze existing metrics without switching to AskMetrics. When no suitable metric exists, it can use the available read-only SQL tools; metric authoring starts only when explicitly requested. Follow-up questions to a selected business subagent continue its original child session. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1612">Agent #1612</a>) Docs: <a href="https://docs.datus.ai/dev/cli/chat_command/">Chat</a>, <a href="https://docs.datus.ai/dev/subagent/ask_metrics/">AskMetrics</a>.</li>
+<li><strong>Export Complete Query Results to Project CSV/Parquet Files</strong> - Adds <code>export_query</code>, accepting SQL text or a project SQL file and returning the output path, row count, and completion status without sending the full dataset into model context. Streaming is preferred when both the database adapter and policies support it; otherwise, exports buffer the complete result. Data permissions and policy checks apply in both modes. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1611">Agent #1611</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/193">DB #193</a>) Docs: <a href="https://docs.datus.ai/dev/tools/query_exports/">Query Result Exports</a>.</li>
+</ul>
+<p><strong>Enhancements</strong></p>
+<ul>
+<li><strong>More Complete Database Integration and SQL Guidance</strong> - Athena adds an SQL skill packaged with its adapter; Hive/Inceptor provides syntax and metadata guidance for the actual server product. The adapter repository also provides standalone <code>datus-duckdb</code> and <code>datus-sqlite</code> packages, plus configuration schema and validation entry points for integration outside the Agent. Agent adoption of those standalone packages is a separate change. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1571">Agent #1571</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/184">DB #184</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/185">#185</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/187">#187</a>) Docs: <a href="https://docs.datus.ai/dev/configuration/datasources/hive/">Hive/Inceptor</a>.</li>
+<li><strong>More Reliable Long Tasks and Private Model Execution</strong> - Chat and the chat/agent-creation APIs default to 200 turns while retaining explicit settings. Unknown or private models can use fallback capacity settings when metadata is unavailable. Improves reasoning replay, midstream fallback retries, and output-exhaustion handling. Calls to unavailable tools return errors to the model so it can correct them within the same run. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1581">Agent #1581</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1626">#1626</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1589">#1589</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1616">#1616</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1567">#1567</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1577">#1577</a>) Docs: <a href="https://docs.datus.ai/dev/configuration/agent/">Agent Capacity Configuration</a>, <a href="https://docs.datus.ai/dev/API/chat/">Chat API Turn Limit</a>.</li>
+<li><strong>Unified Skill Creation, Revision, and Review</strong> - <code>gen_skill</code> uses one workflow and distinguishes format validity from content correctness. Review-only requests leave the target unchanged, and loading a skill keeps access to its supporting reference files consistent. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1589">Agent #1589</a>) Docs: <a href="https://docs.datus.ai/dev/subagent/builtin_subagents/">Built-in Subagents</a>.</li>
+</ul>
+<p><strong>Bug Fixes</strong></p>
+<ul>
+<li><strong>PostgreSQL Metadata, DDL Reconstruction, and SQL Lineage Compatibility</strong> - Preserves numeric/varchar precision and length, arrays, and user-defined types. Restores foreign keys, cross-schema references, and required indexes without changing multiline defaults; arrays no longer enter unsupported scalar aggregates. The Agent also fixes SQL lineage extraction with SQLGlot 30. (<a href="https://github.com/Datus-ai/datus-db-adapters/pull/177">DB #177</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/181">#181</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/183">#183</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1576">Agent #1576</a>)</li>
+</ul>
+<p><strong>Upgrade Notes</strong></p>
+<ul>
+<li><strong>Replace the Legacy Report Type</strong> - Change <code>gen_report</code> to <code>gen_visual_report</code> in configurations, workflows, and calls. There is no compatibility alias, and existing configurations are not rewritten automatically. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1570">Agent #1570</a>) Docs: <a href="https://docs.datus.ai/dev/subagent/gen_visual_report/">HTML Reports</a>.</li>
+<li><strong>Check Custom Tool Configuration and Prompts</strong> - <code>read_tool_result</code> is removed; use pagination parameters on the original tool. OSI dataset/metric upsert and delete methods move from <code>filesystem_tools</code> to <code>semantic_tools</code>, and old selections are not converted automatically. Custom native tools must declare <code>tool_contract</code> and update the capability catalog. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1613">Agent #1613</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1609">#1609</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1603">#1603</a>) Docs: <a href="https://docs.datus.ai/dev/configuration/agent/">Tool Pagination</a>, <a href="https://docs.datus.ai/dev/tool-contracts/">Tool Contracts</a>.</li>
+<li><strong>Add Metric Tools to Existing Chat Allowlists as Needed</strong> - A non-empty <code>tools</code> list replaces the defaults. To enable direct metric analysis, add the required <code>semantic_tools.&lt;method&gt;</code> entries. Omitted or empty lists use the default tools. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1612">Agent #1612</a>) Docs: <a href="https://docs.datus.ai/dev/cli/chat_command/">Chat</a>.</li>
+</ul>
 <h3 id="044">0.4.4<a class="headerlink" href="#044" title="Permanent link">&para;</a></h3>
 <p><strong>New Features</strong></p>
 <ul>
