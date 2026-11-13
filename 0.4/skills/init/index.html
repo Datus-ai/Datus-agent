@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/0.4/skills/init/">
       
       
         <link rel="prev" href="../introduction/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/0.4/skills/init/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/skills/init/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/skills/init/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/skills/init/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -3185,8 +3179,6 @@
       
         
       
-        
-      
     
     
     
@@ -3377,34 +3369,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/sql_policy/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    SQL Policy
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../configuration/web_tool/" class="md-nav__link">
         
   
@@ -3524,10 +3488,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_8" >
         
           
-          <label class="md-nav__link" for="__nav_1_12_9" id="__nav_1_12_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_12_8" id="__nav_1_12_8_label" tabindex="0">
             
   
   
@@ -3545,8 +3509,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_12_9">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_12_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5099,7 +5063,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/skills/init.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/skills/init.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5147,7 +5111,7 @@
 <p>Use <code>todo_list/read/write/update</code> for business topics and work steps, adjusting them as needed rather than creating one task per table. Todo use neither activates plan mode nor requires plan confirmation. The runtime does not maintain a separate selected-table registry or per-table completion state.</p>
 <p>The model incrementally edits AGENTS.md and knowledge/*.md through ordinary file tools, preserving human text, unrelated scopes and useful existing definitions. Write details before navigation and read back changes. Resolve structural questions with available tools before asking the user. Reserve pending questions for business ambiguities or unavailable information. Shared purpose, grain or similar SQL does not prove identical columns or keys: scope claims to actual evidence. Store unresolved questions in knowledge/pending-questions.md and do not use them as facts for answers, SQL or build-kb generation.</p>
 <p>The final reply explains the current scope, outcomes, changed files, open questions and unfinished work. The CLI reports only whether execution returned or stopped and why. Metadata success, completed todos, file-only work and a normal reply do not certify business completion or full-database coverage. <code>knowledge/pending-questions.md</code> holds unresolved questions; todos and conversation summaries hold work progress.</p>
-<p>Large results are archived intact and read with <code>read_tool_result</code>. Page budgets scale with the available model window, within bounded limits. Compaction retains a bounded set of exact recent archive identifiers, sections and cursors alongside the summary, so recovery does not depend on the model reproducing them. Automatic mid-turn compaction preserves the current goal, latest corrections, outcomes and next step, then continues the same loop. Read todo details on demand rather than injecting entire table lists. Long user clarifications use the same archive paging mechanism for complete recovery. Capacity checks include full input, output reserve and a safety margin; compaction does not reset the run budget. Interruption, timeouts, model errors or exhausted budgets preserve documents and report the concrete reason and unfinished scope. Ordinary tools and interactions are restored on exit, including errors; user confirmations continue in the same conversation.</p>
+<p>Catalog tools return their own pages (200 records by default, no hard page-size maximum); when <code>has_more=true</code>, continue with the same tool using <code>snapshot_id=extra.snapshot_id</code> and <code>offset=extra.next_offset</code>. <code>extra.offset</code> identifies the current page. Compaction retains recent native tool continuation arguments alongside the summary. Oversized clarifications and historical archive references are saved losslessly as files; read them with <code>read_file</code> in line ranges. Automatic mid-turn compaction preserves the current goal, latest corrections, outcomes and next step, then continues the same loop. Read todo details on demand rather than injecting entire table lists. Long user clarifications remain fully recoverable from their files. Capacity checks include full input, output reserve and a safety margin; compaction does not reset the run budget. Interruption, timeouts, model errors or exhausted budgets preserve documents and report the concrete reason and unfinished scope. Ordinary tools and interactions are restored on exit, including errors; user confirmations continue in the same conversation.</p>
 <p>There is no init task ID, persistent task queue or .datus/init/ checkpoint directory. Later invocations read existing documents and supplement them. Explicit user-selected plan mode remains read-only. Existing file permissions and concurrent-edit checks remain in force, without an init-specific content validator or multi-file transaction.</p>
 <h2 id="init-vs-build-kb">Init vs. Build KB<a class="headerlink" href="#init-vs-build-kb" title="Permanent link">&para;</a></h2>
 <table>

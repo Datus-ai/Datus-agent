@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/0.4/configuration/agent/">
       
       
         <link rel="prev" href="../introduction/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/0.4/configuration/agent/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/configuration/agent/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/configuration/agent/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/configuration/agent/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -3081,8 +3075,6 @@
       
         
       
-        
-      
     
     
     
@@ -3504,6 +3496,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#sql-read-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SQL Read-Only Mode
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#complete-configuration-example" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3594,34 +3597,6 @@
     
   
     Benchmark
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../sql_policy/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    SQL Policy
   
 
     
@@ -3761,10 +3736,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_8" >
         
           
-          <label class="md-nav__link" for="__nav_1_12_9" id="__nav_1_12_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_12_8" id="__nav_1_12_8_label" tabindex="0">
             
   
   
@@ -3782,8 +3757,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_12_9">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_12_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5548,6 +5523,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#sql-read-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SQL Read-Only Mode
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#complete-configuration-example" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5575,7 +5561,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/configuration/agent.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/configuration/agent.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5597,7 +5583,7 @@
 <h3 id="llm-configuration-two-tier-provider-model">LLM Configuration (Two-Tier Provider Model)<a class="headerlink" href="#llm-configuration-two-tier-provider-model" title="Permanent link">&para;</a></h3>
 <p>LLM selection uses a two-tier system. Most users only need the provider-level configuration; custom entries are for self-hosted or private endpoints.</p>
 <h4 id="provider-level-configuration-preferred">Provider-Level Configuration (Preferred)<a class="headerlink" href="#provider-level-configuration-preferred" title="Permanent link">&para;</a></h4>
-<p>Configure credentials under <code>agent.providers.&lt;name&gt;</code>. Available models and metadata are loaded from <code>conf/providers.yml</code> automatically. Use the <a href="../../cli/other_commands/#model"><code>/model</code></a> slash command in the CLI to switch between providers and models interactively.</p>
+<p>Configure credentials under <code>agent.providers.&lt;name&gt;</code>. Available models and metadata are refreshed automatically from OpenRouter, with <code>conf/providers.yml</code> as an offline fallback. Use the <a href="../../cli/other_commands/#model"><code>/model</code></a> slash command in the CLI to switch between providers and models interactively.</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">providers</span><span class="p">:</span>
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">openai</span><span class="p">:</span>
@@ -5694,11 +5680,11 @@ existing configurations do not need new fields:</p>
 <tbody>
 <tr>
 <td><code>context_length</code></td>
-<td>Use existing model specifications or the provider catalogue; fall back to a <code>262144</code> (256K) token budget if unknown</td>
+<td>Use existing model specifications or the provider catalogue; fall back to a <code>1048576</code> (1M) token budget if unknown</td>
 </tr>
 <tr>
 <td><code>max_tokens</code></td>
-<td>Use the model's output specification; fall back to <code>8192</code> if unknown. Transports with an output cap also leave room for input and the safety margin, so small windows may get a lower default</td>
+<td>Retain the known output default, or use <code>384000</code> if unknown, matching the bundled DeepSeek V4 Flash budget. Defaults leave room for input and the safety margin, so small windows may get a lower output budget</td>
 </tr>
 <tr>
 <td><code>tokenizer_ref</code></td>
@@ -5706,10 +5692,30 @@ existing configurations do not need new fields:</p>
 </tr>
 </tbody>
 </table>
+<p>For an unknown model on a custom OpenAI endpoint, <code>384000</code> remains a local
+reservation. When no output limit is configured or known, Datus omits the output
+limit from requests and lets the server choose its default. Explicit per-model
+or per-call limits and known output defaults are still sent. Native protocols
+that require an output limit retain it.</p>
+<p>Model selection and runtime capacity checks share an automatically refreshed
+OpenRouter catalog. On first use, Datus reads the cache under the current Agent
+home (<code>cache/openrouter_models.json</code>) or fetches the public catalog with an
+8-second timeout. Metadata stays fresh for 10 minutes; failed refreshes retain
+stale data and wait 60 seconds before retrying. Both context and output limits
+are retained. Async generation and model listing refresh metadata in a worker
+thread; capacity lookups on the event loop only read the current cache snapshot.
+Explicit settings take priority over catalog metadata, with
+<code>providers.yml</code> and LiteLLM specifications as offline fallbacks. Numeric model
+versions do not inherit an older version's limits through prefix matching.
+An advertised output ceiling does not automatically increase the default output
+budget: known defaults are retained, and newly discovered models keep the
+<code>384000</code> default, lowered when the catalog or remaining context requires it.
+Public catalog limits describe the catalog's serving provider. On custom endpoints,
+these limits are planning hints and cannot reject explicitly configured output limits.</p>
 <p>The fallback window is a local budget assumption, not automatic detection of
 server capacity. Private deployments can override any of these settings. Set
 the actual limit for a smaller window; a larger configured window or a matching
-tokenizer can improve capacity utilization:</p>
+tokenizer can improve capacity utilization:
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">models</span><span class="p">:</span>
 </span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">warehouse_llm</span><span class="p">:</span>
@@ -5720,25 +5726,54 @@ tokenizer can improve capacity utilization:</p>
 </span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">      </span><span class="nt">context_length</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">262144</span>
 </span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">      </span><span class="nt">max_tokens</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8192</span>
 </span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="w">      </span><span class="nt">tokenizer_ref</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/opt/model/tokenizer.json</span>
-</span></code></pre></div>
+</span></code></pre></div></p>
 <p><code>context_length</code> and <code>max_tokens</code> must be positive integers. A per-call output
 limit overrides the configured default. <code>tokenizer_ref</code> accepts a local Hugging
 Face tokenizer JSON, a Hugging Face tokenizer reference, or <code>tiktoken:&lt;encoding&gt;</code>
 when that encoding matches the deployment. Local files must be readable by the
-Datus process. Omitted settings use defaults; explicitly invalid values or a
-tokenizer that cannot be loaded still produce an error.
+Datus process. Omitted settings use defaults; explicitly invalid numeric settings
+still produce an error. An unavailable tokenizer falls back to an available model
+counter or UTF-8 byte estimation, recording the fallback reason in logs.
+Failed tokenizer initialization is remembered for up to five minutes across
+capacity checks, then retried, so repeated planning checks do not repeat the same download failure.
 Local counting includes serialized messages, instructions, tools and output
 schemas, plus framing allowance; a deployment with different templates or
 routing limits can still reject a request and should be configured accordingly.
 UTF-8 byte estimates can trigger compaction earlier and are not measured provider
-token usage. Output caps above a known maximum are rejected explicitly.
-Remote image URLs and opaque file inputs require extracted content or a provider
-token count; counting only their URL or file ID cannot establish request capacity.</p>
-<p>Large tool results are preserved in the session archive; the model receives a
-bounded view and can continue with <code>read_tool_result</code>. Original Python tool
-returns and action/UI results retain their existing formats. Source truncation
-and analysis completeness are separate from archive pagination. Disabling
-<code>agent.compact</code> does not disable result bounding or the final send check.</p>
+token usage. Custom endpoints and models without catalog metadata can send requests
+above an estimated planning budget. Trusted counts are retained separately: if the
+trusted portion alone exceeds an explicit deployment limit, adding unmeasurable
+media does not disable that limit. Known standard provider endpoints retain their
+existing context checks and catalog output ceilings.
+Images use an available image counter, or a 4096-token estimate per image. Remote
+image references and opaque files also receive a 4096-token estimate per item when
+their content cannot be counted. Binary data is excluded from text estimation, and
+the original request content and references are preserved. These estimates do not
+require model registration and are not assertions about the server's actual limits.</p>
+<p>In the OpenAI-compatible and native OpenAI Responses paths, an explicit output-limit
+termination is reported as a failure. Tool runs retain received assistant text
+and usage in the failed result and session; reasoning is not returned as the answer,
+and incomplete tool calls are not executed. Datus does not automatically retry these
+runs. Continue with the existing session when more output is needed.</p>
+<p>Tools own their result sizes. Agent calls to <code>list_tables</code>, <code>list_databases</code>,
+<code>list_schemas</code>, <code>query_metrics</code> and <code>select_records</code> default to 200 items per
+page; <code>query_lineage</code> defaults to 100. <code>page_size</code> is caller-controlled with no
+hard maximum. Continue directory/lineage results with the original tool,
+<code>snapshot_id</code>, <code>offset</code> and (for lineage) <code>section</code>. Continue metric/record
+results with the original tool, <code>result_id</code> and <code>offset</code>; this reads the cached
+rows without rerunning SQL. For catalog/lineage pages with <code>has_more=true</code>, use
+<code>offset=extra.next_offset</code>; <code>extra.offset</code> identifies the current page. Business
+<code>limit</code> remains independent of page size.
+Direct Python/MCP calls without pagination arguments retain their existing
+complete catalog/graph or compressed query preview. <code>execute_sql</code> and
+<code>execute_reference_template</code> keep their existing compression.</p>
+<p>There is no <code>read_tool_result</code> tool or generic result projection. Historical
+archive references are recovered into files readable through <code>read_file</code> in
+line ranges. Source truncation and analysis completeness are independent of
+pagination. Disabling <code>agent.compact</code> does not disable the final capacity check;
+an input that still cannot fit is stopped before sending it to the provider.
+Page sizes count whole records, not tokens or bytes, and are not automatically
+reduced. A page of very wide records can therefore still hit the capacity check.</p>
 <p>The Codex subscription transport has no output-limit field in its wire protocol.
 It retains that protocol and reserves the known model output ceiling, including
 provider catalogue metadata, rather than pretending a smaller requested cap is
@@ -6015,7 +6050,7 @@ type to filter it.</p>
 <p><code>agent.agentic_nodes</code> is where Datus configures chat and subagent behavior.</p>
 <p>This section is used for:</p>
 <ul>
-<li>built-in agentic nodes such as <code>chat</code>, <code>explore</code>, <code>gen_sql</code>, <code>gen_report</code>, <code>gen_dashboard</code>, and <code>scheduler</code></li>
+<li>built-in agentic nodes such as <code>chat</code>, <code>explore</code>, <code>gen_sql</code>, <code>gen_visual_report</code>, <code>gen_dashboard</code>, and <code>scheduler</code></li>
 <li>custom subagents created with the unified agent TUI (<code>/agent</code> or <code>/subagent</code>)</li>
 <li>advanced manual aliases that point a custom name at a built-in node class</li>
 </ul>
@@ -6024,7 +6059,7 @@ type to filter it.</p>
 <ul>
 <li><code>model</code>: provider key from <code>agent.models</code> (custom entries only; omit to inherit the active provider/model)</li>
 <li><code>system_prompt</code>: subagent name / prompt template base name</li>
-<li><code>node_class</code>: node implementation to use, such as <code>gen_sql</code>, <code>gen_report</code>, <code>explore</code>, <code>gen_table</code>, <code>gen_skill</code>, <code>gen_dashboard</code>, or <code>scheduler</code></li>
+<li><code>node_class</code>: node implementation to use, such as <code>gen_sql</code>, <code>gen_visual_report</code>, <code>explore</code>, <code>gen_table</code>, <code>gen_skill</code>, <code>gen_dashboard</code>, or <code>scheduler</code></li>
 <li><code>prompt_version</code>, <code>prompt_language</code></li>
 <li><code>agent_description</code></li>
 <li><code>tools</code>, <code>mcp</code>, <code>skills</code></li>
@@ -6049,13 +6084,13 @@ type to filter it.</p>
 <li>explicitly setting an empty value disables delegation</li>
 </ul>
 <h3 id="scoped_context"><code>scoped_context</code><a class="headerlink" href="#scoped_context" title="Permanent link">&para;</a></h3>
-<p><code>scoped_context</code> limits what the subagent should see from shared metadata and knowledge:</p>
+<p><code>scoped_context</code> limits what the subagent should see from shared metadata and knowledge:
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="nt">scoped_context</span><span class="p">:</span>
 </span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="w">  </span><span class="nt">datasource</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">finance</span>
 </span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="w">  </span><span class="nt">tables</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">mart.finance_daily, mart.finance_budget</span>
 </span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="w">  </span><span class="nt">metrics</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">finance.revenue.daily_revenue</span>
 </span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="w">  </span><span class="nt">sqls</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">finance.revenue.region_rollup</span>
-</span></code></pre></div>
+</span></code></pre></div></p>
 <p>When writing YAML manually, set <code>datasource</code> explicitly. The unified agent TUI's Custom-tab wizard fills it from the current database automatically.</p>
 <h3 id="example">Example<a class="headerlink" href="#example" title="Permanent link">&para;</a></h3>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="nt">agent</span><span class="p">:</span>
@@ -6066,7 +6101,7 @@ type to filter it.</p>
 </span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="w">      </span><span class="nt">subagents</span><span class="p">:</span><span class="w"> </span><span class="s">"*"</span>
 </span><span id="__span-19-7"><a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>
 </span><span id="__span-19-8"><a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a><span class="w">    </span><span class="nt">finance_report</span><span class="p">:</span>
-</span><span id="__span-19-9"><a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a><span class="w">      </span><span class="nt">node_class</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_report</span>
+</span><span id="__span-19-9"><a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a><span class="w">      </span><span class="nt">node_class</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_visual_report</span>
 </span><span id="__span-19-10"><a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
 </span><span id="__span-19-11"><a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a><span class="w">      </span><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">finance_report</span>
 </span><span id="__span-19-12"><a id="__codelineno-19-12" name="__codelineno-19-12" href="#__codelineno-19-12"></a><span class="w">      </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">"1.0"</span>
@@ -6100,37 +6135,48 @@ type to filter it.</p>
 <blockquote>
 <p>Context compaction (automatic minor/major passes that keep a long session within the model's context window) is configured under <code>agent.compact</code>. See <a href="../compact/">Context Compaction</a> for how it works and the tunable parameters.</p>
 </blockquote>
+<h2 id="sql-read-only">SQL Read-Only Mode<a class="headerlink" href="#sql-read-only" title="Permanent link">&para;</a></h2>
+<p>Set <code>agent.sql_read_only</code> to enforce read-only SQL across CLI, API, MCP and workflow execution:</p>
+<div class="language-yaml highlight"><span class="filename">agent.yml</span><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w">  </span><span class="nt">sql_read_only</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">  </span><span class="c1"># default: false</span>
+</span></code></pre></div>
+<p>This blocks SQL writes, DDL and cross-datasource result transfers regardless of the
+interactive permission profile. Statements that contain writes inside a CTE or
+<code>EXPLAIN</code> are also refused. The setting requires no plugin and cannot be disabled
+by a request once enabled for the deployment.</p>
+<p>For interactive confirmation of individual tool calls, see
+<a href="../../cli/execution_command/">direct tool execution</a>.</p>
 <h2 id="complete-configuration-example">Complete Configuration Example<a class="headerlink" href="#complete-configuration-example" title="Permanent link">&para;</a></h2>
 <p>Here's a comprehensive agent configuration example with the provider-level format:</p>
-<div class="language-yaml highlight"><span class="filename">agent.yml</span><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w">  </span><span class="c1"># Provider credentials (models and metadata from conf/providers.yml)</span>
-</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="w">  </span><span class="nt">providers</span><span class="p">:</span>
-</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="w">    </span><span class="nt">openai</span><span class="p">:</span>
-</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${OPENAI_API_KEY}</span>
-</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="w">    </span><span class="nt">deepseek</span><span class="p">:</span>
-</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DEEPSEEK_API_KEY}</span>
-</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="w">    </span><span class="nt">claude</span><span class="p">:</span>
-</span><span id="__span-20-9"><a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${ANTHROPIC_API_KEY}</span>
-</span><span id="__span-20-10"><a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a><span class="w">    </span><span class="nt">gemini</span><span class="p">:</span>
-</span><span id="__span-20-11"><a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${GEMINI_API_KEY}</span>
-</span><span id="__span-20-12"><a id="__codelineno-20-12" name="__codelineno-20-12" href="#__codelineno-20-12"></a><span class="w">    </span><span class="nt">claude_subscription</span><span class="p">:</span>
-</span><span id="__span-20-13"><a id="__codelineno-20-13" name="__codelineno-20-13" href="#__codelineno-20-13"></a><span class="w">      </span><span class="nt">auth_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">subscription</span>
-</span><span id="__span-20-14"><a id="__codelineno-20-14" name="__codelineno-20-14" href="#__codelineno-20-14"></a><span class="w">    </span><span class="nt">codex</span><span class="p">:</span>
-</span><span id="__span-20-15"><a id="__codelineno-20-15" name="__codelineno-20-15" href="#__codelineno-20-15"></a><span class="w">      </span><span class="nt">auth_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">oauth</span>
-</span><span id="__span-20-16"><a id="__codelineno-20-16" name="__codelineno-20-16" href="#__codelineno-20-16"></a>
-</span><span id="__span-20-17"><a id="__codelineno-20-17" name="__codelineno-20-17" href="#__codelineno-20-17"></a><span class="w">  </span><span class="c1"># Custom models for self-hosted endpoints (optional)</span>
-</span><span id="__span-20-18"><a id="__codelineno-20-18" name="__codelineno-20-18" href="#__codelineno-20-18"></a><span class="w">  </span><span class="nt">models</span><span class="p">:</span>
-</span><span id="__span-20-19"><a id="__codelineno-20-19" name="__codelineno-20-19" href="#__codelineno-20-19"></a><span class="w">    </span><span class="nt">my-internal</span><span class="p">:</span>
-</span><span id="__span-20-20"><a id="__codelineno-20-20" name="__codelineno-20-20" href="#__codelineno-20-20"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span>
-</span><span id="__span-20-21"><a id="__codelineno-20-21" name="__codelineno-20-21" href="#__codelineno-20-21"></a><span class="w">      </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://internal.example.com/v1</span>
-</span><span id="__span-20-22"><a id="__codelineno-20-22" name="__codelineno-20-22" href="#__codelineno-20-22"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MY_KEY}</span>
-</span><span id="__span-20-23"><a id="__codelineno-20-23" name="__codelineno-20-23" href="#__codelineno-20-23"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">internal-gpt-4</span>
+<div class="language-yaml highlight"><span class="filename">agent.yml</span><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span><span class="c1"># Provider credentials (models and metadata from conf/providers.yml)</span>
+</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="w">  </span><span class="nt">providers</span><span class="p">:</span>
+</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="w">    </span><span class="nt">openai</span><span class="p">:</span>
+</span><span id="__span-21-5"><a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${OPENAI_API_KEY}</span>
+</span><span id="__span-21-6"><a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="w">    </span><span class="nt">deepseek</span><span class="p">:</span>
+</span><span id="__span-21-7"><a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DEEPSEEK_API_KEY}</span>
+</span><span id="__span-21-8"><a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="w">    </span><span class="nt">claude</span><span class="p">:</span>
+</span><span id="__span-21-9"><a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${ANTHROPIC_API_KEY}</span>
+</span><span id="__span-21-10"><a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a><span class="w">    </span><span class="nt">gemini</span><span class="p">:</span>
+</span><span id="__span-21-11"><a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${GEMINI_API_KEY}</span>
+</span><span id="__span-21-12"><a id="__codelineno-21-12" name="__codelineno-21-12" href="#__codelineno-21-12"></a><span class="w">    </span><span class="nt">claude_subscription</span><span class="p">:</span>
+</span><span id="__span-21-13"><a id="__codelineno-21-13" name="__codelineno-21-13" href="#__codelineno-21-13"></a><span class="w">      </span><span class="nt">auth_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">subscription</span>
+</span><span id="__span-21-14"><a id="__codelineno-21-14" name="__codelineno-21-14" href="#__codelineno-21-14"></a><span class="w">    </span><span class="nt">codex</span><span class="p">:</span>
+</span><span id="__span-21-15"><a id="__codelineno-21-15" name="__codelineno-21-15" href="#__codelineno-21-15"></a><span class="w">      </span><span class="nt">auth_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">oauth</span>
+</span><span id="__span-21-16"><a id="__codelineno-21-16" name="__codelineno-21-16" href="#__codelineno-21-16"></a>
+</span><span id="__span-21-17"><a id="__codelineno-21-17" name="__codelineno-21-17" href="#__codelineno-21-17"></a><span class="w">  </span><span class="c1"># Custom models for self-hosted endpoints (optional)</span>
+</span><span id="__span-21-18"><a id="__codelineno-21-18" name="__codelineno-21-18" href="#__codelineno-21-18"></a><span class="w">  </span><span class="nt">models</span><span class="p">:</span>
+</span><span id="__span-21-19"><a id="__codelineno-21-19" name="__codelineno-21-19" href="#__codelineno-21-19"></a><span class="w">    </span><span class="nt">my-internal</span><span class="p">:</span>
+</span><span id="__span-21-20"><a id="__codelineno-21-20" name="__codelineno-21-20" href="#__codelineno-21-20"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span>
+</span><span id="__span-21-21"><a id="__codelineno-21-21" name="__codelineno-21-21" href="#__codelineno-21-21"></a><span class="w">      </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://internal.example.com/v1</span>
+</span><span id="__span-21-22"><a id="__codelineno-21-22" name="__codelineno-21-22" href="#__codelineno-21-22"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MY_KEY}</span>
+</span><span id="__span-21-23"><a id="__codelineno-21-23" name="__codelineno-21-23" href="#__codelineno-21-23"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">internal-gpt-4</span>
 </span></code></pre></div>
 <p>And the corresponding project-level override:</p>
-<div class="language-yaml highlight"><span class="filename">.datus/config.yml</span><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="nt">target</span><span class="p">:</span>
-</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span><span class="nt">provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span>
-</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gpt-4.1</span>
-</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="nt">default_datasource</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_duckdb</span>
+<div class="language-yaml highlight"><span class="filename">.datus/config.yml</span><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="nt">target</span><span class="p">:</span>
+</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w">  </span><span class="nt">provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span>
+</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gpt-4.1</span>
+</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="nt">default_datasource</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_duckdb</span>
 </span></code></pre></div>
 
 

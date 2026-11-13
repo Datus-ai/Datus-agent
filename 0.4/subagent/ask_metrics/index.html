@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/0.4/subagent/ask_metrics/">
       
       
         <link rel="prev" href="../semantic_modeling/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/0.4/subagent/ask_metrics/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/subagent/ask_metrics/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/subagent/ask_metrics/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/subagent/ask_metrics/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -3233,8 +3227,6 @@
       
         
       
-        
-      
     
     
     
@@ -3425,34 +3417,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/sql_policy/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    SQL Policy
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../configuration/web_tool/" class="md-nav__link">
         
   
@@ -3572,10 +3536,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_8" >
         
           
-          <label class="md-nav__link" for="__nav_1_12_9" id="__nav_1_12_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_12_8" id="__nav_1_12_8_label" tabindex="0">
             
   
   
@@ -3593,8 +3557,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_12_9">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_12_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5197,7 +5161,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/subagent/ask_metrics.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/subagent/ask_metrics.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5207,7 +5171,7 @@
 
 <h1 id="askmetrics-guide">AskMetrics Guide<a class="headerlink" href="#askmetrics-guide" title="Permanent link">&para;</a></h1>
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
-<p><code>ask_metrics</code> is a built-in metric question-answering subagent. It answers questions from existing semantic metrics instead of exploring raw tables or asking the model to write ad hoc SQL; Dosi compiles and executes the query.</p>
+<p><code>ask_metrics</code> is a built-in metric question-answering subagent that can package a specific business context and tool surface for selected users. It answers questions from existing semantic metrics; Dosi compiles and executes the query. The main chat also provides metric queries and attribution directly. Choose AskMetrics when you want its scoped context or explicitly selected agent interface.</p>
 <p>Use AskMetrics when the user asks for:</p>
 <ul>
 <li>KPI values, such as "What was revenue last month?"</li>
@@ -5224,7 +5188,7 @@
 <p>Continue from the DuckDB example in <a href="../semantic_modeling/#quickstart-with-the-built-in-duckdb-sample">Semantic Modeling</a> and start Datus with the same datasource:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>datus<span class="w"> </span>--datasource<span class="w"> </span>duckdb_demo
 </span></code></pre></div>
-<p>After creating the <code>bank_failures</code> model, ask the question directly in the main chat. The main agent delegates it to AskMetrics automatically:</p>
+<p>After creating the <code>bank_failures</code> model, ask directly in the main chat, which can query the metrics itself:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Show bank failure count and failed assets by year.
 </span></code></pre></div>
 <p>AskMetrics matches the business wording against the subject tree and metric definitions, selecting the generated <code>bank_failure_count</code> and <code>failed_assets_million</code> metrics without requiring the user to know their names. This query uses yearly <code>date</code> buckets. The real test returned 14 yearly groups; for example, 2008 returned <code>26</code> and <code>768576.8</code>, while 2024 returned <code>2</code> and <code>6107.8</code>.</p>
@@ -5301,8 +5265,21 @@
 <td><code>semantic_tools.attribution_analyze</code></td>
 <td>Explain metric movement across candidate dimensions</td>
 </tr>
+<tr>
+<td><code>filesystem_tools.read_file</code></td>
+<td>Read relevant project business definitions or background</td>
+</tr>
+<tr>
+<td><code>filesystem_tools.glob</code></td>
+<td>Locate relevant project files</td>
+</tr>
+<tr>
+<td><code>filesystem_tools.grep</code></td>
+<td>Search project files for specific business terms</td>
+</tr>
 </tbody>
 </table>
+<p>File exploration is optional for any question when business scope or interpretation needs more context. AskMetrics first reuses supplied knowledge and metric/dataset descriptions; a simple query with enough context proceeds without a file lookup. Attribution may benefit from business definitions or operational records, but does not require a file-discovery step. When using project documents, AskMetrics cites their paths and distinguishes measured contributions from business hypotheses.</p>
 <p>If the Dosi runtime is unavailable, AskMetrics cannot safely answer metric questions. If context search is unavailable, AskMetrics can still query Dosi, but it will not have subject-tree routing context.</p>
 <h2 id="output">Output<a class="headerlink" href="#output" title="Permanent link">&para;</a></h2>
 <p>AskMetrics returns a concise Markdown report with:</p>
@@ -5320,7 +5297,7 @@
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">ask_metrics</span><span class="p">:</span>
 </span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">12</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span>
 </span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">      </span><span class="nt">subject_tree_prompt_limit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span>
 </span></code></pre></div>
 <h3 id="custom-askmetrics-agents">Custom AskMetrics Agents<a class="headerlink" href="#custom-askmetrics-agents" title="Permanent link">&para;</a></h3>
@@ -5330,14 +5307,14 @@
 </span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="nt">sales_metric_qa</span><span class="p">:</span>
 </span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ask_metrics</span>
 </span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">12</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span>
 </span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">      </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">"1.0"</span>
 </span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">      </span><span class="nt">tools</span><span class="p">:</span><span class="w"> </span><span class="s">"context_search_tools.search_metrics,semantic_tools.get_metric,semantic_tools.query_metrics"</span>
 </span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">      </span><span class="nt">subject_tree_prompt_limit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">50</span>
 </span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">      </span><span class="nt">agent_description</span><span class="p">:</span><span class="w"> </span><span class="s">"Answer</span><span class="nv"> </span><span class="s">sales</span><span class="nv"> </span><span class="s">metric</span><span class="nv"> </span><span class="s">questions</span><span class="nv"> </span><span class="s">using</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">sales</span><span class="nv"> </span><span class="s">semantic</span><span class="nv"> </span><span class="s">layer."</span>
 </span></code></pre></div>
 <p>When <code>system_prompt</code> is omitted, Datus first looks for a prompt template matching the custom agent name, such as <code>sales_metric_qa_system_1.0.j2</code>, then falls back to the built-in <code>ask_metrics_system</code> template.</p>
-<p><code>tools</code> can be a comma-separated string or a list. The default surface is metric-focused. Custom agents can opt into other user-facing tool categories when needed, but keeping AskMetrics metric-only produces more deterministic answers.</p>
+<p><code>tools</code> can be a comma-separated string or a list. An explicit allowlist replaces the defaults; the three file tools are not appended automatically. To enable project-file access in an existing custom allowlist, add the desired <code>filesystem_tools.read_file</code>, <code>filesystem_tools.glob</code>, and <code>filesystem_tools.grep</code> entries alongside its metric tools. Custom agents can also opt into other user-facing tool categories when needed.</p>
 <p>For existing custom tool lists, remove <code>context_search_tools.get_metrics</code>. Use <code>semantic_tools.get_metric</code> when the metric definition is needed; <code>context_search_tools.search_metrics</code> remains available for discovery.</p>
 <h2 id="when-not-to-use-askmetrics">When Not To Use AskMetrics<a class="headerlink" href="#when-not-to-use-askmetrics" title="Permanent link">&para;</a></h2>
 <p>Use another subagent when the task is not answerable through existing semantic metrics:</p>

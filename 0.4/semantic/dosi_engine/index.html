@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/0.4/semantic/dosi_engine/">
       
       
         <link rel="prev" href="../../configuration/nodes/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/0.4/semantic/dosi_engine/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/semantic/dosi_engine/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/semantic/dosi_engine/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/semantic/dosi_engine/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -3079,8 +3073,6 @@
       
         
       
-        
-      
     
     
     
@@ -3271,34 +3263,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/sql_policy/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    SQL Policy
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../configuration/web_tool/" class="md-nav__link">
         
   
@@ -3418,10 +3382,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_8" >
         
           
-          <label class="md-nav__link" for="__nav_1_12_9" id="__nav_1_12_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_12_8" id="__nav_1_12_8_label" tabindex="0">
             
   
   
@@ -3439,8 +3403,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_12_9">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_12_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4321,6 +4285,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#dashboard-metric-queries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dashboard Metric Queries
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5034,6 +5009,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#dashboard-metric-queries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dashboard Metric Queries
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5051,7 +5037,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/semantic/dosi_engine.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/semantic/dosi_engine.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5079,6 +5065,9 @@
 <h2 id="agent-features">Agent features<a class="headerlink" href="#agent-features" title="Permanent link">&para;</a></h2>
 <p>Agent uses Dosi to discover semantic models, metrics, and metric-specific dimensions; compile and execute metric queries; validate exact model artifacts; and run native attribution. The <code>semantic_modeling</code> workflow uses the native authoring contract and validation. Explorer reads, writes, and deletes metric nodes in OSI YAML files, then synchronizes the affected Knowledge Base entries. The external Dosi CLI, REST server, and MCP server are outside Agent's integration.</p>
 <p>Each model file has its own engine instance. The runtime refreshes it after the model file changes. Dosi handles SQL dialects and query planning; Agent supplies the active datasource connection and keeps subject paths in its Knowledge Base.</p>
+<h2 id="dashboard-metric-queries">Dashboard Metric Queries<a class="headerlink" href="#dashboard-metric-queries" title="Permanent link">&para;</a></h2>
+<p>IDE previews compile saved metric queries against the project's current Semantic Model. Editing a metric or upgrading its file format does not require regenerating the dashboard query.</p>
+<p>Published dashboards compile against the model snapshot saved with the artifact. Project model edits do not change their calculation definitions. Dosi can upgrade a frozen model's file format in the temporary execution directory without invalidating the query.</p>
 
 
 

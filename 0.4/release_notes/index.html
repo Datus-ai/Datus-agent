@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/0.4/release_notes/">
       
       
         <link rel="prev" href="../vscode_extension/introduction/">
@@ -16,9 +16,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -55,13 +55,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/0.4/release_notes/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/release_notes/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/release_notes/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/release_notes/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -3072,8 +3066,6 @@
       
         
       
-        
-      
     
     
     
@@ -3264,34 +3256,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/sql_policy/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    SQL Policy
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../configuration/web_tool/" class="md-nav__link">
         
   
@@ -3411,10 +3375,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_8" >
         
           
-          <label class="md-nav__link" for="__nav_1_12_9" id="__nav_1_12_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_12_8" id="__nav_1_12_8_label" tabindex="0">
             
   
   
@@ -3432,8 +3396,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_12_9">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_12_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4940,6 +4904,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#045" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.4.5
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#044" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5339,6 +5314,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#045" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.4.5
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#044" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5708,7 +5694,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/release_notes.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/release_notes.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5718,6 +5704,28 @@
 
 <h1 id="release-notes">Release notes<a class="headerlink" href="#release-notes" title="Permanent link">&para;</a></h1>
 <h2 id="04">0.4<a class="headerlink" href="#04" title="Permanent link">&para;</a></h2>
+<h3 id="045">0.4.5<a class="headerlink" href="#045" title="Permanent link">&para;</a></h3>
+<p><strong>New Features</strong></p>
+<ul>
+<li><strong>Query Metrics, Trends, and Attribution Directly in Chat</strong> - Chat can analyze existing metrics without switching to AskMetrics. When no suitable metric exists, it can use the available read-only SQL tools; metric authoring starts only when explicitly requested. Follow-up questions to a selected business subagent continue its original child session. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1612">Agent #1612</a>) Docs: <a href="https://docs.datus.ai/dev/cli/chat_command/">Chat</a>, <a href="https://docs.datus.ai/dev/subagent/ask_metrics/">AskMetrics</a>.</li>
+<li><strong>Export Complete Query Results to Project CSV/Parquet Files</strong> - Adds <code>export_query</code>, accepting SQL text or a project SQL file and returning the output path, row count, and completion status without sending the full dataset into model context. Streaming is preferred when both the database adapter and policies support it; otherwise, exports buffer the complete result. Data permissions and policy checks apply in both modes. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1611">Agent #1611</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/193">DB #193</a>) Docs: <a href="https://docs.datus.ai/dev/tools/query_exports/">Query Result Exports</a>.</li>
+</ul>
+<p><strong>Enhancements</strong></p>
+<ul>
+<li><strong>More Complete Database Integration and SQL Guidance</strong> - Athena adds an SQL skill packaged with its adapter; Hive/Inceptor provides syntax and metadata guidance for the actual server product. The adapter repository also provides standalone <code>datus-duckdb</code> and <code>datus-sqlite</code> packages, plus configuration schema and validation entry points for integration outside the Agent. Agent adoption of those standalone packages is a separate change. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1571">Agent #1571</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/184">DB #184</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/185">#185</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/187">#187</a>) Docs: <a href="https://docs.datus.ai/dev/configuration/datasources/hive/">Hive/Inceptor</a>.</li>
+<li><strong>More Reliable Long Tasks and Private Model Execution</strong> - Chat and the chat/agent-creation APIs default to 200 turns while retaining explicit settings. Unknown or private models can use fallback capacity settings when metadata is unavailable. Improves reasoning replay, midstream fallback retries, and output-exhaustion handling. Calls to unavailable tools return errors to the model so it can correct them within the same run. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1581">Agent #1581</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1626">#1626</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1589">#1589</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1616">#1616</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1567">#1567</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1577">#1577</a>) Docs: <a href="https://docs.datus.ai/dev/configuration/agent/">Agent Capacity Configuration</a>, <a href="https://docs.datus.ai/dev/API/chat/">Chat API Turn Limit</a>.</li>
+<li><strong>Unified Skill Creation, Revision, and Review</strong> - <code>gen_skill</code> uses one workflow and distinguishes format validity from content correctness. Review-only requests leave the target unchanged, and loading a skill keeps access to its supporting reference files consistent. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1589">Agent #1589</a>) Docs: <a href="https://docs.datus.ai/dev/subagent/builtin_subagents/">Built-in Subagents</a>.</li>
+</ul>
+<p><strong>Bug Fixes</strong></p>
+<ul>
+<li><strong>PostgreSQL Metadata, DDL Reconstruction, and SQL Lineage Compatibility</strong> - Preserves numeric/varchar precision and length, arrays, and user-defined types. Restores foreign keys, cross-schema references, and required indexes without changing multiline defaults; arrays no longer enter unsupported scalar aggregates. The Agent also fixes SQL lineage extraction with SQLGlot 30. (<a href="https://github.com/Datus-ai/datus-db-adapters/pull/177">DB #177</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/181">#181</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/183">#183</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1576">Agent #1576</a>)</li>
+</ul>
+<p><strong>Upgrade Notes</strong></p>
+<ul>
+<li><strong>Replace the Legacy Report Type</strong> - Change <code>gen_report</code> to <code>gen_visual_report</code> in configurations, workflows, and calls. There is no compatibility alias, and existing configurations are not rewritten automatically. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1570">Agent #1570</a>) Docs: <a href="https://docs.datus.ai/dev/subagent/gen_visual_report/">HTML Reports</a>.</li>
+<li><strong>Check Custom Tool Configuration and Prompts</strong> - <code>read_tool_result</code> is removed; use pagination parameters on the original tool. OSI dataset/metric upsert and delete methods move from <code>filesystem_tools</code> to <code>semantic_tools</code>, and old selections are not converted automatically. Custom native tools must declare <code>tool_contract</code> and update the capability catalog. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1613">Agent #1613</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1609">#1609</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1603">#1603</a>) Docs: <a href="https://docs.datus.ai/dev/configuration/agent/">Tool Pagination</a>, <a href="https://docs.datus.ai/dev/tool-contracts/">Tool Contracts</a>.</li>
+<li><strong>Add Metric Tools to Existing Chat Allowlists as Needed</strong> - A non-empty <code>tools</code> list replaces the defaults. To enable direct metric analysis, add the required <code>semantic_tools.&lt;method&gt;</code> entries. Omitted or empty lists use the default tools. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1612">Agent #1612</a>) Docs: <a href="https://docs.datus.ai/dev/cli/chat_command/">Chat</a>.</li>
+</ul>
 <h3 id="044">0.4.4<a class="headerlink" href="#044" title="Permanent link">&para;</a></h3>
 <p><strong>New Features</strong></p>
 <ul>
@@ -5791,7 +5799,6 @@
 <p><strong>Upgrade Notes</strong></p>
 <ul>
 <li><strong><code>where</code> Semantics With Dosi 0.1.12</strong> - In a query with a window metric, a <code>where</code> condition on group-by fields now filters the result rows instead of the rows being ranked, so the kept rows keep the ranks and partition counts of the whole population. Pass the condition as <code>context_filter</code> to get the previous numbers. Row-level metric policies that scope a tenant's population must target <code>context_filter</code> for the same reason. <a href="https://docs.datus.ai/0.4/knowledge_base/metrics/">Metrics and Dimensions</a></li>
-<li><strong>SQL Policy Configuration</strong> - Every <code>row_filter</code> and <code>metric_row_filter</code> now requires a stable, unique <code>id</code>. The global <code>access_mode: unrestricted</code> mode has been removed; set request-level <code>access_mode: scoped</code> and use <code>policy_modes.&lt;policy_id&gt;: unrestricted</code> to bypass a specific policy. <a href="https://github.com/Datus-ai/Datus-agent/pull/1416">#1416</a> <a href="https://github.com/Datus-ai/datus-sql-policies/pull/9">datus-sql-policies#9</a> <a href="https://docs.datus.ai/0.4/configuration/sql_policy/">SQL Policy</a></li>
 <li><strong>Dosi Semantic Dependencies</strong> - Native attribution and dimension recommendations require <code>datus-semantic-core&gt;=0.2.6</code> and <code>datus-semantic-dosi&gt;=0.1.14</code>; <code>datus-semantic-dosi 0.1.14</code> pins <code>dosi-engine 0.1.11</code>. <a href="https://github.com/Datus-ai/Datus-agent/pull/1421">#1421</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1443">#1443</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/101">datus-semantic-adapter#101</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/107">#107</a> <a href="https://docs.datus.ai/0.4/adapters/dosi_semantic_adapter/">Dosi Semantic Adapter</a></li>
 <li><strong>Model SDK Dependencies</strong> - Deployments with independent dependency locks or compatibility patches should use <code>openai&gt;=2.45,&lt;3</code>, <code>openai-agents[litellm]==0.18.1</code>, <code>litellm==1.100.1</code>, and <code>httpx==0.28.1</code>. Image reading also requires <code>Pillow&gt;=10.4</code>. <a href="https://github.com/Datus-ai/Datus-agent/pull/1412">#1412</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1418">#1418</a> <a href="https://docs.datus.ai/0.4/configuration/image_tool/">Image Reading</a></li>
 </ul>
@@ -5828,10 +5835,6 @@
 <li><strong>End-to-End GaussDB/openGauss Support</strong> - The integration supports both the official driver and the pure-Python pg8000 driver, SHA-256 authentication, PG/A/B compatibility modes, full TLS <code>sslmode</code> and CA verification, and native Dosi execution. <a href="https://github.com/Datus-ai/Datus-agent/pull/1279">#1279</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1295">#1295</a> <a href="https://github.com/Datus-ai/datus-db-adapters/pull/96">datus-db-adapters#96</a> <a href="https://github.com/Datus-ai/datus-db-adapters/pull/100">#100</a> <a href="https://github.com/Datus-ai/datus-db-adapters/pull/102">#102</a> <a href="https://github.com/Datus-ai/osi-engine/pull/50">osi-engine#50</a> <a href="https://github.com/Datus-ai/osi-engine/pull/57">#57</a> <a href="https://github.com/Datus-ai/osi-engine/pull/58">#58</a> <a href="https://docs.datus.ai/0.4/configuration/datasources/">Datasource docs</a> <a href="https://dosi.datus.ai/connectors/">Dosi connector docs</a></li>
 <li><strong>Portable Project Packaging</strong> - The new <code>datus package</code> command exports project configuration, semantic models, skills, templates, and reports as a self-contained ZIP archive with credentials excluded. File tools also no longer enforce a file-extension allowlist, enabling them to work with Dockerfiles, Terraform files, notebooks, and other project files. <a href="https://github.com/Datus-ai/Datus-agent/pull/1262">#1262</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1260">#1260</a> <a href="https://docs.datus.ai/0.4/cli/package_command/">docs</a></li>
 </ul>
-<p><strong>Enhancements</strong></p>
-<ul>
-<li><strong>Data Permissions for Semantic Metric Queries</strong> - The new <code>metric_row_filter</code> injects filters before aggregation based on the datasets used by a metric. Restricted AI permission reviews are also supported in the ASK state, and principal propagation has been fixed. <a href="https://github.com/Datus-ai/Datus-agent/pull/1261">#1261</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1265">#1265</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1277">#1277</a> <a href="https://github.com/Datus-ai/datus-sql-policies/pull/5">datus-sql-policies#5</a></li>
-</ul>
 <p><strong>Bug Fixes</strong></p>
 <ul>
 <li><strong>Semantic Modeling and Query Correctness</strong> - Standardized half-open time ranges and fixed SQL preflight, partial failures in multi-dimensional attribution, preview validation error propagation, the SQLite bridge, Dosi dry-run SQL formatting, and Oracle service-name mapping. <a href="https://github.com/Datus-ai/Datus-agent/pull/1238">#1238</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1242">#1242</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1253">#1253</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1292">#1292</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/74">datus-semantic-adapter#74</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/79">#79</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/80">#80</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/83">#83</a></li>
@@ -5848,7 +5851,7 @@
 <p><strong>New Features</strong></p>
 <ul>
 <li><strong>Datus Plugin Ecosystem</strong> - Third-party capabilities can now extend Datus without modifying Datus Agent itself. Plugins can provide <code>datus &lt;plugin&gt;</code> CLI commands, bundled skills, and additional prompt context. They support installation, upgrades, activation, offline packaging, and export, with per-project activation and profile selection. Version 0.3.9 further completes the declarative <code>datus-plugin.yml</code> contract, external-directory mounting, and managed multi-tenant deployment support. <a href="https://github.com/Datus-ai/Datus-agent/pull/1125">#1125</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1151">#1151</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1153">#1153</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1155">#1155</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1159">#1159</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1192">#1192</a> <a href="https://docs.datus.ai/0.3/plugin/introduction/">Plugin docs</a> <a href="https://docs.datus.ai/0.3/plugin/development/">Plugin development docs</a></li>
-<li><strong>Three Input Modes and Direct Tool Execution</strong> - Press <code>Tab</code> in the CLI to cycle between chat, SQL, and Bash modes. In chat mode, use <code>!&lt;tool&gt;</code> to run an agent tool directly or <code>!&lt;plugin&gt;</code> to run an installed plugin CLI, with command and argument completion. All operations follow the existing permission and SQL policies, and results are added to the conversation so the agent can continue the analysis. <a href="https://github.com/Datus-ai/Datus-agent/pull/1157">#1157</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1186">#1186</a> <a href="https://docs.datus.ai/0.3/cli/execution_command/">docs</a></li>
+<li><strong>Three Input Modes and Direct Tool Execution</strong> - Press <code>Tab</code> in the CLI to cycle between chat, SQL, and Bash modes. In chat mode, use <code>!&lt;tool&gt;</code> to run an agent tool directly or <code>!&lt;plugin&gt;</code> to run an installed plugin CLI, with command and argument completion. All operations follow the existing permission checks, and results are added to the conversation so the agent can continue the analysis. <a href="https://github.com/Datus-ai/Datus-agent/pull/1157">#1157</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1186">#1186</a> <a href="https://docs.datus.ai/0.3/cli/execution_command/">docs</a></li>
 <li><strong>OS-Level Bash Sandbox</strong> - Bash commands can run inside an OS-enforced sandbox backed by macOS <code>sandbox-exec</code> or Linux <code>bubblewrap</code>, with writes restricted to the workspace, session data, and temporary directories. Enable it with <code>/sandbox</code> or <code>agent.bash.sandbox</code>; strict mode further limits accessible paths and minimizes the child-process environment, while <code>deny_network: true</code> also blocks network access. The sandbox is disabled by default; once enabled, Bash commands are rejected if the current platform has no supported isolation mechanism. <a href="https://github.com/Datus-ai/Datus-agent/pull/1181">#1181</a> <a href="https://docs.datus.ai/0.3/cli/reference/">docs</a></li>
 </ul>
 <p><strong>Enhancements</strong></p>
@@ -5953,7 +5956,6 @@
 <h3 id="035">0.3.5<a class="headerlink" href="#035" title="Permanent link">&para;</a></h3>
 <p><strong>New Features</strong></p>
 <ul>
-<li><strong>SQL Policy Framework</strong> - Added a request-level SQL read policy framework. API callers can pass structured principal data through <code>X-Datus-Principal</code>, and custom providers can rewrite or reject read SQL before execution; rewritten SQL is revalidated as read-only before it reaches the datasource. <a href="https://github.com/Datus-ai/Datus-agent/pull/1020">#1020</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1028">#1028</a> <a href="https://docs.datus.ai/0.3/configuration/sql_policy/">docs</a></li>
 <li><strong>Strict OSI Semantic Authoring</strong> - <code>gen_semantic_model</code> and <code>gen_metrics</code> can now enter strict OSI authoring mode based on the configured OSI adapter, generate OSI core YAML, validate and dry-run through the adapter, and sync queryable metrics back into the Knowledge Base without leaking MetricFlow-only fields into the source semantic model. <a href="https://github.com/Datus-ai/Datus-agent/pull/1007">#1007</a> <a href="https://docs.datus.ai/0.3/adapters/osi_semantic_adapter/">docs</a></li>
 <li><strong>Metric Preview API</strong> - Added endpoints for saved-metric dimension discovery and SQL preview, so the metric editor can list queryable dimensions, dry-run compile metric SQL, and return structured preflight feedback for incompatible dimension selections. <a href="https://github.com/Datus-ai/Datus-agent/pull/992">#992</a></li>
 <li><strong>Lightweight <code>/init</code> + new <code>/build-kb</code></strong> - <code>/init</code> is now a fast project scan that writes an <code>AGENTS.md</code> inventory plus file-based knowledge/memory stores, while expensive vector-indexed KB construction moves to <code>/build-kb</code> with optional file, table, datasource, or business-domain scope. The new built-in <code>storage-classify</code> skill routes semantic models, metrics, reference SQL, knowledge, memory, skills, and <code>AGENTS.md</code> updates to the right stores. <a href="https://github.com/Datus-ai/Datus-agent/pull/997">#997</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1022">#1022</a> <a href="https://docs.datus.ai/0.3/cli/build_kb_command/">docs</a></li>
