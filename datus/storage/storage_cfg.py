@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from datus.storage.embedding_models import DEFAULT_MODEL_CONFIG, EmbeddingModel
+from datus.storage.embedding_openai import OpenAIEmbeddings
 from datus.utils.constants import EmbeddingProvider
 from datus.utils.exceptions import DatusException, ErrorCode
 
@@ -62,6 +63,21 @@ def _find_config_differences(
         existing_config = DEFAULT_MODEL_CONFIG
     if not new_config:
         new_config = DEFAULT_MODEL_CONFIG
+    existing_config = dict(existing_config)
+    new_config = dict(new_config)
+
+    # INI persistence uses strings; compare the effective request policy so
+    # equivalent explicit/automatic settings can reuse an unchanged index.
+    for config in (existing_config, new_config):
+        policy = config.pop("send_dimensions", None)
+        if config.get("registry_name") != EmbeddingProvider.OPENAI:
+            continue
+        if isinstance(policy, str):
+            policy = {"true": True, "false": False, "none": None}[policy.lower()]
+        dim = config.get("dim_size")
+        if isinstance(dim, str) and dim.lower() == "none":
+            dim = None
+        config["send_dimensions"] = OpenAIEmbeddings.should_send_dimensions(config.get("model_name", ""), dim, policy)
 
     if "registry_name" not in existing_config:
         existing_config["registry_name"] = EmbeddingProvider.SENTENCE_TRANSFORMERS

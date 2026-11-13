@@ -47,6 +47,29 @@ database:
 ```
 **参数**：`registry_name`、`model_name`、`dim_size`、`batch_size`、`target_model`
 
+`send_dimensions` 是 OpenAI 兼容接口的可选布尔参数。`true` 将本地 `dim_size` 作为
+API 请求的 `dimensions` 参数发送，`false` 则省略该参数。省略配置或设为 `null` 时，
+仅 `text-embedding-3-small` 和 `text-embedding-3-large` 会发送已配置的维度；
+`text-embedding-ada-002` 始终不发送该参数。
+
+### 自定义 OpenAI 兼容嵌入模型
+
+自定义模型需要配置与接口实际输出一致的正整数 `dim_size`。本地向量维度与远端是否支持
+`dimensions` 参数是独立的，例如：
+
+```yaml
+database:
+  registry_name: openai
+  model_name: mistral-embed
+  dim_size: 1024
+  target_model: embedding_gateway  # agent.models 中配置 API Key 和 base_url 的条目
+  send_dimensions: false
+```
+
+此配置请求不发送 `dimensions`，本地向量列使用 1024 维。仅在接口支持调整输出维度时
+设为 `send_dimensions: true`。初始化会校验探测向量长度，维度不一致时立即报错。
+修改已有索引的向量维度需要重建嵌入数据。
+
 ### 文档嵌入
 ```yaml
 document:

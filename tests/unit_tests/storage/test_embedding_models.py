@@ -285,3 +285,58 @@ class TestTryInitModelSilent:
         model = EmbeddingModel(model_name="test", dim_size=384)
         model.is_model_failed = True
         assert model.try_init_model_silent() is False
+
+
+def test_custom_model_initializes_without_remote_dimensions(monkeypatch):
+    from datus.storage.embedding_openai import OpenAIEmbeddings
+
+    calls = []
+
+    def generate(self, texts):
+        calls.append(self.send_dimensions)
+        return [[0.1] * 1024 for _ in texts]
+
+    monkeypatch.setattr(OpenAIEmbeddings, "generate_embeddings", generate)
+    model = EmbeddingModel("mistral-embed", 1024, registry_name="openai", send_dimensions=False)
+    assert model.model.ndims() == 1024
+    assert calls == [False]
+    assert model.to_dict()["send_dimensions"] is False
+    import copy
+
+    assert copy.deepcopy(model).send_dimensions is False
+
+
+@pytest.mark.parametrize("name", ["mistral-embed", "text-embedding-3-small", "text-embedding-ada-002"])
+def test_initialization_rejects_provider_width_mismatch(monkeypatch, name):
+    from datus.storage.embedding_openai import OpenAIEmbeddings
+
+    monkeypatch.setattr(OpenAIEmbeddings, "generate_embeddings", lambda self, texts: [[0.1] * 8])
+    model = EmbeddingModel(name, 4, registry_name="openai")
+    with pytest.raises(DatusException, match="dimension"):
+        _ = model.model
+    assert model._model is None
+    assert model.is_model_failed is True
+
+
+def test_same_name_with_different_request_policy_is_not_reused(monkeypatch):
+    from datus.storage.embedding_models import init_embedding_models
+
+    monkeypatch.setattr("datus.storage.embedding_models.EMBEDDING_MODELS", {})
+    models = init_embedding_models(
+        {
+            "embedding_device_type": "cpu",
+            **{
+                store: {
+                    "model_name": "mistral-embed",
+                    "dim_size": 1024,
+                    "registry_name": "openai",
+                    "send_dimensions": policy,
+                }
+                for store, policy in [("database", False), ("document", True), ("metric", False)]
+            },
+        },
+        {},
+        None,
+    )
+    assert models["database"] is not models["document"]
+    assert models["database"] is models["metric"]
