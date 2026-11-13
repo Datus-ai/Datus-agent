@@ -1,4 +1,4 @@
-"""Required check identities must survive PR metadata events and queue entry."""
+"""PR triggers and required check identities must remain consistent."""
 
 import os
 import subprocess
@@ -15,7 +15,20 @@ def workflow(name):
     return yaml.load((ROOT / ".github/workflows" / name).read_text(), Loader=yaml.BaseLoader)
 
 
-@pytest.mark.parametrize("event", ["opened", "synchronize", "reopened", "edited"])
+@pytest.mark.parametrize(
+    "name, event, expected_types",
+    [
+        ("code-quality.yml", "pull_request", {"opened", "synchronize", "reopened"}),
+        ("title-check.yml", "pull_request_target", {"opened"}),
+    ],
+)
+def test_quality_and_title_checks_ignore_pr_metadata_edits(name, event, expected_types):
+    config = workflow(name)
+    assert set(config["on"]) == {event}
+    assert set(config["on"][event]["types"]) == expected_types
+
+
+@pytest.mark.parametrize("event", ["opened", "synchronize", "reopened"])
 def test_each_pr_event_publishes_real_required_checks(event):
     config = workflow("code-quality.yml")
     assert set(config["on"]) == {"pull_request"}
