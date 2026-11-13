@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import warnings
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -106,6 +107,11 @@ class QueryResult(BaseModel):
     )
 
 
+# Deprecated: the request and result of Dosi's shipped attribution
+# (``Engine.attribute``), kept only for ``PolicyMetricExecutor.attribute``, which
+# Datus-backend still calls. The attribution tools return Dosi's own
+# ``schema_version: 3`` results (``attribute_metrics``, ``attribute_dimensions``)
+# and use none of these types. They go with ``PolicyMetricExecutor.attribute``.
 AttributionStrategy = Literal[
     "term_wise",
     "mix_shift",
@@ -115,14 +121,16 @@ AttributionStrategy = Literal[
 
 
 class AttributionWindow(BaseModel):
-    """One half-open ``[start, end)`` attribution window."""
+    """Deprecated: one half-open ``[start, end)`` window of ``AttributionRequest``."""
 
     start: str
     end: str
 
 
 class AttributionRequest(BaseModel):
-    """Backend-neutral request for explaining a metric change."""
+    """Deprecated: the request of ``PolicyMetricExecutor.attribute``. Use
+    ``PolicyMetricExecutor.attribute_metrics`` / ``attribute_dimensions`` with
+    Dosi's request instead."""
 
     metric: str
     dimensions: List[str] = Field(default_factory=list)
@@ -134,6 +142,13 @@ class AttributionRequest(BaseModel):
     top_n_dimensions: Optional[int] = Field(None, ge=0)
     top_n_values: Optional[int] = Field(None, ge=0)
     params: Dict[str, Any] = Field(default_factory=dict)
+
+    def model_post_init(self, __context: Any) -> None:
+        warnings.warn(
+            "AttributionRequest is deprecated; use PolicyMetricExecutor.attribute_metrics or attribute_dimensions",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
 
 class AttributionUnsupportedInfo(BaseModel):
@@ -261,7 +276,7 @@ class AttributionWarning(BaseModel):
 
 
 class AttributionResult(BaseModel):
-    """Unified attribution result returned by native and generic implementations."""
+    """Deprecated: the result of ``PolicyMetricExecutor.attribute``."""
 
     execution_info: List[Dict[str, Any]] = Field(default_factory=list)
 
