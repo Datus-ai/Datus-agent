@@ -135,7 +135,7 @@ class ChatInput(BaseModel):
                 "stream_response": True,
                 "plan_mode": False,
                 "subagent_id": None,
-                "max_turns": 100,
+                "max_turns": 200,
             }
         }
     )
@@ -193,7 +193,7 @@ class ChatInput(BaseModel):
     db_schema: Optional[str] = Field(None, description="Schema; omit/null to inherit, empty to use the engine default")
 
     # Chat configuration
-    max_turns: int = Field(default=100, description="Maximum conversation turns per interaction")
+    max_turns: int = Field(default=200, description="Maximum conversation turns per interaction")
     workspace_root: Optional[str] = Field(None, description="Root directory path for filesystem MCP server")
 
     # Context references (parsed from @ symbols)
