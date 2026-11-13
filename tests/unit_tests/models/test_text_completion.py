@@ -228,7 +228,7 @@ async def test_completion_logs_only_metadata_and_provider_finish_reason(
     assert record["duration_ms"] >= 0
     assert record["usage_reported"] is (status == 200)
     if status == 200:
-        assert record["first_text_ms"] is not None
+        assert 0 <= record["first_text_ms"] <= record["duration_ms"]
         assert record["output_chars"] == len('{"summary":"ok"}')
         assert record["output_tokens"] == 7
         assert record["reasoning_chars"] == len("PRIVATE_REASONING")
@@ -263,10 +263,13 @@ async def test_stalled_stream_reports_partial_progress_and_unknown_usage(provide
     assert record["usage_reported"] is False and record["output_tokens"] is None
     assert record["finish_reason"] is None
     if reasoning:
-        assert record["first_reasoning_ms"] is not None and record["reasoning_chars"] > 0
+        assert 0 <= record["first_reasoning_ms"] <= record["duration_ms"]
+        assert record["reasoning_chars"] == len("PRIVATE_REASONING")
         assert record["first_text_ms"] is None and record["output_chars"] == 0
     else:
-        assert record["first_text_ms"] is not None and record["output_chars"] > 0
+        assert 0 <= record["first_text_ms"] <= record["duration_ms"] and record["output_chars"] == len(
+            '{"summary":"ok"}'
+        )
     assert all(client.is_closed for client in clients)
 
 
