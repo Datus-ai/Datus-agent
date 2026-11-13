@@ -312,9 +312,8 @@ function summarizeTraceDiagnostics(processDiagnostics) {
   };
 }
 
-function nightlyStatus(testExitCode, coldResult, coldRequired = false) {
-  const coldPassed = coldResult === 'success' || (!coldRequired && coldResult === 'skipped');
-  return String(testExitCode) === '0' && coldPassed ? 'PASSED' : 'FAILED';
+function nightlyStatus(testExitCode, policyResult) {
+  return String(testExitCode) === '0' && policyResult === 'success' ? 'PASSED' : 'FAILED';
 }
 
 function buildNightlyFeishuMessage({

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.integration.conftest import ManagedPluginRuntime
+from tests.integration.conftest import ManagedPluginRuntime, sql_policy_source
 
 pytestmark = pytest.mark.component
 
@@ -22,6 +22,22 @@ def _runtime(tmp_path: Path) -> ManagedPluginRuntime:
     home = tmp_path / "home"
     home.mkdir()
     return ManagedPluginRuntime(home=home, datus_executable=Path(sys.executable))
+
+
+def test_policy_release_installs_from_wheel_without_any_source_checkout(monkeypatch, tmp_path):
+    wheel = tmp_path / "datus_sql_policies-0.5.3.whl"
+    wheel.touch()
+    monkeypatch.setenv("DATUS_SQL_POLICY_WHEEL", str(wheel))
+    monkeypatch.setenv("EXTERNAL_REPOS_ROOT", str(tmp_path / "missing-sources"))
+    artifact = sql_policy_source.__wrapped__()
+    monkeypatch.setattr(ManagedPluginRuntime, "run", lambda self, *args: args)
+    assert _runtime(tmp_path).install(artifact) == ("plugin", "install", "whl:" + str(wheel.resolve()))
+
+
+def test_missing_policy_release_does_not_fall_back_to_source(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATUS_SQL_POLICY_WHEEL", str(tmp_path / "missing.whl"))
+    with pytest.raises(FileNotFoundError):
+        sql_policy_source.__wrapped__()
 
 
 def test_managed_plugin_runtime_defaults_to_isolated_home(tmp_path):

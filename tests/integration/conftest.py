@@ -120,6 +120,8 @@ class ManagedPluginRuntime:
         return completed
 
     def install(self, source: Path) -> subprocess.CompletedProcess[str]:
+        if source.suffix == ".whl":
+            return self.run("plugin", "install", f"whl:{source.resolve(strict=True)}")
         wheel = os.environ.get("DATUS_SQL_POLICY_WHEEL")
         if source.name == "datus-sql-policies" and wheel:
             return self.run("plugin", "install", f"whl:{Path(wheel).resolve(strict=True)}")
@@ -191,6 +193,8 @@ def _resolve_external_root() -> Path:
 
 @pytest.fixture(scope="session")
 def sql_policy_source() -> Path:
+    if wheel := os.environ.get("DATUS_SQL_POLICY_WHEEL"):
+        return Path(wheel).resolve(strict=True)
     source = _resolve_external_root() / "datus-sql-policies"
     if not source.is_dir():
         pytest.fail(f"P0 SQL policy source checkout missing: {source}", pytrace=False)

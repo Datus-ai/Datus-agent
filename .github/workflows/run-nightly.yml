@@ -30,6 +30,11 @@ on:
         required: false
         default: ""
         type: string
+      policy_release:
+        description: "Policy Release tag; empty selects latest stable for full Nightly or the reviewed pin for P0."
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       datus_agent_ref:
@@ -57,6 +62,11 @@ on:
         required: false
         default: ""
         type: string
+      policy_release:
+        description: "Policy Release tag; empty selects latest stable for full Nightly or the reviewed pin for P0."
+        required: false
+        default: ""
+        type: string
     secrets:
       RELEASE_BOT_TOKEN:
         description: "Read token for private repositories required by Nightly."
@@ -76,19 +86,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  sql-policy-cold-contract:
-    if: ${{ github.event_name == 'schedule' && inputs.test_profile != 'p0' }}
-    uses: ./.github/workflows/sql-policy-gate.yml
-    with:
-      agent_ref: ${{ inputs.datus_agent_ref || github.sha }}
-      policy_ref: main
-      cold: true
-    secrets:
-      RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
-
   run-nightly:
-    needs: sql-policy-cold-contract
-    if: ${{ !cancelled() }}
     runs-on: self-hosted
     env:
       DATUS_AGENT_REF: ${{ inputs.datus_agent_ref || github.ref_name }}
@@ -215,66 +213,26 @@ jobs:
           path: external/Datus-Plugins
           persist-credentials: false
 
-      - name: Require private repository checkout token
+      - name: Require policy Release read token
         shell: bash
         env:
           PRIVATE_REPO_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
         run: |
           if [[ -z "${PRIVATE_REPO_TOKEN}" ]]; then
-            echo "::error::RELEASE_BOT_TOKEN is required to checkout Datus-ai/datus-sql-policies"
+            echo "::error::RELEASE_BOT_TOKEN is required to download Datus-ai/datus-sql-policies Release assets"
             exit 1
           fi
 
-      - name: Checkout datus-sql-policies main
-        uses: actions/checkout@v4
-        with:
-          repository: Datus-ai/datus-sql-policies
-          ref: ${{ inputs.test_profile == 'p0' && steps.p0_sources.outputs.sql_policies || 'main' }}
-          path: external/datus-sql-policies
-          persist-credentials: false
-          token: ${{ secrets.RELEASE_BOT_TOKEN }}
-
-      - name: Checkout Nightly toolchain configuration
+      - name: Checkout Nightly policy release tooling
         uses: actions/checkout@v4
         with:
           ref: ${{ github.workflow_sha }}
           path: .nightly-workflow
-          sparse-checkout: ci/harness/sql-policy-host.json
+          sparse-checkout: |
+            ci/sql_policy_release.py
+            ci/harness/sql-policy-release.json
           sparse-checkout-cone-mode: false
           persist-credentials: false
-
-      - name: Resolve SQL policy Rust toolchain
-        id: policy_rust
-        working-directory: .nightly-workflow
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-          config = json.loads(Path('ci/harness/sql-policy-host.json').read_text())
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write('rust_toolchain=' + config['rust_toolchain'] + '\n')
-          PY
-
-      # Jobs do not inherit the toolchain installed by the policy gate.
-      - name: Set up SQL policy Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ steps.policy_rust.outputs.rust_toolchain }}
-
-      - name: Fetch SQL policy native build dependencies
-        env:
-          PRIVATE_REPO_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
-          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-          GIT_TERMINAL_PROMPT: "0"
-          GIT_CONFIG_COUNT: "1"
-          GIT_CONFIG_KEY_0: credential.https://github.com/Datus-ai/osi-engine.helper
-          GIT_CONFIG_VALUE_0: '!f() { printf "username=x-access-token\npassword=%s\n" "$PRIVATE_REPO_TOKEN"; }; f'
-        run: |
-          if [ -f external/datus-sql-policies/Cargo.toml ]; then
-            cargo --version
-            cargo fetch --locked --manifest-path external/datus-sql-policies/Cargo.toml
-          fi
 
       # Source checkouts of datus-gaussdb carry no vendored libpq (wheels get
       # it at release-build time); without it the gaussdb driver binds the
@@ -386,15 +344,19 @@ jobs:
           uv pip check
           uv run --no-sync playwright install --with-deps chromium
 
-      - name: Build SQL policy native source wheel cache
-        timeout-minutes: 15
+      - name: Prepare SQL policy Release
+        id: policy_release
+        timeout-minutes: 12
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+          POLICY_RELEASE: ${{ inputs.policy_release }}
         run: |
-          if [ -f external/datus-sql-policies/Cargo.toml ]; then
-            native_build_root="$(mktemp -d "$RUNNER_TEMP/datus-sql-policy-build.XXXXXX")"
-            trap 'rm -rf "$native_build_root"' EXIT
-            uv pip install --python .venv/bin/python --no-deps \
-              --target "$native_build_root" ./external/datus-sql-policies
-          fi
+          policy_work="$(mktemp -d "$RUNNER_TEMP/datus-policy-release.XXXXXX")"
+          echo "DATUS_SQL_POLICY_WORK=$policy_work" >> "$GITHUB_ENV"
+          echo "DATUS_SQL_POLICY_RECEIPT=$policy_work/sql-policy-release.json" >> "$GITHUB_ENV"
+          .venv/bin/python .nightly-workflow/ci/sql_policy_release.py \
+            --profile "$NIGHTLY_PROFILE" --release "$POLICY_RELEASE" \
+            --work "$policy_work" --github-env "$GITHUB_ENV"
 
       - name: Ensure Docker runtime
         env:
@@ -763,6 +725,7 @@ jobs:
           path: |
             test_output_nightly_*.log
             nightly-manifest.json
+            ${{ env.DATUS_SQL_POLICY_RECEIPT }}
             p0-installed-artifact.json
             ci/p0-execution*/
             ci/p0-execution-coverage.json
@@ -777,6 +740,13 @@ jobs:
             nightly-process-diagnostics.json
             test-results/web-e2e/
           retention-days: 7
+
+      - name: Clean up policy Release workspace
+        if: always()
+        run: |
+          if [[ "${DATUS_SQL_POLICY_WORK:-}" == "$RUNNER_TEMP"/datus-policy-release.* ]]; then
+            rm -rf -- "$DATUS_SQL_POLICY_WORK"
+          fi
 
       - name: Check documented coverage gaps
         if: always()
@@ -814,11 +784,10 @@ jobs:
           script: |
             const { buildNightlyFeishuMessage, nightlyStatus } = require('./ci/format-nightly-feishu-report');
 
-            const coldResult = '${{ needs.sql-policy-cold-contract.result }}';
+            const policyResult = '${{ steps.policy_release.outcome }}';
             const testStatus = nightlyStatus(
               '${{ steps.nightly_tests.outputs.test_exit_code }}',
-              coldResult,
-              '${{ github.event_name == 'schedule' && inputs.test_profile != 'p0' }}' === 'true',
+              policyResult,
             );
             const today = new Date().toISOString().split('T')[0];
             const messageBody = buildNightlyFeishuMessage({
@@ -826,7 +795,7 @@ jobs:
               runNumber: '${{ github.run_number }}',
               runUrl: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',
               date: today,
-            }) + `\nSQL policy build contract: ${coldResult}`;
+            }) + `\nSQL policy Release preparation: ${policyResult}`;
 
             // Send to Feishu
             const https = require('https');

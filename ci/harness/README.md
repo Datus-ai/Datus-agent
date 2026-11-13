@@ -172,60 +172,51 @@ introduced.
 Code changes affecting plugin installation, policy execution, datasource reads,
 Dosi, or shared integration fixtures select `P0 SQL Policy Plugin Contracts`.
 The product plan includes this deterministic group even without live-model targets.
-SQL policy host acceptance runs in scheduled Nightly. The required `Merge Queue
-Gate` checks merged-tree consistency; SQL policy and BI host acceptance are not
-merge-queue dependencies. Documentation builds remain in Deploy Docs.
+SQL policy integration runs once in the normal Nightly P0 groups. The required
+`Merge Queue Gate` checks merged-tree consistency; SQL policy and BI host
+acceptance are not merge-queue dependencies. Documentation builds remain in Deploy Docs.
 
-`sql-policy-gate.yml` runs on the shared Linux x64 `osi-engine` self-hosted runners.
-The runner must have a C compiler, `patchelf`, and the ODBC development package
-preinstalled; the job verifies these prerequisites without installing system
-packages during each run. It resolves the
-reviewed policy pin from `sql-policy-host.json` and the engine commit from the
-policy's Cargo dependencies, freezes all three checkout SHAs, then builds Agent,
-engine and policy wheels from those sources. External repositories are read-only
-test dependencies; this workflow does not modify or trigger their CI.
-The gate uses dev-profile test wheels without debug symbols; the engine enables
-the DuckDB/policy host boundary needed here. Release optimization, executor matrices
-and distribution publication remain covered by their existing release workflows.
-Wheel repair runs on a separate wheel copy, so bundling shared libraries cannot
-rewrite the Cargo artifacts reused by subsequent warm builds. Verification also
-checks bundled native libraries against their wheel payloads.
+Nightly downloads the latest published stable `datus-sql-policies` GitHub Release
+by default. The optional `policy_release` workflow input selects an explicit stable
+tag for reproduction. One Release response selects the asset IDs for the entire
+run; the wheel, platform build manifest and checksums all come from that response.
+The helper verifies the runner's Python/platform tags, asset digests, SHA256SUMS,
+release/source identity and compatibility with the installed published Dosi wheel.
+Drafts, prereleases, incompatible/missing assets and failed checks stop preparation;
+there is no source-build fallback.
 
-Agent and engine are installed as wheels, and the harness is staged outside the
-Agent checkout. SQL policy is installed through the real managed-plugin CLI into
-an isolated HOME. All installed runtime payloads, including native binaries, must
-match the identified wheels. The P0 checks SQL row filtering, Dosi metrics, denied
-and unrestricted contexts, and HTTP Chat enforcement without an external LLM.
+`ci/harness/sql-policy-release.json` pins only **release P0**, initially `v0.5.3`,
+including the source commit and per-platform wheel hashes. It does not pin ordinary
+Nightly: new stable Policy Releases are selected automatically there. Updating the
+P0 baseline requires reviewing this file and running the complete P0 profile;
+`policy_release=latest` and alternative versions are rejected for P0.
 
-`result.json` records the source SHAs, input/patch hashes, toolchain, wheel hashes,
-cache mode and separate build/install/execution stages. Execution evidence carries
-the source identity and must include successful outcomes for every required P0
-nodeid. Different sources, modified artifacts, missing reports, skips and xfails
-fail validation. Each run verifies its own frozen source combination; evidence is
-not reused from an earlier source revision.
+The wheel is installed through the real managed-plugin CLI into an isolated HOME,
+not the global Agent environment. The existing contract checks SQL row filtering,
+Dosi metrics, denied and unrestricted contexts, HTTP Chat enforcement, and native
+payload equality with the downloaded wheel, without an external LLM. The fixture
+accepts `DATUS_SQL_POLICY_WHEEL` without requiring a private source checkout.
+Agent uses its normal test environment (or its candidate wheel for release P0),
+and Dosi stays on its published dependency. Nightly performs no Policy/Dosi Rust
+builds; Policy's own build/release workflows own those checks.
 
-Warm runs reuse the runner's available build caches. Cold runs use new empty uv,
-Cargo and target directories.
-Scheduled Nightly runs both modes against policy main, resolved once to immutable
-SHAs before the matrix starts. The compiled private payloads and caches remain on
-the runner; artifacts contain only receipts and logs. Source-read tokens are used
-only by checkout actions, never exposed to native builds or tests.
+`sql-policy-release.json` evidence records the resolved tag, release/asset IDs,
+source/API revisions, Agent commit, installed Dosi version and wheel hash. It is
+included in `nightly-manifest.json` and uploaded with the test results. Payloads and
+credentials are not uploaded. A fresh per-run directory holds downloaded assets
+and is removed after evidence upload; credentials are scoped to the download step.
+The final notification requires both successful Release preparation and tests.
 
-Review `p0.yml` and `sql-policy-host.json` together when updating the policy pin.
-Release P0 continues using the reviewed pin; scheduled compatibility checks follow
-policy main. Cross-repository PR-triggered acceptance is outside this Agent gate.
-The scheduled cold contract finishes before the ordinary Nightly suites start;
-its failure also marks the final notification failed, even if those suites pass.
+The independent `sql-policy-gate.yml` source-build verifier is retained for existing
+callers, but ordinary and release P0 Nightly no longer invoke it.
 
-Local reproduction in a dedicated locked Linux environment (this replaces its Agent and
-engine installations):
+Local reproduction in the locked Agent environment:
 
 ```sh
-uv pip install 'maturin==1.16.0' 'auditwheel==6.8.2'
-uv run --no-sync python ci/sql_policy_gate.py run \
-  --policy external/datus-sql-policies --engine external/osi-engine \
-  --agent-sha <agent-sha> --policy-sha <policy-sha> --engine-sha <engine-sha> \
-  --mode cold --work /tmp/datus-sql-policy-cold
+policy_work="$(mktemp -d)"
+uv run python ci/sql_policy_release.py --release v0.5.3 --work "$policy_work"
+DATUS_SQL_POLICY_WHEEL="$(find "$policy_work" -name '*.whl')" \
+  uv run pytest tests/integration/plugins/test_sql_policy_plugin.py
 ```
 
 ## Release P0
