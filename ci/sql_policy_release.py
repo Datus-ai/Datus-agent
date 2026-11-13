@@ -18,7 +18,6 @@ from packaging.utils import parse_wheel_filename
 from packaging.version import Version
 
 REPOSITORY = "Datus-ai/datus-sql-policies"
-CONFIG = Path(__file__).resolve().parent / "harness/sql-policy-release.json"
 
 
 def request(endpoint: str, *, binary: bool = False) -> bytes:
@@ -80,19 +79,14 @@ def release_commit(tag: str) -> str:
     raise ValueError("Policy Release tag does not resolve to a commit")
 
 
-def prepare(work: Path, *, profile: str = "full", release: str = "", agent: Path | None = None) -> dict:
+def prepare(work: Path, *, release: str = "", agent: Path | None = None) -> dict:
     agent = agent or Path.cwd()
     work.mkdir(parents=True, exist_ok=True)
     if any(work.iterdir()):
         raise ValueError("Use a fresh Policy Release work directory")
-    receipt = {"status": "failure", "profile": profile, "requested_release": release or "default"}
+    receipt = {"status": "failure", "requested_release": release or "default"}
     try:
-        pin = json.loads(CONFIG.read_text())
-        if pin["schema_version"] != 1:
-            raise ValueError("Unsupported Policy Release configuration")
-        selected = release or (pin["tag"] if profile == "p0" else "latest")
-        if profile == "p0" and selected != pin["tag"]:
-            raise ValueError("P0 requires its pinned Policy Release; latest/overrides are not permitted")
+        selected = release or "latest"
         if selected != "latest" and not re.fullmatch(r"v\d+\.\d+\.\d+", selected):
             raise ValueError("Policy Release must be latest or an explicit stable vX.Y.Z tag")
         endpoint = "latest" if selected == "latest" else "tags/" + selected
@@ -137,10 +131,6 @@ def prepare(work: Path, *, profile: str = "full", release: str = "", agent: Path
         digest = checksum(data)
         if expected.get(wheel["name"]) != digest:
             raise ValueError("Policy wheel checksum mismatch")
-        if profile == "p0" and (
-            manifest["source_commit"] != pin["source_commit"] or digest != pin["wheels"].get(target)
-        ):
-            raise ValueError("Policy Release differs from the reviewed P0 source/wheel")
         path = work / wheel["name"]
         path.write_bytes(data)
         receipt.update(
@@ -167,12 +157,11 @@ def prepare(work: Path, *, profile: str = "full", release: str = "", agent: Path
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
-    parser.add_argument("--profile", choices=("full", "p0"), default="full")
     parser.add_argument("--release", default="")
     parser.add_argument("--github-env", type=Path)
     args = parser.parse_args()
     try:
-        receipt = prepare(args.work.resolve(), profile=args.profile, release=args.release)
+        receipt = prepare(args.work.resolve(), release=args.release)
     except Exception as exc:
         parser.exit(1, f"Policy Release preparation failed: {exc}\n")
     if args.github_env:

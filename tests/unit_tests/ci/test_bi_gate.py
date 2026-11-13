@@ -7,8 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ci.bi_gate import GROUP, compose_document, required, verify
-from ci.p0_plan import load_profile
+from ci.bi_gate import NODEIDS, SOURCE_REVISIONS, compose_document, required, verify
 
 pytestmark = pytest.mark.acceptance
 
@@ -52,11 +51,11 @@ def test_compose_isolates_names_ports_and_fixture_mounts(tmp_path):
     assert document["services"]["postgres"]["volumes"] == [str(tmp_path / "init.sh") + ":/init.sh:ro"]
 
 
-def test_bi_receipt_requires_all_p0_tests_and_same_sources(tmp_path):
+def test_bi_receipt_requires_all_product_tests_and_same_sources(tmp_path):
     sources = {"agent": {"sha": "a" * 40}}
     identity = hashlib.sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest()
     (tmp_path / "result.json").write_text(json.dumps({"sources": sources, "source_id": identity, "status": "success"}))
-    nodeids = load_profile()["groups"][GROUP]["nodeids"]
+    nodeids = NODEIDS
     report = {"collected": nodeids, "outcomes": dict.fromkeys(nodeids, "passed"), "exit_code": 0, "source_id": identity}
     path = tmp_path / "execution.json"
     path.write_text(json.dumps(report))
@@ -77,12 +76,14 @@ def test_bi_receipt_requires_all_p0_tests_and_same_sources(tmp_path):
         verify(tmp_path, sources)
 
 
-def test_bi_gate_keeps_real_p0_regression():
+def test_bi_gate_keeps_real_product_regression():
     root = Path(__file__).resolve().parents[3]
     gate = (root / ".github/workflows/bi-gate.yml").read_text()
     assert "ci/bi_gate.py run" in gate
+    assert "SOURCE_REVISIONS" in gate
+    assert all(len(sha) == 40 for sha in SOURCE_REVISIONS.values())
     assert "ci/bi_gate.py verify" in gate
-    assert any("test_bi_chart_lifecycle.py" in n for n in load_profile()["groups"][GROUP]["nodeids"])
+    assert any("test_bi_chart_lifecycle.py" in n for n in NODEIDS)
 
 
 def test_privileged_pr_context_cannot_call_product_gate_workflows():
@@ -106,12 +107,12 @@ def test_targeted_bi_suite_runs_every_required_file_with_services_and_excludes_b
     (command,) = [
         line
         for line in script.splitlines()
-        if line.startswith('  run_compose_suite "P0 BI Product E2E"') and "pytest" in line
+        if line.startswith('  run_compose_suite "Superset Product Tests"') and '"$DASHBOARD_MARK_EXPR"' in line
     ]
     targets = set(shlex.split(command))
     deselects = script.split("NIGHTLY_DEDICATED_SUITE_DESELECTS=(", 1)[1].split("\n)", 1)[0]
     broad_arguments = shlex.split(deselects)
-    for nodeid in load_profile()["groups"][GROUP]["nodeids"]:
+    for nodeid in NODEIDS:
         path = nodeid.split("::", 1)[0]
         assert path in targets, f"Required BI contract missing from service-backed targeted suite: {nodeid}"
         assert any(broad_arguments[i : i + 2] == ["--deselect", path] for i in range(len(broad_arguments)))

@@ -18,12 +18,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from ci.harness.test_plan import changed_files, impact_plan  # noqa: E402
-from ci.p0_plan import check_p0_execution, load_profile  # noqa: E402
+from ci.harness.test_plan import changed_files, check_execution, impact_plan  # noqa: E402
 from ci.release_artifact import distributions, sha256  # noqa: E402
-from ci.stage_p0 import stage  # noqa: E402
+from ci.stage_harness import stage  # noqa: E402
 
-GROUP = "P0 SQL Policy Plugin Contracts"
+GROUP = "SQL Policy Plugin Tests"
+NODEIDS = (
+    "tests/integration/plugins/test_sql_policy_plugin.py::test_managed_sql_policy_enforces_sql_semantic_and_api_reads",
+)
 CONFIG = ROOT / "ci/harness/sql-policy-host.json"
 REQUIRED_STAGES = {
     "toolchain",
@@ -35,7 +37,7 @@ REQUIRED_STAGES = {
     "install-hosts",
     "verify-agent",
     "verify-engine",
-    "policy-p0",
+    "policy-contract",
 }
 
 
@@ -164,7 +166,7 @@ def verify_result(sources: dict, receipt: dict, execution: Path, wheels: dict[st
     report = json.loads(execution.read_text())
     if report.get("source_id") != receipt["source_id"]:
         raise ValueError("Execution report belongs to a different source combination")
-    result = check_p0_execution([execution], {GROUP: load_profile()["groups"][GROUP]})
+    result = check_execution([execution], "nightly", {"execution": {"core_nodeids": NODEIDS}, "flow_groups": {}})
     if result["status"] != "success":
         raise ValueError("; ".join(result["errors"]))
     return result
@@ -323,12 +325,12 @@ def run_gate(agent: Path, policy: Path, engine: Path, work: Path, mode: str, exp
         env["EXTERNAL_REPOS_ROOT"] = str(policy.parent)
         execution = work / "execution.json"
         run(
-            "policy-p0",
+            "policy-contract",
             [
                 sys.executable,
                 "-m",
                 "pytest",
-                *load_profile()["groups"][GROUP]["nodeids"],
+                *NODEIDS,
                 "-p",
                 "ci.pytest_gate_plugin",
                 "--gate-report",

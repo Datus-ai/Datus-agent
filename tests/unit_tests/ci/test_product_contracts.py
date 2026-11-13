@@ -1,4 +1,4 @@
-"""Release P0 must execute its required cases against the identified artifact."""
+"""Product execution evidence and installed artifact identity remain verifiable."""
 
 import json
 import sys
@@ -8,31 +8,11 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from ci.harness.test_plan import ROOT, load_map
-from ci.p0_plan import check_p0_execution, load_profile, selected_groups
+from ci.harness.test_plan import ROOT, check_product_execution
 from ci.release_artifact import distributions, verify, verify_install
-from ci.stage_p0 import stage
+from ci.stage_harness import stage
 
 pytestmark = pytest.mark.component
-
-
-def test_p0_reuses_all_core_journeys_and_includes_live_tasks():
-    profile = load_profile()
-    groups = profile["groups"]
-    assert groups["P0 Core Product Contracts"]["nodeids"] == load_map()["execution"]["core_nodeids"]
-    assert len(groups["P0 Core Real Model"]["nodeids"]) == 3
-    all_nodeids = [n for group in groups.values() for n in group["nodeids"]]
-    assert len(all_nodeids) == len(set(all_nodeids))
-    for nodeid in all_nodeids:
-        assert (ROOT / nodeid.split("::", 1)[0]).is_file(), nodeid
-    assert all(len(sha) == 40 for sha in profile["release_sources"].values())
-
-
-def test_p0_filter_selects_explicit_groups():
-    groups = selected_groups(load_profile(), "^P0 Core ")
-    assert set(groups) == {"P0 Core Product Contracts", "P0 Core Real Model"}
-    with pytest.raises(ValueError, match="no P0 groups"):
-        selected_groups(load_profile(), "^P0 DOES_NOT_EXIST$")
 
 
 def test_required_postgresql_provider_cannot_skip_missing_dependencies(monkeypatch):
@@ -65,7 +45,7 @@ def test_required_postgresql_setup_failure_cleans_both_providers(monkeypatch):
 
 
 @pytest.mark.parametrize("outcome", ["passed", "skipped", "xfailed", "failed", "not_executed"])
-def test_p0_requires_successful_execution_of_every_planned_case(tmp_path, outcome):
+def test_product_plan_requires_successful_execution_of_every_required_case(tmp_path, outcome):
     path = tmp_path / "execution.json"
     path.write_text(
         json.dumps(
@@ -76,10 +56,10 @@ def test_p0_requires_successful_execution_of_every_planned_case(tmp_path, outcom
             }
         )
     )
-    groups = {"P0 Query": {"nodeids": ["test_query.py::test_total"]}}
-    assert check_p0_execution([path], groups)["status"] == ("success" if outcome == "passed" else "failure")
-    groups["P0 Query"]["nodeids"].append("test_query.py::test_followup")
-    assert check_p0_execution([path], groups)["status"] == "failure"
+    plan = {"required_targets": ["test_query.py::test_total"]}
+    assert check_product_execution(plan, [path])["status"] == ("success" if outcome == "passed" else "failure")
+    plan["required_targets"].append("test_query.py::test_followup")
+    assert check_product_execution(plan, [path])["status"] == "failure"
 
 
 def test_release_identity_verifies_source_and_distribution_hashes(tmp_path):

@@ -17,7 +17,7 @@ scope are local repository contracts.
 | Adapter merge queue checks | Adapter repository | Service-backed integration that is too heavy for every PR commit. |
 | Datus-agent merge queue | Datus-agent | Deterministic product acceptance across core Datus chains. |
 | Datus-agent nightly | Datus-agent | Cross-repository source-checkout compatibility in realistic product flows. |
-| Release P0 | Datus-agent | Candidate wheel with published adapter pins and explicitly pinned plugin/service fixtures. |
+| Release candidate checks | Datus-agent | Package metadata, wheel installation, strict docs builds, and distribution identity for publishing. |
 | Weekly/manual benchmark | datus-benchmark | Product quality trend tracking and evaluator health. |
 
 ## Adapter Required Check Documents
@@ -36,8 +36,8 @@ cross-repository integration contract changes.
 
 ## Dashboard Bootstrap Nightly Scope
 
-The P0 Superset group selects the two explicit nodeids in `ci/harness/p0.yml`:
-managed plugin installation with verified SQL export, and real-model dashboard creation.
+The Superset product suite runs chart repair/deletion, managed plugin installation
+with verified SQL export, and real-model dashboard creation.
 Creation runs through GenDashboardAgenticNode, reloads persisted dashboard/chart
 objects through the BI adapter, and compares chart data with independently computed
 source-table aggregates. Full skill-driven bootstrap remains a documented coverage gap. It requires provider
@@ -56,8 +56,9 @@ uv run pytest -m product_e2e \
   tests/integration/tools/test_bi_dashboard.py
 ```
 
-Evaluation failures retain pytest's nonzero exit status. The complete P0 manifest
-runs in both daily Nightly and release-candidate validation. The latter installs
-the candidate wheel and published dependency pins, while daily Nightly tests
-repository-main source compatibility. See `ci/harness/README.md` for artifact
-identity, execution evidence and profile-specific environment preparation.
+Evaluation failures retain pytest's nonzero exit status. Core acceptance, live SQL,
+PostgreSQL storage, SQL policy, semantic modeling and Superset product suites run
+in daily Nightly, which tests repository-main source compatibility. Release
+workflows run package and docs smoke checks; product validation remains in Nightly
+and weekly/manual benchmarks. See `ci/harness/README.md` for execution evidence and
+service setup.

@@ -5,7 +5,6 @@
   "cold_paths": [
     "pyproject.toml",
     "uv.lock",
-    "ci/harness/p0.yml",
     "ci/harness/sql-policy-host.json",
     "ci/sql_policy_gate.py",
     "tests/integration/conftest.py",
