@@ -100,6 +100,8 @@ channels:
 
 ### Feishu (Lark)
 
+International Lark channels must set `extra.domain: lark`; the default is `feishu`.
+
 ```yaml
 channels:
   feishu-main:

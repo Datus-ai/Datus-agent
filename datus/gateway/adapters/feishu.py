@@ -19,6 +19,7 @@ from datus.gateway.models import ChannelConfig, InboundMessage, OutboundMessage,
 
 if TYPE_CHECKING:
     from datus.gateway.bridge import ChannelBridge
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -91,6 +92,12 @@ class FeishuAdapter(ChannelAdapter):
         super().__init__(channel_id, config, bridge, channel_config)
         self._app_id: str = config.get("app_id", "")
         self._app_secret: str = config.get("app_secret", "")
+        self._domain = config.get("domain", "feishu")
+        if not isinstance(self._domain, str) or self._domain not in {"feishu", "lark"}:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message="Feishu channel domain must be 'feishu' or 'lark'",
+            )
         self._bot_open_id: Optional[str] = config.get("bot_open_id", "")
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._ws_client: Optional[object] = None
@@ -251,7 +258,10 @@ class FeishuAdapter(ChannelAdapter):
 
         self._loop = asyncio.get_running_loop()
 
-        self._lark_client = lark.Client.builder().app_id(self._app_id).app_secret(self._app_secret).build()
+        domain = lark.LARK_DOMAIN if self._domain == "lark" else lark.FEISHU_DOMAIN
+        self._lark_client = (
+            lark.Client.builder().app_id(self._app_id).app_secret(self._app_secret).domain(domain).build()
+        )
 
         # Build the event handler on the main thread (no loop dependency).
         # The ws.Client is created inside the worker thread so the SDK
@@ -323,6 +333,7 @@ class FeishuAdapter(ChannelAdapter):
             self._app_secret,
             event_handler=event_handler,
             log_level=lark.LogLevel.INFO,
+            domain=lark.LARK_DOMAIN if self._domain == "lark" else lark.FEISHU_DOMAIN,
         )
         try:
             self._ws_client.start()
