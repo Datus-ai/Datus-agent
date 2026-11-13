@@ -189,6 +189,7 @@ async def list_models(svc: ServiceDep) -> Result[ModelsData]:
                     id=model_key,
                     model=actual_model,
                     name=model_key,
+                    supports_image_input=getattr(model_cfg, "supports_image_input", None),
                     context_length=spec_ctx if isinstance(spec_ctx, int) else None,
                     max_tokens=spec_max if isinstance(spec_max, int) else None,
                 )

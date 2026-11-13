@@ -522,3 +522,26 @@ class TestCurrentModel:
         result = await list_models(svc)
 
         assert result.data.current_model is None
+
+
+@pytest.mark.asyncio
+async def test_connection_image_capabilities_override_names_independently(monkeypatch):
+    monkeypatch.setattr(models_routes, "resolve_model_details", lambda: None)
+    svc = _make_svc(
+        catalog={},
+        custom_models={
+            "private-vision": ModelConfig(type="openai", api_key="stub", model="YunCode", supports_image_input=True),
+            "private-text": ModelConfig(type="openai", api_key="stub", model="YunCode", supports_image_input=False),
+            "disabled-vision": ModelConfig(type="openai", api_key="stub", model="gpt-4o", supports_image_input=False),
+            "legacy": ModelConfig(type="openai", api_key="stub", model="YunCode"),
+        },
+    )
+    result = await list_models(svc)
+    capabilities = {model.id: model.supports_image_input for model in result.data.models}
+    assert capabilities == {"private-vision": True, "private-text": False, "disabled-vision": False, "legacy": None}
+
+
+@pytest.mark.parametrize("value", [0, 1, "true", "false", [], {}])
+def test_model_config_rejects_non_boolean_image_capabilities(value):
+    with pytest.raises(ValueError, match="supports_image_input must be a boolean"):
+        ModelConfig(type="openai", api_key="stub", model="YunCode", supports_image_input=value)
