@@ -67,7 +67,7 @@ class CreateAgentInput(BaseModel):
     permissions: Optional[dict] = Field(default_factory=dict, description="Permission overrides")
     hooks: Optional[dict] = Field(default_factory=dict, description="Hook configuration")
     rules: Optional[list[str]] = Field(default_factory=list, description="Instruction rules")
-    max_turns: Optional[int] = Field(default=100, description="Max conversation turns")
+    max_turns: Optional[int] = Field(default=200, description="Max conversation turns")
     workspace_root: Optional[str] = Field(default=None, description="Workspace root path")
     adapter_type: Optional[str] = Field(default=None, description="Adapter type")
     sql_file_threshold: Optional[int] = Field(default=None, description="SQL file threshold")

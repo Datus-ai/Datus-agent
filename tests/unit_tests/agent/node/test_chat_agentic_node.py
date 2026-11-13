@@ -2971,3 +2971,16 @@ class TestChatAgenticNodeHonoursConfiguredTools:
             node.setup_tools()
 
             assert [t.name for t in node.tools].count(self._DOC_TOOL_NAME) == 1
+
+
+@pytest.mark.parametrize(
+    "chat_config, expected", [(None, 200), ({}, 200), ({"max_turns": 350}, 350), ({"max_turns": 50}, 50)]
+)
+def test_chat_turn_default_preserves_explicit_configuration(real_agent_config, mock_llm_create, chat_config, expected):
+    from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+    real_agent_config.agentic_nodes = {} if chat_config is None else {"chat": chat_config}
+    node = ChatAgenticNode(
+        node_id="turn_budget", description="Turn budget", node_type=NodeType.TYPE_CHAT, agent_config=real_agent_config
+    )
+    assert node.max_turns == expected
