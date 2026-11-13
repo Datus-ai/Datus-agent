@@ -2,6 +2,29 @@
 
 ## 0.4
 
+### 0.4.5
+
+**New Features**
+
+- **Query Metrics, Trends, and Attribution Directly in Chat** - Chat can analyze existing metrics without switching to AskMetrics. When no suitable metric exists, it can use the available read-only SQL tools; metric authoring starts only when explicitly requested. Follow-up questions to a selected business subagent continue its original child session. ([Agent #1612](https://github.com/Datus-ai/Datus-agent/pull/1612)) Docs: [Chat](https://docs.datus.ai/dev/cli/chat_command/), [AskMetrics](https://docs.datus.ai/dev/subagent/ask_metrics/).
+- **Export Complete Query Results to Project CSV/Parquet Files** - Adds `export_query`, accepting SQL text or a project SQL file and returning the output path, row count, and completion status without sending the full dataset into model context. Streaming is preferred when both the database adapter and policies support it; otherwise, exports buffer the complete result. Data permissions and policy checks apply in both modes. ([Agent #1611](https://github.com/Datus-ai/Datus-agent/pull/1611), [DB #193](https://github.com/Datus-ai/datus-db-adapters/pull/193)) Docs: [Query Result Exports](https://docs.datus.ai/dev/tools/query_exports/).
+
+**Enhancements**
+
+- **More Complete Database Integration and SQL Guidance** - Athena adds an SQL skill packaged with its adapter; Hive/Inceptor provides syntax and metadata guidance for the actual server product. The adapter repository also provides standalone `datus-duckdb` and `datus-sqlite` packages, plus configuration schema and validation entry points for integration outside the Agent. Agent adoption of those standalone packages is a separate change. ([Agent #1571](https://github.com/Datus-ai/Datus-agent/pull/1571), [DB #184](https://github.com/Datus-ai/datus-db-adapters/pull/184), [#185](https://github.com/Datus-ai/datus-db-adapters/pull/185), [#187](https://github.com/Datus-ai/datus-db-adapters/pull/187)) Docs: [Hive/Inceptor](https://docs.datus.ai/dev/configuration/datasources/hive/).
+- **More Reliable Long Tasks and Private Model Execution** - Chat and the chat/agent-creation APIs default to 200 turns while retaining explicit settings. Unknown or private models can use fallback capacity settings when metadata is unavailable. Improves reasoning replay, midstream fallback retries, and output-exhaustion handling. Calls to unavailable tools return errors to the model so it can correct them within the same run. ([Agent #1581](https://github.com/Datus-ai/Datus-agent/pull/1581), [#1626](https://github.com/Datus-ai/Datus-agent/pull/1626), [#1589](https://github.com/Datus-ai/Datus-agent/pull/1589), [#1616](https://github.com/Datus-ai/Datus-agent/pull/1616), [#1567](https://github.com/Datus-ai/Datus-agent/pull/1567), [#1577](https://github.com/Datus-ai/Datus-agent/pull/1577)) Docs: [Agent Capacity Configuration](https://docs.datus.ai/dev/configuration/agent/), [Chat API Turn Limit](https://docs.datus.ai/dev/API/chat/).
+- **Unified Skill Creation, Revision, and Review** - `gen_skill` uses one workflow and distinguishes format validity from content correctness. Review-only requests leave the target unchanged, and loading a skill keeps access to its supporting reference files consistent. ([Agent #1589](https://github.com/Datus-ai/Datus-agent/pull/1589)) Docs: [Built-in Subagents](https://docs.datus.ai/dev/subagent/builtin_subagents/).
+
+**Bug Fixes**
+
+- **PostgreSQL Metadata, DDL Reconstruction, and SQL Lineage Compatibility** - Preserves numeric/varchar precision and length, arrays, and user-defined types. Restores foreign keys, cross-schema references, and required indexes without changing multiline defaults; arrays no longer enter unsupported scalar aggregates. The Agent also fixes SQL lineage extraction with SQLGlot 30. ([DB #177](https://github.com/Datus-ai/datus-db-adapters/pull/177), [#181](https://github.com/Datus-ai/datus-db-adapters/pull/181), [#183](https://github.com/Datus-ai/datus-db-adapters/pull/183), [Agent #1576](https://github.com/Datus-ai/Datus-agent/pull/1576))
+
+**Upgrade Notes**
+
+- **Replace the Legacy Report Type** - Change `gen_report` to `gen_visual_report` in configurations, workflows, and calls. There is no compatibility alias, and existing configurations are not rewritten automatically. ([Agent #1570](https://github.com/Datus-ai/Datus-agent/pull/1570)) Docs: [HTML Reports](https://docs.datus.ai/dev/subagent/gen_visual_report/).
+- **Check Custom Tool Configuration and Prompts** - `read_tool_result` is removed; use pagination parameters on the original tool. OSI dataset/metric upsert and delete methods move from `filesystem_tools` to `semantic_tools`, and old selections are not converted automatically. Custom native tools must declare `tool_contract` and update the capability catalog. ([Agent #1613](https://github.com/Datus-ai/Datus-agent/pull/1613), [#1609](https://github.com/Datus-ai/Datus-agent/pull/1609), [#1603](https://github.com/Datus-ai/Datus-agent/pull/1603)) Docs: [Tool Pagination](https://docs.datus.ai/dev/configuration/agent/), [Tool Contracts](https://docs.datus.ai/dev/tool-contracts/).
+- **Add Metric Tools to Existing Chat Allowlists as Needed** - A non-empty `tools` list replaces the defaults. To enable direct metric analysis, add the required `semantic_tools.<method>` entries. Omitted or empty lists use the default tools. ([Agent #1612](https://github.com/Datus-ai/Datus-agent/pull/1612)) Docs: [Chat](https://docs.datus.ai/dev/cli/chat_command/).
+
 ### 0.4.4
 
 **New Features**
