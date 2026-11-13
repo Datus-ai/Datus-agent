@@ -8,6 +8,7 @@ import os
 
 import pytest
 
+from datus.configuration.agent_config import AgentConfig
 from datus.storage.embedding_models import DEFAULT_MODEL_CONFIG, EmbeddingModel
 from datus.storage.storage_cfg import (
     _find_config_differences,
@@ -18,6 +19,84 @@ from datus.storage.storage_cfg import (
 )
 from datus.utils.constants import EmbeddingProvider
 from datus.utils.exceptions import DatusException
+
+
+class TestEmbeddingRequestPolicyLifecycle:
+    @staticmethod
+    def _agent_config(tmp_path, model_name, policy, dim_size=4):
+        # Exercise the actual AgentConfig save/check entry points without
+        # initializing unrelated LLMs, providers, or project directories.
+        config = object.__new__(AgentConfig)
+        config._skip_init_dirs = False
+        config.rag_base_path = str(tmp_path)
+        options = {} if policy == "omitted" else {"send_dimensions": policy}
+        config.storage_configs = {
+            "database": EmbeddingModel(
+                model_name=model_name, dim_size=dim_size, registry_name=EmbeddingProvider.OPENAI, **options
+            )
+        }
+        return config
+
+    @pytest.mark.parametrize(
+        ("model_name", "explicit"),
+        [
+            ("vendor/custom-model", False),
+            ("text-embedding-3-small", True),
+            ("text-embedding-3-large", True),
+            ("text-embedding-ada-002", False),
+            ("text-embedding-ada-002", True),
+        ],
+    )
+    @pytest.mark.parametrize("automatic", ["omitted", None])
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_equivalent_policy_survives_save_load_check(self, tmp_path, model_name, explicit, automatic, reverse):
+        old_policy, new_policy = (automatic, explicit) if reverse else (explicit, automatic)
+        original = self._agent_config(tmp_path, model_name, old_policy)
+        original.save_storage_config("database")
+        assert load_storage_config(original.rag_storage_path())["database"]["model_name"] == model_name
+
+        restored = self._agent_config(tmp_path, model_name, new_policy)
+        restored.check_init_storage_config("database")
+        restored.check_init_storage_config("database", save_config=False)
+
+        saved = load_storage_config(restored.rag_storage_path())["database"]
+        assert saved["model_name"] == model_name
+        assert saved["dim_size"] == "4"
+
+    @pytest.mark.parametrize(
+        ("model_name", "old_policy", "new_policy"),
+        [
+            ("vendor/custom-model", "omitted", True),
+            ("vendor/custom-model", True, None),
+            ("text-embedding-3-small", None, False),
+            ("text-embedding-3-large", False, "omitted"),
+        ],
+    )
+    def test_changed_effective_policy_requires_reinitialization(self, tmp_path, model_name, old_policy, new_policy):
+        original = self._agent_config(tmp_path, model_name, old_policy)
+        original.save_storage_config("database")
+        restored = self._agent_config(tmp_path, model_name, new_policy)
+
+        with pytest.raises(DatusException, match="send_dimensions"):
+            restored.check_init_storage_config("database")
+
+    def test_equivalent_policy_does_not_hide_changed_vector_width(self, tmp_path):
+        original = self._agent_config(tmp_path, "vendor/custom-model", False)
+        original.save_storage_config("database")
+        restored = self._agent_config(tmp_path, "vendor/custom-model", None, dim_size=8)
+
+        with pytest.raises(DatusException, match="dim_size"):
+            restored.check_init_storage_config("database")
+
+    def test_no_explicit_width_keeps_automatic_request_compatible(self, tmp_path):
+        original = self._agent_config(tmp_path, "text-embedding-3-small", True, dim_size=None)
+        original.save_storage_config("database")
+        restored = self._agent_config(tmp_path, "text-embedding-3-small", "omitted", dim_size=None)
+
+        restored.check_init_storage_config("database")
+
+        assert load_storage_config(restored.rag_storage_path())["database"]["dim_size"] == "None"
+
 
 # ---------------------------------------------------------------------------
 # save / load round-trip
