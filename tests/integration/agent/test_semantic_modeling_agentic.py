@@ -298,7 +298,7 @@ async def test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm(
     restore_storage_defaults,
 ):
     """Smoke the complete LLM authoring loop after the deterministic contract."""
-    assert os.environ.get("DEEPSEEK_API_KEY"), "P0 Dosi smoke requires DEEPSEEK_API_KEY"
+    assert os.environ.get("DEEPSEEK_API_KEY"), "Semantic modeling requires DEEPSEEK_API_KEY"
     _use_deterministic_embeddings(monkeypatch)
     nightly_agent_config.home = str(tmp_path / "home")
     config = _use_dosi(nightly_agent_config, tmp_path / "workspace")

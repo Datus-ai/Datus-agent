@@ -11,12 +11,11 @@ import pytest
 
 from ci.release_artifact import sha256, verify_wheel_payload
 from ci.sql_policy_gate import (
-    GROUP,
+    NODEIDS,
     REQUIRED_STAGES,
     ROOT,
     build_environment,
     load_config,
-    load_profile,
     plan_gate,
     policy_engine_revision,
     snapshot,
@@ -59,7 +58,7 @@ def test_docs_keep_the_gate_optional_and_scheduled_runs_require_cold_builds():
 
 
 def test_host_gate_uses_the_reviewed_release_policy_source():
-    assert plan_gate([])["sql_policies"] == load_profile()["release_sources"]["sql_policies"]
+    assert plan_gate([])["sql_policies"] == load_config()["sql_policies"]
 
 
 @pytest.mark.parametrize(
@@ -194,7 +193,7 @@ def _evidence(tmp_path):
         "artifacts": {name: {"sha256": sha256(wheel)} for name, wheel in wheels.items()},
         "stages": [{"name": name, "exit_code": 0} for name in REQUIRED_STAGES],
     }
-    nodes = load_profile()["groups"][GROUP]["nodeids"]
+    nodes = NODEIDS
     report = {
         "source_id": receipt["source_id"],
         "collected": nodes,
@@ -212,7 +211,7 @@ def test_identified_builds_and_successful_execution_are_accepted(tmp_path):
 
 
 @pytest.mark.parametrize("outcome", ["skipped", "xfailed", "failed", "not_executed"])
-def test_missing_or_unsuccessful_p0_execution_blocks_acceptance(tmp_path, outcome):
+def test_missing_or_unsuccessful_policy_execution_blocks_acceptance(tmp_path, outcome):
     sources, receipt, wheels, report, path = _evidence(tmp_path)
     report["outcomes"] = {node: outcome for node in report["collected"]}
     write_json(path, report)
@@ -302,8 +301,6 @@ def test_execution_report_records_the_frozen_source_identity(tmp_path, monkeypat
     assert json.loads(report.read_text())["source_id"] == "source-combination"
 
 
-@pytest.mark.parametrize(
-    "path", ["ci/release_artifact.py", "ci/pytest_gate_plugin.py", "ci/p0_plan.py", "ci/stage_p0.py"]
-)
+@pytest.mark.parametrize("path", ["ci/release_artifact.py", "ci/pytest_gate_plugin.py", "ci/stage_harness.py"])
 def test_verifier_changes_require_installed_host_acceptance(path):
     assert plan_gate([path])["required"] is True

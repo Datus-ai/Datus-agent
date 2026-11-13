@@ -50,7 +50,7 @@ def test_chat_service_changes_select_the_api_lifecycle():
 @pytest.mark.parametrize("path", ["datus/storage/feedback/store.py", "pyproject.toml", "uv.lock"])
 def test_storage_changes_select_required_postgresql_acceptance(path):
     plan = impact_plan([path])
-    assert "P0 PostgreSQL Agent Storage Contracts" in plan["nightly_groups"]
+    assert "PostgreSQL Agent Storage Tests" in plan["nightly_groups"]
     assert (
         "tests/integration/storage/test_postgresql_feedback_store.py::"
         "test_postgresql_feedback_storage_write_read_update_and_delete"
@@ -61,25 +61,23 @@ def test_documentation_changes_have_no_remote_model_requirement():
     assert impact_plan(["docs/index.md"])["live_targets"] == []
 
 
-def test_policy_changes_select_p0_without_requiring_remote_models(tmp_path):
+def test_policy_changes_select_policy_tests_without_requiring_remote_models(tmp_path):
     plan = impact_plan(["datus/plugins/store.py"])
     assert plan["live_targets"] == []
-    assert "P0 SQL Policy Plugin Contracts" in plan["nightly_groups"]
-    from ci.p0_plan import load_profile
-
-    nodes = load_profile()["groups"]["P0 SQL Policy Plugin Contracts"]["nodeids"]
+    assert "SQL Policy Plugin Tests" in plan["nightly_groups"]
+    nodes = plan["required_targets"]
     report = tmp_path / "execution.json"
     report.write_text(json.dumps({"collected": nodes, "outcomes": {node: "passed" for node in nodes}, "exit_code": 0}))
     assert check_product_execution(plan, [report])["status"] == "success"
-    assert re.search(product_group_filter(plan), "P0 SQL Policy Plugin Contracts")
+    assert re.search(product_group_filter(plan), "SQL Policy Plugin Tests")
     assert not re.search(product_group_filter(plan), "Product E2E Nightly Tests")
 
 
 @pytest.mark.parametrize(
     "node,group",
     [
-        ("semantic_modeling", "P0 Dosi Semantic Modeling E2E"),
-        ("gen_dashboard", "P0 BI Product E2E"),
+        ("semantic_modeling", "Semantic Modeling Product Tests"),
+        ("gen_dashboard", "Superset Product Tests"),
         ("scheduler", "Airflow Nightly Tests"),
     ],
 )
@@ -110,7 +108,7 @@ def test_impact_targets_exist():
     data = load_map()
     assert validate_unit_rules(data) == []
     for rule in data["execution"]["impact_rules"]:
-        for target in rule.get("live_targets", []):
+        for target in [*rule.get("live_targets", []), *rule.get("required_targets", [])]:
             assert (ROOT / target.split("::", 1)[0]).exists(), (rule["id"], target)
 
 
@@ -302,7 +300,7 @@ def test_specific_units_preserve_additive_live_and_service_requirements():
     assert "tests/unit_tests/storage/reference_template/" in plan["unit_targets"]
     assert "tests/unit_tests/tools/func_tool/test_reference_template_tools.py" in plan["unit_targets"]
     assert "tests/integration/agent/test_core_live.py" in plan["live_targets"]
-    assert "P0 PostgreSQL Agent Storage Contracts" in plan["nightly_groups"]
+    assert "PostgreSQL Agent Storage Tests" in plan["nightly_groups"]
 
 
 def test_longest_package_owner_keeps_connector_consumers():

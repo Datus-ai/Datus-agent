@@ -31,7 +31,14 @@ jobs:
           enable-cache: false
       - name: Resolve pinned service and plugin fixtures
         id: sources
-        run: uv run --no-project --with pyyaml python ci/p0_plan.py --github-output "$GITHUB_OUTPUT" > /dev/null
+        run: |
+          uv run --no-project --with pyyaml python - <<'PY'
+          import os
+          from ci.bi_gate import SOURCE_REVISIONS
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              for name, sha in SOURCE_REVISIONS.items():
+                  output.write(f"{name}={sha}\n")
+          PY
       - uses: actions/checkout@v4
         with:
           repository: Datus-ai/datus-bi-adapters
@@ -73,11 +80,11 @@ jobs:
           if not values.get('DEEPSEEK_API_KEY'):
               raise SystemExit('CI template is missing DEEPSEEK_API_KEY')
           PYENV
-      - name: Run deterministic repair and real-model BI P0
+      - name: Run deterministic repair and real-model BI tests
         env:
           DATUS_TEST_BIRD_ROOT: ${{ runner.temp }}/bi-bird
         run: .venv/bin/python ci/bi_gate.py run --work "$RUNNER_TEMP/bi-gate"
-      - name: Require complete BI P0 execution evidence
+      - name: Require complete BI execution evidence
         if: always()
         run: .venv/bin/python ci/bi_gate.py verify --work "$RUNNER_TEMP/bi-gate"
       - uses: actions/upload-artifact@v4

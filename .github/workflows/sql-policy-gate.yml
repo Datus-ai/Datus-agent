@@ -122,7 +122,7 @@ jobs:
             --policy external/datus-sql-policies --engine external/osi-engine \
             --agent-sha "$AGENT_SHA" --policy-sha "$POLICY_SHA" --engine-sha "$ENGINE_SHA" \
             --mode "$CACHE_MODE" --work "$RUNNER_TEMP/sql-policy-$CACHE_MODE"
-      - name: Require the bound P0 execution receipt
+      - name: Require the bound policy execution receipt
         if: always()
         env:
           AGENT_SHA: ${{ needs.sources.outputs.agent }}

@@ -48,8 +48,6 @@ jobs:
       expected_version: ${{ inputs.version }}
       check_adapter_latest: ${{ inputs.check_adapter_latest }}
       check_tag_available: false
-    secrets:
-      RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
 
   publish:
     needs: validate-candidate

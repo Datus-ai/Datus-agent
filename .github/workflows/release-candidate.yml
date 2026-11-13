@@ -44,10 +44,6 @@ on:
         value: ${{ jobs.package-smoke.outputs.source_sha }}
       artifact_name:
         value: ${{ jobs.package-smoke.outputs.artifact_name }}
-    secrets:
-      RELEASE_BOT_TOKEN:
-        description: "Read token for private repositories required by P0 Nightly."
-        required: true
   pull_request:
     branches:
       - "release/**"
@@ -66,21 +62,6 @@ env:
   RELEASE_CANDIDATE_DIST_ARTIFACT: datus-agent-release-candidate-dist-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
-  p0-nightly-contracts:
-    needs: package-smoke
-    name: P0 nightly contracts on release commit
-    # Never execute pull-request code on the long-lived Nightly runner. PRs
-    # still receive the GitHub-hosted package/docs smoke below; the protected
-    # release-branch push (or Prepare Release workflow_call) owns the P0 gate.
-    if: ${{ github.event_name != 'pull_request' }}
-    uses: ./.github/workflows/run-nightly.yml
-    with:
-      datus_agent_ref: ${{ needs.package-smoke.outputs.source_sha }}
-      test_profile: p0
-      candidate_artifact: ${{ needs.package-smoke.outputs.artifact_name }}
-    secrets:
-      RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
-
   package-smoke:
     name: Package and docs smoke
     outputs:

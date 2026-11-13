@@ -104,8 +104,9 @@ Each executed pytest group writes a report under a fresh
 file/nodeid against successful test outcomes across product and dedicated groups;
 deselected or unexecuted targets fail even when other product tests pass.
 Reports and `ci/product-execution-coverage.json` are uploaded with Nightly artifacts.
-Without a group filter or `product_test_base_ref`, Nightly runs the complete P0 manifest alongside
-the broader adapter, provider, UI and product suites. Real LLMs are not required
+Without a group filter or `product_test_base_ref`, Nightly runs its core acceptance,
+live SQL, PostgreSQL storage, SQL policy, semantic modeling and Superset suites
+alongside the broader adapter, provider, UI and product suites. Real LLMs are not required
 in merge-group runs.
 
 ## PR routing and merge queue
@@ -170,9 +171,9 @@ introduced.
 ## SQL policy host acceptance
 
 Code changes affecting plugin installation, policy execution, datasource reads,
-Dosi, or shared integration fixtures select `P0 SQL Policy Plugin Contracts`.
+Dosi, or shared integration fixtures select `SQL Policy Plugin Tests`.
 The product plan includes this deterministic group even without live-model targets.
-SQL policy integration runs once in the normal Nightly P0 groups. The required
+SQL policy integration runs once in the normal Nightly SQL policy group. The required
 `Merge Queue Gate` checks merged-tree consistency; SQL policy and BI host
 acceptance are not merge-queue dependencies. Documentation builds remain in Deploy Docs.
 
@@ -185,18 +186,12 @@ release/source identity and compatibility with the installed published Dosi whee
 Drafts, prereleases, incompatible/missing assets and failed checks stop preparation;
 there is no source-build fallback.
 
-`ci/harness/sql-policy-release.json` pins only **release P0**, initially `v0.5.3`,
-including the source commit and per-platform wheel hashes. It does not pin ordinary
-Nightly: new stable Policy Releases are selected automatically there. Updating the
-P0 baseline requires reviewing this file and running the complete P0 profile;
-`policy_release=latest` and alternative versions are rejected for P0.
-
 The wheel is installed through the real managed-plugin CLI into an isolated HOME,
 not the global Agent environment. The existing contract checks SQL row filtering,
 Dosi metrics, denied and unrestricted contexts, HTTP Chat enforcement, and native
 payload equality with the downloaded wheel, without an external LLM. The fixture
 accepts `DATUS_SQL_POLICY_WHEEL` without requiring a private source checkout.
-Agent uses its normal test environment (or its candidate wheel for release P0),
+Agent uses its normal test environment,
 and Dosi stays on its published dependency. Nightly performs no Policy/Dosi Rust
 builds; Policy's own build/release workflows own those checks.
 
@@ -208,7 +203,7 @@ and is removed after evidence upload; credentials are scoped to the download ste
 The final notification requires both successful Release preparation and tests.
 
 The independent `sql-policy-gate.yml` source-build verifier is retained for existing
-callers, but ordinary and release P0 Nightly no longer invoke it.
+callers, but Nightly no longer invokes it.
 
 Local reproduction in the locked Agent environment:
 
@@ -219,40 +214,39 @@ DATUS_SQL_POLICY_WHEEL="$(find "$policy_work" -name '*.whl')" \
   uv run pytest tests/integration/plugins/test_sql_policy_plugin.py
 ```
 
-## Release P0
+## Nightly product contracts
 
-`ci/harness/p0.yml` explicitly lists six groups and 24 required nodeids: the
-15 deterministic core journeys, three real-model SQL tasks, PostgreSQL reconcile and feedback CRUD,
-SQL-policy enforcement through HTTP, real-model semantic authoring, managed
-Superset export and real-model dashboard creation. Initialization/tool-wiring contracts
-run as components; fixed-result BI orchestration remains ordinary Nightly coverage.
-P0 cases cannot skip, xfail, disappear from collection or finish without execution.
-`ci/p0_plan.py` verifies reports from a fresh `ci/p0-execution.*` directory.
+`ci/run-nightly-tests.sh` directly selects core acceptance, three real-model SQL
+questions, PostgreSQL reconcile and feedback CRUD, SQL-policy enforcement through
+HTTP, real-model semantic authoring, managed Superset export and real-model dashboard
+creation. These ordinary Nightly groups retain isolated Agent homes, strict skip
+checks, and the required PostgreSQL/pgvector or Superset service preparation.
+The broader collectors exclude dedicated service tests to avoid duplicate runs.
 Unknown filters that select no test groups fail before execution.
+
+Targeted product plans keep exact required cases in the existing coverage map's
+impact rules. Their execution reports must show successful outcomes for every
+required case, including cases owned by dedicated service groups.
 
 PR and merge queue explicitly select `DATUS_TEST_STORAGE_BACKENDS=sqlite+lance`;
 installed external adapter entry points cannot add service-backed unit tests to
 these gates. Feedback CRUD always has a local SQLite acceptance case. The same
-business assertions run against PostgreSQL in the required P0 storage group,
+business assertions run against PostgreSQL in the PostgreSQL Agent Storage Tests group,
 sharing its PostgreSQL/pgvector session providers with semantic KB reconcile.
-Full Nightly and release P0 require both cases to pass; missing `testcontainers`,
+Full Nightly requires both cases to pass; missing `testcontainers`,
 provider errors and service startup failures fail the group. Storage/configuration
 and dependency changes also select this group for targeted product validation.
 
-Release Candidate Validation builds distributions once, then passes that artifact
-and its source SHA to Nightly's `p0` profile. This profile installs published
-adapter pins from `ci/requirements-p0.txt`; the profile's pinned source checkouts
-supply managed plugins and service fixtures. Review both manifests when updating
-adapter/plugin versions. Full Nightly continues source-installing repository main.
+Release Candidate Validation checks package metadata, builds and validates the
+distributions, installs the wheel in a clean environment, and strictly builds
+English and Chinese docs. Product validation runs in scheduled Nightly and
+weekly/manual benchmarks.
+Publish And Finalize Release downloads the validated distributions, verifies their
+hashes and publishes them without rebuilding.
 
-The candidate harness runs outside the checkout, with the wheel installed in a
-clean environment. `ci/release_artifact.py` checks distribution hashes, the import
-location and the installed runtime/resource payload against the wheel, then records
-all resolved package versions. P0 prepares small SQLite fixtures; its service-backed
-groups start PostgreSQL/pgvector and Superset as needed. It does not build the full
-KB, frontend assets, browser environment or cloud adapters.
-Publish And Finalize Release depends on candidate validation and downloads those
-same distributions, verifies their hashes and publishes them without rebuilding.
+Nightly installs the Agent and adapter repository-main source checkouts. The
+standalone SQL policy host verifier stages its own wheel harness with
+`ci/stage_harness.py`; it does not participate in release-candidate validation.
 
 Local commands (the complete gate requires Dosi and Docker):
 
@@ -284,13 +278,13 @@ Live core defaults to `deepseek/deepseek-v4-flash` with `DEEPSEEK_API_KEY`.
 ### BI repair acceptance
 
 Changes to BI tools, validation, Superset authoring/validation skills, their tests,
-dependencies, or CI select `P0 BI Product E2E` in the product test plan. Scheduled
-Nightly and release P0 run this group; it is not a merge-queue dependency. The separate
+dependencies, or CI select `Superset Product Tests` in the product test plan. Scheduled
+Nightly runs this group; it is not a merge-queue dependency. The separate
 `merge-queue-pr.yml` workflow publishes the lightweight PR context without a
-checkout or reusable workflow call. The standalone BI gate uses pinned BI and plugin fixtures from `p0.yml`, the existing
+checkout or reusable workflow call. The standalone BI gate uses pinned BI and plugin fixtures declared in `ci/bi_gate.py`, the existing
 self-hosted CI credential template, and dynamically allocated loopback Docker ports.
 It runs the deterministic chart repair/delete contract, managed plugin installation,
-and real-model dashboard creation. Missing, skipped, or failed P0 receipts fail the gate.
+and real-model dashboard creation. Missing, skipped, or failed execution receipts fail the gate.
 
 Nightly runs the same deterministic repair contract. Its trace plugin captures BI
 session references inside child tasks and writes resource coordinates, tool result

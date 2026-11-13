@@ -17,7 +17,7 @@ from tests.integration.storage.test_postgresql_semantic_kb import (
 def test_postgresql_feedback_storage_write_read_update_and_delete(
     postgresql_agent_config, required_postgresql_storage, tmp_path
 ):
-    """Run real CRUD against the same service providers as semantic KB P0."""
+    """Run real CRUD against the same service providers as semantic KB acceptance."""
     reset_backends()
     try:
         init_backends(
