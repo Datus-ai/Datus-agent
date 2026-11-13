@@ -27,7 +27,7 @@ from datus.storage.task import TaskStore
 from datus.utils.loggings import configure_entrypoint_logging, get_logger
 
 from ..utils.json_utils import to_str
-from .legacy_auth import auth_service, get_current_client
+from .legacy_auth import auth_service, get_current_client, require_legacy_auth
 from .legacy_models import (
     FeedbackRequest,
     FeedbackResponse,
@@ -540,7 +540,7 @@ def create_app(agent_args: argparse.Namespace) -> FastAPI:
         """Health check endpoint (no authentication required)."""
         return await service.health_check()
 
-    @app.post("/auth/token", response_model=TokenResponse, tags=["auth"])
+    @app.post("/auth/token", response_model=TokenResponse, tags=["auth"], dependencies=[Depends(require_legacy_auth)])
     async def authenticate(
         client_id: str = _form_client_id, client_secret: str = _form_client_secret, grant_type: str = _form_grant_type
     ) -> TokenResponse:
