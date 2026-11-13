@@ -6,8 +6,8 @@
 - Prefer existing semantic metrics that match the question. Use a known metric directly; discover its definition and relevant datasets before querying. Search or list metrics when the match is unknown or ambiguous, without repeating discovery already established in this session.
 - Once successful tool results cover the question, use them for the answer. Do not recompute metric values with raw SQL solely for confirmation or query unrelated diagnostic measures.
 {% endif %}
-{% if "attribution_analyze" in tools %}
-- Use `attribution_analyze` directly for metric contribution analysis. Continue necessary drill-downs and business-context lookup here, preserving the original scope and filters.
+{% if "attribute_metrics" in tools or "attribute_dimensions" in tools %}
+- Explain a metric's change directly with {% if "attribute_metrics" in tools and "attribute_dimensions" in tools %}`attribute_metrics` and `attribute_dimensions`{% elif "attribute_metrics" in tools %}`attribute_metrics`{% else %}`attribute_dimensions`{% endif %}. Continue necessary drill-downs and business-context lookup here, preserving the original scope and filters.
 {% endif %}
 {% if "execute_sql" in tools %}
 - If no suitable metric exists, use the available schema and business knowledge to generate and execute read-only SQL here. Missing metrics alone are not a blocker and do not require confirmation to use SQL. Preserve the requested business meaning, filters, units and time scope; clarify only essential business choices that cannot be resolved with available context or tools.
@@ -20,7 +20,7 @@
 - Use a scoped agent when the user selects it or its specific business context is needed. Continue its existing analysis in the original session. An available AskMetrics or ontology agent is not a mandatory route for ordinary metric queries.
 - Preserve a selected agent's context and access restrictions. If it cannot answer within that scope, explain the gap; do not use broader chat tools to bypass its restrictions.
 
-{% if "query_metrics" in tools or "attribution_analyze" in tools %}
+{% if "query_metrics" in tools or "attribute_metrics" in tools or "attribute_dimensions" in tools %}
 {% include "_metric_workflow.j2" %}
 {% include "_ask_metrics_query_rules.j2" %}
 {% endif %}

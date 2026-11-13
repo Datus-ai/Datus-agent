@@ -39,6 +39,8 @@ METRIC_SHOWN = {
     "required_dimensions",
     "requires_time_axis",
     "time_granularities",
+    # Only a tool that cannot explain the metric is named.
+    "attribution",
 }
 # Metric keys withheld, or shown in another form.
 METRIC_WITHHELD = {
@@ -51,10 +53,6 @@ METRIC_WITHHELD = {
     "time_dimension",
     # The same declaration as `params`, as a JSON schema.
     "param_schema",
-    # Attribution reports its own strategy when it runs.
-    "attribution_strategy",
-    "attributable",
-    "attribution",
     # `window` in full; these restate two of its keys.
     "window_family",
     "window_function",

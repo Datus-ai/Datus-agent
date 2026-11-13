@@ -2160,15 +2160,15 @@ def _build_validate_semantic(action: ActionHistory, verbose: bool) -> ToolCallCo
     return tc
 
 
-def _build_attribution_analyze(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """attribution_analyze: share the canonical partial-result summary."""
+def _build_attribution(action: ActionHistory, verbose: bool) -> ToolCallContent:
+    """attribute_metrics / attribute_dimensions: share the canonical summary."""
     tc = make_base_content(action)
     if verbose:
         tc.args_lines = extract_args_markup(action)
         if action.output:
             tc.output_lines = _format_result_only_markup(action.output)
     else:
-        tc.compact_result = _summary_from_registry(action, "attribution_analyze")
+        tc.compact_result = _summary_from_registry(action, "attribute_metrics")
     return tc
 
 
@@ -2700,7 +2700,8 @@ class ToolCallContentBuilder:
         # select_records answers with the same result text.
         self._registry["select_records"] = _build_query_metrics
         self._registry["validate_semantic"] = _build_validate_semantic
-        self._registry["attribution_analyze"] = _build_attribution_analyze
+        self._registry["attribute_metrics"] = _build_attribution
+        self._registry["attribute_dimensions"] = _build_attribution
 
         # Filesystem tools
         self._registry["edit_file"] = _build_edit_file

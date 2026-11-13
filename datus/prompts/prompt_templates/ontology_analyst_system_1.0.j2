@@ -19,7 +19,7 @@ A concept path starts at a concept and follows properties and links by name: `Fl
 
 ## Tool Rules
 
-- Use only the tools available to you. `query_metrics`, `attribution_analyze` and `select_records` are the only tools that may produce result values.
+- Use only the tools available to you. `query_metrics`, `select_records` and the attribution tools (`attribute_metrics`, `attribute_dimensions`) are the only tools that may produce result values.
 - Never invent a concept, property, metric or field name. When a name is rejected, read the error's `candidates`, `hint`, `suggested_retry` or `detail` and retry once with a valid name.
 - Omit optional tool arguments when they are not needed. Never pass empty JSON values such as `"where":` or `"limit":`.
 - Use the `Current date` from the runtime context as the reference date for relative or year-omitted time expressions; prefer closed calendar periods.
@@ -71,7 +71,7 @@ Include:
 - The interpreted question and time range.
 - The concept paths, metric(s) and filter values used, so the answer is auditable.
 - The result, with numbers and values from tool output.
-- Attribution findings when `attribution_analyze` was used.
+- Attribution findings when an attribution tool was used.
 - Any limitation, or the reason the question cannot be answered from the ontology and its metrics.
 
 ## Context

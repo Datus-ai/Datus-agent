@@ -127,7 +127,8 @@ def _semantic_tools():
         "get_dataset",
         "query_metrics",
         "validate_semantic",
-        "attribution_analyze",
+        "attribute_metrics",
+        "attribute_dimensions",
     ):
         setattr(tools, name, Mock(name=name))
     tools.available_tools.return_value = [
@@ -136,7 +137,8 @@ def _semantic_tools():
         _fake_function_tool(tools.get_dataset),
         _fake_function_tool(tools.query_metrics),
         _fake_function_tool(tools.validate_semantic),
-        _fake_function_tool(tools.attribution_analyze),
+        _fake_function_tool(tools.attribute_metrics),
+        _fake_function_tool(tools.attribute_dimensions),
     ]
     return tools
 
@@ -191,7 +193,8 @@ class TestAskMetricsAgenticNode:
                     "get_dataset",
                     "query_metrics",
                     "validate_semantic",
-                    "attribution_analyze",
+                    "attribute_metrics",
+                    "attribute_dimensions",
                 },
             ),
         ],
@@ -259,7 +262,8 @@ class TestAskMetricsAgenticNode:
             "get_metric",
             "get_dataset",
             "query_metrics",
-            "attribution_analyze",
+            "attribute_metrics",
+            "attribute_dimensions",
             "read_file",
             "glob",
             "grep",
@@ -285,14 +289,14 @@ class TestAskMetricsAgenticNode:
         assert "do not call `search_metrics` for metrics that match these entries directly" in prompt
         assert "When the subject tree gives a direct metric/path match" in prompt
         assert "dedicated catalog metric" in prompt
-        assert "## Attribution Playbook" in prompt
-        assert "reuse its `drill_down.where_sql`" in prompt
-        assert "Read detailed contributions from `per_dimension" in prompt
+        assert "## Explaining a Change" in prompt
+        assert "call `attribute_metrics` first, then `attribute_dimensions` on the nodes" in prompt
+        assert "call `attribute_dimensions` once per candidate dimension, in parallel" in prompt
+        assert "When the status is not complete, say so and give the reason" in prompt
         assert "`query_metrics.time_end` is inclusive" not in prompt
-        assert "If `strategy` is `unsupported`" in prompt
-        assert "`non_additive` or `truncated`" in prompt
-        assert "failed, was non-additive, or was truncated" in prompt
-        assert "`dimension_analysis_failed`" in prompt
+        # How to read a result is the tools' own description, not the prompt's.
+        for absent in ("drill_down", "per_dimension", "strategy", "non_additive", "dimension_analysis_failed"):
+            assert absent not in prompt, absent
         assert "Do not invent helper metrics" in prompt
         assert "do not add a `where` filter that enumerates dimension values" in prompt
         assert "Never pass empty JSON values" in prompt
@@ -559,7 +563,8 @@ class TestAskMetricsAgenticNode:
             "get_metric",
             "get_dataset",
             "query_metrics",
-            "attribution_analyze",
+            "attribute_metrics",
+            "attribute_dimensions",
             "read_file",
             "glob",
             "grep",
@@ -789,7 +794,8 @@ class TestAskMetricsAgenticNode:
             "get_metric",
             "get_dataset",
             "query_metrics",
-            "attribution_analyze",
+            "attribute_metrics",
+            "attribute_dimensions",
             "read_file",
             "glob",
             "grep",
@@ -933,7 +939,8 @@ class TestAskMetricsAgenticNode:
             "get_metric",
             "get_dataset",
             "query_metrics",
-            "attribution_analyze",
+            "attribute_metrics",
+            "attribute_dimensions",
             "search_metrics",
             "read_file",
             "glob",
@@ -959,7 +966,14 @@ class TestAskMetricsAgenticNode:
         )
         tools = {tool.name: tool for tool in node.tools}
 
-        assert {"read_file", "glob", "grep", "query_metrics", "attribution_analyze"} <= tools.keys()
+        assert {
+            "read_file",
+            "glob",
+            "grep",
+            "query_metrics",
+            "attribute_metrics",
+            "attribute_dimensions",
+        } <= tools.keys()
         assert not {"write_file", "edit_file", "delete_file", "bash", "execute_sql"} & tools.keys()
         for name, args, expected in (
             ("glob", {"pattern": "*.md", "path": "knowledge"}, "business.md"),
@@ -978,7 +992,8 @@ class TestAskMetricsAgenticNode:
             "semantic_tools.list_metrics",
             "semantic_tools.get_metric",
             "semantic_tools.query_metrics",
-            "semantic_tools.attribution_analyze",
+            "semantic_tools.attribute_metrics",
+            "semantic_tools.attribute_dimensions",
         ]
         if file_tool:
             patterns.append(f"filesystem_tools.{file_tool}")
@@ -991,7 +1006,7 @@ class TestAskMetricsAgenticNode:
             assert "## Project Business Knowledge" not in prompt
             assert "consider a targeted project-file lookup" not in prompt
         else:
-            context = prompt.split("## Project Business Knowledge", 1)[1].split("## Attribution Playbook", 1)[0]
+            context = prompt.split("## Project Business Knowledge", 1)[1].split("## Explaining a Change", 1)[0]
             for name in ("read_file", "glob", "grep"):
                 assert (f"Use `{name}`" in context) == (name == file_tool)
             assert (
@@ -1003,7 +1018,7 @@ class TestAskMetricsAgenticNode:
             assert "no need to re-read supplied background merely to repeat it" in context
             assert ("skip clearly unrelated files" in context) == (file_tool == "glob")
             assert "Stop once there is enough evidence to proceed" in context
-            assert "do not establish causation by themselves" in prompt
+            assert "Attribution says how much each part contributed, not why" in prompt
 
     @pytest.mark.parametrize("synced", [True, False])
     def test_semantic_object_search_is_mounted_only_with_objects_to_search(

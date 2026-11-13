@@ -1,0 +1,123 @@
+{
+ "schema_version": 3,
+ "status": "complete",
+ "metric": "store_sales_vs_channel_average",
+ "algorithm": "exact_subset",
+ "accuracy": "exact",
+ "tree": {
+  "label": "store_sales_vs_channel_average",
+  "metric": "store_sales_vs_channel_average",
+  "expression": "store_sales_amount / channel_average_sales_amount * 100",
+  "baseline": 144.23904684175895,
+  "current": 145.31999296045603,
+  "delta": 1.080946118697085,
+  "effect": 1.080946118697085,
+  "share": 1.0,
+  "children": [
+   {
+    "label": "store_sales_amount",
+    "metric": "store_sales_amount",
+    "expression": "SUM(ss_ext_sales_price)",
+    "atom": "store_sales_amount",
+    "binding": {
+     "datasets": [
+      "store_sales"
+     ],
+     "filters": [],
+     "time_dimension": "date_dim.d_date"
+    },
+    "baseline": 1019954026.32,
+    "current": 1024805506.63,
+    "delta": 4851480.309999943,
+    "effect": 0.6870203295958817,
+    "share": 0.6355731499586487
+   },
+   {
+    "label": "channel_average_sales_amount",
+    "metric": "channel_average_sales_amount",
+    "expression": "all_channel_sales_amount / 3",
+    "baseline": 707127541.85,
+    "current": 705206135.6133333,
+    "delta": -1921406.2366666794,
+    "effect": 0.39392578910120324,
+    "share": 0.3644268500413512,
+    "children": [
+     {
+      "label": "all_channel_sales_amount",
+      "metric": "all_channel_sales_amount",
+      "expression": "CASE WHEN store_sales_amount IS NULL AND catalog_sales_amount IS NULL AND web_sales_amount IS NULL THEN NULL ELSE COALESCE(store_sales_amount, 0) + COALESCE(catalog_sales_amount, 0) + COALESCE(web_sales_amount, 0) END",
+      "baseline": 2121382625.5500002,
+      "current": 2115618406.8400002,
+      "delta": -5764218.710000038,
+      "effect": 0.39392578910120324,
+      "share": 0.3644268500413512,
+      "children": [
+       {
+        "label": "web_sales_amount",
+        "metric": "web_sales_amount",
+        "expression": "SUM(ws_ext_sales_price)",
+        "atom": "web_sales_amount",
+        "binding": {
+         "datasets": [
+          "web_sales"
+         ],
+         "filters": [],
+         "time_dimension": "date_dim.d_date"
+        },
+        "baseline": 373090521.69,
+        "current": 365010650.37,
+        "delta": -8079871.319999993,
+        "effect": 0.552181696865541,
+        "share": 0.5108318419525956
+       },
+       {
+        "label": "store_sales_amount",
+        "metric": "store_sales_amount",
+        "expression": "SUM(ss_ext_sales_price)",
+        "atom": "store_sales_amount",
+        "binding": {
+         "datasets": [
+          "store_sales"
+         ],
+         "filters": [],
+         "time_dimension": "date_dim.d_date"
+        },
+        "baseline": 1019954026.32,
+        "current": 1024805506.63,
+        "delta": 4851480.309999943,
+        "effect": -0.3315563812747703,
+        "share": -0.30672794465871317
+       },
+       {
+        "label": "catalog_sales_amount",
+        "metric": "catalog_sales_amount",
+        "expression": "SUM(cs_ext_sales_price)",
+        "atom": "catalog_sales_amount",
+        "binding": {
+         "datasets": [
+          "catalog_sales"
+         ],
+         "filters": [],
+         "time_dimension": "date_dim.d_date"
+        },
+        "baseline": 728338077.54,
+        "current": 725802249.84,
+        "delta": -2535827.6999999285,
+        "effect": 0.17330047351043257,
+        "share": 0.1603229527474688
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "issues": [],
+ "execution": {
+  "queries_executed": 2,
+  "rows_fetched": 2,
+  "evaluations_executed": 18,
+  "elapsed_ms": 104,
+  "budget_exhausted": []
+ }
+}
