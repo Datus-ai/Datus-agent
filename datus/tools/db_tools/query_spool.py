@@ -70,8 +70,8 @@ def bulk_slot(connector):
 @dataclass(frozen=True)
 class QueryLimits:
     batch_rows: int = 5000
-    max_rows: int = 1_000_000
-    max_bytes: int = 1024 * 1024 * 1024
+    max_rows: int = 100_000
+    max_bytes: int = 100_000_000
     max_batch_bytes: int = 32 * 1024 * 1024
 
     @classmethod
@@ -83,6 +83,10 @@ class QueryLimits:
         for value in raw.values():
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError("bulk_query limits must be positive integers")
+        for name in ("max_rows", "max_bytes"):
+            maximum = getattr(cls, name)
+            if raw.get(name, maximum) > maximum:
+                raise ValueError(f"bulk_query.{name} must not exceed {maximum}")
         return cls(**raw)
 
 

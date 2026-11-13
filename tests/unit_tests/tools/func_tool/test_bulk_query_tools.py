@@ -13,7 +13,7 @@ import pytest
 from datus.tools.db_tools.config import DuckDBConfig
 from datus.tools.db_tools.db_manager import DBManager
 from datus.tools.db_tools.duckdb_connector import DuckdbConnector
-from datus.tools.db_tools.query_spool import QuerySpool
+from datus.tools.db_tools.query_spool import QueryLimits, QuerySpool
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.policy_runtime import PolicyRuntime
 from datus.tools.read_observer import observe_reads
@@ -1070,10 +1070,122 @@ async def test_tool_timeout_prevents_late_file_publication(environment, monkeypa
 
 @pytest.mark.parametrize("limits", [{"batch_rows": 0}, {"max_bytes": True}, {"unexpected": 1}])
 def test_host_limits_are_validated(limits):
-    from datus.tools.db_tools.query_spool import QueryLimits
-
     with pytest.raises(ValueError):
         QueryLimits.from_dict(limits)
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        (None, (100_000, 100_000_000)),
+        ({}, (100_000, 100_000_000)),
+        ({"max_rows": 100_000, "max_bytes": 100_000_000}, (100_000, 100_000_000)),
+        ({"max_rows": 50_000, "max_bytes": 1_000_000}, (50_000, 1_000_000)),
+        ({"max_rows": 50_000}, (50_000, 100_000_000)),
+        ({"max_bytes": 1_000_000}, (100_000, 1_000_000)),
+    ],
+)
+def test_host_limits_default_to_export_ceilings_and_allow_lower_limits(raw, expected):
+    limits = QueryLimits.from_dict(raw)
+    assert (limits.max_rows, limits.max_bytes) == expected
+
+
+@pytest.mark.parametrize("name, value", [("max_rows", 100_001), ("max_bytes", 100_000_001)])
+def test_export_rejects_configuration_above_hard_limits_before_reading(environment, monkeypatch, name, value):
+    tool, source, _, root = environment
+    tool.agent_config.bulk_query[name] = value
+    read = Mock(side_effect=AssertionError("Invalid limits must be rejected before reading"))
+    stream = Mock(side_effect=AssertionError("Invalid limits must be rejected before streaming"))
+    monkeypatch.setattr(source, "execute_query", read)
+    monkeypatch.setattr(source, "iter_query_batches", stream)
+
+    result = tool.export_query("SELECT 1 AS id", "exports/invalid.csv")
+
+    assert result.success == 0
+    assert f"bulk_query.{name} must not exceed {value - 1}" in result.error
+    read.assert_not_called()
+    stream.assert_not_called()
+    assert not (root / "exports/invalid.csv").exists()
+    assert not (root / "exports/invalid.csv.meta.json").exists()
+    assert not list((root / "exports").glob(".query-*"))
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("suffix", ["csv", "parquet"])
+@pytest.mark.parametrize("row_count", [100_000, 100_001])
+def test_export_enforces_default_row_limit(environment, monkeypatch, streaming, suffix, row_count):
+    tool, source, _, root = environment
+    tool.agent_config.bulk_query = {}
+    monkeypatch.setattr(source, "supports_streaming_read", streaming)
+    path = root / f"exports/row-limit.{suffix}"
+
+    result = tool.export_query(f"SELECT i AS id FROM range({row_count}) t(i)", str(path.relative_to(root)))
+
+    if row_count == 100_000:
+        assert result.success == 1, result.error
+        assert result.result["row_count"] == row_count
+        assert result.result["complete"] is True
+        assert result.result["read_mode"] == ("streaming" if streaming else "buffered")
+        frame = pd.read_parquet(path) if suffix == "parquet" else pd.read_csv(path)
+        assert frame["id"].tolist() == list(range(row_count))
+    else:
+        assert result.success == 0
+        assert "max_rows" in result.error
+        assert result.result["complete"] is False
+        assert not path.exists()
+        assert not path.with_name(path.name + ".meta.json").exists()
+    assert not list(path.parent.glob(".query-*"))
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_export_enforces_default_byte_limit_below_row_limit(environment, monkeypatch, streaming):
+    tool, source, _, root = environment
+    tool.agent_config.bulk_query = {}
+    # Reuse one buffer to exercise 100 MB of logical data without a large allocation.
+    chunk = pa.array(["x" * 1_000_000])
+    table = pa.table({"payload": pa.chunked_array([chunk] * 100)})
+    assert table.num_rows == 100
+    assert table.nbytes > 100_000_000
+    monkeypatch.setattr(source, "supports_streaming_read", streaming)
+    monkeypatch.setattr(source, "execute_query", Mock(return_value=SimpleNamespace(success=True, sql_return=table)))
+    monkeypatch.setattr(source, "iter_query_batches", Mock(return_value=(batch for batch in [table])))
+
+    result = tool.export_query("SELECT 'x' AS payload", "exports/byte-limit.parquet")
+
+    assert result.success == 0
+    assert "max_rows/max_bytes" in result.error
+    assert result.result["complete"] is False
+    assert not (root / "exports/byte-limit.parquet").exists()
+    assert not (root / "exports/byte-limit.parquet.meta.json").exists()
+    assert not list((root / "exports").glob(".query-*"))
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("excess_bytes", [0, 1])
+def test_export_checks_serialized_file_size_at_byte_limit(environment, monkeypatch, streaming, excess_bytes):
+    tool, source, _, root = environment
+    monkeypatch.setattr(source, "supports_streaming_read", streaming)
+    # CSV escaping expands this result beyond both its Arrow data and staging size.
+    sql = "SELECT repeat(chr(34), 1000) AS value FROM range(8)"
+    baseline = tool.export_query(sql, "exports/baseline.csv")
+    assert baseline.success == 1, baseline.error
+    tool.agent_config.bulk_query["max_bytes"] = baseline.result["byte_count"] - excess_bytes
+
+    result = tool.export_query(sql, "exports/byte-limit.csv")
+
+    path = root / "exports/byte-limit.csv"
+    if excess_bytes == 0:
+        assert result.success == 1, result.error
+        assert path.stat().st_size == tool.agent_config.bulk_query["max_bytes"]
+        assert path.read_bytes() == (root / "exports/baseline.csv").read_bytes()
+        assert result.result["complete"] is True
+    else:
+        assert result.success == 0
+        assert "Export file exceeds max_bytes" in result.error
+        assert result.result["complete"] is False
+        assert not path.exists()
+        assert not path.with_name(path.name + ".meta.json").exists()
+    assert not list(path.parent.glob(".query-*"))
 
 
 def test_null_only_first_batch_promotes_without_losing_later_values(environment, monkeypatch):

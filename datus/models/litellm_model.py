@@ -193,13 +193,20 @@ class DatusLitellmModel(ObservedLitellmModel):
         if isinstance(result, tuple):
             response, stream = result
             on_usage = None
+            on_finish_reason = None
             if getattr(self, "_datus_capture_usage", False):
 
                 def on_usage(usage):
                     """Retain provider usage for the isolated text-completion caller."""
                     self._datus_reported_usage = usage
 
-            return response, checked_chat_completion_stream(stream, on_usage=on_usage)
+                def on_finish_reason(reason):
+                    """Retain the provider's terminal reason before SDK conversion."""
+                    self._datus_finish_reason = reason
+
+            return response, checked_chat_completion_stream(
+                stream, on_usage=on_usage, on_finish_reason=on_finish_reason
+            )
         check_chat_completion(result)
         return result
 
