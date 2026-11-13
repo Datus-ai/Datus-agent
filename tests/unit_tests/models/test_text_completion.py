@@ -270,10 +270,9 @@ async def test_completion_logs_only_metadata_and_provider_finish_reason(
         assert record["reasoning_chars"] == len("PRIVATE_REASONING")
     else:
         assert record["input_tokens"] is None and record["output_tokens"] is None
-    serialized = json.dumps([call.kwargs for call in log.info.call_args_list])
-    assert all(
-        secret not in serialized for secret in ["PRIVATE_PROMPT", "PRIVATE_REASONING", '{"summary":"ok"}', "rejected"]
-    )
+    serialized = json.dumps([{"args": call.args, "kwargs": call.kwargs} for call in log.info.call_args_list])
+    # The output's stable marker survives JSON quote escaping in logged strings.
+    assert all(secret not in serialized for secret in ["PRIVATE_PROMPT", "PRIVATE_REASONING", "summary", "rejected"])
     assert all(client.is_closed for client in clients)
 
 
