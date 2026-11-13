@@ -260,11 +260,23 @@ def test_installed_native_payload_must_match_the_identified_wheel(tmp_path, chan
         verify_wheel_payload(wheel, package.parent, package.name)
 
 
-def test_execution_report_records_the_frozen_source_identity(tmp_path):
+@pytest.mark.parametrize("inherit_pytest_addopts", [False, True])
+def test_execution_report_records_the_frozen_source_identity(tmp_path, monkeypatch, inherit_pytest_addopts):
+    if inherit_pytest_addopts:
+        monkeypatch.setenv("PYTEST_ADDOPTS", f"--basetemp={tmp_path.parent}")
+    else:
+        monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
     (tmp_path / "test_probe.py").write_text("def test_probe(): pass\n")
     (tmp_path / "pytest.ini").write_text("[pytest]\n")
     report = tmp_path / "execution.json"
-    env = {**os.environ, "DATUS_GATE_SOURCE_ID": "source-combination", "PYTHONPATH": str(ROOT)}
+    env = {
+        **os.environ,
+        "DATUS_GATE_SOURCE_ID": "source-combination",
+        "PYTHONPATH": str(ROOT),
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    }
+    # The outer pytest basetemp is an ancestor of this subprocess's working directory.
+    env.pop("PYTEST_ADDOPTS", None)
     completed = subprocess.run(
         [
             sys.executable,

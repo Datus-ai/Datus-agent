@@ -179,6 +179,11 @@ def init_manifest(args: argparse.Namespace) -> None:
             repo_info(external_root / "datus-sql-policies"),
         ],
         "packages": [package_info(name) for name in PACKAGE_NAMES],
+        "sql_policy_release": (
+            json.loads(Path(os.environ["DATUS_SQL_POLICY_RECEIPT"]).read_text())
+            if os.environ.get("DATUS_SQL_POLICY_RECEIPT")
+            else None
+        ),
         "compose_projects": [],
         "suites": [],
     }

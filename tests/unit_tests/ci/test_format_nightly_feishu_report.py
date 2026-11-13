@@ -29,22 +29,22 @@ def _find_node_executable() -> str:
 
 @pytest.mark.component
 @pytest.mark.parametrize(
-    "exit_code,cold_result,required,expected",
+    "exit_code,policy_result,expected",
     [
-        ("0", "success", True, "PASSED"),
-        ("0", "failure", True, "FAILED"),
-        ("0", "skipped", True, "FAILED"),
-        ("0", "skipped", False, "PASSED"),
-        ("1", "success", True, "FAILED"),
-        ("0", "cancelled", False, "FAILED"),
-        ("0", "", False, "FAILED"),
+        ("0", "success", "PASSED"),
+        ("0", "failure", "FAILED"),
+        ("0", "skipped", "FAILED"),
+        ("1", "success", "FAILED"),
+        ("", "success", "FAILED"),
+        ("0", "cancelled", "FAILED"),
+        ("0", "", "FAILED"),
     ],
 )
-def test_nightly_notification_requires_the_cold_contract_when_scheduled(exit_code, cold_result, required, expected):
+def test_nightly_notification_requires_verified_policy_release(exit_code, policy_result, expected):
     module = str(REPO_ROOT / "ci/format-nightly-feishu-report.js")
     script = (
         f"const {{nightlyStatus}} = require({json.dumps(module)}); "
-        f"console.log(nightlyStatus({json.dumps(exit_code)}, {json.dumps(cold_result)}, {json.dumps(required)}));"
+        f"console.log(nightlyStatus({json.dumps(exit_code)}, {json.dumps(policy_result)}));"
     )
     result = subprocess.run([_find_node_executable(), "-e", script], check=True, capture_output=True, text=True)
     assert result.stdout.strip() == expected

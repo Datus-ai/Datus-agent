@@ -246,7 +246,7 @@ agent:
       check_result: true # Whether to check the results of the previous step, the default value is false
     chat:
       workspace_root: sql2
-      max_turns: 100
+      max_turns: 200
       prompt_version: "1.0" # It can be unconfigured, and the latest version is used by default
 
   # Configuration for date_parsing_tools.parse_temporal_expressions.
@@ -487,6 +487,9 @@ agent:
     background_sync_include_values: false
 
   agentic_nodes:
+    chat:
+      max_turns: 200
+
     # Built-in subagents ship with a ``DEFAULT_SKILLS`` class attribute so every
     # node loads its canonical skills out of the box. Override ``skills:`` here
     # only when you want to narrow or broaden the pattern; omit the key to keep

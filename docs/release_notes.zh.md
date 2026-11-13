@@ -2,6 +2,29 @@
 
 ## 0.4
 
+### 0.4.5
+
+**新功能**
+
+- **Chat 可以直接问指标、看趋势和做归因。** 不必先切换到 AskMetrics；没有合适指标时，可以使用现有只读 SQL 能力，只有明确要求创建或修改指标时才进入建模。选择业务子 Agent 后，后续追问会延续原子会话。([Agent #1612](https://github.com/Datus-ai/Datus-agent/pull/1612)) 文档：[Chat](https://docs.datus.ai/zh/dev/cli/chat_command/)、[AskMetrics](https://docs.datus.ai/zh/dev/subagent/ask_metrics/)。
+- **完整查询结果可直接导出为项目 CSV/Parquet 文件。** 新增 `export_query`，接受 SQL 文本或项目内 SQL 文件，返回文件路径、行数及完成状态，不把整份数据送入模型上下文。数据库 adapter 和策略支持时优先流式读取，否则使用完整结果缓冲模式；导出继续执行数据权限和策略检查。([Agent #1611](https://github.com/Datus-ai/Datus-agent/pull/1611)、[DB #193](https://github.com/Datus-ai/datus-db-adapters/pull/193)) 文档：[查询结果导出](https://docs.datus.ai/dev/tools/query_exports/)。
+
+**增强**
+
+- **数据库适配与 SQL 指导更完整。** Athena 新增随 adapter 安装的 SQL 技能；Hive/Inceptor 会按实际服务器产品提供语法和元数据指导。Adapter 仓库另提供独立 `datus-duckdb`、`datus-sqlite` 包及连接配置 schema/校验入口，便于脱离 Agent 集成；这不等于 Agent 已切换为这两个独立包。([Agent #1571](https://github.com/Datus-ai/Datus-agent/pull/1571)、[DB #184](https://github.com/Datus-ai/datus-db-adapters/pull/184)、[#185](https://github.com/Datus-ai/datus-db-adapters/pull/185)、[#187](https://github.com/Datus-ai/datus-db-adapters/pull/187)) 文档：[Hive/Inceptor](https://docs.datus.ai/zh/dev/configuration/datasources/hive/)。
+- **长任务和私有模型运行更稳。** Chat 及聊天/创建 Agent API 的默认回合上限提高为 200，继续尊重显式配置；未知或私有模型缺少容量元数据时可使用回退设置。补齐推理内容回放、流式 fallback 重试和输出耗尽处理；模型误调用当前不可用的工具时，错误交回模型在同一次运行内纠正。([Agent #1581](https://github.com/Datus-ai/Datus-agent/pull/1581)、[#1626](https://github.com/Datus-ai/Datus-agent/pull/1626)、[#1589](https://github.com/Datus-ai/Datus-agent/pull/1589)、[#1616](https://github.com/Datus-ai/Datus-agent/pull/1616)、[#1567](https://github.com/Datus-ai/Datus-agent/pull/1567)、[#1577](https://github.com/Datus-ai/Datus-agent/pull/1577)) 文档：[Agent 容量配置](https://docs.datus.ai/zh/dev/configuration/agent/)、[Chat API 回合上限](https://docs.datus.ai/zh/dev/API/chat/)。
+- **Skill 创作、修订和审阅统一。** `gen_skill` 支持同一套工作流，并区分格式有效与内容正确；只要求审阅时保持目标不变，加载技能后关联参考文件的读取权限也保持一致。([Agent #1589](https://github.com/Datus-ai/Datus-agent/pull/1589)) 文档：[内置子 Agent](https://docs.datus.ai/zh/dev/subagent/builtin_subagents/)。
+
+**Bug 修复**
+
+- **修复 PostgreSQL 元数据和 DDL 重建，以及 SQL 血缘兼容。** 保留 numeric/varchar 的精度与长度、数组和自定义类型，补回外键、跨 schema 引用及必要索引，避免改变多行默认值；数组不再进入不支持的标量聚合。Agent 同时修复 SQLGlot 30 下的血缘解析。([DB #177](https://github.com/Datus-ai/datus-db-adapters/pull/177)、[#181](https://github.com/Datus-ai/datus-db-adapters/pull/181)、[#183](https://github.com/Datus-ai/datus-db-adapters/pull/183)、[Agent #1576](https://github.com/Datus-ai/Datus-agent/pull/1576))
+
+**升级说明**
+
+- **替换旧报告类型。** 配置、工作流和调用中的 `gen_report` 需要改为 `gen_visual_report`，没有兼容别名，配置不会自动重写。([Agent #1570](https://github.com/Datus-ai/Datus-agent/pull/1570)) 文档：[HTML 报告](https://docs.datus.ai/zh/dev/subagent/gen_visual_report/)。
+- **检查自定义工具配置和提示词。** `read_tool_result` 已移除，改用原工具的分页参数。OSI dataset/metric 的 upsert/delete 方法归属从 `filesystem_tools` 迁到 `semantic_tools`，旧选择项不会自动转换；自定义原生工具需声明 `tool_contract` 并更新能力目录。([Agent #1613](https://github.com/Datus-ai/Datus-agent/pull/1613)、[#1609](https://github.com/Datus-ai/Datus-agent/pull/1609)、[#1603](https://github.com/Datus-ai/Datus-agent/pull/1603)) 文档：[工具分页](https://docs.datus.ai/zh/dev/configuration/agent/)、[工具契约](https://docs.datus.ai/dev/tool-contracts/)。
+- **已有 Chat 工具白名单需要按需补充指标工具。** 非空 `tools` 列表会替换默认工具；希望启用直接问数时，应添加需要的 `semantic_tools.<method>`。未配置或空列表使用默认工具。([Agent #1612](https://github.com/Datus-ai/Datus-agent/pull/1612)) 文档：[Chat](https://docs.datus.ai/zh/dev/cli/chat_command/)。
+
 ### 0.4.4
 
 **新功能**
