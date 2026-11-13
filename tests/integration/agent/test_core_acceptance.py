@@ -190,13 +190,19 @@ async def test_read_only_refuses_a_write_without_changing_data(product):
 async def test_large_tool_result_is_bounded_and_archived(product):
     config, server = product
     # Native catalog paging is visible at the real SDK/provider boundary.
+    extra_table_count = 201  # Exceed the default 200-item page without a large catalog fixture.
     with sqlite3.connect(Path(config.project_root).parent / "sales.sqlite") as db:
-        db.executescript(";".join(f"CREATE TABLE extra_{i:05d} (id INTEGER)" for i in range(2000)))
+        # executescript otherwise commits each DDL statement independently.
+        db.executescript(
+            "BEGIN;"
+            + ";".join(f"CREATE TABLE extra_{i:05d} (id INTEGER)" for i in range(extra_table_count))
+            + ";COMMIT;"
+        )
     server.enqueue(tool_call("list_tables", {}), answer("The first catalog page was read."))
     node, _ = await run_chat(config, "Inspect the catalog.")
     messages = [m for m in server.requests[-1]["messages"] if m.get("role") == "tool"]
     page = ast.literal_eval(messages[-1]["content"])["result"]
-    assert len(page["items"]) == 200 and page["total"] >= 2000 and page["has_more"]
+    assert len(page["items"]) == 200 and page["total"] >= extra_table_count and page["has_more"]
     assert "read_tool_result" not in {t["function"]["name"] for t in server.requests[0]["tools"]}
     snapshots = node._get_tool_result_store().root.parent / "result_snapshots"
     assert any(len(json.loads(path.read_text())["payload"]) == page["total"] for path in snapshots.glob("*.json"))

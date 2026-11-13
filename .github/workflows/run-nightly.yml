@@ -738,6 +738,7 @@ jobs:
             nightly-trace-references.jsonl
             nightly-trace-summary.jsonl
             nightly-process-diagnostics.json
+            test-results/mcp/
             test-results/web-e2e/
           retention-days: 7
 
