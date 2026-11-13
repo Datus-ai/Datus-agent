@@ -62,10 +62,50 @@ def test_metric_tree_one_node_per_line():
         "      web_sales_amount [input] | 373090522 → 365010650 | +0.552182 (51.1%)",
         "      store_sales_amount [input] | 1019954026 → 1024805507 | -0.331556 (-30.7%)",
         "      catalog_sales_amount [input] | 728338078 → 725802250 | +0.1733 (16.0%)",
+        # An input read in two places gets its whole effect on one line, so
+        # the model quotes the sum rather than one of the parts.
+        "store_sales_amount in all, 2 places | +0.355464 (32.9%)",
     ]
     # What a model does not act on stays out.
     for absent in ("schema_version", "exact_subset", "queries_executed", "store_sales.ss", "date_dim"):
         assert absent not in text
+
+
+def test_an_input_is_named_by_its_metric_even_when_it_cannot_be_queried_as_it():
+    # A member with a fill of its own reads the bare aggregate inside its
+    # parent: Dosi gives no `metric`, and the input is still named by the
+    # metric it is written as, not by its expression.
+    leaf = {
+        "label": "late_orders",
+        "metric": None,
+        "expression": "SUM(late)",
+        "atom": "SUM(late)",
+        "binding": {"datasets": ["orders"], "filters": [], "time_dimension": None},
+        "baseline": 58.0,
+        "current": 179.0,
+        "delta": 121.0,
+        "effect": -0.0965352,
+        "share": 0.869,
+    }
+    result = {
+        "schema_version": 3,
+        "status": "complete",
+        "metric": "on_time_rate",
+        "issues": [],
+        "tree": {
+            "label": "on_time_rate",
+            "metric": "on_time_rate",
+            "expression": "1 - late_orders / orders",
+            "baseline": 0.946375,
+            "current": 0.835294,
+            "delta": -0.111081,
+            "effect": -0.111081,
+            "share": 1.0,
+            "children": [leaf],
+        },
+    }
+    lines = render_attribute_metrics(result).splitlines()
+    assert lines[3] == "  late_orders [input] | 58 → 179 | -0.0965352 (86.9%)"
 
 
 def test_metric_tree_of_a_grouped_target_names_its_row_once():
