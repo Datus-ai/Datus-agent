@@ -706,6 +706,10 @@ jobs:
             done
             cp -R ci/p0-execution* "$GITHUB_WORKSPACE/ci/"
             if [ -d nightly-bi-evidence ]; then cp -R nightly-bi-evidence "$GITHUB_WORKSPACE/"; fi
+            if [ -d test-results/mcp ]; then
+              mkdir -p "$GITHUB_WORKSPACE/test-results"
+              cp -R test-results/mcp "$GITHUB_WORKSPACE/test-results/"
+            fi
           fi
           exit "$status"
 
