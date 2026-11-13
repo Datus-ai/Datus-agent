@@ -2689,6 +2689,9 @@ class SemanticTools:
           input can sit under several parents (a ratio's numerator and
           denominator); a last line `<input> in all, <n> places | <effect>`
           then gives its whole effect. Quote that, not one of its lines.
+        - To say what drove the change, compare the inputs by their whole
+          effects. A formula node in between (a numerator, a denominator, an
+          average of channels) only groups inputs; it is not a cause itself.
         - A node written `<metric> = …` or `<metric> [input]` can be passed as
           `metric` to attribute_dimensions with the same other arguments; a
           formula in parentheses cannot.
