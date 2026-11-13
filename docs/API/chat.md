@@ -22,7 +22,7 @@ Send a chat message and stream the response as Server-Sent Events.
 | `plan_mode`      | bool     | Enable plan mode |
 | `catalog`/`database`/`db_schema` | string? | Database context |
 | `table_paths`/`metric_paths`/`sql_paths`/`knowledge_paths` | string[]? | `@`-reference paths |
-| `max_turns`      | int      | Default `200` |
+| `max_turns`      | int      | Per-request override. If omitted, uses the selected node's configured limit; Chat defaults to `200` when `agentic_nodes.chat.max_turns` is unset. |
 | `prompt_language`| string   | `en` (default) or `zh` — selects the prompt template variant |
 | `language`       | string?  | Optional response language override (e.g. `en`, `zh`, `ja`). Falls back to `agent.language` from yaml; when neither is set, no language directive is injected and the model chooses its own response language. Controls the natural language every agentic node uses for replies, file comments, sub-agent prompts, and `ask_user` questions. Code/SQL/identifiers stay in their original form. |
 | `stream_response`| bool?   | Stream thinking deltas token-by-token; `null` defers to server `--stream` flag (default `false`) |
