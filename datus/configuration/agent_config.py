@@ -433,8 +433,11 @@ class ModelConfig:
     context_length: Optional[int] = None
     max_tokens: Optional[int] = None
     tokenizer_ref: Optional[str] = None
+    supports_image_input: Optional[bool] = None
 
     def __post_init__(self) -> None:
+        if self.supports_image_input is not None and not isinstance(self.supports_image_input, bool):
+            raise ValueError("supports_image_input must be a boolean")
         for name in ("context_length", "max_tokens"):
             value = getattr(self, name)
             if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value <= 0):
@@ -3121,6 +3124,7 @@ def load_model_config(data: dict) -> ModelConfig:
         context_length=data.get("context_length"),
         max_tokens=data.get("max_tokens"),
         tokenizer_ref=data.get("tokenizer_ref"),
+        supports_image_input=data.get("supports_image_input"),
     )
 
 
