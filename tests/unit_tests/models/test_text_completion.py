@@ -107,6 +107,9 @@ def provider_http(monkeypatch):
                     },
                 }
             ]
+            if behavior["reason"] == "length":
+                events[0]["type"] = "response.incomplete"
+                events[0]["response"].update(status="incomplete", incomplete_details={"reason": "max_output_tokens"})
         elif request.url.path.endswith("/messages"):
             events = anthropic_events('{"summary":"ok"}', behavior["reason"])
         elif request.url.host == "generativelanguage.googleapis.com":
@@ -161,6 +164,8 @@ def provider_http(monkeypatch):
         if behavior.get("omit_usage"):
             for event in events:
                 event.pop("usage", None)
+                if "response" in event:
+                    event["response"].pop("usage", None)
 
         class ProviderStream(httpx.AsyncByteStream):
             """Yield real provider frames, optionally stalling after the first frame."""
@@ -199,6 +204,37 @@ async def test_explicit_none_disables_deepseek_thinking_on_the_wire(provider_htt
     assert body["thinking"] == {"type": "disabled"}
     assert body["max_tokens"] == 32768
     assert len(requests) == 1
+    assert all(client.is_closed for client in clients)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reported", [False, True])
+@pytest.mark.parametrize(
+    "kind,name,url,finish_reason",
+    [
+        ("deepseek", "deepseek-v4-pro", "https://api.deepseek.com", "length"),
+        ("openai", "gpt-4.1", "https://api.openai.com/v1", "max_output_tokens"),
+    ],
+)
+async def test_truncation_keeps_usage_provenance_and_terminal_reason(
+    provider_http, monkeypatch, reported, kind, name, url, finish_reason
+):
+    """A fallback Usage object must not turn absent provider usage into reported zeroes."""
+    _, clients, _, behavior = provider_http
+    behavior.update(reason="length", omit_usage=not reported)
+    log = MagicMock()
+    monkeypatch.setattr(text_completion, "logger", log)
+    model = LLMBaseModel.from_config(ModelConfig(type=kind, model=name, api_key="dummy", base_url=url))
+    with pytest.raises(ModelOutputTruncatedError) as caught:
+        await model.complete_text("facts", max_tokens=4000, timeout=5)
+    assert caught.value.usage_reported is reported
+    assert caught.value.usage.output_tokens == (7 if reported else 0)
+    record = next(call.kwargs for call in log.info.call_args_list if call.args[0] == "text_completion.finished")
+    assert record["status"] == "truncated" and record["finish_reason"] == finish_reason
+    assert record["usage_reported"] is reported
+    assert record["input_tokens"] == (11 if reported else None)
+    assert record["output_tokens"] == (7 if reported else None)
+    assert record["output_chars"] == len('{"summary":"ok"}')
     assert all(client.is_closed for client in clients)
 
 

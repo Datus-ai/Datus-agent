@@ -18,6 +18,7 @@ class ModelOutputTruncatedError(AgentsException):
     def __init__(self, partial_response: str = "", usage: Usage | None = None, reason: str = "length"):
         super().__init__(f"Model output was truncated at the output token limit ({reason}).")
         self.partial_response = partial_response
+        self.usage_reported = usage is not None
         self.usage = usage if usage is not None else Usage(requests=1)
 
 
@@ -42,8 +43,10 @@ def check_chat_completion(response: Any) -> None:
     for choice in _value(response, "choices", []) or []:
         if _value(choice, "index", 0) == 0 and _value(choice, "finish_reason") == "length":
             content = _value(_value(choice, "message"), "content")
+            raw_usage = _value(response, "usage")
             raise ModelOutputTruncatedError(
-                content if isinstance(content, str) else "", chat_completion_usage(_value(response, "usage"))
+                content if isinstance(content, str) else "",
+                chat_completion_usage(raw_usage) if raw_usage is not None else None,
             )
 
 
@@ -108,8 +111,9 @@ async def checked_chat_completion_stream(
         if truncated:
             # A failed usage-only tail cannot turn known output exhaustion
             # into a retryable transport error and repeat earlier tool calls.
+            received_usage = _received_chat_stream_usage(stream, usage)
             raise ModelOutputTruncatedError(
-                "".join(text), chat_completion_usage(_received_chat_stream_usage(stream, usage))
+                "".join(text), chat_completion_usage(received_usage) if received_usage is not None else None
             ) from exc
         raise
     received_usage = _received_chat_stream_usage(stream, usage)
@@ -117,7 +121,7 @@ async def checked_chat_completion_stream(
         on_usage(chat_completion_usage(received_usage) if received_usage is not None else None)
     if truncated:
         raise ModelOutputTruncatedError(
-            "".join(text), chat_completion_usage(_received_chat_stream_usage(stream, usage))
+            "".join(text), chat_completion_usage(received_usage) if received_usage is not None else None
         )
 
 
@@ -134,13 +138,17 @@ def check_responses_output(response: Any) -> None:
             if _value(part, "type") == "output_text" and isinstance(_value(part, "text"), str):
                 text.append(_value(part, "text"))
     raw_usage = _value(response, "usage")
-    usage = Usage(
-        requests=1,
-        input_tokens=_value(raw_usage, "input_tokens", 0) or 0,
-        output_tokens=_value(raw_usage, "output_tokens", 0) or 0,
-        total_tokens=_value(raw_usage, "total_tokens", 0) or 0,
-        input_tokens_details=_value(raw_usage, "input_tokens_details"),
-        output_tokens_details=_value(raw_usage, "output_tokens_details"),
+    usage = (
+        Usage(
+            requests=1,
+            input_tokens=_value(raw_usage, "input_tokens", 0) or 0,
+            output_tokens=_value(raw_usage, "output_tokens", 0) or 0,
+            total_tokens=_value(raw_usage, "total_tokens", 0) or 0,
+            input_tokens_details=_value(raw_usage, "input_tokens_details"),
+            output_tokens_details=_value(raw_usage, "output_tokens_details"),
+        )
+        if raw_usage is not None
+        else None
     )
     raise ModelOutputTruncatedError("".join(text), usage, reason="max_output_tokens")
 

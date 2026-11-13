@@ -53,6 +53,7 @@ async def complete_text(
     usage = response = None
     status = "failed"
     error_type = model_call_id = None
+    truncation_reason = None
     try:
         settings = agent.model_settings
         if isinstance(sdk_model, ObservedResponsesModel):
@@ -140,7 +141,9 @@ async def complete_text(
         status = "succeeded"
         return {"content": response.output_text, "usage": usage, "model": model.model_name}
     except ModelOutputTruncatedError as error:
-        status, error_type, usage = "truncated", type(error).__name__, error.usage
+        status, error_type = "truncated", type(error).__name__
+        usage = error.usage if error.usage_reported else None
+        truncation_reason = "max_output_tokens" if isinstance(sdk_model, ObservedResponsesModel) else "length"
         output_chars = max(output_chars, len(error.partial_response))
         raise
     except TimeoutError as error:
@@ -158,10 +161,19 @@ async def complete_text(
         finally:
             # Only timings, counters and fixed classifications: never prompt,
             # response text, reasoning text, credentials or exception messages.
-            reason = getattr(sdk_model, "_datus_finish_reason", None)
+            reason = truncation_reason or getattr(sdk_model, "_datus_finish_reason", None)
             if isinstance(sdk_model, ObservedResponsesModel) and response is not None:
                 reason = response.status
-            if reason not in {None, "stop", "length", "tool_calls", "function_call", "content_filter", "completed"}:
+            if reason not in {
+                None,
+                "stop",
+                "length",
+                "max_output_tokens",
+                "tool_calls",
+                "function_call",
+                "content_filter",
+                "completed",
+            }:
                 reason = "other"
             logger.info(
                 "text_completion.finished",
