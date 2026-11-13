@@ -3,15 +3,18 @@
 
 """Exercise chat's real SDK/LiteLLM conversion with an in-memory HTTP provider."""
 
+import asyncio
 import json
 import os
+from unittest.mock import MagicMock
 
 import httpx
+import litellm
 import pytest
 from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
 
 from datus.configuration.agent_config import ModelConfig
-from datus.models import openai_compatible
+from datus.models import openai_compatible, text_completion
 from datus.models.base import LLMBaseModel
 from datus.models.output_truncation import ModelOutputTruncatedError
 
@@ -104,6 +107,9 @@ def provider_http(monkeypatch):
                     },
                 }
             ]
+            if behavior["reason"] == "length":
+                events[0]["type"] = "response.incomplete"
+                events[0]["response"].update(status="incomplete", incomplete_details={"reason": "max_output_tokens"})
         elif request.url.path.endswith("/messages"):
             events = anthropic_events('{"summary":"ok"}', behavior["reason"])
         elif request.url.host == "generativelanguage.googleapis.com":
@@ -144,10 +150,34 @@ def provider_http(monkeypatch):
                     "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
                 },
             ]
+            if behavior.get("reasoning"):
+                events.insert(
+                    0,
+                    {
+                        "id": "chat_test",
+                        "object": "chat.completion.chunk",
+                        "created": 1,
+                        "model": "test",
+                        "choices": [{"index": 0, "delta": {"reasoning_content": "PRIVATE_REASONING"}}],
+                    },
+                )
         if behavior.get("omit_usage"):
             for event in events:
                 event.pop("usage", None)
-        return httpx.Response(200, headers={"content-type": "text/event-stream"}, text=sse(events))
+                if "response" in event:
+                    event["response"].pop("usage", None)
+
+        class ProviderStream(httpx.AsyncByteStream):
+            """Yield real provider frames, optionally stalling after the first frame."""
+
+            async def __aiter__(self):
+                for index, event in enumerate(events):
+                    yield sse([event]).encode()
+                    if behavior.get("stall") and index == 0:
+                        behavior["stream_ready"].set()
+                        await asyncio.Event().wait()
+
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=ProviderStream())
 
     def create_client(self, **kwargs):
         """Record each client's TLS setting and route its requests to the fake provider."""
@@ -160,6 +190,122 @@ def provider_http(monkeypatch):
 
     monkeypatch.setattr(AsyncHTTPHandler, "create_client", create_client)
     return requests, clients, tls, behavior
+
+
+@pytest.mark.asyncio
+async def test_explicit_none_disables_deepseek_thinking_on_the_wire(provider_http):
+    """Check LiteLLM's provider translation rather than only inspecting our settings."""
+    requests, clients, _, _ = provider_http
+    model = LLMBaseModel.from_config(
+        ModelConfig(type="deepseek", model="deepseek-v4-pro", api_key="dummy", reasoning_effort="none")
+    )
+    await model.complete_text("facts", max_tokens=32768, timeout=5)
+    body = requests[0][1]
+    assert body["thinking"] == {"type": "disabled"}
+    assert body["max_tokens"] == 32768
+    assert len(requests) == 1
+    assert all(client.is_closed for client in clients)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reported", [False, True])
+@pytest.mark.parametrize(
+    "kind,name,url,finish_reason",
+    [
+        ("deepseek", "deepseek-v4-pro", "https://api.deepseek.com", "length"),
+        ("openai", "gpt-4.1", "https://api.openai.com/v1", "max_output_tokens"),
+    ],
+)
+async def test_truncation_keeps_usage_provenance_and_terminal_reason(
+    provider_http, monkeypatch, reported, kind, name, url, finish_reason
+):
+    """A fallback Usage object must not turn absent provider usage into reported zeroes."""
+    _, clients, _, behavior = provider_http
+    behavior.update(reason="length", omit_usage=not reported)
+    log = MagicMock()
+    monkeypatch.setattr(text_completion, "logger", log)
+    model = LLMBaseModel.from_config(ModelConfig(type=kind, model=name, api_key="dummy", base_url=url))
+    with pytest.raises(ModelOutputTruncatedError) as caught:
+        await model.complete_text("facts", max_tokens=4000, timeout=5)
+    assert caught.value.usage_reported is reported
+    assert caught.value.usage.output_tokens == (7 if reported else 0)
+    record = next(call.kwargs for call in log.info.call_args_list if call.args[0] == "text_completion.finished")
+    assert record["status"] == "truncated" and record["finish_reason"] == finish_reason
+    assert record["usage_reported"] is reported
+    assert record["input_tokens"] == (11 if reported else None)
+    assert record["output_tokens"] == (7 if reported else None)
+    assert record["output_chars"] == len('{"summary":"ok"}')
+    assert all(client.is_closed for client in clients)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reason,status,outcome", [("stop", 200, "succeeded"), ("length", 200, "truncated"), ("stop", 400, "failed")]
+)
+async def test_completion_logs_only_metadata_and_provider_finish_reason(
+    provider_http, monkeypatch, reason, status, outcome
+):
+    """Keep diagnostic metadata on success and failure without disclosing content."""
+    _, clients, _, behavior = provider_http
+    behavior.update(reason=reason, status=status, reasoning=True)
+    log = MagicMock()
+    monkeypatch.setattr(text_completion, "logger", log)
+    model = LLMBaseModel.from_config(ModelConfig(type="deepseek", model="deepseek-v4-pro", api_key="dummy"))
+    if outcome == "succeeded":
+        await model.complete_text("PRIVATE_PROMPT", max_tokens=4000, timeout=5)
+    else:
+        with pytest.raises(ModelOutputTruncatedError if outcome == "truncated" else litellm.BadRequestError):
+            await model.complete_text("PRIVATE_PROMPT", max_tokens=4000, timeout=5)
+    finished = [call.kwargs for call in log.info.call_args_list if call.args[0] == "text_completion.finished"]
+    assert len(finished) == 1
+    record = finished[0]
+    assert record["status"] == outcome
+    assert record["finish_reason"] == (reason if status == 200 else None)
+    assert record["duration_ms"] >= 0
+    assert record["usage_reported"] is (status == 200)
+    if status == 200:
+        assert 0 <= record["first_text_ms"] <= record["duration_ms"]
+        assert record["output_chars"] == len('{"summary":"ok"}')
+        assert record["output_tokens"] == 7
+        assert record["reasoning_chars"] == len("PRIVATE_REASONING")
+    else:
+        assert record["input_tokens"] is None and record["output_tokens"] is None
+    serialized = json.dumps([{"args": call.args, "kwargs": call.kwargs} for call in log.info.call_args_list])
+    # The output's stable marker survives JSON quote escaping in logged strings.
+    assert all(secret not in serialized for secret in ["PRIVATE_PROMPT", "PRIVATE_REASONING", "summary", "rejected"])
+    assert all(client.is_closed for client in clients)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel,reasoning", [(False, False), (False, True), (True, False)])
+async def test_stalled_stream_reports_partial_progress_and_unknown_usage(provider_http, monkeypatch, cancel, reasoning):
+    """Distinguish waiting after reasoning/text from a finished response with zero usage."""
+    _, clients, _, behavior = provider_http
+    behavior.update(stall=True, reasoning=reasoning, stream_ready=asyncio.Event())
+    log = MagicMock()
+    monkeypatch.setattr(text_completion, "logger", log)
+    model = LLMBaseModel.from_config(ModelConfig(type="deepseek", model="deepseek-v4-pro", api_key="dummy"))
+    task = asyncio.create_task(model.complete_text("PRIVATE_PROMPT", max_tokens=4000, timeout=5 if cancel else 0.2))
+    await asyncio.wait_for(behavior["stream_ready"].wait(), timeout=5)
+    if cancel:
+        task.cancel()
+    with pytest.raises(asyncio.CancelledError if cancel else TimeoutError):
+        await task
+    records = [call.kwargs for call in log.info.call_args_list if call.args[0] == "text_completion.finished"]
+    assert len(records) == 1
+    record = records[0]
+    assert record["status"] == ("cancelled" if cancel else "timeout")
+    assert record["usage_reported"] is False and record["output_tokens"] is None
+    assert record["finish_reason"] is None
+    if reasoning:
+        assert 0 <= record["first_reasoning_ms"] <= record["duration_ms"]
+        assert record["reasoning_chars"] == len("PRIVATE_REASONING")
+        assert record["first_text_ms"] is None and record["output_chars"] == 0
+    else:
+        assert 0 <= record["first_text_ms"] <= record["duration_ms"] and record["output_chars"] == len(
+            '{"summary":"ok"}'
+        )
+    assert all(client.is_closed for client in clients)
 
 
 @pytest.mark.asyncio
