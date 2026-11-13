@@ -1,0 +1,15 @@
+name: Validate SQL policy workspace isolation
+on:
+  push:
+    branches:
+      - ci/validate-sql-policy-workspace-20261113
+permissions:
+  contents: read
+jobs:
+  sql-policy-contract:
+    uses: ./.github/workflows/sql-policy-gate.yml
+    with:
+      agent_ref: ${{ github.sha }}
+      policy_ref: caf2c58ffd0fc3e786eb62c4828fbf8bafd48806
+      cold: true
+    secrets: inherit
