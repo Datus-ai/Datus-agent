@@ -295,6 +295,45 @@ def test_nightly_policy_release_tooling_comes_from_the_workflow_revision():
     assert ".venv/bin/python .nightly-workflow/ci/sql_policy_release.py" in prepare["run"]
 
 
+@pytest.mark.parametrize("status", [0, 1])
+@pytest.mark.parametrize("with_diagnostics", [False, True])
+def test_staged_nightly_copies_mcp_diagnostics_and_preserves_status(tmp_path, status, with_diagnostics):
+    steps = yaml.safe_load(WORKFLOW.read_text())["jobs"]["run-nightly"]["steps"]
+    run = next(step for step in steps if step.get("name") == "Run nightly tests")
+    upload = next(step for step in steps if step.get("name") == "Upload test results")
+    staged = tmp_path / "staged harness"
+    checkout = tmp_path / "workspace checkout"
+    (staged / "ci" / "p0-execution.example").mkdir(parents=True)
+    (checkout / "ci").mkdir(parents=True)
+    (staged / "ci" / "p0-execution.example" / "report.json").write_text("{}\n")
+    runner = staged / "ci" / "run-nightly-tests.sh"
+    runner.write_text(f"#!/bin/bash\nexit {status}\n")
+    runner.chmod(0o755)
+    diagnostics = Path("test-results/mcp/test_describe_table-child")
+    artifacts = {"stderr.log": "child startup stack\n", "phases.jsonl": '{"phase":"startup","event":"timeout"}\n'}
+    if with_diagnostics:
+        (staged / diagnostics).mkdir(parents=True)
+        for name, text in artifacts.items():
+            (staged / diagnostics / name).write_text(text)
+
+    result = subprocess.run(
+        ["bash", "-e", "-c", run["run"]],
+        cwd=checkout,
+        env={"PATH": os.defpath, "P0_TEST_ROOT": str(staged), "GITHUB_WORKSPACE": str(checkout)},
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == status, result.stdout + result.stderr
+    assert (checkout / "ci" / "p0-execution.example" / "report.json").read_text() == "{}\n"
+    assert "test-results/mcp/" in upload["with"]["path"]
+    if with_diagnostics:
+        for name, text in artifacts.items():
+            assert (checkout / diagnostics / name).read_text() == text
+    else:
+        assert not (checkout / "test-results" / "mcp").exists()
+
+
 def test_nightly_installs_new_database_adapters_from_latest_checkout():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
