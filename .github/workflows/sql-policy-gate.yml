@@ -73,6 +73,18 @@ jobs:
       matrix:
         mode: ${{ fromJSON(inputs.cold && '["warm","cold"]' || '["warm"]') }}
     steps:
+      - name: Allocate isolated gate workspace
+        id: workspace
+        env:
+          CACHE_MODE: ${{ matrix.mode }}
+        run: |
+          # Self-hosted runners can retain RUNNER_TEMP after interrupted jobs.
+          work="$(mktemp -d "$RUNNER_TEMP/sql-policy-$CACHE_MODE.XXXXXX")"
+          echo "path=$work" >> "$GITHUB_OUTPUT"
+          if [ "$CACHE_MODE" = warm ]; then
+            # Keep the warm target cache independent of per-execution evidence.
+            echo "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$RUNNER_TEMP/sql-policy-warm/cache/target}" >> "$GITHUB_ENV"
+          fi
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.sources.outputs.agent }}
@@ -117,11 +129,12 @@ jobs:
           POLICY_SHA: ${{ needs.sources.outputs.sql_policies }}
           ENGINE_SHA: ${{ needs.sources.outputs.osi_engine }}
           CACHE_MODE: ${{ matrix.mode }}
+          GATE_WORK: ${{ steps.workspace.outputs.path }}
         run: |
           .venv/bin/python ci/sql_policy_gate.py run \
             --policy external/datus-sql-policies --engine external/osi-engine \
             --agent-sha "$AGENT_SHA" --policy-sha "$POLICY_SHA" --engine-sha "$ENGINE_SHA" \
-            --mode "$CACHE_MODE" --work "$RUNNER_TEMP/sql-policy-$CACHE_MODE"
+            --mode "$CACHE_MODE" --work "$GATE_WORK"
       - name: Require the bound P0 execution receipt
         if: always()
         env:
@@ -129,12 +142,13 @@ jobs:
           POLICY_SHA: ${{ needs.sources.outputs.sql_policies }}
           ENGINE_SHA: ${{ needs.sources.outputs.osi_engine }}
           CACHE_MODE: ${{ matrix.mode }}
+          GATE_WORK: ${{ steps.workspace.outputs.path }}
         run: |
           .venv/bin/python - <<'PY'
           import json, os
           from pathlib import Path
           from ci.sql_policy_gate import ROOT, one_wheel, snapshot, verify_result
-          work = Path(os.environ['RUNNER_TEMP']) / ('sql-policy-' + os.environ['CACHE_MODE'])
+          work = Path(os.environ['GATE_WORK'])
           receipt = json.loads((work / 'result.json').read_text())
           assert receipt['status'] == 'success'
           assert receipt['cache_mode'] == os.environ['CACHE_MODE']
@@ -154,6 +168,6 @@ jobs:
           # Source trees, wheel payloads and private build caches stay on the
           # runner. Only identities, execution receipts and logs are uploaded.
           path: |
-            ${{ runner.temp }}/sql-policy-${{ matrix.mode }}/result.json
-            ${{ runner.temp }}/sql-policy-${{ matrix.mode }}/execution.json
-            ${{ runner.temp }}/sql-policy-${{ matrix.mode }}/*.log
+            ${{ steps.workspace.outputs.path }}/result.json
+            ${{ steps.workspace.outputs.path }}/execution.json
+            ${{ steps.workspace.outputs.path }}/*.log

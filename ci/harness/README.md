@@ -204,8 +204,12 @@ nodeid. Different sources, modified artifacts, missing reports, skips and xfails
 fail validation. Each run verifies its own frozen source combination; evidence is
 not reused from an earlier source revision.
 
-Warm runs reuse the runner's available build caches. Cold runs use new empty uv,
-Cargo and target directories.
+Each execution allocates a fresh workspace under `RUNNER_TEMP` for its wheels,
+harness, receipts and logs, including when a self-hosted runner retains files from
+an earlier run. The build, receipt verification and artifact upload use that same
+workspace. Warm runs reuse the runner's available build caches, with a persistent
+target directory outside the workspace. Cold runs use new empty uv, Cargo and
+target directories inside their workspace.
 Scheduled Nightly runs both modes against policy main, resolved once to immutable
 SHAs before the matrix starts. The compiled private payloads and caches remain on
 the runner; artifacts contain only receipts and logs. Source-read tokens are used

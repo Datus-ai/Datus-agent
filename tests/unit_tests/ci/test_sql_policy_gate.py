@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import yaml
 
 from ci.release_artifact import sha256, verify_wheel_payload
 from ci.sql_policy_gate import (
@@ -117,6 +118,83 @@ def test_warm_build_reuses_configured_cache_and_fetches_engine_without_tokens(mo
     assert env["GIT_CONFIG_KEY_0"] == "user.name"
     assert env["GIT_CONFIG_VALUE_1"] == "https://github.com/Datus-ai/osi-engine"
     assert env["GIT_CONFIG_KEY_1"] == f"url.{(tmp_path / 'engine').as_uri()}.insteadOf"
+
+
+@pytest.mark.parametrize("mode", ["warm", "cold"])
+@pytest.mark.parametrize("configured_target", [False, True])
+def test_host_workspaces_isolate_repeated_runs_from_stale_runner_files(monkeypatch, tmp_path, mode, configured_target):
+    from ci.stage_p0 import stage
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/sql-policy-gate.yml").read_text())
+    steps = workflow["jobs"]["host"]["steps"]
+    allocation = next(step for step in steps if step.get("id") == "workspace")
+    workspace_output = "${{ steps.workspace.outputs.path }}"
+    for name in ("Build, install and verify the frozen combination", "Require the bound P0 execution receipt"):
+        step = next(step for step in steps if step.get("name") == name)
+        assert step["env"]["GATE_WORK"] == workspace_output
+        assert "GATE_WORK" in step["run"]
+    upload = next(step for step in steps if step.get("uses") == "actions/upload-artifact@v4")
+    assert all(path.startswith(workspace_output + "/") for path in upload["with"]["path"].splitlines())
+
+    stale = tmp_path / ("sql-policy-" + mode)
+    for name in ("cache/uv/stale", "cache/cargo/stale", "cache/target/stale", "harness/stale", "wheels/stale.whl"):
+        path = stale / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("previous execution")
+    (stale / "result.json").write_text('{"status": "success"}')
+    for name in ("UV_CACHE_DIR", "CARGO_HOME"):
+        monkeypatch.setenv(name, str(stale / "cache" / name.lower()))
+    monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
+    if configured_target:
+        monkeypatch.setenv("CARGO_TARGET_DIR", str(tmp_path / "configured-target"))
+
+    source = tmp_path / "source"
+    source.mkdir()
+    for name in ("tests", "ci", "conf"):
+        (source / name).mkdir()
+    for name in ("pyproject.toml", "pytest.ini"):
+        (source / name).touch()
+    workspaces = []
+    for attempt in range(2):
+        output, github_env = (tmp_path / f"{name}-{attempt}" for name in ("output", "env"))
+        completed = subprocess.run(
+            ["bash", "-eu", "-c", allocation["run"]],
+            env={
+                **os.environ,
+                "RUNNER_TEMP": str(tmp_path),
+                "CACHE_MODE": mode,
+                "GITHUB_OUTPUT": str(output),
+                "GITHUB_ENV": str(github_env),
+            },
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert completed.returncode == 0, completed.stderr
+        work = Path(dict(line.split("=", 1) for line in output.read_text().splitlines())["path"])
+        assert work.parent == tmp_path
+        assert list(work.iterdir()) == []
+        if github_env.exists():
+            for line in github_env.read_text().splitlines():
+                key, value = line.split("=", 1)
+                monkeypatch.setenv(key, value)
+        env = build_environment(work, mode, tmp_path / "engine")
+        if mode == "cold":
+            for name in ("UV_CACHE_DIR", "CARGO_HOME", "CARGO_TARGET_DIR"):
+                cache = Path(env[name])
+                assert cache.is_relative_to(work)
+                assert list(cache.iterdir()) == []
+                (cache / "used").touch()
+        else:
+            expected_target = (
+                tmp_path / "configured-target" if configured_target else tmp_path / "sql-policy-warm/cache/target"
+            )
+            assert Path(env["CARGO_TARGET_DIR"]) == expected_target
+        stage(source, work / "harness")
+        (work / "result.json").write_text('{"status": "success"}')
+        workspaces.append(work)
+    assert workspaces[0] != workspaces[1]
+    assert (stale / "harness/stale").read_text() == "previous execution"
 
 
 @pytest.mark.parametrize("suffix", ["", ".git"])
