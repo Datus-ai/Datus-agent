@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "tag": "v0.5.3",
+  "source_commit": "1240bc60207ff5dfe23e051ddc566497e2573ff1",
+  "wheels": {
+    "linux-amd64": "cbca55ed0e00276d3504bdebd1a2ab7db34a802a50a2c7a3ff58eac5ad02da2f",
+    "macos-arm64": "ae61056ce5382e0059d83c31b2a9be52343d6d671f0a3f042ee5d5bba64e6166"
+  }
+}

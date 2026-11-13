@@ -81,6 +81,29 @@ def test_parse_collection_output_extracts_nodeids_and_counts():
     assert parsed["counts"] == {"selected": 2, "deselected": 10}
 
 
+def test_manifest_records_the_verified_policy_release_instead_of_requiring_sources(tmp_path, monkeypatch):
+    receipt = {"status": "success", "tag": "v0.5.3", "source_commit": "a" * 40, "wheel": {"sha256": "b" * 64}}
+    path = tmp_path / "sql-policy-release.json"
+    path.write_text(json.dumps(receipt))
+    monkeypatch.setenv("DATUS_SQL_POLICY_RECEIPT", str(path))
+    output = tmp_path / "nightly-manifest.json"
+    assert (
+        nightly_manifest.main(
+            [
+                "init",
+                "--output",
+                str(output),
+                "--repo-root",
+                str(Path.cwd()),
+                "--external-repos-root",
+                str(tmp_path / "missing"),
+            ]
+        )
+        == 0
+    )
+    assert json.loads(output.read_text())["sql_policy_release"] == receipt
+
+
 def test_record_collection_and_finalize_manifest(tmp_path):
     manifest_path = tmp_path / "nightly-manifest.json"
     collection_output = tmp_path / "collect.log"

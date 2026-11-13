@@ -2555,6 +2555,8 @@ execution:
         - ci/plan-product-tests.py
         - ci/harness/sql-policy-host.json
         - ci/sql_policy_gate.py
+        - ci/harness/sql-policy-release.json
+        - ci/sql_policy_release.py
         - ci/release_artifact.py
         - ci/pytest_gate_plugin.py
         - ci/p0_plan.py
