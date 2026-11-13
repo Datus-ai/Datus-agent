@@ -19,6 +19,30 @@ from datus.storage.storage_cfg import (
 from datus.utils.constants import EmbeddingProvider
 from datus.utils.exceptions import DatusException
 
+
+@pytest.mark.parametrize("name,policy", [("custom", False), ("text-embedding-3-small", True)])
+def test_equivalent_embedding_policies_can_reuse_saved_configuration(tmp_path, name, policy):
+    original = {"registry_name": "openai", "model_name": name, "dim_size": 4, "send_dimensions": policy}
+    check_storage_config("database", original, str(tmp_path))
+    automatic = {"registry_name": "openai", "model_name": name, "dim_size": 4}
+    check_storage_config("database", automatic, str(tmp_path))
+    assert load_storage_config(str(tmp_path))["database"]["dim_size"] == "4"
+
+
+def test_changed_effective_embedding_policy_is_rejected(tmp_path):
+    original = {"registry_name": "openai", "model_name": "custom", "dim_size": 4}
+    check_storage_config("database", original, str(tmp_path))
+    with pytest.raises(DatusException, match="send_dimensions"):
+        check_storage_config("database", {**original, "send_dimensions": True}, str(tmp_path))
+
+
+def test_inferred_embedding_width_can_reuse_saved_configuration(tmp_path):
+    config = {"registry_name": "openai", "model_name": "text-embedding-3-small", "dim_size": None}
+    check_storage_config("database", config, str(tmp_path))
+    check_storage_config("database", config, str(tmp_path))
+    assert load_storage_config(str(tmp_path))["database"]["dim_size"] == "None"
+
+
 # ---------------------------------------------------------------------------
 # save / load round-trip
 # ---------------------------------------------------------------------------

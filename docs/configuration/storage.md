@@ -77,6 +77,29 @@ database:
 - **`dim_size`**: Output embedding dimension size
 - **`batch_size`**: Number of texts to process in each batch
 - **`target_model`**: LLM model key from [`models`](agent.md#models-configuration) (for OpenAI embeddings)
+- **`send_dimensions`**: Optional boolean for OpenAI-compatible APIs. `true` sends the configured
+  `dim_size` as the API's `dimensions` parameter; `false` omits it. When omitted or `null`, only
+  `text-embedding-3-small` and `text-embedding-3-large` send configured dimensions.
+  `text-embedding-ada-002` never sends this parameter.
+
+### Custom OpenAI-compatible Embeddings
+
+Custom model names require a positive `dim_size` matching the provider's output. This local
+vector width does not require the provider to support the optional `dimensions` parameter:
+
+```yaml
+database:
+  registry_name: openai
+  model_name: mistral-embed
+  dim_size: 1024
+  target_model: embedding_gateway  # agent.models entry with the API key and base_url
+  send_dimensions: false
+```
+
+This omits `dimensions` from the embeddings request; the local vector column uses
+1024 dimensions. Set `send_dimensions: true` only when the endpoint supports resizing.
+Initialization checks a returned probe vector against `dim_size` and rejects mismatches.
+Changing the vector width of an existing index requires rebuilding its embeddings.
 
 ### Document Embeddings
 
