@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/0.4/subagent/gen_visual_report/">
       
       
         <link rel="prev" href="../gen_job/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/0.4/subagent/gen_visual_report/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/subagent/gen_visual_report/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/subagent/gen_visual_report/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/subagent/gen_visual_report/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -3227,8 +3221,6 @@
       
         
       
-        
-      
     
     
     
@@ -3419,34 +3411,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/sql_policy/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    SQL Policy
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../configuration/web_tool/" class="md-nav__link">
         
   
@@ -3566,10 +3530,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_8" >
         
           
-          <label class="md-nav__link" for="__nav_1_12_9" id="__nav_1_12_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_12_8" id="__nav_1_12_8_label" tabindex="0">
             
   
   
@@ -3587,8 +3551,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_12_9">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_12_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5185,7 +5149,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/subagent/gen_visual_report.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/subagent/gen_visual_report.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5198,7 +5162,6 @@
 <p><code>gen_visual_report</code> 把一个问题——<em>"Q4 营收怎么样？"</em>、<em>"分析一下 H2 商户流失"</em>——直接变成一份自包含的 <strong>HTML 报告</strong>：一个可上下滚动浏览的网页，包含执行摘要、KPI 卡片、图表、表格和叙事段落。Datus-CLI 模式下，页面会自动在浏览器中打开；Datus-SaaS 模式下，直接在 chat 中内联展示。</p>
 <p><img alt="HTML 报告示例——KPI 横幅、关键指标、月度增长趋势图" src="../../assets/gen_visual_report_preview.png" /></p>
 <p>HTML 报告是一份长篇叙事，数据在生成时就固化下来。页面上没有筛选器，也不会再次访问数据库。如果你要的是接 Superset 等外部 BI 平台的仪表盘，请让主 agent 直接使用已安装的 BI plugin。</p>
-<p>如果你想要的是纯文本的 <strong>Markdown 报告</strong>（不带 HTML 渲染、不带图表），请改用 <code>gen_report</code> agent。</p>
 <h2 id="_2">快速开始<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <p>先把当前 agent 切到 <code>gen_visual_report</code>——之前的 <code>/gen_visual_report ...</code> slash 调用方式已经移除，统一通过 <code>/agent</code> 选择：</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/agent<span class="w"> </span>gen_visual_report
@@ -5261,7 +5224,7 @@
 </span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
 </span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">gen_visual_report</span><span class="p">:</span>
 </span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span><span class="w">              </span><span class="c1"># 可选，默认使用当前配置的模型</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span><span class="w">              </span><span class="c1"># 可选，默认 30</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span><span class="w">              </span><span class="c1"># 可选，默认 100</span>
 </span></code></pre></div>
 <table>
 <thead>
@@ -5283,7 +5246,7 @@
 <td><code>max_turns</code></td>
 <td>否</td>
 <td>agent 最多迭代多少轮后强制结束</td>
-<td>30</td>
+<td>100</td>
 </tr>
 </tbody>
 </table>

@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/0.4/subagent/semantic_modeling/">
       
       
         <link rel="prev" href="../customized_subagent/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/0.4/subagent/semantic_modeling/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/subagent/semantic_modeling/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/subagent/semantic_modeling/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/subagent/semantic_modeling/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -3261,8 +3255,6 @@
       
         
       
-        
-      
     
     
     
@@ -3453,34 +3445,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/sql_policy/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    SQL Policy
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../configuration/web_tool/" class="md-nav__link">
         
   
@@ -3600,10 +3564,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_8" >
         
           
-          <label class="md-nav__link" for="__nav_1_12_9" id="__nav_1_12_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_12_8" id="__nav_1_12_8_label" tabindex="0">
             
   
   
@@ -3621,8 +3585,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_12_9">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_12_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5253,7 +5217,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/subagent/semantic_modeling.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/subagent/semantic_modeling.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5464,7 +5428,7 @@
 <p>新文件写入当前项目和 datasource 对应的目录：</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>subject/semantic_models/&lt;datasource&gt;/&lt;semantic_model&gt;.yml
 </span></code></pre></div>
-<p>每个创作文件的根 <code>semantic_model</code> 列表只放一个模型对象。建议按业务域组织相关的事实表和维表，例如 <code>sales.yml</code> 或 <code>marketing.yml</code>。物理来源和 query-backed 来源的选择遵循上面的规则。</p>
+<p>每个创作文件在文档根部定义一个模型。建议按业务域组织相关的事实表和维表，例如 <code>sales.yml</code> 或 <code>marketing.yml</code>。物理来源和 query-backed 来源的选择遵循上面的规则。</p>
 <h2 id="yaml">YAML 规范<a class="headerlink" href="#yaml" title="Permanent link">&para;</a></h2>
 <p>Dosi 生成 OSI Core <code>0.2.0.dev0</code> YAML。core schema 不允许未知字段，因此 Datus 特有行为必须写在 <code>custom_extensions</code> 中，不能随意增加 YAML key。</p>
 <p>dataset 和 metric 写入工具的 <code>datasets_json</code>、<code>metrics_json</code> 接收结构化数组，兼容旧的 JSON 编码字符串。DATUS 扩展的 <code>data</code> 始终使用 JSON 字符串。</p>
@@ -5482,8 +5446,8 @@
 <tbody>
 <tr>
 <td>根对象</td>
-<td><code>version</code>、<code>semantic_model</code></td>
-<td>OSI 版本和模型列表</td>
+<td><code>version</code>、<code>name</code>、<code>datasets</code></td>
+<td>Ossie 版本和模型定义</td>
 </tr>
 <tr>
 <td>Semantic model</td>
@@ -5521,73 +5485,72 @@
 <h3 id="_7">完整示例<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
 <p>下面是这次手动 REPL 生成并通过 Dosi 原生校验的模型；仅调整了 YAML 缩进和长行换行，模型内容与真实产物一致：</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.2.0.dev0</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="nt">semantic_model</span><span class="p">:</span>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bank_failures</span>
-</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="nt">datasets</span><span class="p">:</span>
-</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bank_failures</span>
-</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">        </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">main.bank_failures</span>
-</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">        </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">银行倒闭事件事实表，每一行记录一家倒闭银行及其倒闭日期与倒闭时资产。</span>
-</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">        </span><span class="nt">ai_context</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">每一行代表一家银行的倒闭事件；用于按时间（date）、州（state）等维度分析银行倒闭数量与倒闭资产规模。</span>
-</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">        </span><span class="nt">fields</span><span class="p">:</span>
-</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bank</span>
-</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="w">            </span><span class="nt">expression</span><span class="p">:</span>
-</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="w">              </span><span class="nt">dialects</span><span class="p">:</span>
-</span><span id="__span-10-13"><a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="w">                </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">dialect</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DUCKDB</span>
-</span><span id="__span-10-14"><a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="w">                  </span><span class="nt">expression</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Bank</span>
-</span><span id="__span-10-15"><a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a><span class="w">            </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">倒闭银行名称</span>
-</span><span id="__span-10-16"><a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">state</span>
-</span><span id="__span-10-17"><a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a><span class="w">            </span><span class="nt">expression</span><span class="p">:</span>
-</span><span id="__span-10-18"><a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a><span class="w">              </span><span class="nt">dialects</span><span class="p">:</span>
-</span><span id="__span-10-19"><a id="__codelineno-10-19" name="__codelineno-10-19" href="#__codelineno-10-19"></a><span class="w">                </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">dialect</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DUCKDB</span>
-</span><span id="__span-10-20"><a id="__codelineno-10-20" name="__codelineno-10-20" href="#__codelineno-10-20"></a><span class="w">                  </span><span class="nt">expression</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">State</span>
-</span><span id="__span-10-21"><a id="__codelineno-10-21" name="__codelineno-10-21" href="#__codelineno-10-21"></a><span class="w">            </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">银行所在州（美国州代码）</span>
-</span><span id="__span-10-22"><a id="__codelineno-10-22" name="__codelineno-10-22" href="#__codelineno-10-22"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">date</span>
-</span><span id="__span-10-23"><a id="__codelineno-10-23" name="__codelineno-10-23" href="#__codelineno-10-23"></a><span class="w">            </span><span class="nt">expression</span><span class="p">:</span>
-</span><span id="__span-10-24"><a id="__codelineno-10-24" name="__codelineno-10-24" href="#__codelineno-10-24"></a><span class="w">              </span><span class="nt">dialects</span><span class="p">:</span>
-</span><span id="__span-10-25"><a id="__codelineno-10-25" name="__codelineno-10-25" href="#__codelineno-10-25"></a><span class="w">                </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">dialect</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DUCKDB</span>
-</span><span id="__span-10-26"><a id="__codelineno-10-26" name="__codelineno-10-26" href="#__codelineno-10-26"></a><span class="w">                  </span><span class="nt">expression</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Date</span>
-</span><span id="__span-10-27"><a id="__codelineno-10-27" name="__codelineno-10-27" href="#__codelineno-10-27"></a><span class="w">            </span><span class="nt">dimension</span><span class="p">:</span>
-</span><span id="__span-10-28"><a id="__codelineno-10-28" name="__codelineno-10-28" href="#__codelineno-10-28"></a><span class="w">              </span><span class="nt">is_time</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-10-29"><a id="__codelineno-10-29" name="__codelineno-10-29" href="#__codelineno-10-29"></a><span class="w">            </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">银行倒闭日期</span>
-</span><span id="__span-10-30"><a id="__codelineno-10-30" name="__codelineno-10-30" href="#__codelineno-10-30"></a><span class="w">            </span><span class="nt">custom_extensions</span><span class="p">:</span>
-</span><span id="__span-10-31"><a id="__codelineno-10-31" name="__codelineno-10-31" href="#__codelineno-10-31"></a><span class="w">              </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vendor_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DATUS</span>
-</span><span id="__span-10-32"><a id="__codelineno-10-32" name="__codelineno-10-32" href="#__codelineno-10-32"></a><span class="w">                </span><span class="nt">data</span><span class="p">:</span><span class="w"> </span><span class="s">'{"v":"1.4","time_granularity":"day"}'</span>
-</span><span id="__span-10-33"><a id="__codelineno-10-33" name="__codelineno-10-33" href="#__codelineno-10-33"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">assets_million</span>
-</span><span id="__span-10-34"><a id="__codelineno-10-34" name="__codelineno-10-34" href="#__codelineno-10-34"></a><span class="w">            </span><span class="nt">expression</span><span class="p">:</span>
-</span><span id="__span-10-35"><a id="__codelineno-10-35" name="__codelineno-10-35" href="#__codelineno-10-35"></a><span class="w">              </span><span class="nt">dialects</span><span class="p">:</span>
-</span><span id="__span-10-36"><a id="__codelineno-10-36" name="__codelineno-10-36" href="#__codelineno-10-36"></a><span class="w">                </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">dialect</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DUCKDB</span>
-</span><span id="__span-10-37"><a id="__codelineno-10-37" name="__codelineno-10-37" href="#__codelineno-10-37"></a><span class="w">                  </span><span class="nt">expression</span><span class="p">:</span><span class="w"> </span><span class="s">'"Assets</span><span class="nv"> </span><span class="s">($mil.)"'</span>
-</span><span id="__span-10-38"><a id="__codelineno-10-38" name="__codelineno-10-38" href="#__codelineno-10-38"></a><span class="w">            </span><span class="nt">label</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Assets ($mil.)</span>
-</span><span id="__span-10-39"><a id="__codelineno-10-39" name="__codelineno-10-39" href="#__codelineno-10-39"></a><span class="w">            </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">倒闭时资产总额（百万美元）</span>
-</span><span id="__span-10-40"><a id="__codelineno-10-40" name="__codelineno-10-40" href="#__codelineno-10-40"></a><span class="w">        </span><span class="nt">custom_extensions</span><span class="p">:</span>
-</span><span id="__span-10-41"><a id="__codelineno-10-41" name="__codelineno-10-41" href="#__codelineno-10-41"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vendor_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DATUS</span>
-</span><span id="__span-10-42"><a id="__codelineno-10-42" name="__codelineno-10-42" href="#__codelineno-10-42"></a><span class="w">            </span><span class="nt">data</span><span class="p">:</span><span class="w"> </span><span class="s">'{"v":"1.4","time_dimension":"date"}'</span>
-</span><span id="__span-10-43"><a id="__codelineno-10-43" name="__codelineno-10-43" href="#__codelineno-10-43"></a>
-</span><span id="__span-10-44"><a id="__codelineno-10-44" name="__codelineno-10-44" href="#__codelineno-10-44"></a><span class="w">    </span><span class="nt">relationships</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
-</span><span id="__span-10-45"><a id="__codelineno-10-45" name="__codelineno-10-45" href="#__codelineno-10-45"></a><span class="w">    </span><span class="nt">metrics</span><span class="p">:</span>
-</span><span id="__span-10-46"><a id="__codelineno-10-46" name="__codelineno-10-46" href="#__codelineno-10-46"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bank_failure_count</span>
-</span><span id="__span-10-47"><a id="__codelineno-10-47" name="__codelineno-10-47" href="#__codelineno-10-47"></a><span class="w">        </span><span class="nt">expression</span><span class="p">:</span>
-</span><span id="__span-10-48"><a id="__codelineno-10-48" name="__codelineno-10-48" href="#__codelineno-10-48"></a><span class="w">          </span><span class="nt">dialects</span><span class="p">:</span>
-</span><span id="__span-10-49"><a id="__codelineno-10-49" name="__codelineno-10-49" href="#__codelineno-10-49"></a><span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">dialect</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DUCKDB</span>
-</span><span id="__span-10-50"><a id="__codelineno-10-50" name="__codelineno-10-50" href="#__codelineno-10-50"></a><span class="w">              </span><span class="nt">expression</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">COUNT(*)</span>
-</span><span id="__span-10-51"><a id="__codelineno-10-51" name="__codelineno-10-51" href="#__codelineno-10-51"></a><span class="w">        </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">倒闭银行数量，即银行倒闭事件的记录数。</span>
-</span><span id="__span-10-52"><a id="__codelineno-10-52" name="__codelineno-10-52" href="#__codelineno-10-52"></a><span class="w">        </span><span class="nt">ai_context</span><span class="p">:</span>
-</span><span id="__span-10-53"><a id="__codelineno-10-53" name="__codelineno-10-53" href="#__codelineno-10-53"></a><span class="w">          </span><span class="nt">instructions</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">按 date 作为业务时间，统计倒闭事件条数；可按 state 或时间粒度分组。</span>
-</span><span id="__span-10-54"><a id="__codelineno-10-54" name="__codelineno-10-54" href="#__codelineno-10-54"></a><span class="w">        </span><span class="nt">custom_extensions</span><span class="p">:</span>
-</span><span id="__span-10-55"><a id="__codelineno-10-55" name="__codelineno-10-55" href="#__codelineno-10-55"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vendor_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DATUS</span>
-</span><span id="__span-10-56"><a id="__codelineno-10-56" name="__codelineno-10-56" href="#__codelineno-10-56"></a><span class="w">            </span><span class="nt">data</span><span class="p">:</span><span class="w"> </span><span class="s">'{"v":"1.4","dataset":"bank_failures","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","count"],"unit":"banks"}'</span>
-</span><span id="__span-10-57"><a id="__codelineno-10-57" name="__codelineno-10-57" href="#__codelineno-10-57"></a>
-</span><span id="__span-10-58"><a id="__codelineno-10-58" name="__codelineno-10-58" href="#__codelineno-10-58"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">failed_assets_million</span>
-</span><span id="__span-10-59"><a id="__codelineno-10-59" name="__codelineno-10-59" href="#__codelineno-10-59"></a><span class="w">        </span><span class="nt">expression</span><span class="p">:</span>
-</span><span id="__span-10-60"><a id="__codelineno-10-60" name="__codelineno-10-60" href="#__codelineno-10-60"></a><span class="w">          </span><span class="nt">dialects</span><span class="p">:</span>
-</span><span id="__span-10-61"><a id="__codelineno-10-61" name="__codelineno-10-61" href="#__codelineno-10-61"></a><span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">dialect</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DUCKDB</span>
-</span><span id="__span-10-62"><a id="__codelineno-10-62" name="__codelineno-10-62" href="#__codelineno-10-62"></a><span class="w">              </span><span class="nt">expression</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">SUM(bank_failures.assets_million)</span>
-</span><span id="__span-10-63"><a id="__codelineno-10-63" name="__codelineno-10-63" href="#__codelineno-10-63"></a><span class="w">        </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">倒闭银行资产总额（单位：百万美元）。</span>
-</span><span id="__span-10-64"><a id="__codelineno-10-64" name="__codelineno-10-64" href="#__codelineno-10-64"></a><span class="w">        </span><span class="nt">ai_context</span><span class="p">:</span>
-</span><span id="__span-10-65"><a id="__codelineno-10-65" name="__codelineno-10-65" href="#__codelineno-10-65"></a><span class="w">          </span><span class="nt">instructions</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">按 date 作为业务时间，对倒闭时资产求和；单位是百万美元。</span>
-</span><span id="__span-10-66"><a id="__codelineno-10-66" name="__codelineno-10-66" href="#__codelineno-10-66"></a><span class="w">        </span><span class="nt">custom_extensions</span><span class="p">:</span>
-</span><span id="__span-10-67"><a id="__codelineno-10-67" name="__codelineno-10-67" href="#__codelineno-10-67"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vendor_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DATUS</span>
-</span><span id="__span-10-68"><a id="__codelineno-10-68" name="__codelineno-10-68" href="#__codelineno-10-68"></a><span class="w">            </span><span class="nt">data</span><span class="p">:</span><span class="w"> </span><span class="s">'{"v":"1.4","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","assets"],"unit":"USD</span><span class="nv"> </span><span class="s">million"}'</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bank_failures</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="nt">datasets</span><span class="p">:</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bank_failures</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">    </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">main.bank_failures</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">    </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">银行倒闭事件事实表，每一行记录一家倒闭银行及其倒闭日期与倒闭时资产。</span>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">    </span><span class="nt">ai_context</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">每一行代表一家银行的倒闭事件；用于按时间（date）、州（state）等维度分析银行倒闭数量与倒闭资产规模。</span>
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">    </span><span class="nt">fields</span><span class="p">:</span>
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bank</span>
+</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="w">        </span><span class="nt">expression</span><span class="p">:</span>
+</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="w">          </span><span class="nt">dialects</span><span class="p">:</span>
+</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">dialect</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DUCKDB</span>
+</span><span id="__span-10-13"><a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="w">              </span><span class="nt">expression</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Bank</span>
+</span><span id="__span-10-14"><a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="w">        </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">倒闭银行名称</span>
+</span><span id="__span-10-15"><a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">state</span>
+</span><span id="__span-10-16"><a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a><span class="w">        </span><span class="nt">expression</span><span class="p">:</span>
+</span><span id="__span-10-17"><a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a><span class="w">          </span><span class="nt">dialects</span><span class="p">:</span>
+</span><span id="__span-10-18"><a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a><span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">dialect</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DUCKDB</span>
+</span><span id="__span-10-19"><a id="__codelineno-10-19" name="__codelineno-10-19" href="#__codelineno-10-19"></a><span class="w">              </span><span class="nt">expression</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">State</span>
+</span><span id="__span-10-20"><a id="__codelineno-10-20" name="__codelineno-10-20" href="#__codelineno-10-20"></a><span class="w">        </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">银行所在州（美国州代码）</span>
+</span><span id="__span-10-21"><a id="__codelineno-10-21" name="__codelineno-10-21" href="#__codelineno-10-21"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">date</span>
+</span><span id="__span-10-22"><a id="__codelineno-10-22" name="__codelineno-10-22" href="#__codelineno-10-22"></a><span class="w">        </span><span class="nt">expression</span><span class="p">:</span>
+</span><span id="__span-10-23"><a id="__codelineno-10-23" name="__codelineno-10-23" href="#__codelineno-10-23"></a><span class="w">          </span><span class="nt">dialects</span><span class="p">:</span>
+</span><span id="__span-10-24"><a id="__codelineno-10-24" name="__codelineno-10-24" href="#__codelineno-10-24"></a><span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">dialect</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DUCKDB</span>
+</span><span id="__span-10-25"><a id="__codelineno-10-25" name="__codelineno-10-25" href="#__codelineno-10-25"></a><span class="w">              </span><span class="nt">expression</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Date</span>
+</span><span id="__span-10-26"><a id="__codelineno-10-26" name="__codelineno-10-26" href="#__codelineno-10-26"></a><span class="w">        </span><span class="nt">dimension</span><span class="p">:</span>
+</span><span id="__span-10-27"><a id="__codelineno-10-27" name="__codelineno-10-27" href="#__codelineno-10-27"></a><span class="w">          </span><span class="nt">is_time</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-10-28"><a id="__codelineno-10-28" name="__codelineno-10-28" href="#__codelineno-10-28"></a><span class="w">        </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">银行倒闭日期</span>
+</span><span id="__span-10-29"><a id="__codelineno-10-29" name="__codelineno-10-29" href="#__codelineno-10-29"></a><span class="w">        </span><span class="nt">custom_extensions</span><span class="p">:</span>
+</span><span id="__span-10-30"><a id="__codelineno-10-30" name="__codelineno-10-30" href="#__codelineno-10-30"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vendor_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DATUS</span>
+</span><span id="__span-10-31"><a id="__codelineno-10-31" name="__codelineno-10-31" href="#__codelineno-10-31"></a><span class="w">            </span><span class="nt">data</span><span class="p">:</span><span class="w"> </span><span class="s">'{"v":"1.4","time_granularity":"day"}'</span>
+</span><span id="__span-10-32"><a id="__codelineno-10-32" name="__codelineno-10-32" href="#__codelineno-10-32"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">assets_million</span>
+</span><span id="__span-10-33"><a id="__codelineno-10-33" name="__codelineno-10-33" href="#__codelineno-10-33"></a><span class="w">        </span><span class="nt">expression</span><span class="p">:</span>
+</span><span id="__span-10-34"><a id="__codelineno-10-34" name="__codelineno-10-34" href="#__codelineno-10-34"></a><span class="w">          </span><span class="nt">dialects</span><span class="p">:</span>
+</span><span id="__span-10-35"><a id="__codelineno-10-35" name="__codelineno-10-35" href="#__codelineno-10-35"></a><span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">dialect</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DUCKDB</span>
+</span><span id="__span-10-36"><a id="__codelineno-10-36" name="__codelineno-10-36" href="#__codelineno-10-36"></a><span class="w">              </span><span class="nt">expression</span><span class="p">:</span><span class="w"> </span><span class="s">'"Assets</span><span class="nv"> </span><span class="s">($mil.)"'</span>
+</span><span id="__span-10-37"><a id="__codelineno-10-37" name="__codelineno-10-37" href="#__codelineno-10-37"></a><span class="w">        </span><span class="nt">label</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Assets ($mil.)</span>
+</span><span id="__span-10-38"><a id="__codelineno-10-38" name="__codelineno-10-38" href="#__codelineno-10-38"></a><span class="w">        </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">倒闭时资产总额（百万美元）</span>
+</span><span id="__span-10-39"><a id="__codelineno-10-39" name="__codelineno-10-39" href="#__codelineno-10-39"></a><span class="w">    </span><span class="nt">custom_extensions</span><span class="p">:</span>
+</span><span id="__span-10-40"><a id="__codelineno-10-40" name="__codelineno-10-40" href="#__codelineno-10-40"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vendor_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DATUS</span>
+</span><span id="__span-10-41"><a id="__codelineno-10-41" name="__codelineno-10-41" href="#__codelineno-10-41"></a><span class="w">        </span><span class="nt">data</span><span class="p">:</span><span class="w"> </span><span class="s">'{"v":"1.4","time_dimension":"date"}'</span>
+</span><span id="__span-10-42"><a id="__codelineno-10-42" name="__codelineno-10-42" href="#__codelineno-10-42"></a>
+</span><span id="__span-10-43"><a id="__codelineno-10-43" name="__codelineno-10-43" href="#__codelineno-10-43"></a><span class="nt">relationships</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+</span><span id="__span-10-44"><a id="__codelineno-10-44" name="__codelineno-10-44" href="#__codelineno-10-44"></a><span class="nt">metrics</span><span class="p">:</span>
+</span><span id="__span-10-45"><a id="__codelineno-10-45" name="__codelineno-10-45" href="#__codelineno-10-45"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bank_failure_count</span>
+</span><span id="__span-10-46"><a id="__codelineno-10-46" name="__codelineno-10-46" href="#__codelineno-10-46"></a><span class="w">    </span><span class="nt">expression</span><span class="p">:</span>
+</span><span id="__span-10-47"><a id="__codelineno-10-47" name="__codelineno-10-47" href="#__codelineno-10-47"></a><span class="w">      </span><span class="nt">dialects</span><span class="p">:</span>
+</span><span id="__span-10-48"><a id="__codelineno-10-48" name="__codelineno-10-48" href="#__codelineno-10-48"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">dialect</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DUCKDB</span>
+</span><span id="__span-10-49"><a id="__codelineno-10-49" name="__codelineno-10-49" href="#__codelineno-10-49"></a><span class="w">          </span><span class="nt">expression</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">COUNT(*)</span>
+</span><span id="__span-10-50"><a id="__codelineno-10-50" name="__codelineno-10-50" href="#__codelineno-10-50"></a><span class="w">    </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">倒闭银行数量，即银行倒闭事件的记录数。</span>
+</span><span id="__span-10-51"><a id="__codelineno-10-51" name="__codelineno-10-51" href="#__codelineno-10-51"></a><span class="w">    </span><span class="nt">ai_context</span><span class="p">:</span>
+</span><span id="__span-10-52"><a id="__codelineno-10-52" name="__codelineno-10-52" href="#__codelineno-10-52"></a><span class="w">      </span><span class="nt">instructions</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">按 date 作为业务时间，统计倒闭事件条数；可按 state 或时间粒度分组。</span>
+</span><span id="__span-10-53"><a id="__codelineno-10-53" name="__codelineno-10-53" href="#__codelineno-10-53"></a><span class="w">    </span><span class="nt">custom_extensions</span><span class="p">:</span>
+</span><span id="__span-10-54"><a id="__codelineno-10-54" name="__codelineno-10-54" href="#__codelineno-10-54"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vendor_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DATUS</span>
+</span><span id="__span-10-55"><a id="__codelineno-10-55" name="__codelineno-10-55" href="#__codelineno-10-55"></a><span class="w">        </span><span class="nt">data</span><span class="p">:</span><span class="w"> </span><span class="s">'{"v":"1.4","dataset":"bank_failures","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","count"],"unit":"banks"}'</span>
+</span><span id="__span-10-56"><a id="__codelineno-10-56" name="__codelineno-10-56" href="#__codelineno-10-56"></a>
+</span><span id="__span-10-57"><a id="__codelineno-10-57" name="__codelineno-10-57" href="#__codelineno-10-57"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">failed_assets_million</span>
+</span><span id="__span-10-58"><a id="__codelineno-10-58" name="__codelineno-10-58" href="#__codelineno-10-58"></a><span class="w">    </span><span class="nt">expression</span><span class="p">:</span>
+</span><span id="__span-10-59"><a id="__codelineno-10-59" name="__codelineno-10-59" href="#__codelineno-10-59"></a><span class="w">      </span><span class="nt">dialects</span><span class="p">:</span>
+</span><span id="__span-10-60"><a id="__codelineno-10-60" name="__codelineno-10-60" href="#__codelineno-10-60"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">dialect</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DUCKDB</span>
+</span><span id="__span-10-61"><a id="__codelineno-10-61" name="__codelineno-10-61" href="#__codelineno-10-61"></a><span class="w">          </span><span class="nt">expression</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">SUM(bank_failures.assets_million)</span>
+</span><span id="__span-10-62"><a id="__codelineno-10-62" name="__codelineno-10-62" href="#__codelineno-10-62"></a><span class="w">    </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">倒闭银行资产总额（单位：百万美元）。</span>
+</span><span id="__span-10-63"><a id="__codelineno-10-63" name="__codelineno-10-63" href="#__codelineno-10-63"></a><span class="w">    </span><span class="nt">ai_context</span><span class="p">:</span>
+</span><span id="__span-10-64"><a id="__codelineno-10-64" name="__codelineno-10-64" href="#__codelineno-10-64"></a><span class="w">      </span><span class="nt">instructions</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">按 date 作为业务时间，对倒闭时资产求和；单位是百万美元。</span>
+</span><span id="__span-10-65"><a id="__codelineno-10-65" name="__codelineno-10-65" href="#__codelineno-10-65"></a><span class="w">    </span><span class="nt">custom_extensions</span><span class="p">:</span>
+</span><span id="__span-10-66"><a id="__codelineno-10-66" name="__codelineno-10-66" href="#__codelineno-10-66"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vendor_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DATUS</span>
+</span><span id="__span-10-67"><a id="__codelineno-10-67" name="__codelineno-10-67" href="#__codelineno-10-67"></a><span class="w">        </span><span class="nt">data</span><span class="p">:</span><span class="w"> </span><span class="s">'{"v":"1.4","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","assets"],"unit":"USD</span><span class="nv"> </span><span class="s">million"}'</span>
 </span></code></pre></div>
 <p>这个结果来自真实 schema 和数据检查，而不是预先编写的模板。它只为提示词要求的 4 个字段建模，也没有声明 key。DuckDB 可以不加引号解析 <code>Bank</code>、<code>State</code> 和 <code>Date</code> 这些简单标识符；<code>Assets ($mil.)</code> 含空格和符号，因此使用双引号表达式。</p>
 <h2 id="datus-custom-extension">DATUS custom extension 简介<a class="headerlink" href="#datus-custom-extension" title="Permanent link">&para;</a></h2>

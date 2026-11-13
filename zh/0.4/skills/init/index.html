@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/0.4/skills/init/">
       
       
         <link rel="prev" href="../introduction/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/0.4/skills/init/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/skills/init/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/skills/init/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/skills/init/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -3185,8 +3179,6 @@
       
         
       
-        
-      
     
     
     
@@ -3377,34 +3369,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/sql_policy/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    SQL Policy
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../configuration/web_tool/" class="md-nav__link">
         
   
@@ -3524,10 +3488,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_8" >
         
           
-          <label class="md-nav__link" for="__nav_1_12_9" id="__nav_1_12_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_12_8" id="__nav_1_12_8_label" tabindex="0">
             
   
   
@@ -3545,8 +3509,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_12_9">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_12_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5099,7 +5063,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/skills/init.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/skills/init.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5147,8 +5111,8 @@
 <p>工作步骤复用 <code>todo_list/read/write/update</code>，按业务主题和实际工作记录，由模型自行调整；不要求逐表建任务。使用 todo 不开启 plan mode，也不要求确认计划。程序不再单独维护选定表清单和逐表完成状态。</p>
 <p>模型通过普通文件工具增量维护 <code>AGENTS.md</code> 和 <code>knowledge/*.md</code>，保留人工内容、其他范围和已有有效定义。先写详情，再更新导航并读回检查。结构问题优先用工具查清；只有业务含义不明或工具无法取得的信息才留待用户确认。用途、粒度或 SQL 相似不能证明字段和键相同，结论必须对应实际证据。待确认问题保存在 <code>knowledge/pending-questions.md</code>，不能直接用于问答、SQL 或 build-kb 生成。</p>
 <p>模型在最终回复中说明本轮范围、成果、修改文件、待确认问题和未完成内容。CLI 只报告执行正常返回或停止及其原因，不认证业务完成度；查询结构成功、todo 全部完成、文件类工作或普通回复都不等于全库初始化成功。<code>knowledge/pending-questions.md</code> 只存待确认问题，工作进度保留在 todo 和会话摘要中。</p>
-<p>大结果完整归档，通过 <code>read_tool_result</code> 分页读取，分页预算随可用模型窗口调整，并设有上限。必要时自动 mid-turn compact，保留目标、最新修正、完成情况和下一步，在同一 loop 中继续。todo 详情按需读取，不反复注入全量表名单。用户澄清过长时复用归档分页恢复，不截断丢弃。容量检查包含完整输入、输出预留和安全余量；压缩不重置任务预算。中断、工具超时、模型错误或预算耗尽时保留文件，报告具体原因和剩余范围。正常结束或异常后，普通聊天恢复原有工具和交互，用户可继续确认待解决问题。</p>
-<p>压缩时，程序在摘要旁保留有限条最近归档的完整编号、section 和分页游标，避免依赖模型转述这些编号。</p>
+<p>目录工具自行分页，默认每页 200 条，页大小没有硬上限；<code>has_more=true</code> 时，用原工具和 <code>snapshot_id=extra.snapshot_id</code>、<code>offset=extra.next_offset</code> 续读；<code>extra.offset</code> 表示当前页的位置。压缩保留最近的原工具续读参数。超长澄清和历史归档引用完整保存为文件，通过 <code>read_file</code> 按行读取。必要时自动 mid-turn compact，保留目标、最新修正、完成情况和下一步，在同一 loop 中继续。todo 详情按需读取，不反复注入全量表名单。用户澄清过长时从归档文件恢复，不截断丢弃。容量检查包含完整输入、输出预留和安全余量；压缩不重置任务预算。中断、工具超时、模型错误或预算耗尽时保留文件，报告具体原因和剩余范围。正常结束或异常后，普通聊天恢复原有工具和交互，用户可继续确认待解决问题。</p>
+<p>压缩时，程序在摘要旁保留有限条最近结果的原工具续读参数或归档文件路径，避免依赖模型转述这些信息。</p>
 <p>没有 init 任务 ID、持久化任务队列或 <code>.datus/init/</code> 断点目录。后续 <code>/init</code> 重新读取已有文档补充知识。显式选择的 plan mode 仍按已有只读规则运行。文件权限和并发编辑沿用公共机制，没有 init 专用内容审核或跨文件事务。</p>
 <h2 id="init-vs-build-kb">Init 与 Build KB 的区别<a class="headerlink" href="#init-vs-build-kb" title="Permanent link">&para;</a></h2>
 <table>

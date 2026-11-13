@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/0.4/subagent/ask_metrics/">
       
       
         <link rel="prev" href="../semantic_modeling/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/0.4/subagent/ask_metrics/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/subagent/ask_metrics/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/subagent/ask_metrics/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/subagent/ask_metrics/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -3233,8 +3227,6 @@
       
         
       
-        
-      
     
     
     
@@ -3425,34 +3417,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/sql_policy/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    SQL Policy
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../configuration/web_tool/" class="md-nav__link">
         
   
@@ -3572,10 +3536,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_8" >
         
           
-          <label class="md-nav__link" for="__nav_1_12_9" id="__nav_1_12_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_12_8" id="__nav_1_12_8_label" tabindex="0">
             
   
   
@@ -3593,8 +3557,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_12_9">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_12_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5197,7 +5161,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/subagent/ask_metrics.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/subagent/ask_metrics.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5207,7 +5171,7 @@
 
 <h1 id="askmetrics">AskMetrics 指南<a class="headerlink" href="#askmetrics" title="Permanent link">&para;</a></h1>
 <h2 id="_1">概览<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<p><code>ask_metrics</code> 是内置的指标问答 subagent。它基于已有语义指标回答问题，不直接探索原始表，也不让模型临时编写 SQL；实际查询由 Dosi 编译并执行。</p>
+<p><code>ask_metrics</code> 是内置的指标问答 subagent，可封装特定业务上下文和工具范围，供限定用户使用。它基于已有语义指标回答问题，实际查询由 Dosi 编译并执行。主 chat 也能直接查询指标和进行归因；需要其特定上下文或明确选择该 agent 时使用 AskMetrics。</p>
 <p>适合使用 AskMetrics 的问题包括：</p>
 <ul>
 <li>KPI 数值，例如“上个月收入是多少？”</li>
@@ -5224,7 +5188,7 @@
 <p>沿用<a href="../semantic_modeling/">语义建模</a>中的 DuckDB 示例，使用同一个 datasource 启动 Datus：</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>datus<span class="w"> </span>--datasource<span class="w"> </span>duckdb_demo
 </span></code></pre></div>
-<p>完成 <code>bank_failures</code> 建模后，在主 chat 中直接提问即可，主 agent 会自动派发给 AskMetrics：</p>
+<p>完成 <code>bank_failures</code> 建模后，在主 chat 中直接提问即可，主 agent 可以直接查询指标：</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>按年份查询倒闭银行数量和倒闭银行资产总额。
 </span></code></pre></div>
 <p>AskMetrics 会根据业务描述从主题树和指标定义中匹配刚生成的 <code>bank_failure_count</code> 和 <code>failed_assets_million</code>，用户无需在问题中写出指标名。这次查询按 <code>date</code> 的年份粒度执行；真实测试返回了 14 个年份分组，例如 2008 年分别为 <code>26</code> 和 <code>768576.8</code>，2024 年分别为 <code>2</code> 和 <code>6107.8</code>。</p>
@@ -5301,8 +5265,21 @@
 <td><code>semantic_tools.attribution_analyze</code></td>
 <td>按候选维度解释指标变化</td>
 </tr>
+<tr>
+<td><code>filesystem_tools.read_file</code></td>
+<td>读取相关的项目业务定义或背景</td>
+</tr>
+<tr>
+<td><code>filesystem_tools.glob</code></td>
+<td>定位相关项目文件</td>
+</tr>
+<tr>
+<td><code>filesystem_tools.grep</code></td>
+<td>在项目文件中搜索具体业务关键词</td>
+</tr>
 </tbody>
 </table>
+<p>任何问题在业务范围或解释存在信息缺口时，都可以按需探索文件。AskMetrics 优先复用已提供的知识和指标、数据集描述；上下文充分的简单问数直接查询。归因分析可以参考业务定义或运营记录，但不要求先探索文件。使用项目文档时会引用文件路径，并区分实测贡献与业务假设。</p>
 <p>如果 Dosi 无法加载当前模型，AskMetrics 无法回答指标问题。如果上下文搜索不可用，AskMetrics 仍可使用 Dosi 工具，但不会有主题树路由上下文。</p>
 <h2 id="_6">输出<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
 <p>AskMetrics 返回简洁的 Markdown 报告，包含：</p>
@@ -5320,7 +5297,7 @@
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">ask_metrics</span><span class="p">:</span>
 </span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">12</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span>
 </span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">      </span><span class="nt">subject_tree_prompt_limit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span>
 </span></code></pre></div>
 <h3 id="askmetrics-agent">自定义 AskMetrics Agent<a class="headerlink" href="#askmetrics-agent" title="Permanent link">&para;</a></h3>
@@ -5330,14 +5307,14 @@
 </span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="nt">sales_metric_qa</span><span class="p">:</span>
 </span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ask_metrics</span>
 </span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">12</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span>
 </span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">      </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">"1.0"</span>
 </span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">      </span><span class="nt">tools</span><span class="p">:</span><span class="w"> </span><span class="s">"context_search_tools.search_metrics,semantic_tools.get_metric,semantic_tools.query_metrics"</span>
 </span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">      </span><span class="nt">subject_tree_prompt_limit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">50</span>
 </span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">      </span><span class="nt">agent_description</span><span class="p">:</span><span class="w"> </span><span class="s">"Answer</span><span class="nv"> </span><span class="s">sales</span><span class="nv"> </span><span class="s">metric</span><span class="nv"> </span><span class="s">questions</span><span class="nv"> </span><span class="s">using</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">sales</span><span class="nv"> </span><span class="s">semantic</span><span class="nv"> </span><span class="s">layer."</span>
 </span></code></pre></div>
 <p>如果省略 <code>system_prompt</code>，Datus 会先查找与自定义 agent 名称匹配的模板，例如 <code>sales_metric_qa_system_1.0.j2</code>，找不到时再回退到内置 <code>ask_metrics_system</code> 模板。</p>
-<p><code>tools</code> 可以是逗号分隔字符串，也可以是列表。默认工具面聚焦指标。自定义 agent 可以按需选择其他用户可见工具类别，但保持 AskMetrics 仅使用指标工具通常能得到更稳定的回答。</p>
+<p><code>tools</code> 可以是逗号分隔字符串，也可以是列表。显式白名单会替换默认工具，不会自动追加这三个文件工具。如果已有自定义白名单需要读取项目文件，请在指标工具之外按需加入 <code>filesystem_tools.read_file</code>、<code>filesystem_tools.glob</code> 和 <code>filesystem_tools.grep</code>。自定义 agent 也可以按需选择其他用户可见工具类别。</p>
 <p>已有自定义工具列表需要移除 <code>context_search_tools.get_metrics</code>。需要指标定义时使用 <code>semantic_tools.get_metric</code>；发现候选指标仍可使用 <code>context_search_tools.search_metrics</code>。</p>
 <h2 id="askmetrics_1">不适合使用 AskMetrics 的场景<a class="headerlink" href="#askmetrics_1" title="Permanent link">&para;</a></h2>
 <p>当任务无法通过现有语义指标回答时，请使用其他 subagent：</p>

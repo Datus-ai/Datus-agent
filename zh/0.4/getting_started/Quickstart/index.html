@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/0.4/getting_started/Quickstart/">
       
       
         <link rel="prev" href="../">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/0.4/getting_started/Quickstart/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/getting_started/Quickstart/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/getting_started/Quickstart/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/getting_started/Quickstart/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -3211,8 +3205,6 @@
       
         
       
-        
-      
     
     
     
@@ -3403,34 +3395,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/sql_policy/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    SQL Policy
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../configuration/web_tool/" class="md-nav__link">
         
   
@@ -3550,10 +3514,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_8" >
         
           
-          <label class="md-nav__link" for="__nav_1_12_9" id="__nav_1_12_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_12_8" id="__nav_1_12_8_label" tabindex="0">
             
   
   
@@ -3571,8 +3535,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_12_9">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_12_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5153,7 +5117,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/getting_started/Quickstart.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/getting_started/Quickstart.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5240,7 +5204,7 @@
 <p>启动后会看到 banner 与绿色提示符 <code>&gt;</code>。在空输入行按 <strong>Tab</strong>，可以依次切换三种输入模式：对话 <code>&gt;</code> → <code>sql&gt;</code> → <code>bash&gt;</code>；按 <strong>Esc</strong> 或 <strong>Ctrl+C</strong> 返回对话模式：</p>
 <ul>
 <li><strong>对话模式 <code>&gt;</code></strong>（默认）—— 自然语言输入交给 Agent；<code>/help</code>、<code>/datasource</code>、<code>/model</code>、<code>/exit</code> 等斜杠命令在每种模式下都可使用。</li>
-<li><strong>SQL 模式 <code>sql&gt;</code></strong> —— 提示符和分隔线变为红色，并启用 SQL 语法高亮；输入内容会经过与 Agent 调用 <code>execute_sql</code> 相同的权限与 SQL policy 检查。只读查询直接执行，写入和 DDL 会先请求确认。使用 <code>\</code> + Enter 可以继续输入下一行。</li>
+<li><strong>SQL 模式 <code>sql&gt;</code></strong> —— 提示符和分隔线变为红色，并启用 SQL 语法高亮；输入内容会经过与 Agent 调用 <code>execute_sql</code> 相同的权限检查。是否直接执行、请求确认或拒绝，取决于当前生效的权限设置（包括档位和配置覆盖）及只读限制。使用 <code>\</code> + Enter 可以继续输入下一行。</li>
 <li><strong>Bash 模式 <code>bash&gt;</code></strong> —— 提示符变为黄色；输入内容通过与 Agent 相同的权限检查后作为 shell 命令执行。命中 <code>deny</code> 规则的命令会被阻止，其他未匹配规则的命令会请求确认。</li>
 </ul>
 <p>手动执行 SQL 或 Bash 时，命令行会立即显示并附带 <code>· running Ns</code> 状态；完成后会展示包含命令和结果的执行块。执行结果也会作为一轮上下文发送给模型，方便 Agent 接着分析，并随 session 保存，之后可通过 <code>/resume</code> 恢复。</p>

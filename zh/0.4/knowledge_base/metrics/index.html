@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/0.4/knowledge_base/metrics/">
       
       
         <link rel="prev" href="../semantic_model/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/0.4/knowledge_base/metrics/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/knowledge_base/metrics/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/knowledge_base/metrics/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/knowledge_base/metrics/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -3255,8 +3249,6 @@
       
         
       
-        
-      
     
     
     
@@ -3447,34 +3439,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/sql_policy/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    SQL Policy
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../configuration/web_tool/" class="md-nav__link">
         
   
@@ -3594,10 +3558,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_8" >
         
           
-          <label class="md-nav__link" for="__nav_1_12_9" id="__nav_1_12_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_12_8" id="__nav_1_12_8_label" tabindex="0">
             
   
   
@@ -3615,8 +3579,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_12_9">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_12_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5241,7 +5205,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/knowledge_base/metrics.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/knowledge_base/metrics.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5281,7 +5245,7 @@
 <p>用户不需要知道指标名。AskMetrics 会根据主题树和指标描述推断该问题需要 <code>bank_failure_count</code> 与 <code>failed_assets_million</code>，发现可用时间维度，再按年查询。</p>
 <p>该流程要求当前 datasource 已经存在可执行指标。如果没有现有指标能回答问题，AskMetrics 会直接说明限制，不会切换成无关的原始 SQL 回答。路由方式、配置和输出行为见 <a href="../../subagent/ask_metrics/">AskMetrics</a>。</p>
 <h2 id="yaml">当前指标 YAML<a class="headerlink" href="#yaml" title="Permanent link">&para;</a></h2>
-<p>下面是 Datus 示例 DuckDB 数据库上真实生成的 <code>bank_failures.yml</code> 中 <code>semantic_model[0].metrics</code> 的片段，使用了<a href="../semantic_model/">语义模型</a>页面中的 dataset 和 field。代码块保留了它在完整文件中的缩进；它属于 semantic model 内部，不是一份独立的 YAML 文档。</p>
+<p>下面是 Datus 示例 DuckDB 数据库上真实生成的 <code>bank_failures.yml</code> 中 <code>metrics</code> 的片段，使用了<a href="../semantic_model/">语义模型</a>页面中的 dataset 和 field。代码块保留了它在完整文件中的缩进；它属于 semantic model 内部，不是一份独立的 YAML 文档。</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="w">    </span><span class="nt">metrics</span><span class="p">:</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bank_failure_count</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">        </span><span class="nt">expression</span><span class="p">:</span>
