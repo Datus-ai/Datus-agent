@@ -200,7 +200,8 @@ graph LR
 | `semantic_tools.list_metrics` | 列出可执行指标 |
 | `semantic_tools.get_metric` | 描述单个指标 |
 | `semantic_tools.query_metrics` | 查询指标值 |
-| `semantic_tools.attribution_analyze` | 跨维度解释指标变化 |
+| `semantic_tools.attribute_metrics` | 按公式解释指标变化 |
+| `semantic_tools.attribute_dimensions` | 按维度分组解释指标变化 |
 | `context_search_tools.search_metrics` | 按措辞查找候选指标 |
 
 ## 配置
