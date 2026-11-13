@@ -12,6 +12,7 @@ need engine handles or model reconstruction details.
 
 import asyncio
 import json
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -93,23 +94,73 @@ class PolicyMetricExecutor:
             raise _denied("Query unavailable")
         return result.sql_return
 
+    async def attribute_metrics(self, request: dict[str, Any], *, policy_context: dict[str, Any]) -> dict[str, Any]:
+        """Dosi ``attribute_metrics`` under the metric's read policy.
+
+        ``request`` is Dosi's (``metric``, ``baseline``, ``current`` and the
+        metric query's fields). Its ``where_sql`` goes through the metric
+        policy, whose condition is what runs, and every dataset the model reads
+        is scoped by the row policies, so both periods and every query the
+        attribution sends see only allowed rows. Returns Dosi's result as is;
+        the caller decides what to show.
+        """
+        return await self._attribute_native("attribute_metrics", request, policy_context)
+
+    async def attribute_dimensions(self, request: dict[str, Any], *, policy_context: dict[str, Any]) -> dict[str, Any]:
+        """Dosi ``attribute_dimensions`` under the metric's read policy; as
+        ``attribute_metrics``, with ``dimensions`` in the request."""
+        return await self._attribute_native("attribute_dimensions", request, policy_context)
+
+    async def _attribute_native(self, method: str, request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        """Scope the request and the model, then run one Dosi attribution tool."""
+        where, policy = await self._scope(str(request.get("metric") or ""), request.get("where_sql"), context)
+        self.validate_attribution_support(self.config, policy)
+        handle = await asyncio.to_thread(self.runtime._handle_for_metric, request["metric"])
+        scoped = {key: value for key, value in request.items() if key != "where_sql"}
+        if where:
+            scoped["where_sql"] = where
+        return await asyncio.to_thread(self._scoped_call, handle, policy, context, method, scoped)
+
     async def attribute(self, request: AttributionRequest, *, policy_context: dict[str, Any]) -> AttributionResult:
-        """Enforce the same metric scope for both periods and every native query."""
+        """Deprecated: Dosi's shipped attribution. Use ``attribute_metrics`` or
+        ``attribute_dimensions``; this goes when Dosi removes ``Engine.attribute``.
+
+        Enforces the same metric scope for both periods and every native query."""
+        warnings.warn(
+            "PolicyMetricExecutor.attribute is deprecated; use attribute_metrics or attribute_dimensions",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         where, policy = await self._scope(request.metric, request.where_sql, policy_context)
         self.validate_attribution_support(self.config, policy)
         handle = await asyncio.to_thread(self.runtime._handle_for_metric, request.metric)
-        return await asyncio.to_thread(
-            self._scoped_attribution, handle, policy, policy_context, request.model_copy(update={"where_sql": where})
+        result = await asyncio.to_thread(
+            self._scoped_call,
+            handle,
+            policy,
+            policy_context,
+            "attribute",
+            request.model_copy(update={"where_sql": where}).model_dump(mode="python", exclude_none=True),
+        )
+        return AttributionResult.model_validate({**result, "implementation": "dosi"})
+
+    def _scoped_call(
+        self, handle: Any, policy: PolicyRuntime, context: dict[str, Any], method: str, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Run ``Engine.<method>`` on a private model whose datasets read through the row policies."""
+        engine = self._scoped_engine(handle, policy, context)
+        return getattr(engine, method)(
+            request,
+            connection=handle.profile_name,
+            timeout_secs=float(self.runtime.config.timeout_seconds),
         )
 
-    def _scoped_attribution(
-        self, handle: Any, policy: PolicyRuntime, context: dict[str, Any], request: AttributionRequest
-    ) -> AttributionResult:
+    def _scoped_engine(self, handle: Any, policy: PolicyRuntime, context: dict[str, Any]) -> Any:
         # Native attribution executes multiple queries internally, without a Python
         # SQL callback. Apply row policies to every dataset source in a private,
         # in-memory model before native compilation. Never alter the shared model.
         # Result/column policies and unknown plugins cannot be represented this way.
-        """Apply row policies to a private model before every native attribution query."""
+        """A private engine over the metric's model, each dataset's source rewritten through the row policies."""
         if handle.has_ontology:
             raise _denied("MAPPING_UNSUPPORTED")
         handle.get()
@@ -147,12 +198,6 @@ class PolicyMetricExecutor:
                 data = json.loads(extension["data"])
                 data["source_type"] = "query"
                 extension["data"] = json.dumps(data)
-        engine = load_binding().Engine(
+        return load_binding().Engine(
             model_text=yaml.safe_dump(document), connections=handle._runtime_connections(handle._config), pool_size=1
         )
-        result = engine.attribute(
-            request.model_dump(mode="python", exclude_none=True),
-            connection=handle.profile_name,
-            timeout_secs=float(self.runtime.config.timeout_seconds),
-        )
-        return AttributionResult.model_validate({**result, "implementation": "dosi"})
