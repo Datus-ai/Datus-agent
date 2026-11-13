@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Set, Union
 
+from datus.configuration.legacy_tool_names import expand_replaced_tools
 from datus.configuration.logging_config import LoggingConfig
 from datus.configuration.project_config import PluginActivation
 from datus.observability.config import ObservabilityConfig
@@ -1083,6 +1084,8 @@ class AgentConfig:
                 )
             if not raw_config.get("system_prompt"):
                 raw_config["system_prompt"] = name
+            if "tools" in raw_config:
+                raw_config["tools"] = expand_replaced_tools(name, raw_config["tools"])
 
         self.benchmark_configs: Dict[str, BenchmarkConfig] = {}
         self.schema_linking_rate = kwargs.get("schema_linking_rate", "fast")

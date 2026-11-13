@@ -4,7 +4,9 @@
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
+
+from datus.configuration.legacy_tool_names import expand_replaced_tools
 
 
 class ScopedContextLists(BaseModel):
@@ -75,7 +77,10 @@ class SubAgentConfig(BaseModel):
 
     @field_validator("tools", mode="before")
     @classmethod
-    def normalize_tools(cls, value):
+    def normalize_tools(cls, value, info: ValidationInfo):
+        # A replaced tool name (sub-agents built by the API, the editor or a
+        # parent agent) becomes its successors here, as agent.yml's do on load.
+        value = expand_replaced_tools(str(info.data.get("system_prompt") or ""), value)
         if isinstance(value, (list, tuple)) and all(isinstance(item, str) for item in value):
             return ",".join(item.strip() for item in value if item.strip())
         return value
