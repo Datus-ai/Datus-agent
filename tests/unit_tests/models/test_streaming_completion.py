@@ -69,6 +69,9 @@ async def provider_http(monkeypatch):
         """Return a provider-shaped stream or the requested HTTP failure."""
         body = json.loads(request.content)
         requests.append((request, body))
+        behavior.setdefault("closed_before_request", []).append(
+            [clients[int(previous.headers["x-test-client"])].is_closed for previous, _ in requests[:-1]]
+        )
         if behavior["status"] != 200:
             return httpx.Response(
                 behavior["status"], json={"error": {"type": "invalid_request_error", "message": "rejected"}}
@@ -76,10 +79,6 @@ async def provider_http(monkeypatch):
         if body.get("stream") is False:
             if behavior.get("fail_once") and len(requests) == 1:
                 return httpx.Response(500, json={"error": {"message": "temporary"}})
-            if behavior.get("fail_once") and len(requests) == 2:
-                assert clients[int(requests[0][0].headers["x-test-client"])].is_closed
-            client = clients[int(request.headers["x-test-client"])]
-            assert not client.is_closed
             message = {"role": "assistant", "content": '{"summary":"ok"}'}
             if body.get("tools") and len(requests) % 2:
                 message = {
@@ -342,7 +341,7 @@ async def test_regular_chat_keeps_existing_tls_client_path(provider_http, monkey
     with patch.object(litellm_model, "_TLSHTTPHandler", side_effect=AssertionError("unexpected request-local client")):
         recorder = Recorder()
         await consume(model, recorder)
-    assert recorder.usage is not None
+    assert (recorder.usage.input_tokens, recorder.usage.output_tokens) == (11, 7)
 
 
 @pytest.mark.asyncio
@@ -378,8 +377,24 @@ async def test_nonstream_closes_owned_client_after_complete_runner(provider_http
             assert result["content"] == '{"summary":"ok"}'
         assert all(clients[int(request.headers["x-test-client"])].is_closed for request, _ in requests)
     assert len(requests) == {"success": 3, "failure": 1, "retry": 2, "tool_rounds": 2}[outcome]
-    if outcome == "tool_rounds":
-        assert requests[0][0].headers["x-test-client"] == requests[1][0].headers["x-test-client"]
+    assert (
+        len({request.headers["x-test-client"] for request, _ in requests})
+        == {
+            "success": 3,
+            "failure": 1,
+            "retry": 2,
+            "tool_rounds": 1,
+        }[outcome]
+    )
+    assert (
+        behavior["closed_before_request"]
+        == {
+            "success": [[], [True], [True, True]],
+            "failure": [[]],
+            "retry": [[], [True]],
+            "tool_rounds": [[], [False]],
+        }[outcome]
+    )
 
 
 @pytest.mark.asyncio
