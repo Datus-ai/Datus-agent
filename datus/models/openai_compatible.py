@@ -1153,6 +1153,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             # Use multiple_mcp_servers context manager with empty dict if no MCP servers
             async with (
                 multiple_mcp_servers(mcp_servers or {}) as connected_servers,
+                AsyncExitStack() as model_clients,
                 self._preserve_truncated_run_result(None, session),
             ):
                 agent_name = kwargs.get("agent_name", "default_agent")
@@ -1166,6 +1167,8 @@ class OpenAICompatibleModel(LLMBaseModel):
                     agent_name=agent_name,
                     max_tokens=kwargs.get("max_completion_tokens", kwargs.get("max_tokens")),
                 )
+                if inspect.iscoroutinefunction(close := getattr(getattr(agent, "model", None), "aclose", None)):
+                    model_clients.push_async_callback(close)
                 run_config = self._build_run_config(agent_name=agent_name)
 
                 # OpenAI Agents SDK tracing is configured by observability adapters.

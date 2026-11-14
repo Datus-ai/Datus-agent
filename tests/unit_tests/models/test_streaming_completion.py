@@ -73,6 +73,39 @@ async def provider_http(monkeypatch):
             return httpx.Response(
                 behavior["status"], json={"error": {"type": "invalid_request_error", "message": "rejected"}}
             )
+        if body.get("stream") is False:
+            if behavior.get("fail_once") and len(requests) == 1:
+                return httpx.Response(500, json={"error": {"message": "temporary"}})
+            if behavior.get("fail_once") and len(requests) == 2:
+                assert clients[int(requests[0][0].headers["x-test-client"])].is_closed
+            client = clients[int(request.headers["x-test-client"])]
+            assert not client.is_closed
+            message = {"role": "assistant", "content": '{"summary":"ok"}'}
+            if body.get("tools") and len(requests) % 2:
+                message = {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {"id": "call_test", "type": "function", "function": {"name": "ping", "arguments": "{}"}}
+                    ],
+                }
+            return httpx.Response(
+                200,
+                json={
+                    "id": "chat_test",
+                    "object": "chat.completion",
+                    "created": 1,
+                    "model": "test",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": message,
+                            "finish_reason": "tool_calls" if "tool_calls" in message else "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+                },
+            )
         if request.url.host == "api.openai.com":
             events = [
                 {
@@ -310,6 +343,43 @@ async def test_regular_chat_keeps_existing_tls_client_path(provider_http, monkey
         recorder = Recorder()
         await consume(model, recorder)
     assert recorder.usage is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "failure", "retry", "tool_rounds"])
+async def test_nonstream_closes_owned_client_after_complete_runner(provider_http, outcome):
+    from agents import function_tool
+
+    from datus.utils.exceptions import DatusException
+
+    requests, clients, _, behavior = provider_http
+    if outcome == "failure":
+        behavior["status"] = 400
+    if outcome == "retry":
+        behavior["fail_once"] = True
+
+    @function_tool
+    def ping() -> str:
+        """Return a test tool result."""
+        assert not clients[int(requests[-1][0].headers["x-test-client"])].is_closed
+        return "pong"
+
+    model = LLMBaseModel.from_config(
+        ModelConfig(type="deepseek", model="deepseek-v4-flash", api_key="dummy", max_retry=1, ssl_verify=True),
+        configure_ssl_env=False,
+    )
+    for _ in range(3 if outcome == "success" else 1):
+        call = model.generate_with_tools("hello", tools=[ping] if outcome == "tool_rounds" else [])
+        if outcome == "failure":
+            with pytest.raises(DatusException):
+                await call
+        else:
+            result = await call
+            assert result["content"] == '{"summary":"ok"}'
+        assert all(clients[int(request.headers["x-test-client"])].is_closed for request, _ in requests)
+    assert len(requests) == {"success": 3, "failure": 1, "retry": 2, "tool_rounds": 2}[outcome]
+    if outcome == "tool_rounds":
+        assert requests[0][0].headers["x-test-client"] == requests[1][0].headers["x-test-client"]
 
 
 @pytest.mark.asyncio
