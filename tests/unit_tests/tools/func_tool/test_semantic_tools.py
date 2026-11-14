@@ -1854,28 +1854,31 @@ class TestRenderMetricDetail:
         assert lines[-1] == "time: none"
         assert not any(line.startswith(("path:", "params")) for line in lines)
 
-    def test_attribution_line_only_names_a_tool_that_cannot_explain_the_metric(self):
+    def test_attribution_line_answers_for_both_tools(self):
         from datus.tools.func_tool.semantic_tools import render_metric_detail
 
         both = {"metrics": {"supported": True}, "dimensions": {"supported": True}}
-        assert not any(
-            line.startswith("attribution")
-            for line in render_metric_detail({**RETURNING_METRIC, "attribution": both}).splitlines()
-        )
+        lines = render_metric_detail({**RETURNING_METRIC, "attribution": both}).splitlines()
+        assert lines[-1] == "attribution: attribute_metrics yes; attribute_dimensions yes"
 
         distinct = {
             "metrics": {"supported": True},
             "dimensions": {"supported": False, "code": "insufficient_state", "message": "counts distinct values"},
         }
         lines = render_metric_detail({**RETURNING_METRIC, "attribution": distinct}).splitlines()
-        assert lines[-1] == "attribution: attribute_dimensions insufficient_state"
+        assert lines[-1] == "attribution: attribute_metrics yes; attribute_dimensions no (insufficient_state)"
 
         untimed = {
             "metrics": {"supported": False, "code": "no_time_dimension", "message": "no time field"},
             "dimensions": {"supported": False, "code": "no_time_dimension", "message": "no time field"},
         }
         lines = render_metric_detail({**RETURNING_METRIC, "attribution": untimed}).splitlines()
-        assert lines[-1] == "attribution: attribute_metrics no_time_dimension; attribute_dimensions no_time_dimension"
+        assert lines[-1] == (
+            "attribution: attribute_metrics no (no_time_dimension); attribute_dimensions no (no_time_dimension)"
+        )
+
+        # A catalog that says nothing about attribution gets no line.
+        assert not any(line.startswith("attribution") for line in render_metric_detail(RETURNING_METRIC).splitlines())
 
 
 class TestRenderDatasetDetail:

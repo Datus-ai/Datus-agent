@@ -146,8 +146,11 @@ def test_a_distinct_count_by_group_is_an_answer_not_a_tool_failure(attribution_t
     ]
     # get_metric says so before any call.
     detail = attribution_tool.get_metric(name="unique_categories")
-    assert detail.result.splitlines()[-1] == "attribution: attribute_dimensions insufficient_state"
-    assert "attribution:" not in attribution_tool.get_metric(name="net").result
+    assert detail.result.splitlines()[-1] == (
+        "attribution: attribute_metrics yes; attribute_dimensions no (insufficient_state)"
+    )
+    net = attribution_tool.get_metric(name="net").result
+    assert net.splitlines()[-1] == "attribution: attribute_metrics yes; attribute_dimensions yes"
 
 
 def test_null_and_literal_null_groups_stay_apart(attribution_tool):
