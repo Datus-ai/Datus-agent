@@ -2776,7 +2776,7 @@ class SemanticTools:
 
         Args:
             metric: The metric to explain.
-            dimensions: What to split by, 1 to 3 fields as `dataset.field[:grain]` of the datasets
+            dimensions: What to split by, fields as `dataset.field[:grain]` of the datasets
                 get_metric lists under `dimension_datasets`; a field that does not exist is
                 answered with the candidates. Business categories, not ids and not the time field
                 the periods are cut on.
