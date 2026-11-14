@@ -39,6 +39,7 @@ class _ObservedAsyncStream:
 class _ObservedModel:
     _datus_protocol = "chat_completions"
     _datus_impl = "litellm"
+    provider_reported_usage: Any = None
 
     def _new_call(self) -> ModelCall:
         endpoint = getattr(self, "base_url", None)
@@ -62,12 +63,15 @@ class _ObservedModel:
             return result
 
     async def stream_response(self, *args, **kwargs):
+        self.provider_reported_usage = None
         with self._new_call() as call:
             async with aclosing(super().stream_response(*args, **kwargs)) as stream:
                 async for event in stream:
                     call.stream_event()
                     response = getattr(event, "response", None)
                     if response is not None:
+                        if self._datus_protocol == "responses":
+                            self.provider_reported_usage = getattr(response, "usage", None)
                         call.usage(getattr(response, "usage", None))
                         call.record_tool_calls(getattr(response, "output", None))
                     yield event
@@ -120,6 +124,10 @@ class ObservedLitellmModel(_ObservedModel, LitellmModel):
 class ObservedResponsesModel(_ObservedModel, OpenAIResponsesModel):
     _datus_protocol = "responses"
     _datus_impl = "openai_responses"
+
+    async def aclose(self):
+        """Release the client owned by this SDK model after a complete run."""
+        await self._client.close()
 
     def capacity_payload(self, *args: Any, **kwargs: Any) -> dict:
         """Build the SDK request locally without sending it or recording a call."""

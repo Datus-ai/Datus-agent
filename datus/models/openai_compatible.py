@@ -6,6 +6,7 @@
 
 import asyncio
 import hashlib
+import inspect
 import json
 import os
 import threading
@@ -345,6 +346,8 @@ class OpenAICompatibleModel(LLMBaseModel):
             enable_thinking=model_config.enable_thinking,
             reasoning_effort=model_config.reasoning_effort,
             default_headers=self.default_headers,
+            ssl_verify=self.ssl_verify,
+            max_retries=0 if model_config.max_retry == 1 else None,
         )
 
         # Context for tracing ToDo: replace it with Context object
@@ -569,14 +572,6 @@ class OpenAICompatibleModel(LLMBaseModel):
         applies its own defaults for both parameters.
         """
         return getattr(self.litellm_adapter, "provider", "") in (LLMProvider.CLAUDE, LLMProvider.ANTHROPIC)
-
-    async def complete_text(
-        self, prompt: str, *, instruction: str = "", max_tokens: Optional[int] = None, timeout: float = 60
-    ) -> Dict[str, Any]:
-        """One tool-less call using chat's model, settings and response adapters."""
-        from datus.models.text_completion import complete_text
-
-        return await complete_text(self, prompt, instruction=instruction, max_tokens=max_tokens, timeout=timeout)
 
     def generate(self, prompt: Any, enable_thinking: bool | None = None, **kwargs) -> str:
         """
@@ -1050,6 +1045,8 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         litellm_model = self.litellm_adapter.get_agents_sdk_model()
         litellm_model._datus_capacity = self.request_capacity()
+        litellm_model.request_ssl_verify = self.ssl_verify
+        litellm_model.request_max_retries = 0 if self.model_config.max_retry == 1 else None
 
         # DeepSeek requires "json" keyword in prompt for JSON mode
         final_instruction = instruction
@@ -1107,6 +1104,11 @@ class OpenAICompatibleModel(LLMBaseModel):
                     effort,
                     self.model_name,
                 )
+
+        if self.litellm_adapter.provider == "deepseek" and effort == "none":
+            # Preserve explicit off after LiteLLM maps it to thinking.disabled,
+            # so gateways cannot inject a contradictory default effort.
+            model_settings_kwargs.setdefault("extra_args", {})["extra_body"] = {"reasoning_effort": "none"}
 
         prompt_cache_retention = self._default_prompt_cache_retention()
         if prompt_cache_retention:
@@ -1315,8 +1317,10 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                 tool_stream = ToolResultStream(agent.hooks)
                 agent.hooks = tool_stream
+                if inspect.iscoroutinefunction(close := getattr(agent.model, "aclose", None)):
+                    tool_streams.push_async_callback(close)
 
-                run_config = self._build_run_config(
+                run_config = kwargs.get("run_config") or self._build_run_config(
                     pending_input_queue=pending_input_queue,
                     session=session,
                     interrupt_controller=interrupt_controller,

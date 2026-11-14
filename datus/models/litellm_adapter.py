@@ -11,7 +11,7 @@ Provides:
 3. Integration with openai-agents SDK's LitellmModel
 """
 
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 from urllib.parse import urlparse
 
 from datus.utils.loggings import get_logger
@@ -200,6 +200,8 @@ class LiteLLMAdapter:
         enable_thinking: bool = False,
         reasoning_effort: Optional[str] = None,
         default_headers: Optional[Dict[str, str]] = None,
+        ssl_verify: Any = None,
+        max_retries: Optional[int] = None,
     ):
         """
         Initialize the LiteLLM adapter.
@@ -223,6 +225,8 @@ class LiteLLMAdapter:
         self._enable_thinking = enable_thinking
         self._reasoning_effort = reasoning_effort.strip().lower() if isinstance(reasoning_effort, str) else None
         self.default_headers = default_headers
+        self.ssl_verify = ssl_verify
+        self.max_retries = max_retries
         self._litellm_model_name = None
 
     @property
@@ -475,6 +479,12 @@ class LiteLLMAdapter:
             client_kwargs["base_url"] = self.base_url
         if self.default_headers:
             client_kwargs["default_headers"] = self.default_headers
+        if self.ssl_verify is not None:
+            import httpx
+
+            client_kwargs["http_client"] = httpx.AsyncClient(verify=self.ssl_verify)
+        if self.max_retries is not None:
+            client_kwargs["max_retries"] = self.max_retries
         async_client = AsyncOpenAI(**client_kwargs)
         logger.debug(f"Creating OpenAIResponsesModel for official OpenAI model={self.model}")
         return OpenAIResponsesModel(model=self.model, openai_client=async_client)
