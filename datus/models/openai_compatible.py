@@ -297,20 +297,9 @@ class OpenAICompatibleModel(LLMBaseModel):
         self.base_url = self._get_base_url()
         self.default_headers = dict(self.model_config.default_headers) if self.model_config.default_headers else None
 
-        # Resolve SSL/TLS verification for this endpoint (e.g. a private gateway CA).
-        # When configured, it takes priority over the SSL_VERIFY / SSL_CERT_FILE env
-        # vars (house convention: config first, env fallback). We materialize it into
-        # SSL_VERIFY so litellm honors it across both the agents-SDK LitellmModel path
-        # (whose __init__ accepts no ssl argument) and direct litellm.completion calls.
-        # The native Anthropic client (ClaudeModel) reads self.ssl_verify directly.
-        #
-        # Why a process-level env var and not a per-request kwarg: litellm does NOT
-        # thread a per-call ``ssl_verify`` into the Anthropic provider's HTTP client
-        # (verified — the kwarg is silently ignored), and a scoped set/restore around
-        # each call would break the agents-SDK streaming path (Runner.run_streamed does
-        # its network I/O after returning). A process global is the only mechanism that
-        # works across all paths. Blast radius is limited: ``SSL_VERIFY`` is a
-        # litellm-specific variable that standard libraries (requests/httpx/curl) ignore.
+        # Native clients and the shared SDK streaming adapter consume this TLS
+        # policy directly. Keep SSL_VERIFY for legacy synchronous completions;
+        # background callers can opt out of changing process-wide defaults.
         from datus.utils.ssl_utils import (
             is_pem_cert_content,
             materialize_ca_bundle,
@@ -1045,8 +1034,8 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         litellm_model = self.litellm_adapter.get_agents_sdk_model()
         litellm_model._datus_capacity = self.request_capacity()
-        litellm_model.request_ssl_verify = self.ssl_verify
-        litellm_model.request_max_retries = 0 if self.model_config.max_retry == 1 else None
+        litellm_model.request_ssl_verify = getattr(self, "ssl_verify", None)
+        litellm_model.request_max_retries = 0 if getattr(self.model_config, "max_retry", 3) == 1 else None
 
         # DeepSeek requires "json" keyword in prompt for JSON mode
         final_instruction = instruction
@@ -1317,7 +1306,7 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                 tool_stream = ToolResultStream(agent.hooks)
                 agent.hooks = tool_stream
-                if inspect.iscoroutinefunction(close := getattr(agent.model, "aclose", None)):
+                if inspect.iscoroutinefunction(close := getattr(getattr(agent, "model", None), "aclose", None)):
                     tool_streams.push_async_callback(close)
 
                 run_config = kwargs.get("run_config") or self._build_run_config(
@@ -1761,6 +1750,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         # Execute the streaming operation with retry logic for connection errors
         max_retries = getattr(self.model_config, "max_retry", 3)
         retry_delay = getattr(self.model_config, "retry_interval", 2.0)
+        safe_errors = not getattr(kwargs.get("run_config"), "trace_include_sensitive_data", True)
 
         # Track already processed action IDs to prevent duplicates across retries
         processed_action_ids = set()
@@ -1813,7 +1803,10 @@ class OpenAICompatibleModel(LLMBaseModel):
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 2
                 else:
-                    logger.exception(f"Model behavior error after {max_retries} attempts: {type(e).__name__}: {e}")
+                    if safe_errors:
+                        logger.error("Model behavior error in stream", error_type=type(e).__name__)
+                    else:
+                        logger.exception(f"Model behavior error after {max_retries} attempts: {type(e).__name__}: {e}")
                     raise
 
             except (httpx.RemoteProtocolError, APIConnectionError, APITimeoutError, MidStreamFallbackError) as e:
@@ -1841,7 +1834,10 @@ class OpenAICompatibleModel(LLMBaseModel):
                     retry_delay *= 2  # Exponential backoff
                 else:
                     # All retries exhausted
-                    logger.exception(f"Stream failed after {max_retries} attempts: {type(e).__name__}: {e}")
+                    if safe_errors:
+                        logger.error("Model stream failed", error_type=type(e).__name__)
+                    else:
+                        logger.exception(f"Stream failed after {max_retries} attempts: {type(e).__name__}: {e}")
                     raise
 
     @asynccontextmanager

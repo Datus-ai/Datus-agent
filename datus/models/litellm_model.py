@@ -207,6 +207,8 @@ class DatusLitellmModel(ObservedLitellmModel):
         # Resolve request policy at the shared HTTP boundary, after capacity
         # and trace serialization. Chat and background callers use this path.
         options = {}
+        if tracing.is_disabled():
+            options.update({"no-log": True, "success_callback": [], "failure_callback": []})
         if self.request_max_retries is not None:
             options.update(num_retries=self.request_max_retries, max_retries=self.request_max_retries)
         if self.request_ssl_verify is not None:

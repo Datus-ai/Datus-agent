@@ -65,6 +65,8 @@ async def provider_http(monkeypatch):
         """Return a provider-shaped stream or the requested HTTP failure."""
         body = json.loads(request.content)
         requests.append((request, body))
+        if behavior.get("transport_error"):
+            raise httpx.RemoteProtocolError("PRIVATE_PROVIDER_ERROR", request=request)
         if behavior["status"] != 200:
             return httpx.Response(
                 behavior["status"], json={"error": {"type": "invalid_request_error", "message": "rejected"}}
@@ -205,7 +207,7 @@ class Recorder(AgentHooks):
         self.responses.append(response)
 
 
-async def consume(model, recorder, timeout=5):
+async def consume(model, recorder, timeout=5, private=False):
     async for _ in model.generate_with_tools_stream(
         "facts",
         instruction="Return JSON.",
@@ -213,7 +215,11 @@ async def consume(model, recorder, timeout=5):
         max_turns=1,
         max_tokens=4000,
         hooks=recorder,
-        run_config=RunConfig(tracing_disabled=True, model_settings=ModelSettings(extra_args={"timeout": timeout})),
+        run_config=RunConfig(
+            tracing_disabled=True,
+            trace_include_sensitive_data=not private,
+            model_settings=ModelSettings(extra_args={"timeout": timeout}),
+        ),
     ):
         pass
 
@@ -342,3 +348,20 @@ async def test_shared_stream_rejects_truncated_text(provider_http):
     assert error.value.usage_reported
     assert error.value.usage.input_tokens == 11
     assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_private_stream_does_not_log_raw_connection_errors(provider_http, monkeypatch):
+    from unittest.mock import MagicMock
+
+    requests, _, _, behavior = provider_http
+    behavior["transport_error"] = True
+    log = MagicMock()
+    monkeypatch.setattr(openai_compatible, "logger", log)
+    model = LLMBaseModel.from_config(
+        ModelConfig(type="deepseek", model="deepseek-v4-flash", api_key="dummy", max_retry=1)
+    )
+    with pytest.raises(litellm.APIConnectionError):
+        await consume(model, Recorder(), private=True)
+    assert len(requests) == 1
+    assert "PRIVATE_PROVIDER_ERROR" not in str(log.mock_calls)
