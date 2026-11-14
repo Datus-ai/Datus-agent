@@ -20,7 +20,6 @@ import pytest
 
 from datus.tools.semantic_tools.dosi.errors import SemanticValidationException
 from datus.tools.semantic_tools.exceptions import SemanticCoreException
-from datus.tools.semantic_tools.models import AttributionRequest, AttributionWindow
 from tests.unit_tests.tools.semantic_tools.dosi_fakes import (
     DIMENSION_ROWS,
     METRIC_ROWS,
@@ -84,7 +83,7 @@ async def test_sql_debug_logging_uses_native_result_without_an_extra_compile(mak
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["metrics", "dry_run", "attribute"])
+@pytest.mark.parametrize("operation", ["metrics", "dry_run", "attribute_metrics", "attribute_dimensions"])
 async def test_native_read_paths_receive_one_request_local_policy(make_runtime, monkeypatch, operation):
     runtime = make_runtime()
     bound = SimpleNamespace(snapshot_json='{"version":"v1"}', context_json='{"datasource":"warehouse"}')
@@ -95,7 +94,7 @@ async def test_native_read_paths_receive_one_request_local_policy(make_runtime, 
         return bound
 
     runtime._read_policy_provider = provider
-    for name in ("compile", "execute", "attribute"):
+    for name in ("compile", "execute", "attribute_metrics", "attribute_dimensions"):
         original = getattr(FakeEngine, name)
 
         def protected(self, *args, _name=name, _original=original, policy=None, policy_required=False, **kwargs):
@@ -103,14 +102,14 @@ async def test_native_read_paths_receive_one_request_local_policy(make_runtime, 
             return _original(self, *args, **kwargs)
 
         monkeypatch.setattr(FakeEngine, name, protected)
-    if operation == "attribute":
-        await runtime.attribute(
-            AttributionRequest(
-                metric="revenue",
-                dimensions=["orders.status"],
-                baseline=AttributionWindow(start="2026-01-01", end="2026-01-08"),
-                current=AttributionWindow(start="2026-01-08", end="2026-01-15"),
-            )
+    if operation.startswith("attribute"):
+        await getattr(runtime, operation)(
+            {
+                "metric": "revenue",
+                "dimensions": ["orders.status"],
+                "baseline": {"start": "2026-01-01", "end": "2026-01-08"},
+                "current": {"start": "2026-01-08", "end": "2026-01-15"},
+            }
         )
     else:
         await runtime.query_metrics(["revenue"], dry_run=operation == "dry_run")
@@ -188,54 +187,65 @@ def _install_file_catalog(monkeypatch, metrics_by_stem: dict[str, list[str]]) ->
 
 
 @pytest.mark.asyncio
-async def test_attribute_delegates_to_native_engine(make_runtime):
+@pytest.mark.parametrize("method", ["attribute_metrics", "attribute_dimensions"])
+async def test_attribution_delegates_to_native_engine(make_runtime, method):
     runtime = make_runtime(connection="warehouse", timeout_seconds=42)
-    request = AttributionRequest(
-        metric="revenue",
-        dimensions=[" orders.status ", "orders.status"],
-        baseline=AttributionWindow(start="2026-01-01", end="2026-01-08"),
-        current=AttributionWindow(start="2026-01-08", end="2026-01-15"),
-        where_sql="orders.status IS NOT NULL",
-        top_n_dimensions=2,
-        top_n_values=5,
-        path=["Finance"],
-    )
+    request = {
+        "metric": "revenue",
+        "dimensions": ["orders.status"],
+        "baseline": {"start": "2026-01-01", "end": "2026-01-08"},
+        "current": {"start": "2026-01-08", "end": "2026-01-15"},
+        "where_sql": "orders.status IS NOT NULL",
+    }
 
-    result = await runtime.attribute(request)
+    result = await getattr(runtime, method)(request)
 
-    assert result.implementation == "dosi"
-    assert result.strategy == "term_wise"
-    assert result.total_change.delta == 50
+    # Dosi's result comes back as is: the tool layer renders it.
+    assert result["schema_version"] == 3
+    assert result["status"] == "complete"
     call = FakeEngine.instances[-1].attribute_calls[-1]
+    assert call["method"] == method
     assert call["connection"] == "warehouse"
     assert call["timeout_secs"] == 42.0
-    assert call["request"]["metric"] == "revenue"
-    assert call["request"]["dimensions"] == ["orders.status"]
-    assert call["request"]["baseline"] == {
-        "start": "2026-01-01",
-        "end": "2026-01-08",
-    }
-    assert "path" not in call["request"]
+    assert call["request"] == request
+    assert call["dry_run"] is False
 
 
 @pytest.mark.asyncio
-async def test_attribute_rejects_missing_dimensions_with_structured_error(
-    make_runtime,
-):
+async def test_attribution_request_error_keeps_code_and_candidates(make_runtime):
     runtime = make_runtime()
-    request = AttributionRequest(
-        metric="revenue",
-        dimensions=["", "  "],
-        baseline=AttributionWindow(start="2026-01-01", end="2026-01-08"),
-        current=AttributionWindow(start="2026-01-08", end="2026-01-15"),
-    )
+    request = {
+        "metric": "revenue",
+        "dimensions": [],
+        "baseline": {"start": "2026-01-01", "end": "2026-01-08"},
+        "current": {"start": "2026-01-08", "end": "2026-01-15"},
+    }
 
     with pytest.raises(SemanticValidationException) as exc_info:
-        await runtime.attribute(request)
+        await runtime.attribute_dimensions(request)
 
-    assert exc_info.value.payload.code == "dimensions_required"
-    assert exc_info.value.payload.metrics == ["revenue"]
-    assert "get_dimensions" in exc_info.value.payload.message
+    payload = exc_info.value.payload
+    assert payload.code == "dimensions_required"
+    assert payload.metrics == ["revenue"]
+    assert payload.candidates == ["orders.status", "customers.region"]
+    assert payload.detail == {"field_path": "dimensions"}
+    assert "candidates: orders.status, customers.region" in payload.message
+
+
+@pytest.mark.asyncio
+async def test_attribution_unknown_metric_is_refused_before_the_engine(make_runtime):
+    runtime = make_runtime()
+
+    with pytest.raises(SemanticValidationException) as exc_info:
+        await runtime.attribute_metrics(
+            {
+                "metric": "nope",
+                "baseline": {"start": "2026-01-01", "end": "2026-01-08"},
+                "current": {"start": "2026-01-08", "end": "2026-01-15"},
+            }
+        )
+
+    assert exc_info.value.payload.code == "unknown_metric"
 
 
 @pytest.mark.asyncio

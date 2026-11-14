@@ -42,12 +42,21 @@ METRIC_TOOL_NAMES = {
     "get_dataset",
     "query_metrics",
     "get_query_metrics_result",
-    "attribution_analyze",
+    "attribute_metrics",
+    "attribute_dimensions",
 }
 
 # ===========================================================================
 # ChatAgenticNode Inheritance Tests
 # ===========================================================================
+
+
+_ATTRIBUTION_PERIODS = {
+    "baseline_start": "2024-01-01",
+    "baseline_end": "2024-02-01",
+    "current_start": "2024-02-01",
+    "current_end": "2024-03-01",
+}
 
 
 class TestChatMetricTools:
@@ -331,17 +340,8 @@ class TestChatMetricTools:
         for name, arguments in (
             ("get_metric", {"name": "net"}),
             ("query_metrics", {"metrics": ["net"]}),
-            (
-                "attribution_analyze",
-                {
-                    "metric_name": "net",
-                    "candidate_dimensions": ["ledger.cat"],
-                    "baseline_start": "2024-01-01",
-                    "baseline_end": "2024-02-01",
-                    "current_start": "2024-02-01",
-                    "current_end": "2024-03-01",
-                },
-            ),
+            ("attribute_metrics", {"metric": "net", **_ATTRIBUTION_PERIODS}),
+            ("attribute_dimensions", {"metric": "net", "dimensions": ["ledger.cat"], **_ATTRIBUTION_PERIODS}),
         ):
             result = await tools[name].on_invoke_tool(None, json.dumps(arguments))
             assert result["success"] == 0
@@ -362,7 +362,7 @@ class TestChatMetricTools:
         node.session_id = "chat_session_metric_tools_snapshot"
         prompt = node._get_session_system_prompt()
         meta = node._system_prompt_snapshot_meta(None)
-        assert "## Attribution Playbook" in prompt
+        assert "## Explaining a Change" in prompt
         assert node._get_session_system_prompt() == prompt
         assert node._system_prompt_snapshot_meta(None) == meta
 
@@ -374,14 +374,14 @@ class TestChatMetricTools:
         node.node_config["tools"] = "db_tools.*"
         node._rebuild_tools()
         restricted = node._get_session_system_prompt()
-        assert "## Attribution Playbook" not in restricted
+        assert "## Explaining a Change" not in restricted
         assert "## Metric Queries" not in restricted
         assert node._system_prompt_snapshot_meta(None) != meta
 
-        node.node_config["tools"] = "semantic_tools.attribution_analyze"
+        node.node_config["tools"] = "semantic_tools.attribute_metrics,semantic_tools.attribute_dimensions"
         node._rebuild_tools()
         metric_only = node._get_session_system_prompt()
-        assert "## Attribution Playbook" in metric_only
+        assert "## Explaining a Change" in metric_only
         assert "generate and execute read-only SQL here" not in metric_only
         assert node._get_session_system_prompt() == metric_only
 
@@ -434,8 +434,8 @@ class TestChatMetricTools:
             ("semantic_tools.query_metrics", {"query_metrics"}),
             ("semantic_tools.get_query_metrics_result", {"get_query_metrics_result"}),
             (
-                ["semantic_tools.query_metrics", "semantic_tools.attribution_analyze"],
-                {"query_metrics", "attribution_analyze"},
+                ["semantic_tools.query_metrics", "semantic_tools.attribute_dimensions"],
+                {"query_metrics", "attribute_dimensions"},
             ),
             ("semantic_tools.*", METRIC_TOOL_NAMES | {"validate_semantic"}),
             ("db_tools.*", set()),
@@ -447,7 +447,9 @@ class TestChatMetricTools:
             names = {tool.name for tool in node.tools}
             assert names & (METRIC_TOOL_NAMES | {"validate_semantic"}) == expected
             prompt = node._get_system_prompt()
-            assert ("Use `attribution_analyze` directly" in prompt) == ("attribution_analyze" in expected)
+            assert ("Explain a metric's change directly" in prompt) == bool(
+                {"attribute_metrics", "attribute_dimensions"} & expected
+            )
             assert ("Read each metric with `get_metric`" in prompt) == ("get_metric" in expected)
             assert ("## Period-Over-Period Metric Queries" in prompt) == ("query_metrics" in expected)
             assert ("generate and execute read-only SQL here" in prompt) == ("execute_sql" in names)
@@ -463,20 +465,20 @@ class TestChatMetricTools:
         assert node.semantic_tools is None
         assert {"execute_sql", "read_file"} <= names
         assert not METRIC_TOOL_NAMES & names
-        assert "## Attribution Playbook" not in node._get_system_prompt()
+        assert "## Explaining a Change" not in node._get_system_prompt()
 
     def test_rebuild_does_not_restore_excluded_metric_tools(self, real_agent_config, mock_llm_create):
         node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
         node.node_config["tools"] = "db_tools.*"
         node._rebuild_tools()
         assert not METRIC_TOOL_NAMES & {tool.name for tool in node.tools}
-        assert "## Attribution Playbook" not in node._get_system_prompt()
+        assert "## Explaining a Change" not in node._get_system_prompt()
 
     @pytest.mark.parametrize(
         "patterns",
         [
             "semantic_tools.query_metrics,semantic_tools.get_metric,sub_agent_tools.*",
-            "semantic_tools.attribution_analyze,sub_agent_tools.*",
+            "semantic_tools.attribute_dimensions,sub_agent_tools.*",
             "semantic_tools.query_metrics,semantic_tools.get_metric,db_tools.*,sub_agent_tools.*",
         ],
     )
@@ -544,19 +546,24 @@ class TestChatMetricTools:
         assert cached["columns"] == ["net"]
         assert cached["row_count"] == 1
         assert float(cached["csv"].splitlines()[1]) == 120.0
-        attribution = await invoke(
-            "attribution_analyze",
-            {
-                "metric_name": "net",
-                "candidate_dimensions": ["ledger.cat"],
-                "baseline_start": "2024-01-01",
-                "baseline_end": "2024-02-01",
-                "current_start": "2024-02-01",
-                "current_end": "2024-03-01",
-            },
+        by_formula = await invoke("attribute_metrics", {"metric": "net", **_ATTRIBUTION_PERIODS})
+        # January and February differ in length: the tool says so.
+        assert by_formula.splitlines() == [
+            "status complete",
+            "note the periods differ in length (31 days and 29 days); values are not scaled to one length",
+            "",
+            "net = SUM(ledger.x) - SUM(ledger.y) | 120 → 140 | +20 (100.0%)",
+            "  x_total [input] | 150 → 230 | +80 (400.0%)",
+            "  SUM(y) [input] | 30 → 90 | -60 (-300.0%)",
+        ]
+        by_group = await invoke(
+            "attribute_dimensions", {"metric": "net", "dimensions": ["ledger.cat"], **_ATTRIBUTION_PERIODS}
         )
-        assert attribution["total_change"]["delta"] == 20.0
-        assert attribution["per_dimension"]["ledger.cat"]["reconciliation"]["passed"]
+        assert by_group.splitlines()[3:] == [
+            "net by ledger.cat | 120 → 140 | change +20",
+            "- a | 80 → 120 | +40 (200.0%)",
+            "- b | 40 → 20 | -20 (-100.0%)",
+        ]
         node.semantic_tools.metric_rag.store_batch(
             [
                 {
@@ -581,17 +588,8 @@ class TestChatMetricTools:
         for tool_name, arguments in (
             ("get_metric", {"name": "x_total"}),
             ("query_metrics", {"metrics": ["net", "x_total"]}),
-            (
-                "attribution_analyze",
-                {
-                    "metric_name": "x_total",
-                    "candidate_dimensions": ["ledger.cat"],
-                    "baseline_start": "2024-01-01",
-                    "baseline_end": "2024-02-01",
-                    "current_start": "2024-02-01",
-                    "current_end": "2024-03-01",
-                },
-            ),
+            ("attribute_metrics", {"metric": "x_total", **_ATTRIBUTION_PERIODS}),
+            ("attribute_dimensions", {"metric": "x_total", "dimensions": ["ledger.cat"], **_ATTRIBUTION_PERIODS}),
         ):
             denied = await tools[tool_name].on_invoke_tool(None, json.dumps(arguments))
             assert denied["success"] == 0
@@ -602,17 +600,8 @@ class TestChatMetricTools:
             ("list_metrics", {}),
             ("get_metric", {"name": "net"}),
             ("query_metrics", {"metrics": ["net"]}),
-            (
-                "attribution_analyze",
-                {
-                    "metric_name": "net",
-                    "candidate_dimensions": ["ledger.cat"],
-                    "baseline_start": "2024-01-01",
-                    "baseline_end": "2024-02-01",
-                    "current_start": "2024-02-01",
-                    "current_end": "2024-03-01",
-                },
-            ),
+            ("attribute_metrics", {"metric": "net", **_ATTRIBUTION_PERIODS}),
+            ("attribute_dimensions", {"metric": "net", "dimensions": ["ledger.cat"], **_ATTRIBUTION_PERIODS}),
         ):
             denied = await tools[tool_name].on_invoke_tool(None, json.dumps(arguments))
             assert denied["success"] == 0

@@ -10,7 +10,7 @@ line or the SSE ``shortDesc`` payload.
 
 Contract: summaries are normally ≤ ``SUMMARY_TEXT_MAX_CHARS`` (19)
 characters. Tools whose compact summaries require complete identifiers,
-including filesystem tools and attribution analysis, bypass the clip.
+including filesystem tools and the attribution tools, bypass the clip.
 """
 
 from __future__ import annotations
@@ -474,61 +474,43 @@ class TestSemanticFormatters:
         )
         assert out == "3 issues"
 
-    def test_attribution_analyze(self):
-        out = _summarize(
-            "attribution_analyze",
-            {
-                "success": 1,
-                "result": {
-                    "implementation": "dosi",
-                    "strategy": "factor_shapley",
-                    "dimension_ranking": list(range(8)),
-                    "selected_dimensions": ["region", "platform", "channel"],
-                    "warnings": [{"code": "unequal_windows"}],
-                },
-            },
+    def test_attribute_metrics_names_the_input_with_the_largest_total(self):
+        text = "\n".join(
+            [
+                "status complete",
+                "",
+                "ratio = a / c | 144.239 → 145.32 | +1.08095 (100.0%)",
+                "  a [input] | 1019954026 → 1024805507 | +0.68702 (63.6%)",
+                "  c = all / 3 | 707127542 → 705206136 | +0.393926 (36.4%)",
+                "    w [input] | 373090522 → 365010650 | +0.552182 (51.1%)",
+                "    a [input] | 1019954026 → 1024805507 | -0.331556 (-30.7%)",
+            ]
         )
-        assert out == "dosi factor_shapley; selected region,platform,channel; warnings unequal_windows"
+        out = _summarize("attribute_metrics", {"success": 1, "result": text})
+        # ``a`` totals 0.355 over its two lines, less than ``w``.
+        assert out == "complete · Δ +1.08095 · w +0.552 (51.1%)"
         assert len(out) > SUMMARY_TEXT_MAX_CHARS
 
-    def test_attribution_analyze_partial_dimensions(self):
-        out = _summarize(
-            "attribution_analyze",
-            {
-                "success": 1,
-                "result": {
-                    "implementation": "generic",
-                    "strategy": "term_wise",
-                    "per_dimension": {
-                        "channel": {"values": [], "non_additive": False},
-                        "product": {"truncated": True},
-                        "region": {"values": [], "non_additive": True},
-                    },
-                    "warnings": [
-                        {"code": "dimension_analysis_failed", "dimension": "organization"},
-                        {"code": "high_cardinality_dimension", "dimension": "product"},
-                    ],
-                },
-            },
+    def test_attribute_dimensions_names_the_largest_first_level_group(self):
+        text = "\n".join(
+            [
+                "status complete, accuracy mixed",
+                "",
+                "ratio by item.category > item.class | 144.238 → 145.314 | change +1.07549",
+                "- Home | 143.428 → 145.888 | +0.248937 (23.1%) | 16 below, none listed",
+                "- Children | 143.824 → 144.9 | +0.105782 (9.8%) | 4 below",
+                "  - infants | 142.752 → 147.015 | +0.301707 (28.0%)",
+                "  - 3 others | +0.00407507 (0.4%)",
+                "- 3 others | +0.9 (83.7%)",
+            ]
         )
+        out = _summarize("attribute_dimensions", {"success": 1, "result": text})
+        assert out == "complete · Δ +1.07549 · Home +0.249 (23.1%)"
 
-        assert out == "generic term_wise, 1/4 dimensions usable, 1 failed, 1 non-additive, 1 truncated, 2 warnings"
-
-    def test_attribution_analyze_totals_only(self):
-        out = _summarize(
-            "attribution_analyze",
-            {
-                "success": 1,
-                "result": {
-                    "implementation": "generic",
-                    "strategy": "unsupported",
-                    "unsupported_reason": {"code": "dimensions_required"},
-                    "per_dimension": {},
-                },
-            },
-        )
-
-        assert out == "generic unsupported; dimensions_required"
+    def test_attribution_without_effects_is_its_status_and_code(self):
+        text = "status unsupported\nissue error insufficient_state: counts distinct values"
+        out = _summarize("attribute_dimensions", {"success": 1, "result": text})
+        assert out == "unsupported · insufficient_state"
 
 
 class TestGenerationFormatters:
@@ -962,7 +944,6 @@ def test_failure_path_uniform(tool: str):
         ("list_databases", ["mydb"], "1 db"),
         # Semantic fallbacks
         ("validate_semantic", {"valid": False, "issues": []}, "invalid"),
-        ("attribution_analyze", {"selected_dimensions": ["region"]}, "selected region"),
         # Records written before results became text
         ("query_metrics", {"columns": ["a", "b"]}, "2 cols"),
         ("query_metrics", {"data": {"original_rows": 7}}, "7 rows"),

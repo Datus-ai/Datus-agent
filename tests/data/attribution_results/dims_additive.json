@@ -1,0 +1,91 @@
+{
+ "schema_version": 3,
+ "status": "complete",
+ "metric": "store_sales_amount",
+ "dimensions": [
+  "item.i_category"
+ ],
+ "algorithm": "exact_linear",
+ "accuracy": "exact",
+ "tree": {
+  "label": "store_sales_amount",
+  "metric": "store_sales_amount",
+  "expression": "SUM(ss_ext_sales_price)",
+  "baseline": 1019954026.3199998,
+  "current": 1024805506.6300001,
+  "delta": 4851480.3100003,
+  "effect": 4851480.3100003,
+  "share": 1.0,
+  "groups_total": 11,
+  "others": {
+   "group_count": 6,
+   "effect": -643.8900000094436,
+   "share": -0.00013272031604090004
+  },
+  "children": [
+   {
+    "label": "Children",
+    "key": {
+     "i_category": "Children"
+    },
+    "baseline": 99319529.32,
+    "current": 102535817.04,
+    "delta": 3216287.7200000137,
+    "effect": 3216287.7200000137,
+    "share": 0.6629497626467363
+   },
+   {
+    "label": "Home",
+    "key": {
+     "i_category": "Home"
+    },
+    "baseline": 102083599.32,
+    "current": 104823721.11,
+    "delta": 2740121.7900000066,
+    "effect": 2740121.7900000066,
+    "share": 0.5648011771483077
+   },
+   {
+    "label": "Sports",
+    "key": {
+     "i_category": "Sports"
+    },
+    "baseline": 99895011.16,
+    "current": 102049045.44,
+    "delta": 2154034.280000001,
+    "effect": 2154034.280000001,
+    "share": 0.4439952637878206
+   },
+   {
+    "label": "Shoes",
+    "key": {
+     "i_category": "Shoes"
+    },
+    "baseline": 104487049.69,
+    "current": 102818170.29,
+    "delta": -1668879.399999991,
+    "effect": -1668879.399999991,
+    "share": -0.3439938520537637
+   },
+   {
+    "label": "Music",
+    "key": {
+     "i_category": "Music"
+    },
+    "baseline": 106743278.77,
+    "current": 105153838.58,
+    "delta": -1589440.1899999976,
+    "effect": -1589440.1899999976,
+    "share": -0.32761963121311716
+   }
+  ]
+ },
+ "issues": [],
+ "execution": {
+  "queries_executed": 4,
+  "rows_fetched": 24,
+  "evaluations_executed": 2,
+  "elapsed_ms": 28,
+  "budget_exhausted": []
+ }
+}

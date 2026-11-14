@@ -1,0 +1,25 @@
+{
+ "schema_version": 3,
+ "status": "unsupported",
+ "metric": "store_distinct_list_prices",
+ "dimensions": [
+  "item.i_category"
+ ],
+ "algorithm": null,
+ "accuracy": null,
+ "tree": null,
+ "issues": [
+  {
+   "code": "insufficient_state",
+   "severity": "error",
+   "message": "`COUNT(DISTINCT ss_list_price)` counts distinct values: its groups do not add up to the whole, and the state that would is not fetched"
+  }
+ ],
+ "execution": {
+  "queries_executed": 0,
+  "rows_fetched": 0,
+  "evaluations_executed": 0,
+  "elapsed_ms": 7,
+  "budget_exhausted": []
+ }
+}

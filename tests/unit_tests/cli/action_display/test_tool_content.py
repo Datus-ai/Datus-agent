@@ -14,7 +14,7 @@ from datus.cli.action_display.tool_content import (
     ToolCallContent,
     ToolCallContentBuilder,
     _build_ask_user,
-    _build_attribution_analyze,
+    _build_attribution,
     _build_bash,
     _build_check_exists,
     _build_describe_table,
@@ -1512,19 +1512,17 @@ class TestBuildValidateSemantic:
 
 
 @pytest.mark.ci
-class TestBuildAttributionAnalyze:
-    def test_compact(self):
+class TestBuildAttribution:
+    @pytest.mark.parametrize("name", ["attribute_metrics", "attribute_dimensions"])
+    def test_compact(self, name):
         a = _make(
-            input_data={"function_name": "attribution_analyze"},
+            input_data={"function_name": name},
             output_data={
-                "raw_output": '{"success": 1, "result": {'
-                '"implementation": "generic", "strategy": "term_wise", '
-                '"per_dimension": {"d1": {"values": [], "non_additive": false}}, '
-                '"warnings": [{"code": "dimension_analysis_failed", "dimension": "d2"}]}}'
+                "raw_output": '{"success": 1, "result": "status complete\\n\\nm = a / b | 2 \\u2192 3 | +1 (100.0%)\\n  a [input] | 2 \\u2192 4 | +1.5 (150.0%)\\n  b [input] | 1 \\u2192 1.3333 | -0.5 (-50.0%)"}'
             },
         )
-        tc = _build_attribution_analyze(a, verbose=False)
-        assert tc.compact_result == "generic term_wise, 1/2 dimensions usable, 1 failed, 1 warning"
+        tc = _build_attribution(a, verbose=False)
+        assert tc.compact_result == "complete · Δ +1 · a +1.5 (150.0%)"
 
 
 # ── Filesystem tools ──────────────────────────────────────────────
@@ -2127,7 +2125,8 @@ class TestAllToolsRegistered:
         "get_metric",
         "query_metrics",
         "validate_semantic",
-        "attribution_analyze",
+        "attribute_metrics",
+        "attribute_dimensions",
         # Filesystem
         "edit_file",
         "write_file",

@@ -18,7 +18,7 @@ summaries are produced uniformly by :func:`format_failure`.
 
 Most summaries are clipped to ``SUMMARY_TEXT_MAX_CHARS`` characters at the
 registry exit. Tools whose compact contract requires complete identifiers,
-including filesystem tools and ``attribution_analyze``, bypass the clip.
+including filesystem tools and the two attribution tools, bypass the clip.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ SUMMARY_ERROR_MAX_CHARS = 19
 FS_TOOLS_NO_CLIP = frozenset(
     {"read_file", "read_image", "write_file", "edit_file", "delete_file", "glob", "grep", "web_search", "web_fetch"}
 )
-SUMMARY_TOOLS_NO_CLIP = FS_TOOLS_NO_CLIP | frozenset({"attribution_analyze"})
+SUMMARY_TOOLS_NO_CLIP = FS_TOOLS_NO_CLIP | frozenset({"attribute_metrics", "attribute_dimensions"})
 
 
 # ── Generic helpers (public API) ────────────────────────────────────────
@@ -562,67 +562,12 @@ def _fmt_validate_semantic(result: Any) -> str:
     return ""
 
 
-def _fmt_attribution_analyze(result: Any) -> str:
-    if isinstance(result, dict):
-        implementation = result.get("implementation")
-        strategy = result.get("strategy")
-        summary_parts = [" ".join(str(item) for item in (implementation, strategy) if item)]
-        summary_parts = [part for part in summary_parts if part]
-        if strategy == "unsupported":
-            reason = result.get("unsupported_reason")
-            code = reason.get("code") if isinstance(reason, dict) else None
-            if code:
-                summary_parts.append(str(code))
-            return "; ".join(summary_parts)
+def _fmt_attribution(result: Any) -> str:
+    """``complete · Δ +1.08 · store_sales_amount +0.355 (32.9%)`` from the text
+    either attribution tool returns."""
+    from datus.tools.semantic_tools.dosi.attribution_text import summarize_attribution_text
 
-        warnings = result.get("warnings") or []
-        failed_count = sum(
-            1
-            for warning in warnings
-            if isinstance(warning, dict) and warning.get("code") == "dimension_analysis_failed"
-        )
-        per_dimension = result.get("per_dimension")
-        if isinstance(per_dimension, dict) and per_dimension:
-            usable_count = 0
-            non_additive_count = 0
-            truncated_count = 0
-            for dimension_result in per_dimension.values():
-                if not isinstance(dimension_result, dict):
-                    continue
-                if dimension_result.get("truncated"):
-                    truncated_count += 1
-                elif dimension_result.get("non_additive"):
-                    non_additive_count += 1
-                else:
-                    usable_count += 1
-
-            requested_count = len(per_dimension) + failed_count
-            noun = "dimension" if requested_count == 1 else "dimensions"
-            summary_parts.append(f"{usable_count}/{requested_count} {noun} usable")
-            if failed_count:
-                summary_parts.append(f"{failed_count} failed")
-            if non_additive_count:
-                summary_parts.append(f"{non_additive_count} non-additive")
-            if truncated_count:
-                summary_parts.append(f"{truncated_count} truncated")
-            warning_count = len(warnings) if isinstance(warnings, list) else 0
-            if warning_count:
-                summary_parts.append(pluralize(warning_count, "warning"))
-            return ", ".join(summary_parts)
-
-        selected = result.get("selected_dimensions") or []
-        if isinstance(selected, list) and selected:
-            summary_parts.append(f"selected {','.join(str(dimension) for dimension in selected)}")
-        warning_codes = []
-        if isinstance(warnings, list):
-            for warning in warnings:
-                code = warning.get("code") if isinstance(warning, dict) else None
-                if isinstance(code, str) and code and code not in warning_codes:
-                    warning_codes.append(code)
-        if warning_codes:
-            summary_parts.append(f"warnings {','.join(warning_codes)}")
-        return "; ".join(summary_parts)
-    return ""
+    return summarize_attribution_text(result)
 
 
 def _fmt_search_metrics(result: Any) -> str:
@@ -1276,7 +1221,8 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "query_metrics": _fmt_query_metrics,
         "select_records": _fmt_query_metrics,
         "validate_semantic": _fmt_validate_semantic,
-        "attribution_analyze": _fmt_attribution_analyze,
+        "attribute_metrics": _fmt_attribution,
+        "attribute_dimensions": _fmt_attribution,
         "search_metrics": _fmt_search_metrics,
         "search_reference_sql": _fmt_search_reference_sql,
         "search_semantic_objects": _fmt_search_semantic_objects,

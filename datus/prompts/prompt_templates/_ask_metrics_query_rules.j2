@@ -1,25 +1,20 @@
 {% set tools = tool_names or [] %}
-{% if "attribution_analyze" in tools %}
-## Attribution Playbook
+{% set explain_by_formula = "attribute_metrics" in tools %}
+{% set explain_by_groups = "attribute_dimensions" in tools %}
+{% if explain_by_formula or explain_by_groups %}
+## Explaining a Change
 
-- Use supplied business knowledge and metric/dataset descriptions to guide candidate dimensions and follow-up questions.
-{% if "read_file" in tools or "glob" in tools or "grep" in tools %}
-- When relevant business background is missing, consider a targeted project-file lookup using the available context tools. Reuse evidence already supplied; a file lookup is not a mandatory step before attribution.
+{% if explain_by_formula %}
+- If the metric is built from other metrics, call `attribute_metrics` first{% if explain_by_groups %}, then `attribute_dimensions` on the nodes with the largest effect that have a metric name, with the same periods, filters and params{% endif %}.
 {% endif %}
-- Distinguish measured dimension contributions from business explanations. Documented events may support an explanation, but do not establish causation by themselves; label unverified causes as hypotheses.
-- Use the fields of the datasets under `get_metric`'s `dimension_datasets`{% if "get_dataset" in tools %} (see `get_dataset`){% endif %} to choose 3-5 low-cardinality categorical candidates. Exclude time dimensions and numeric measures, IDs, or high-cardinality fields unless the user explicitly needs one.
-- Use equal-length baseline and current windows. If the result contains `unequal_windows`, disclose that values were not normalized before comparing them.
-- Read the observed change from `total_change`. If `strategy` is `unsupported`, disclose `unsupported_reason` and do not give a dimension-attribution conclusion.
-- Read detailed contributions from `per_dimension.<dimension>.values`. Never compare or add contribution percentages across different dimensions. `top_dimension_values` is only a cross-dimension display summary.
-- Do not interpret a dimension whose `non_additive` or `truncated` flag is true. A dimension omitted from `dimension_ranking` because it failed, was non-additive, or was truncated is not a low-scoring dimension.
-- For `mix_shift`, distinguish `mix_effect` from `rate_effect`. For `factor_shapley`, use `factors` to explain factor effects before discussing dimension values.
-- To drill into a top value, reuse its `drill_down.where_sql` as `where` and retain every parent filter from prior drill-down calls.
-- Always disclose attribution `warnings`:
-  - With `non_additive_dimension`, do not interpret that dimension's percentages as an additive decomposition.
-  - With `no_data_*`, `null_total_*`, or `zero_or_no_data_*`, do not give an attribution conclusion; {% if "query_metrics" in tools %}first confirm coverage with `query_metrics`{% else %}explain the missing coverage evidence{% endif %}.
-  - With `zero_total_delta` or `zero_total_delta_with_component_changes`, explain structural movement using absolute component deltas, not contribution percentages.
-  - With `high_cardinality_dimension`, attribute a coarser dimension first and use `where` to narrow the follow-up query.
-  - With `dimension_analysis_failed`, disclose the affected dimension and continue with successful dimensions only.
+{% if explain_by_groups %}
+- Choose the dimensions to split by from the question, the business knowledge supplied and the metric's and datasets' descriptions. To find which dimension explains a change, call `attribute_dimensions` once per candidate dimension, in parallel. Split a group further only when the question asks for it or one group dominates.
+{% endif %}
+{% if "read_file" in tools or "glob" in tools or "grep" in tools %}
+- Look up project files only for a specific missing business fact; an attribution does not need one.
+{% endif %}
+- Answer from the result of the metric the question asks about; a result for another metric is supporting detail.
+- Attribution says how much each part contributed, not why. Documented events can support an explanation; call an unverified cause a hypothesis. When the status is not complete, say so and give the reason.
 {% endif %}
 
 {% if "query_metrics" in tools %}

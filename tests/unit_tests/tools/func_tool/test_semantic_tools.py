@@ -16,8 +16,6 @@ from datus.tools.func_tool.base import FuncToolResult, normalize_null, trans_to_
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.semantic_tools import SemanticTools, _run_async, render_metric_list
 from datus.tools.semantic_tools.models import (
-    AttributionRequest,
-    AttributionWindow,
     QueryResult,
 )
 from datus.utils.query_result_text import QueryResultText, parse_query_result_text
@@ -1273,7 +1271,9 @@ class TestAllToolsName:
         assert "get_metric" in names
         assert "query_metrics" in names
         assert "validate_semantic" in names
-        assert "attribution_analyze" in names
+        assert "attribute_metrics" in names
+        assert "attribute_dimensions" in names
+        assert "attribution_analyze" not in names
 
 
 class TestAvailableTools:
@@ -1298,7 +1298,8 @@ class TestAvailableTools:
             "get_dataset",
             "query_metrics",
             "validate_semantic",
-            "attribution_analyze",
+            "attribute_metrics",
+            "attribute_dimensions",
         ]
         runtime.assert_not_called()
 
@@ -1853,6 +1854,32 @@ class TestRenderMetricDetail:
         assert lines[-1] == "time: none"
         assert not any(line.startswith(("path:", "params")) for line in lines)
 
+    def test_attribution_line_answers_for_both_tools(self):
+        from datus.tools.func_tool.semantic_tools import render_metric_detail
+
+        both = {"metrics": {"supported": True}, "dimensions": {"supported": True}}
+        lines = render_metric_detail({**RETURNING_METRIC, "attribution": both}).splitlines()
+        assert lines[-1] == "attribution: attribute_metrics yes; attribute_dimensions yes"
+
+        distinct = {
+            "metrics": {"supported": True},
+            "dimensions": {"supported": False, "code": "insufficient_state", "message": "counts distinct values"},
+        }
+        lines = render_metric_detail({**RETURNING_METRIC, "attribution": distinct}).splitlines()
+        assert lines[-1] == "attribution: attribute_metrics yes; attribute_dimensions no (insufficient_state)"
+
+        untimed = {
+            "metrics": {"supported": False, "code": "no_time_dimension", "message": "no time field"},
+            "dimensions": {"supported": False, "code": "no_time_dimension", "message": "no time field"},
+        }
+        lines = render_metric_detail({**RETURNING_METRIC, "attribution": untimed}).splitlines()
+        assert lines[-1] == (
+            "attribution: attribute_metrics no (no_time_dimension); attribute_dimensions no (no_time_dimension)"
+        )
+
+        # A catalog that says nothing about attribution gets no line.
+        assert not any(line.startswith("attribution") for line in render_metric_detail(RETURNING_METRIC).splitlines())
+
 
 class TestRenderDatasetDetail:
     def test_fields_markers_and_relationships(self):
@@ -2329,7 +2356,17 @@ class TestValidateSemantic:
         assert "runtime crash" in result.error
 
 
-class TestAttributionAnalyze:
+def _periods(**extra):
+    return dict(
+        baseline_start="2024-01-01",
+        baseline_end="2024-01-08",
+        current_start="2024-01-08",
+        current_end="2024-01-15",
+        **extra,
+    )
+
+
+class TestAttributionTools:
     def test_execution_failure_preserves_warehouse_cancellation_diagnostics(self, semantic_tools_with_runtime):
         from datus.tools.semantic_tools.exceptions import SemanticCoreException
 
@@ -2337,143 +2374,202 @@ class TestAttributionAnalyze:
         info = [{"query_execution_id": "athena-1", "cancellation_requested": True, "cancellation_confirmed": False}]
         tool._attribute = AsyncMock(side_effect=SemanticCoreException("warehouse timeout", execution_info=info))
 
-        result = tool.attribution_analyze(
-            metric_name="revenue",
-            candidate_dimensions=["region"],
-            baseline_start="2024-01-01",
-            baseline_end="2024-01-08",
-            current_start="2024-01-08",
-            current_end="2024-01-15",
-        )
+        result = tool.attribute_dimensions(metric="revenue", dimensions=["region"], **_periods())
 
         assert result.success == 0
         assert result.result == {"execution_info": info}
 
-    def test_tool_schema_exposes_drilldown_guardrail_parameters(self, semantic_tools_with_runtime):
+    def test_schemas_take_the_metric_query_fields_and_no_dry_run(self, semantic_tools_with_runtime):
         tool, _ = semantic_tools_with_runtime
 
-        schema = trans_to_function_tool(tool.attribution_analyze).params_json_schema
+        metrics = trans_to_function_tool(tool.attribute_metrics).params_json_schema
+        dimensions = trans_to_function_tool(tool.attribute_dimensions).params_json_schema
 
-        assert {
+        shared = {
+            "metric",
+            "baseline_start",
+            "baseline_end",
+            "current_start",
+            "current_end",
             "where",
-            "max_dimension_values",
-            "time_dimension",
+            "context_filter",
             "params",
-        }.issubset(schema["properties"])
-        assert "path" not in schema["properties"]
-        assert "anomaly_context" not in schema["properties"]
-        assert "exclusive" in schema["properties"]["baseline_end"]["description"].lower()
-        assert "exclusive" in schema["properties"]["current_end"]["description"].lower()
+            "group_by",
+            "time_dimension",
+        }
+        assert set(metrics["properties"]) == shared
+        assert set(dimensions["properties"]) == shared | {"dimensions", "top_groups"}
+        assert set(metrics["required"]) == {"metric", "baseline_start", "baseline_end", "current_start", "current_end"}
+        assert "dimensions" in dimensions["required"]
+        assert "exclusive" in metrics["properties"]["baseline_end"]["description"].lower()
+        assert "exclusive" in dimensions["properties"]["current_end"]["description"].lower()
 
-    def test_tool_description_is_explicitly_non_causal(self, semantic_tools_with_runtime):
+    def test_descriptions_say_how_to_read_the_text(self, semantic_tools_with_runtime):
         tool, _ = semantic_tools_with_runtime
 
-        description = " ".join(trans_to_function_tool(tool.attribution_analyze).description.lower().split())
+        metrics = " ".join(trans_to_function_tool(tool.attribute_metrics).description.split())
+        dimensions = " ".join(trans_to_function_tool(tool.attribute_dimensions).description.split())
 
-        assert "descriptive dimension analysis" in description
-        assert "do not establish causation" in description
-        assert "root cause analysis" not in description
-        assert "failed, truncated, and non-additive dimensions are excluded" in description
+        assert "A parent's effect is the sum of its children's" in metrics
+        assert "`<input> in all, <n> places | <effect>` then gives its whole effect" in metrics
+        assert "call it on that metric with group_by, and fix the row with where" in metrics
+        assert "can be passed as `metric` to attribute_dimensions" in metrics
+        assert "one drill-down in the order given" in dimensions
+        assert "call once per dimension" in dimensions
+        assert "Shares from different calls do not add up" in dimensions
 
-    def test_success_builds_unified_request(self, semantic_tools_with_runtime):
+    def test_flat_arguments_become_dosi_request_and_text(self, semantic_tools_with_runtime):
+        from tests.unit_tests.tools.semantic_tools.dosi_fakes import ATTRIBUTE_DIMENSIONS_RESULT
+
         tool, mock_runtime = semantic_tools_with_runtime
-        mock_result = Mock()
-        mock_result.model_dump.return_value = {
-            "metric": "revenue",
-            "implementation": "dosi",
-            "strategy": "term_wise",
-            "dimension_ranking": [],
-            "selected_dimensions": [],
-            "top_dimension_values": [],
-            "warnings": [{"code": "unequal_windows", "message": "not equal"}],
-        }
-        tool._attribute = AsyncMock(return_value=mock_result)
+        tool._attribute = AsyncMock(return_value=ATTRIBUTE_DIMENSIONS_RESULT)
 
-        result = tool.attribution_analyze(
-            metric_name="revenue",
-            candidate_dimensions=["region"],
-            baseline_start="2024-01-01",
-            baseline_end="2024-01-08",
-            current_start="2024-01-08",
-            current_end="2024-01-15",
-            where="region = 'US'",
-            max_dimension_values=25,
-            time_dimension="orders.order_date",
+        result = tool.attribute_dimensions(
+            metric="revenue",
+            dimensions=["orders.status", " orders.status ", "orders.order_date:month"],
+            where="orders.region = 'US'",
+            context_filter="orders.channel = 'web'",
             params={"currency": "USD"},
+            group_by=["orders.store", "orders.order_date:month"],
+            time_dimension="orders.order_date",
+            top_groups=5,
+            **_periods(),
         )
 
         assert result.success == 1
-        assert result.result["warnings"][0]["code"] == "unequal_windows"
-        called_runtime, request = tool._attribute.await_args.args
+        called_runtime, name, request = tool._attribute.await_args.args
         assert called_runtime is mock_runtime
-        assert request.metric == "revenue"
-        assert request.dimensions == ["region"]
-        assert request.where_sql == "region = 'US'"
-        assert request.max_values_per_dimension == 25
-        assert request.time_dimension == "orders.order_date"
-        assert request.params == {"currency": "USD"}
-        mock_result.model_dump.assert_called_once_with(exclude_none=True)
+        assert name == "attribute_dimensions"
+        assert request == {
+            "metric": "revenue",
+            "baseline": {"start": "2024-01-01", "end": "2024-01-08", "dimension": "orders.order_date"},
+            "current": {"start": "2024-01-08", "end": "2024-01-15", "dimension": "orders.order_date"},
+            "where_sql": "orders.region = 'US'",
+            "context_filter": "orders.channel = 'web'",
+            "params": {"currency": "USD"},
+            "group_by": [{"field": "orders.store"}, {"field": "orders.order_date", "grain": "month"}],
+            "dimensions": ["orders.status", "orders.order_date:month"],
+            "top_groups": 5,
+        }
+        assert result.result.splitlines() == [
+            "status complete",
+            "",
+            "revenue by orders.status | 100 → 150 | change +50",
+            "- paid | 80 → 140 | +60 (120.0%)",
+            "- refunded | 20 → 10 | -10 (-20.0%)",
+        ]
 
-    @pytest.mark.asyncio
-    async def test_attribute_prefers_native_runtime(self, semantic_tools_with_runtime):
-        tool, runtime = semantic_tools_with_runtime
-        native_result = Mock()
-        runtime.attribute = AsyncMock(return_value=native_result)
-        request = AttributionRequest(
-            metric="revenue",
-            dimensions=["region"],
-            baseline=AttributionWindow(start="2024-01-01", end="2024-01-08"),
-            current=AttributionWindow(start="2024-01-08", end="2024-01-15"),
+    def test_metric_tree_omits_what_was_not_given(self, semantic_tools_with_runtime):
+        from tests.unit_tests.tools.semantic_tools.dosi_fakes import ATTRIBUTE_METRICS_RESULT
+
+        tool, _ = semantic_tools_with_runtime
+        tool._attribute = AsyncMock(return_value=ATTRIBUTE_METRICS_RESULT)
+
+        result = tool.attribute_metrics(metric="avg_order_value", where="", params={}, group_by=[], **_periods())
+
+        _, name, request = tool._attribute.await_args.args
+        assert name == "attribute_metrics"
+        assert request == {
+            "metric": "avg_order_value",
+            "baseline": {"start": "2024-01-01", "end": "2024-01-08"},
+            "current": {"start": "2024-01-08", "end": "2024-01-15"},
+        }
+        assert result.result.splitlines()[2:] == [
+            "avg_order_value = revenue / order_count | 50 → 60 | +10 (100.0%)",
+            "  revenue [input] | 1000 → 1500 | +22.5 (225.0%)",
+            "  order_count [input] | 20 → 25 | -12.5 (-125.0%)",
+        ]
+
+    def test_periods_of_different_length_get_a_note(self, semantic_tools_with_runtime):
+        from tests.unit_tests.tools.semantic_tools.dosi_fakes import ATTRIBUTE_METRICS_RESULT
+
+        tool, _ = semantic_tools_with_runtime
+        tool._attribute = AsyncMock(return_value=ATTRIBUTE_METRICS_RESULT)
+
+        result = tool.attribute_metrics(
+            metric="avg_order_value",
+            baseline_start="2024-02-01",
+            baseline_end="2024-03-01",
+            current_start="2024-03-01",
+            current_end="2024-04-01",
         )
 
-        result = await tool._attribute(runtime, request)
+        assert result.result.splitlines()[1] == (
+            "note the periods differ in length (29 days and 31 days); values are not scaled to one length"
+        )
 
-        assert result is native_result
+    def test_an_unsupported_metric_is_an_answer_not_a_failure(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
+        tool._attribute = AsyncMock(
+            return_value={
+                "schema_version": 3,
+                "status": "unsupported",
+                "metric": "distinct_buyers",
+                "dimensions": ["orders.status"],
+                "algorithm": None,
+                "accuracy": None,
+                "tree": None,
+                "issues": [
+                    {
+                        "code": "insufficient_state",
+                        "severity": "error",
+                        "message": "`COUNT(DISTINCT buyer)` counts distinct values",
+                    }
+                ],
+                "execution": {},
+            }
+        )
+
+        result = tool.attribute_dimensions(metric="distinct_buyers", dimensions=["orders.status"], **_periods())
+
+        assert result.success == 1
+        assert result.result == (
+            "status unsupported\nissue error insufficient_state: `COUNT(DISTINCT buyer)` counts distinct values"
+        )
+
+    @pytest.mark.asyncio
+    async def test_attribute_calls_the_runtime_method_of_the_tool(self, semantic_tools_with_runtime):
+        tool, runtime = semantic_tools_with_runtime
+        runtime.attribute_metrics = AsyncMock(return_value={"status": "complete"})
+
+        result = await tool._attribute(runtime, "attribute_metrics", {"metric": "revenue"})
+
+        assert result == {"status": "complete"}
+        runtime.attribute_metrics.assert_awaited_once_with({"metric": "revenue"})
 
     def test_exception_returns_failure(self, semantic_tools_with_runtime):
         tool, _ = semantic_tools_with_runtime
         tool._attribute = AsyncMock(side_effect=Exception("analysis failed"))
 
-        result = tool.attribution_analyze(
-            metric_name="revenue",
-            candidate_dimensions=["region"],
-            baseline_start="2024-01-01",
-            baseline_end="2024-01-08",
-            current_start="2024-01-08",
-            current_end="2024-01-15",
-        )
+        result = tool.attribute_metrics(metric="revenue", **_periods())
 
         assert result.success == 0
-        assert "analysis failed" in result.error
+        assert result.error == "attribute_metrics failed: analysis failed"
 
-    def test_native_validation_exception_returns_runtime_payload(self, semantic_tools_with_runtime):
+    def test_request_error_is_its_code_and_message(self, semantic_tools_with_runtime):
         tool, _ = semantic_tools_with_runtime
         payload = Mock(
             error_type="semantic_validation_error",
-            code="unknown_metric",
-            message="Unknown metric 'revenues'.",
+            code="dimensions_required",
+            message="name at least one dimension | candidates: orders.status, customers.region",
         )
         payload.model_dump.return_value = {
             "error_type": "semantic_validation_error",
-            "code": "unknown_metric",
-            "message": "Unknown metric 'revenues'.",
+            "code": "dimensions_required",
+            "message": payload.message,
+            "candidates": ["orders.status", "customers.region"],
         }
         error = Exception(payload.message)
         error.payload = payload
         tool._attribute = AsyncMock(side_effect=error)
 
-        result = tool.attribution_analyze(
-            metric_name="revenues",
-            candidate_dimensions=["region"],
-            baseline_start="2024-01-01",
-            baseline_end="2024-01-08",
-            current_start="2024-01-08",
-            current_end="2024-01-15",
-        )
+        result = tool.attribute_dimensions(metric="revenue", dimensions=[], **_periods())
 
         assert result.success == 0
-        assert result.error == "Unknown metric 'revenues'."
-        assert result.result["code"] == "unknown_metric"
+        assert result.error == (
+            "dimensions_required: name at least one dimension | candidates: orders.status, customers.region"
+        )
+        assert result.result["candidates"] == ["orders.status", "customers.region"]
 
 
 class TestExtractDbConfig:

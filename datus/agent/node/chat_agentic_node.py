@@ -57,7 +57,8 @@ class ChatAgenticNode(AgenticNode):
         "get_dataset",
         "query_metrics",
         "get_query_metrics_result",
-        "attribution_analyze",
+        "attribute_metrics",
+        "attribute_dimensions",
     )
 
     # Subclasses whose contract is read-only (e.g. artifact ask agents) set this

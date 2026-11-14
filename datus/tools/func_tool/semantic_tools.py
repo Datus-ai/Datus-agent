@@ -19,6 +19,7 @@ import secrets
 import weakref
 from collections import OrderedDict
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple
 
@@ -36,12 +37,8 @@ from datus.tools.func_tool.base import (
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.registry.contracts import tool_contract
 from datus.tools.semantic_tools.dosi import DosiConfig, DosiRuntime
+from datus.tools.semantic_tools.dosi.attribution_text import render_attribution
 from datus.tools.semantic_tools.dosi.engine import has_model_files
-from datus.tools.semantic_tools.models import (
-    AttributionRequest,
-    AttributionResult,
-    AttributionWindow,
-)
 from datus.tools.semantic_tools.paging import (
     METRIC_CATALOG_MAX_PAGES,
     METRIC_CATALOG_PAGE_SIZE,
@@ -281,7 +278,32 @@ def render_metric_detail(detail: Mapping[str, Any], subject_path: Optional[List[
         line("requires_time_axis", "true")
     grains = detail.get("time_granularities") or []
     line("time", f"metric_time ({', '.join(grains)})" if grains else "none")
+    line("attribution", _render_attribution_capability(detail.get("attribution")))
     return "\n".join(lines)
+
+
+# Dosi's catalog ``attribution`` keys, by the tool each one is about.
+_ATTRIBUTION_TOOLS = (("metrics", "attribute_metrics"), ("dimensions", "attribute_dimensions"))
+
+
+def _render_attribution_capability(capability: Any) -> Optional[str]:
+    """``attribute_metrics yes; attribute_dimensions no (<code>)``: whether
+    each tool can explain the metric, with the code a call would be refused
+    with. Both are always written, so a metric one tool cannot explain does
+    not read as the only one with a limit. None when the catalog says
+    nothing."""
+    if not isinstance(capability, Mapping):
+        return None
+    parts = []
+    for key, tool in _ATTRIBUTION_TOOLS:
+        support = capability.get(key)
+        if not isinstance(support, Mapping) or not isinstance(support.get("supported"), bool):
+            continue
+        if support["supported"]:
+            parts.append(f"{tool} yes")
+        else:
+            parts.append(f"{tool} no ({support.get('code') or 'unsupported'})")
+    return "; ".join(parts) or None
 
 
 def _render_query_warning(warning: Any) -> str:
@@ -406,6 +428,29 @@ def _normalize_name_list(value) -> List[str]:
         if text:
             names.append(text)
     return names
+
+
+def _period_days(window: Mapping[str, Any]) -> Optional[float]:
+    """A period's length in days, when both ends are ISO dates or timestamps."""
+    try:
+        start = datetime.fromisoformat(str(window.get("start")))
+        end = datetime.fromisoformat(str(window.get("end")))
+    except (TypeError, ValueError):
+        return None
+    return (end - start).total_seconds() / 86400
+
+
+def _period_length_notes(baseline: Mapping[str, Any], current: Mapping[str, Any]) -> List[str]:
+    """A note when the two periods differ in length: Dosi compares the values
+    as they are, a total over 31 days with one over 30."""
+    before, after = _period_days(baseline), _period_days(current)
+    if before is None or after is None or before == after:
+        return []
+
+    def days(value: float) -> str:
+        return f"{value:g} day" + ("" if value == 1 else "s")
+
+    return [f"the periods differ in length ({days(before)} and {days(after)}); values are not scaled to one length"]
 
 
 def _normalize_optional_path(value) -> Optional[List[str]]:
@@ -595,7 +640,8 @@ class SemanticTools:
             "get_dataset",
             "query_metrics",
             "validate_semantic",
-            "attribution_analyze",
+            "attribute_metrics",
+            "attribute_dimensions",
             *cls.ONTOLOGY_TOOL_NAMES,
         ]
 
@@ -1387,9 +1433,6 @@ class SemanticTools:
                     )
         return bound
 
-    async def _attribute(self, runtime: DosiRuntime, request: AttributionRequest) -> AttributionResult:
-        return await runtime.attribute(request)
-
     def _runtime_unavailable_message(self) -> str:
         """Return a consistent message for Dosi runtime failures."""
         if self._runtime_load_error:
@@ -1447,7 +1490,8 @@ class SemanticTools:
             trans_to_function_tool(self.get_dataset),
             trans_to_function_tool(self.query_metrics),
             trans_to_function_tool(self.validate_semantic),
-            trans_to_function_tool(self.attribution_analyze),
+            trans_to_function_tool(self.attribute_metrics),
+            trans_to_function_tool(self.attribute_dimensions),
         ]
         if self.ontology_enabled:
             tools.extend(trans_to_function_tool(getattr(self, name)) for name in self.ONTOLOGY_TOOL_NAMES)
@@ -1831,6 +1875,9 @@ class SemanticTools:
           the default); ``none`` for a metric
           whose table has no time field (a snapshot): query it without
           time_start/time_end and pick the day it reads in ``where``.
+        - ``attribution``: whether attribute_metrics and attribute_dimensions
+          can each explain this metric's change: ``yes``, or ``no (<code>)``
+          with the code a call would be refused with.
 
         Args:
             name: Exact metric name from the selected model or metric catalog.
@@ -2616,94 +2663,230 @@ class SemanticTools:
     @tool_schema(strict_mode=False)
     @mcp_tool()
     @tool_contract(access="read", direct_call=True)
-    def attribution_analyze(
+    def attribute_metrics(
         self,
-        metric_name: str,
-        candidate_dimensions: List[str],
+        metric: str,
         baseline_start: str,
         baseline_end: str,
         current_start: str,
         current_end: str,
-        max_selected_dimensions: int = 3,
-        top_n_values: int = 10,
         where: Optional[str] = None,
-        max_dimension_values: int = 500,
-        time_dimension: Optional[str] = None,
+        context_filter: Optional[str] = None,
         params: Optional[Dict[str, Any]] = None,
+        group_by: Optional[List[str]] = None,
+        time_dimension: Optional[str] = None,
     ) -> FuncToolResult:
         """
-        Descriptive dimension analysis for metric changes.
+        Explain a metric's change between two periods through its formula: which
+        inputs moved it and by how much. Use it first when the metric is built
+        from other metrics (get_metric `expr`). A rank, a share of a total or a
+        change on the period before is explained the same way: call it on that
+        metric with group_by, and fix the row with where.
 
-        Ranks candidate dimensions by change concentration and calculates delta
-        contributions for selected dimensions. Results describe where a metric change
-        is concentrated; they do not establish causation. Failed, truncated, and
-        non-additive dimensions are excluded from rankings and summary contributions.
+        The result is text: a `status` line, `issue` lines when something is
+        missing or refused, then the formula tree, one node per line, indented
+        by level:
+          <metric> = <formula> | <baseline> → <current> | <effect> (<share>)
+        - effect is the node's contribution to the top line's change, in the
+          metric's unit. A parent's effect is the sum of its children's; share
+          is effect over the top line's change. A node's own change is not its
+          effect: a growing denominator has a negative effect.
+        - `[input]` is an aggregate read from data, named by its metric. One
+          input can sit under several parents (a ratio's numerator and
+          denominator); a last line `<input> in all, <n> places | <effect>`
+          then gives its whole effect. Quote that, not one of its lines.
+        - To say what drove the change, compare the inputs by their whole
+          effects. A formula node in between (a numerator, a denominator, an
+          average of channels) only groups inputs; it is not a cause itself.
+        - A node written `<metric> = …` or `<metric> [input]` can be passed as
+          `metric` to attribute_dimensions with the same other arguments; a
+          formula in parentheses cannot.
+        - `row` is the row the top line reads, for a metric with group_by;
+          `@ field=value` is the row or period a node reads where it differs
+          (the month before, the row being ranked).
+        Numbers have 6 significant digits; sums can differ in the last one.
 
         Args:
-            metric_name: Metric to analyze(from list_metrics/search_metrics)
-            candidate_dimensions: List of dimensions to evaluate (from get_metric)
-            baseline_start: Inclusive baseline start date in an OSI half-open range (e.g., "2026-01-01")
-            baseline_end: Exclusive baseline end date (e.g., "2026-01-08" for Jan 1-7)
-            current_start: Inclusive current start date in an OSI half-open range (e.g., "2026-01-08")
-            current_end: Exclusive current end date (e.g., "2026-01-15" for Jan 8-14)
-            max_selected_dimensions: Maximum dimensions to select (default 3)
-            top_n_values: Number of top dimension values to return (default 10)
-            where: Optional SQL boolean expression applied to every attribution query
-            max_dimension_values: Maximum grouped values per dimension (hard-capped at 1000)
-            time_dimension: Optional metric time dimension used for both windows
-            params: Optional parameter bindings for a parameterized metric
-
-        Returns:
-            FuncToolResult with:
-            - dimension_ranking: All dimensions ranked by importance score
-            - selected_dimensions: Top dimensions selected for analysis
-            - top_dimension_values: Delta contributions of dimension values
-            - implementation: dosi or generic
-            - strategy: term_wise, mix_shift, factor_shapley, or unsupported
-            - total_change: Baseline, current, and delta values
-            - per_dimension: Per-dimension contribution details
+            metric: The metric to explain.
+            baseline_start: Start of the earlier period, YYYY-MM-DD, inclusive.
+            baseline_end: End of the earlier period, exclusive.
+            current_start: Start of the later period, inclusive. Make the two periods the same length.
+            current_end: End of the later period, exclusive.
+            where: As in query_metrics; it cannot name a metric.
+            context_filter: As in query_metrics.
+            params: As in query_metrics.
+            group_by: Only for a metric computed per row of a grouping (a rank, a share of a total,
+                a previous-period or running value, or get_metric `required`): its fields,
+                `dataset.field[:grain]`. where must then fix each with `field = value`, so the
+                target is one row.
+            time_dimension: The time field to cut the periods on, if not the metric's own.
         """
-        scope_error = self._check_metric_scope([metric_name])
+        return self._run_attribution(
+            "attribute_metrics",
+            self._attribution_request(
+                metric,
+                baseline_start,
+                baseline_end,
+                current_start,
+                current_end,
+                where=where,
+                context_filter=context_filter,
+                params=params,
+                group_by=group_by,
+                time_dimension=time_dimension,
+            ),
+        )
+
+    # Dosi parameter names come from metric declarations and require an open schema.
+    @tool_schema(strict_mode=False)
+    @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
+    def attribute_dimensions(
+        self,
+        metric: str,
+        dimensions: List[str],
+        baseline_start: str,
+        baseline_end: str,
+        current_start: str,
+        current_end: str,
+        where: Optional[str] = None,
+        context_filter: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+        group_by: Optional[List[str]] = None,
+        time_dimension: Optional[str] = None,
+        top_groups: Optional[int] = None,
+    ) -> FuncToolResult:
+        """
+        Explain a metric's change between two periods by the groups of its
+        dimensions: which groups moved it and by how much.
+
+        The result is text: a `status` line, `issue` lines, a line for the
+        metric, then its groups:
+          - <value> | <baseline> → <current> | <effect> (<share>) | <n> below
+        - baseline → current is the metric computed on that group alone; `no own
+          value` for a metric that compares rows, such as a rank.
+        - effect is the group's contribution to the metric's change. The groups
+          under a parent, with its `others` line, add up to the parent's effect.
+        - The tree lists the top_groups largest effects across all levels, with
+          the groups above them; the rest are summed in `others` lines.
+        Several dimensions are one drill-down in the order given (region, then
+        city within each region), not separate views. To compare dimensions,
+        call once per dimension; the calls can run in parallel. Shares from
+        different calls do not add up.
+
+        Args:
+            metric: The metric to explain.
+            dimensions: What to split by, fields as `dataset.field[:grain]` of the datasets
+                get_metric lists under `dimension_datasets`; a field that does not exist is
+                answered with the candidates. Business categories, not ids and not the time field
+                the periods are cut on.
+            baseline_start: Start of the earlier period, YYYY-MM-DD, inclusive.
+            baseline_end: End of the earlier period, exclusive.
+            current_start: Start of the later period, inclusive. Make the two periods the same length.
+            current_end: End of the later period, exclusive.
+            where: As in attribute_metrics.
+            context_filter: As in attribute_metrics.
+            params: As in attribute_metrics.
+            group_by: As in attribute_metrics.
+            time_dimension: As in attribute_metrics.
+            top_groups: How many groups to list in all (default 20, at most 200).
+        """
+        request = self._attribution_request(
+            metric,
+            baseline_start,
+            baseline_end,
+            current_start,
+            current_end,
+            where=where,
+            context_filter=context_filter,
+            params=params,
+            group_by=group_by,
+            time_dimension=time_dimension,
+        )
+        request["dimensions"] = list(dict.fromkeys(_normalize_name_list(dimensions)))
+        if top_groups is not None:
+            request["top_groups"] = top_groups
+        return self._run_attribution("attribute_dimensions", request)
+
+    @staticmethod
+    def _attribution_request(
+        metric: str,
+        baseline_start: str,
+        baseline_end: str,
+        current_start: str,
+        current_end: str,
+        *,
+        where: Optional[str],
+        context_filter: Optional[str],
+        params: Optional[Dict[str, Any]],
+        group_by: Optional[List[str]],
+        time_dimension: Optional[str],
+    ) -> Dict[str, Any]:
+        """The tool's flat arguments as Dosi's request: two periods on one time
+        field, ``group_by`` fields as ``{field, grain}``."""
+        dimension = str(normalize_null(time_dimension) or "").strip() or None
+
+        def period(start: str, end: str) -> Dict[str, Any]:
+            window: Dict[str, Any] = {"start": str(start).strip(), "end": str(end).strip()}
+            if dimension:
+                window["dimension"] = dimension
+            return window
+
+        request: Dict[str, Any] = {
+            "metric": str(normalize_null(metric) or "").strip(),
+            "baseline": period(baseline_start, baseline_end),
+            "current": period(current_start, current_end),
+        }
+        where = normalize_null(where)
+        if where:
+            request["where_sql"] = where
+        context_filter = normalize_null(context_filter)
+        if context_filter:
+            request["context_filter"] = context_filter
+        params = normalize_null(params)
+        if params:
+            request["params"] = params
+        fields = []
+        for text in _normalize_name_list(group_by):
+            field, _, grain = text.partition(":")
+            fields.append({"field": field, "grain": grain} if grain else {"field": field})
+        if fields:
+            request["group_by"] = fields
+        return request
+
+    async def _attribute(self, runtime: DosiRuntime, tool_name: str, request: Dict[str, Any]) -> Dict[str, Any]:
+        return await getattr(runtime, tool_name)(request)
+
+    def _run_attribution(self, tool_name: str, request: Dict[str, Any]) -> FuncToolResult:
+        """Run one attribution tool and answer with its text. A result is a
+        success whatever its status: an unsupported metric is an answer, said by
+        the status and issue lines. Only a refused request or a failed call is a
+        failure."""
+        scope_error = self._check_metric_scope([request["metric"]])
         if scope_error is not None:
             return scope_error
-        runtime, error = self._require_runtime("attribution_analyze")
+        runtime, error = self._require_runtime(tool_name)
         if error:
             return error
         assert runtime is not None
-
         try:
-            request = AttributionRequest(
-                metric=metric_name,
-                dimensions=candidate_dimensions,
-                baseline=AttributionWindow(start=baseline_start, end=baseline_end),
-                current=AttributionWindow(start=current_start, end=current_end),
-                where_sql=where,
-                time_dimension=time_dimension,
-                max_values_per_dimension=max_dimension_values,
-                top_n_dimensions=max_selected_dimensions,
-                top_n_values=top_n_values,
-                params=params or {},
-            )
-            result = _run_async(self._attribute(runtime, request))
-
-            return FuncToolResult(
-                success=1,
-                result=result.model_dump(exclude_none=True),
-            )
-
-        except Exception as e:
+            result = _run_async(self._attribute(runtime, tool_name, request))
+        except Exception as e:  # noqa: BLE001 - reported to the model below
             payload = getattr(e, "payload", None)
             if payload is not None and getattr(payload, "error_type", None) == "semantic_validation_error":
                 data = payload.model_dump() if hasattr(payload, "model_dump") else dict(payload)
-                logger.debug("attribution validation rejection: code=%s", data.get("code"))
+                logger.debug("%s rejected the request: code=%s", tool_name, data.get("code"))
                 return FuncToolResult(
                     success=0,
-                    error=getattr(payload, "message", "") or "attribution validation failed",
+                    error=f"{data.get('code')}: {getattr(payload, 'message', '') or 'invalid request'}",
                     result=data,
                 )
-            logger.error(f"Error in attribution analysis: {e}")
+            logger.error(f"{tool_name} failed: {e}")
+            info = getattr(e, "execution_info", None)
             return FuncToolResult(
                 success=0,
-                error=f"Failed to analyze attribution: {str(e)}",
-                result={"execution_info": e.execution_info} if getattr(e, "execution_info", None) else None,
+                error=f"{tool_name} failed: {e}",
+                result={"execution_info": info} if info else None,
             )
+        notes = _period_length_notes(request["baseline"], request["current"])
+        return FuncToolResult(success=1, result=render_attribution(result, notes))
