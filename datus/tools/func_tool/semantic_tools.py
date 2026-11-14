@@ -278,7 +278,7 @@ def render_metric_detail(detail: Mapping[str, Any], subject_path: Optional[List[
         line("requires_time_axis", "true")
     grains = detail.get("time_granularities") or []
     line("time", f"metric_time ({', '.join(grains)})" if grains else "none")
-    line("attribution", _render_attribution_refusals(detail.get("attribution")))
+    line("attribution", _render_attribution_capability(detail.get("attribution")))
     return "\n".join(lines)
 
 
@@ -286,18 +286,24 @@ def render_metric_detail(detail: Mapping[str, Any], subject_path: Optional[List[
 _ATTRIBUTION_TOOLS = (("metrics", "attribute_metrics"), ("dimensions", "attribute_dimensions"))
 
 
-def _render_attribution_refusals(capability: Any) -> Optional[str]:
-    """``attribute_metrics <code>; attribute_dimensions <code>`` for the tools
-    that cannot explain the metric, by the code a call would be refused with.
-    None when both can: the usual case costs no line."""
+def _render_attribution_capability(capability: Any) -> Optional[str]:
+    """``attribute_metrics yes; attribute_dimensions no (<code>)``: whether
+    each tool can explain the metric, with the code a call would be refused
+    with. Both are always written, so a metric one tool cannot explain does
+    not read as the only one with a limit. None when the catalog says
+    nothing."""
     if not isinstance(capability, Mapping):
         return None
-    refused = []
+    parts = []
     for key, tool in _ATTRIBUTION_TOOLS:
         support = capability.get(key)
-        if isinstance(support, Mapping) and support.get("supported") is False:
-            refused.append(f"{tool} {support.get('code') or 'unsupported'}")
-    return "; ".join(refused) or None
+        if not isinstance(support, Mapping) or not isinstance(support.get("supported"), bool):
+            continue
+        if support["supported"]:
+            parts.append(f"{tool} yes")
+        else:
+            parts.append(f"{tool} no ({support.get('code') or 'unsupported'})")
+    return "; ".join(parts) or None
 
 
 def _render_query_warning(warning: Any) -> str:
@@ -1869,9 +1875,9 @@ class SemanticTools:
           the default); ``none`` for a metric
           whose table has no time field (a snapshot): query it without
           time_start/time_end and pick the day it reads in ``where``.
-        - ``attribution``: an attribution tool that cannot explain this
-          metric's change, with the reason code a call would get; absent when
-          both can.
+        - ``attribution``: whether attribute_metrics and attribute_dimensions
+          can each explain this metric's change: ``yes``, or ``no (<code>)``
+          with the code a call would be refused with.
 
         Args:
             name: Exact metric name from the selected model or metric catalog.
