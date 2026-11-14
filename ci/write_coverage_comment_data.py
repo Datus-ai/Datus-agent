@@ -16,6 +16,7 @@ def main() -> None:
         "head_repo_id": int(os.environ["PR_HEAD_REPO_ID"]),
         "head_ref": os.environ["PR_HEAD_REF"],
         "metrics": {
+            "coverage_applicable": os.environ.get("METRIC_COVERAGE_APPLICABLE", "true") == "true",
             "overall": os.environ["METRIC_OVERALL"],
             "diff": os.environ["METRIC_DIFF"],
             "test_outcome": os.environ["METRIC_TEST_OUTCOME"],

@@ -456,6 +456,47 @@ def test_required_cases_must_execute_successfully(tmp_path, outcome):
     assert "test_api.py::test_history" in result["errors"][0]
 
 
+@pytest.mark.parametrize("outcome", ["passed", "skipped", "xfailed", "not_executed", "missing"])
+def test_scoped_ci_plan_keeps_execution_proof_without_runtime_core(tmp_path, outcome):
+    node = "tests/unit_tests/ci/test_contract.py::test_contract"
+    report = tmp_path / "execution.json"
+    report.write_text(
+        json.dumps(
+            {
+                "collected": [] if outcome == "missing" else [node],
+                "outcomes": {} if outcome in {"missing", "not_executed"} else {node: outcome},
+            }
+        )
+    )
+    result = check_execution([report], "pr_acceptance", _map(), required=["tests/unit_tests/ci/test_contract.py"])
+    assert result["status"] == ("success" if outcome == "passed" else "failure")
+    assert "test_core.py::test_query" not in result["evidence"]
+
+
+def test_package_selection_keeps_optional_skips_but_cannot_pass_without_execution(tmp_path):
+    report = tmp_path / "execution.json"
+    nodes = {
+        "tests/unit_tests/ci/test_docs.py::test_optional": "skipped",
+        "tests/unit_tests/ci/test_contract.py::test_contract": "passed",
+    }
+    report.write_text(json.dumps({"collected": list(nodes), "outcomes": nodes}))
+    assert check_execution([report], "pr_acceptance", _map(), required=["tests/unit_tests/ci/"])["status"] == "success"
+    nodes = dict.fromkeys(nodes, "skipped")
+    report.write_text(json.dumps({"collected": list(nodes), "outcomes": nodes}))
+    assert check_execution([report], "pr_acceptance", _map(), required=["tests/unit_tests/ci/"])["status"] == "failure"
+
+
+def test_explicit_mandatory_case_cannot_be_excused_as_a_scheduled_exclusion(tmp_path):
+    report = tmp_path / "execution.json"
+    report.write_text(
+        json.dumps({"collected": [], "outcomes": {}, "excluded": {"test_core.py::test_query": "nightly"}})
+    )
+    result = check_execution(
+        [report], "pr_acceptance", _map(), required=["test_core.py::test_query"], allow_excluded=True
+    )
+    assert result["status"] == "failure"
+
+
 def test_pytest_report_distinguishes_collected_from_executed(tmp_path):
     (tmp_path / "pytest.ini").write_text("[pytest]\n")
     source = tmp_path / "test_sample.py"

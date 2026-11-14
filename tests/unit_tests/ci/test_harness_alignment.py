@@ -103,7 +103,60 @@ def test_integration_consumer_audit_honors_another_checkout(tmp_path, full_unit_
     }
     assert validate_unit_rules(data, tmp_path) == []
     assert validate_integration_rules(data, tmp_path) == []
-    assert validate_integration_consumers(data, tmp_path) == []
+    errors = validate_integration_consumers(data, tmp_path)
+    if full_unit_fallback:
+        assert errors == [
+            f"integration_rules: uncovered source/test reference: datus/external.py -> {integration_target}"
+        ]
+    else:
+        assert errors == []
+
+
+def test_ordinary_workflow_changes_select_their_ci_owner_without_core_or_application_coverage():
+    plan = pr_test_plan([".github/workflows/code-quality.yml", ".github/workflows/title-check.yml", "docs/index.md"])
+    assert plan["pytest_targets"] == ["tests/unit_tests/ci/test_code_quality_workflows.py"]
+    assert plan["core_nodeids"] == []
+    assert plan["integration_groups"] == []
+    assert plan["coverage_applicable"] is False
+    assert plan["needs_runtime_fixtures"] is False
+
+
+@pytest.mark.parametrize(
+    "path", ["ci/run-pr-tests.py", "ci/harness/pr_test_plan.py", "tests/conftest.py", "tests/integration/conftest.py"]
+)
+def test_shared_test_infrastructure_keeps_ci_regression_and_core(path):
+    plan = pr_test_plan([path])
+    assert plan["core_nodeids"] == load_map()["execution"]["core_nodeids"]
+    assert any(t in {"tests/unit_tests/ci/", "tests/unit_tests/"} for t in plan["pytest_targets"])
+
+
+def test_test_only_changes_do_not_add_core_or_application_coverage():
+    changed = "tests/unit_tests/configuration/test_agent_config.py"
+    plan = pr_test_plan([changed])
+    assert plan["pytest_targets"] == [changed]
+    assert plan["required_nodeids"] == [changed]
+    assert plan["core_nodeids"] == []
+    assert plan["coverage_applicable"] is False
+
+
+def test_bulk_and_spool_keep_indirect_callers_without_selecting_the_whole_tools_package():
+    plan = pr_test_plan(["datus/tools/db_tools/query_spool.py", "datus/tools/func_tool/bulk_query_tools.py"])
+    assert len(plan["targets"]) == 64
+    assert "tests/unit_tests/configuration/test_agent_config.py" in plan["targets"]
+    assert "tests/unit_tests/tools/registry/test_capabilities.py" in plan["targets"]
+    assert "tests/unit_tests/tools/func_tool/test_database.py" in plan["targets"]
+    assert plan["integration_groups"] == ["cli", "database"]
+    assert len(plan["core_nodeids"]) == 16
+    assert plan["coverage_applicable"] is True
+
+
+def test_full_unit_selection_does_not_imply_every_integration_group():
+    plan = pr_test_plan(["datus/utils/constants.py"])
+    assert plan["targets"] == ["tests/unit_tests/"]
+    assert plan["integration_groups"] == ["cli", "database"]
+    unknown = pr_test_plan(["datus/new_unowned_module.py"])
+    assert unknown["targets"] == ["tests/unit_tests/"]
+    assert len(unknown["core_nodeids"]) == 16
 
 
 @pytest.mark.parametrize(

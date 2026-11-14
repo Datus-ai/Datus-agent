@@ -228,9 +228,17 @@ def covers(reference: str, nodeid: str) -> bool:
     return nodeid == reference or nodeid.startswith(reference + "::") or nodeid.startswith(reference + "[")
 
 
-def check_execution(reports: list[Path], layer: str, data: dict | None = None) -> dict:
+def check_execution(
+    reports: list[Path],
+    layer: str,
+    data: dict | None = None,
+    *,
+    required: list[str] | None = None,
+    allow_excluded: bool = False,
+) -> dict:
     data = data or load_map()
     selected, outcomes = set(), {}
+    excluded = {}
     errors = []
     for path in reports:
         if not path.is_file():
@@ -246,29 +254,50 @@ def check_execution(reports: list[Path], layer: str, data: dict | None = None) -
             errors.append(f"Invalid execution report: {path}: {exc}")
             continue
         selected.update(report["collected"])
+        excluded.update(report.get("excluded", {}))
         for nodeid, outcome in report["outcomes"].items():
             if outcomes.get(nodeid, "passed") == "passed":
                 outcomes[nodeid] = outcome
-    required = list(data["execution"]["core_nodeids"])
-    for group in data["flow_groups"].values():
-        for flow in group.get("flows", []):
-            claim = flow.get("coverage", {}).get(layer, {})
-            if claim.get("status") == "covered":
-                required.extend(claim.get("nodeids", []))
+    if required is None:
+        required = list(data["execution"]["core_nodeids"])
+        for group in data["flow_groups"].values():
+            for flow in group.get("flows", []):
+                claim = flow.get("coverage", {}).get(layer, {})
+                if claim.get("status") == "covered":
+                    required.extend(claim.get("nodeids", []))
     evidence = {}
     for reference in dict.fromkeys(required):
-        matches = sorted(n for n in selected if covers(reference, n))
+        matches = sorted(
+            n for n in selected if covers(reference, n) or (reference.endswith("/") and n.startswith(reference))
+        )
         unhealthy = {n: outcomes.get(n, "not_executed") for n in matches if outcomes.get(n) != "passed"}
+        # A package selection contains optional platform/docs tests as well as
+        # its contracts. Keep their existing skips, but require actual passing
+        # execution and reject crashes or missing outcomes. Explicit files and
+        # nodeids remain strict: every selected case must pass.
+        if reference.endswith("/") and any(outcomes.get(n) == "passed" for n in matches):
+            unhealthy = {n: outcome for n, outcome in unhealthy.items() if outcome not in {"skipped", "xfailed"}}
         evidence[reference] = {"collected": matches, "unhealthy": unhealthy}
         if not matches:
-            errors.append(f"Required test was not collected: {reference}")
+            intentional = {
+                n: reason
+                for n, reason in excluded.items()
+                if (covers(reference, n) or (reference.endswith("/") and n.startswith(reference)))
+                and reason in {"nightly", "quarantine", "integration-not-deterministic"}
+            }
+            if allow_excluded and "::" not in reference and intentional:
+                evidence[reference]["excluded"] = intentional
+            else:
+                errors.append(f"Required test was not collected: {reference}")
         elif unhealthy:
             errors.append(f"Required test did not pass: {reference}: {unhealthy}")
     return {"layer": layer, "status": "failure" if errors else "success", "errors": errors, "evidence": evidence}
 
 
-def verify_gate(reports: list[Path], layer: str, output: Path) -> int:
-    result = check_execution(reports, layer)
+def verify_gate(
+    reports: list[Path], layer: str, output: Path, *, required: list[str] | None = None, allow_excluded: bool = False
+) -> int:
+    result = check_execution(reports, layer, required=required, allow_excluded=allow_excluded)
     output.write_text(json.dumps(result, indent=2) + "\n")
     for error in result["errors"]:
         print(f"[gate-coverage] {error}", flush=True)

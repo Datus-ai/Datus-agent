@@ -2,7 +2,8 @@
 
 from pathlib import Path
 
-from ci.harness.test_plan import ROOT, collapse_targets, load_map, normalize_path, unit_owner, unit_test_plan
+from ci.harness.gate_profile import select_profile
+from ci.harness.test_plan import ROOT, collapse_targets, load_map, normalize_path, unit_test_plan
 
 SHARED_PATHS = (
     "pyproject.toml",
@@ -68,9 +69,9 @@ def validate_integration_rules(data: dict, root: Path = ROOT) -> list[str]:
     return errors
 
 
-def integration_groups(changed: list[str], rules: list[dict], unit_targets: list[str]) -> set[str]:
+def integration_groups(changed: list[str], rules: list[dict]) -> set[str]:
     all_groups = {rule["id"] for rule in rules}
-    groups = set(all_groups) if "tests/unit_tests/" in unit_targets else set()
+    groups = set()
     for path in changed:
         if any(path == prefix or (prefix.endswith("/") and path.startswith(prefix)) for prefix in SHARED_PATHS):
             groups.update(all_groups)
@@ -91,10 +92,7 @@ def validate_integration_consumers(data: dict, root: Path = ROOT) -> list[str]:
     for source, tests in consumers.items():
         if not tests:
             continue
-        # The caller already validated these owners against the requested root.
-        owner = unit_owner(source, data["execution"]["unit_rules"])
-        unit_targets = owner[1]["targets"] if owner else []
-        groups = integration_groups([source], rules, unit_targets)
+        groups = integration_groups([source], rules)
         selected = {target for rule in rules if rule["id"] in groups for target in rule["targets"]}
         for test in sorted(tests - selected):
             errors.append(f"integration_rules: uncovered source/test reference: {source} -> {test}")
@@ -112,16 +110,37 @@ def nightly_pr_contracts() -> list[str]:
     return [*data["execution"]["core_nodeids"], *semantic]
 
 
-def pr_test_plan(changed: list[str], data: dict | None = None, root: Path = ROOT) -> dict:
+def pr_test_plan(
+    changed: list[str], data: dict | None = None, root: Path = ROOT, *, profile: dict | None = None
+) -> dict:
     """Keep marked unit tests in their owner suite instead of excluding them."""
     data = data or load_map()
     changed = sorted({normalize_path(path) for path in changed})
-    unit = unit_test_plan(changed, data)
+    profile = profile or select_profile(changed)
+    effective = [path for path in changed if path not in profile["metadata_paths"]]
+    unit = unit_test_plan(effective, data)
+    owners = {rule["id"]: rule for rule in data["execution"]["unit_rules"]}
+    for selection in unit["selections"]:
+        selection["reason"] = owners.get(selection["rule"], {}).get(
+            "rationale", "Most specific owner and its reviewed consumers"
+        )
+    if profile["gate_changes"]:
+        unit["targets"] = collapse_targets([*unit["targets"], "tests/unit_tests/ci/"])
+    for path in profile["metadata_paths"]:
+        unit["selections"].append(
+            {
+                "path": path,
+                "rule": "project-version-metadata",
+                "targets": [],
+                "fallback": False,
+                "reason": "Semantic comparison found no dependency/config change",
+            }
+        )
     errors = validate_integration_rules(data, root)
     if errors:
         raise ValueError("Invalid integration ownership rules:\n" + "\n".join(errors))
     rules = data["execution"]["integration_rules"]
-    groups = integration_groups(changed, rules, unit["targets"])
+    groups = integration_groups(effective, rules)
     integration = {target for rule in rules if rule["id"] in groups for target in rule["targets"]}
     for path in changed:
         if path.startswith("tests/integration/"):
@@ -129,7 +148,7 @@ def pr_test_plan(changed: list[str], data: dict | None = None, root: Path = ROOT
                 integration.add(path)
             else:
                 integration.update(target for rule in rules for target in rule["targets"])
-    core = list(data["execution"]["core_nodeids"])
+    core = list(data["execution"]["core_nodeids"]) if profile["run_core"] else []
     missing_core = [target for target in core if not (root / target.split("::", 1)[0]).is_file()]
     if missing_core:
         raise ValueError(f"Missing mandatory core tests: {missing_core}")
@@ -138,10 +157,35 @@ def pr_test_plan(changed: list[str], data: dict | None = None, root: Path = ROOT
     excel = "tests/integration/tools/db_tools/test_data_file_loader_excel.py"
     return {
         **unit,
+        "profile": profile,
+        "coverage_applicable": profile["coverage_applicable"],
         "core_nodeids": core,
+        "required_nodeids": core or selected,
+        "integration_selections": [
+            {
+                "path": path,
+                "groups": sorted(integration_groups([path], rules)),
+                "reason": "Shared runtime boundary"
+                if any(path == p or (p.endswith("/") and path.startswith(p)) for p in SHARED_PATHS)
+                else "Domain/consumer ownership",
+            }
+            for path in effective
+            if integration_groups([path], rules)
+        ],
+        "broadening_reasons": sorted(
+            {
+                *(
+                    ["Shared test-selector/runner configuration: full CI regression and core journeys"]
+                    if profile["gate_changes"]
+                    else []
+                ),
+                *(s["reason"] for s in unit["selections"] if "tests/unit_tests/" in s["targets"]),
+            }
+        ),
         "integration_targets": sorted(integration),
         "integration_groups": sorted(groups),
         "pytest_targets": selected,
         "needs_excel": any(t == excel or t.startswith(excel + "::") for t in selected),
+        "needs_runtime_fixtures": any(not t.startswith("tests/unit_tests/ci/") for t in selected),
         "deleted_targets": [t for t in targets if not (root / t.split("::", 1)[0]).exists()],
     }

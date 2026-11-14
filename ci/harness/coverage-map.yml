@@ -1293,6 +1293,7 @@ execution:
         - tests/integration/api/test_api.py
     - id: cli
       paths:
+        - datus/utils/constants.py
         - datus/cli/
         - datus/entrypoints.py
         - datus/tools/db_tools/
@@ -1314,6 +1315,8 @@ execution:
         - tests/integration/storage/test_platform_doc.py
     - id: database
       paths:
+        - datus/utils/constants.py
+        - datus/utils/exceptions.py
         - datus/tools/db_tools/
         - datus/tools/func_tool/database.py
         - datus/tools/registry/
@@ -1376,6 +1379,126 @@ execution:
       targets:
         - tests/integration/tools/test_mcp_acceptance.py
   unit_rules:
+    - id: bulk-query-tools
+      paths: [datus/tools/func_tool/bulk_query_tools.py]
+      targets:
+        - tests/unit_tests/agent/node/test_agentic_node_skills.py
+        - tests/unit_tests/agent/node/test_agentic_node_sysprompt_cache.py
+        - tests/unit_tests/agent/node/test_chat_agentic_node.py
+        - tests/unit_tests/agent/node/test_gen_sql_agentic_node.py
+        - tests/unit_tests/agent/node/test_gen_visual_dashboard_agentic_node.py
+        - tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py
+        - tests/unit_tests/agent/node/test_node.py
+        - tests/unit_tests/agent/node/test_skill_creator_agentic_node.py
+        - tests/unit_tests/agent/node/test_tool_category_maps.py
+        - tests/unit_tests/api/services/test_chat_task_manager.py
+        - tests/unit_tests/api/services/test_dashboard_service.py
+        - tests/unit_tests/cli/test_chat_commands.py
+        - tests/unit_tests/configuration/test_agent_config.py
+        - tests/unit_tests/test_mcp_server.py
+        - tests/unit_tests/test_real_agent_config_sqlite_fixture.py
+        - tests/unit_tests/tools/db_tools/test_database_import.py
+        - tests/unit_tests/tools/db_tools/test_datasource_plan.py
+        - tests/unit_tests/tools/db_tools/test_datasource_quality.py
+        - tests/unit_tests/tools/db_tools/test_db_func_tools.py
+        - tests/unit_tests/tools/func_tool/test_bulk_query_tools.py
+        - tests/unit_tests/tools/func_tool/test_dashboard_artifact_tools.py
+        - tests/unit_tests/tools/func_tool/test_database.py
+        - tests/unit_tests/tools/func_tool/test_database_migration_tools.py
+        - tests/unit_tests/tools/func_tool/test_hana_adapter.py
+        - tests/unit_tests/tools/func_tool/test_metric_artifact_tools.py
+        - tests/unit_tests/tools/func_tool/test_report_artifact_tools.py
+        - tests/unit_tests/tools/mcp_tools/test_mcp_registration.py
+        - tests/unit_tests/tools/registry/test_capabilities.py
+        - tests/unit_tests/tools/registry/test_contracts.py
+        - tests/unit_tests/tools/semantic_tools/test_policy_executor.py
+        - tests/unit_tests/tools/test_policy_runtime.py
+        - tests/unit_tests/tools/test_read_observer.py
+        - tests/unit_tests/utils/test_adapter_sql_analysis.py
+        - tests/unit_tests/utils/test_compress_utils.py
+      rationale: DBFuncTool inherits BulkQueryTools; retain database callers, configuration validation and tool capability contracts.
+    - id: query-spool
+      paths: [datus/tools/db_tools/query_spool.py]
+      targets:
+        - tests/unit_tests/agent/node/test_agentic_node_skills.py
+        - tests/unit_tests/agent/node/test_agentic_node_sysprompt_cache.py
+        - tests/unit_tests/agent/node/test_ask_metrics_agentic_node.py
+        - tests/unit_tests/agent/node/test_chat_agentic_node.py
+        - tests/unit_tests/agent/node/test_gen_sql_agentic_node.py
+        - tests/unit_tests/agent/node/test_gen_visual_dashboard_agentic_node.py
+        - tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py
+        - tests/unit_tests/agent/node/test_node.py
+        - tests/unit_tests/agent/node/test_ontology_analyst_agentic_node.py
+        - tests/unit_tests/agent/node/test_scheduler_agentic_node.py
+        - tests/unit_tests/agent/node/test_semantic_modeling_agentic_node.py
+        - tests/unit_tests/agent/node/test_skill_creator_agentic_node.py
+        - tests/unit_tests/agent/node/test_tool_category_maps.py
+        - tests/unit_tests/api/routes/test_tool_routes.py
+        - tests/unit_tests/api/services/test_chat_task_manager.py
+        - tests/unit_tests/api/services/test_dashboard_service.py
+        - tests/unit_tests/api/services/test_explorer_service.py
+        - tests/unit_tests/api/services/test_tool_service.py
+        - tests/unit_tests/ci/test_bi_diagnostics.py
+        - tests/unit_tests/cli/test_bash_mode.py
+        - tests/unit_tests/cli/test_chat_commands.py
+        - tests/unit_tests/cli/test_init_context.py
+        - tests/unit_tests/cli/test_init_flow_regressions.py
+        - tests/unit_tests/cli/test_service_commands.py
+        - tests/unit_tests/configuration/test_agent_config.py
+        - tests/unit_tests/models/test_init_loop_capacity.py
+        - tests/unit_tests/models/test_request_capacity.py
+        - tests/unit_tests/schemas/test_tool_summary.py
+        - tests/unit_tests/storage/reference_template/test_reference_template_init.py
+        - tests/unit_tests/test_mcp_server.py
+        - tests/unit_tests/test_real_agent_config_sqlite_fixture.py
+        - tests/unit_tests/tools/db_tools/test_database_import.py
+        - tests/unit_tests/tools/db_tools/test_datasource_plan.py
+        - tests/unit_tests/tools/db_tools/test_datasource_quality.py
+        - tests/unit_tests/tools/db_tools/test_db_func_tools.py
+        - tests/unit_tests/tools/func_tool/test_base.py
+        - tests/unit_tests/tools/func_tool/test_bi_tools.py
+        - tests/unit_tests/tools/func_tool/test_bulk_query_tools.py
+        - tests/unit_tests/tools/func_tool/test_context_search.py
+        - tests/unit_tests/tools/func_tool/test_dashboard_artifact_tools.py
+        - tests/unit_tests/tools/func_tool/test_database.py
+        - tests/unit_tests/tools/func_tool/test_database_migration_tools.py
+        - tests/unit_tests/tools/func_tool/test_hana_adapter.py
+        - tests/unit_tests/tools/func_tool/test_lineage_tools.py
+        - tests/unit_tests/tools/func_tool/test_metric_artifact_tools.py
+        - tests/unit_tests/tools/func_tool/test_reference_template_tools.py
+        - tests/unit_tests/tools/func_tool/test_report_artifact_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_discovery_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_tools.py
+        - tests/unit_tests/tools/func_tool/test_semantic_verification_tools.py
+        - tests/unit_tests/tools/func_tool/test_sub_agent_task_tool.py
+        - tests/unit_tests/tools/mcp_tools/test_mcp_registration.py
+        - tests/unit_tests/tools/registry/test_capabilities.py
+        - tests/unit_tests/tools/registry/test_contracts.py
+        - tests/unit_tests/tools/semantic_tools/test_policy_executor.py
+        - tests/unit_tests/tools/test_policy_runtime.py
+        - tests/unit_tests/tools/test_read_observer.py
+        - tests/unit_tests/utils/test_adapter_sql_analysis.py
+        - tests/unit_tests/utils/test_compress_utils.py
+        - tests/unit_tests/utils/test_mcp_decorators.py
+        - tests/unit_tests/utils/test_tool_result_store.py
+        - tests/unit_tests/validation/test_builtin_checks.py
+        - tests/unit_tests/validation/test_hook.py
+        - tests/unit_tests/validation/test_scheduler_runtime.py
+      rationale: Spooling is used by bulk queries, config validation and BaseFuncTool cancellation/concurrency context; retain those caller families.
+    - id: ci-code-quality-workflows
+      paths:
+        - .github/workflows/code-quality.yml
+        - .github/workflows/title-check.yml
+      targets: [tests/unit_tests/ci/test_code_quality_workflows.py]
+    - id: ci-release-readiness
+      paths: [ci/check_release_readiness.py]
+      targets: [tests/unit_tests/ci/test_check_release_readiness.py]
+    - id: ci-prepare-bird
+      paths: [ci/prepare_ci_bird.py]
+      targets: [tests/unit_tests/ci/test_prepare_ci_bird.py]
+    - id: ci-test-audit
+      paths: [ci/audit_tests.py, .github/workflows/test-audit.yml]
+      targets: [tests/unit_tests/ci/test_audit_tests.py]
     - id: datus-agent-node
       paths:
         - datus/agent/node/
