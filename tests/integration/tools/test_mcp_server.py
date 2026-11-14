@@ -23,6 +23,7 @@ import json
 import os
 import socket
 import sys
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -31,12 +32,13 @@ import pytest_asyncio
 import uvicorn
 from mcp import ClientSession
 from mcp.client.sse import sse_client
-from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.stdio import StdioServerParameters
 from mcp.client.streamable_http import streamablehttp_client
 from sse_starlette.sse import AppStatus
 
 from datus.mcp_server import DatusMCPServer, create_dynamic_app, create_server
 from datus.utils.loggings import get_logger
+from tests.helpers.mcp_stdio import StdioTestServer
 
 logger = get_logger(__name__)
 
@@ -160,15 +162,6 @@ async def mcp_http_session(url: str):
 async def mcp_sse_session(url: str):
     """Context manager that yields an initialized MCP ClientSession over SSE."""
     async with sse_client(url=url) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            yield session
-
-
-@asynccontextmanager
-async def mcp_stdio_session(server_params: StdioServerParameters):
-    """Context manager that yields an initialized MCP ClientSession over stdio."""
-    async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             yield session
@@ -444,6 +437,7 @@ class TestStaticModeSSE(StaticModeTestBase):
 
 @pytest.mark.asyncio
 @pytest.mark.nightly
+@pytest.mark.timeout(90)
 class TestStaticModeStdio(StaticModeTestBase):
     """Test DatusMCPServer in static mode using stdio transport."""
 
@@ -466,17 +460,17 @@ class TestStaticModeStdio(StaticModeTestBase):
         )
 
     @pytest_asyncio.fixture(autouse=True)
-    async def verify_subprocess(self):
-        """Pre-flight check: verify stdio reaches the MCP initialized state."""
-        try:
-            async with mcp_stdio_session(self._server_params()) as session:
-                result = await session.list_tools()
-                assert result.tools, "MCP stdio readiness probe returned no tools"
-        except Exception as exc:
-            pytest.fail(f"MCP stdio readiness probe failed: {exc!r}")
+    async def verify_subprocess(self, request):
+        """Keep the initialized pre-flight process alive for this test only."""
+        root = Path(request.config.rootpath) / "test-results" / "mcp"
+        root.mkdir(parents=True, exist_ok=True)
+        diagnostics = Path(tempfile.mkdtemp(prefix=f"{request.node.name}-", dir=root))
+        self._stdio_server = StdioTestServer(self._server_params(), diagnostics)
+        async with self._stdio_server.running():
+            yield
 
     def _session(self):
-        return mcp_stdio_session(self._server_params())
+        return self._stdio_server.session()
 
 
 # =============================================================================

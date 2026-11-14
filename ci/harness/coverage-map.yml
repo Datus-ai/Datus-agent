@@ -117,8 +117,8 @@ flow_groups:
               - tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticExecution::test_creates_a_persisted_queryable_dashboard
               - tests/integration/tools/test_bi_grafana.py
             notes: >
-              The P0 Superset path installs the managed plugin from source, verifies a real
-              dashboard SQL export manifest and checksums. P0 also creates a real dashboard
+              The Superset product suite installs the managed plugin from source, verifies a real
+              dashboard SQL export manifest and checksums. The suite also creates a real dashboard
               through GenDashboardAgenticNode, reloads its persisted resources, and compares
               chart data with source-table aggregates. Full skill-driven bootstrap through
               reference SQL, metrics and sub-agent persistence remains a coverage gap.
@@ -403,7 +403,7 @@ flow_groups:
               - tests/integration/api/test_api_chat.py
               - tests/integration/adapters/test_starrocks.py
             notes: >
-              The P0 managed-plugin test installs the real policy package and exercises fresh-process
+              The managed-plugin test installs the real policy package and exercises fresh-process
               CLI discovery, SQL row filtering, semantic argument rewriting, API context validation,
               deny behavior, and user-permission precedence without an LLM.
           weekly_benchmark:
@@ -529,7 +529,7 @@ flow_groups:
               - tests/integration/storage/test_postgresql_semantic_kb.py::test_postgresql_semantic_kb_reconcile_is_idempotent
               - tests/integration/agent/test_semantic_modeling_agentic.py
             notes: >
-              The P0 PostgreSQL test configures both Agent RDB and vector storage to real
+              The PostgreSQL storage test configures both Agent RDB and vector storage to real
               PostgreSQL/pgvector and verifies semantic projection, nullable booleans,
               reconcile idempotency, vectors, subject tree rows, and RAG reads.
           weekly_benchmark:
@@ -586,7 +586,7 @@ flow_groups:
               - tests/integration/storage/test_postgresql_semantic_kb.py::test_postgresql_semantic_kb_reconcile_is_idempotent
               - tests/integration/tools/test_dosi_ontology.py
             notes: >
-              The P0 Dosi group owns a deterministic author-validate-reconcile-query test and one
+              The semantic modeling suite owns a deterministic author-validate-reconcile-query test and one
               real-LLM authoring smoke. PostgreSQL semantic projection is verified separately at
               the Agent/storage seam.
           weekly_benchmark:
@@ -925,7 +925,7 @@ flow_groups:
               - tests/integration/plugins/test_sql_policy_plugin.py::test_managed_sql_policy_enforces_sql_semantic_and_api_reads
               - tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries
             notes: >
-              P0 installs two real source packages only into isolated managed plugin stores (with no
+              The managed-plugin tests install two real source packages only into isolated managed plugin stores (with no
               globally installed fallback), exercises fresh-process entry-point discovery and CLI
               dispatch, verifies bundled skill delivery, user permission precedence, a tool transformer,
               and real Superset API/export behavior.
@@ -2549,23 +2549,22 @@ execution:
         - tests/conftest.py
         - pyproject.toml
         - uv.lock
-        - ci/harness/p0.yml
         - ci/harness/coverage-map.yml
         - ci/harness/test_plan.py
         - ci/plan-product-tests.py
         - ci/harness/sql-policy-host.json
         - ci/sql_policy_gate.py
-        - ci/harness/sql-policy-release.json
         - ci/sql_policy_release.py
         - ci/release_artifact.py
         - ci/pytest_gate_plugin.py
-        - ci/p0_plan.py
-        - ci/stage_p0.py
+        - ci/stage_harness.py
         - ci/run-nightly-tests.sh
         - .github/workflows/sql-policy-gate.yml
         - .github/workflows/merge-queue.yml
         - .github/workflows/run-nightly.yml
-      nightly_groups: [P0 SQL Policy Plugin Contracts]
+      required_targets:
+        - tests/integration/plugins/test_sql_policy_plugin.py::test_managed_sql_policy_enforces_sql_semantic_and_api_reads
+      nightly_groups: [SQL Policy Plugin Tests]
     - id: model-runtime
       paths: [datus/models/, conf/, pyproject.toml, uv.lock]
       live_targets: [tests/integration/agent/test_core_live.py]
@@ -2588,7 +2587,10 @@ execution:
       live_targets:
         - tests/integration/agent/test_core_live.py
         - tests/integration/storage/test_postgresql_feedback_store.py::test_postgresql_feedback_storage_write_read_update_and_delete
-      nightly_groups: [P0 PostgreSQL Agent Storage Contracts]
+      required_targets:
+        - tests/integration/storage/test_postgresql_semantic_kb.py::test_postgresql_semantic_kb_reconcile_is_idempotent
+        - tests/integration/storage/test_postgresql_feedback_store.py::test_postgresql_feedback_storage_write_read_update_and_delete
+      nightly_groups: [PostgreSQL Agent Storage Tests]
     - id: chat-lifecycle
       paths: [datus/api/, datus/cli/, datus/schemas/, tests/integration/api/test_api_chat.py]
       live_targets: [tests/integration/agent/test_core_live.py, tests/integration/api/test_api_chat.py]
@@ -2597,7 +2599,9 @@ execution:
     - id: node-semantic_modeling
       paths: [datus/agent/node/semantic_modeling_agentic_node.py, tests/integration/agent/test_semantic_modeling_agentic.py]
       live_targets: [tests/integration/agent/test_semantic_modeling_agentic.py]
-      nightly_groups: [P0 Dosi Semantic Modeling E2E]
+      required_targets:
+        - tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm
+      nightly_groups: [Semantic Modeling Product Tests]
     - id: node-ask_metrics
       paths: [datus/agent/node/ask_metrics_agentic_node.py, tests/integration/agent/test_ask_metrics_agentic.py]
       live_targets: [tests/integration/agent/test_ask_metrics_agentic.py]
@@ -2629,7 +2633,11 @@ execution:
         - ci/
         - .github/workflows/
       live_targets: [tests/integration/agent/test_gen_dashboard_agentic.py]
-      nightly_groups: [P0 BI Product E2E]
+      required_targets:
+        - tests/integration/tools/test_bi_chart_lifecycle.py::test_table_grouping_repair_and_deleted_chart_validation
+        - tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries
+        - tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticExecution::test_creates_a_persisted_queryable_dashboard
+      nightly_groups: [Superset Product Tests]
     - id: node-gen_visual_report
       paths: [datus/agent/node/gen_visual_report_agentic_node.py, tests/integration/agent/test_gen_visual_report_agentic.py]
       live_targets: [tests/integration/agent/test_gen_visual_report_agentic.py]

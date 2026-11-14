@@ -14,10 +14,18 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from ci.harness.test_plan import changed_files, impact_plan  # noqa: E402
-from ci.p0_plan import check_p0_execution, load_profile  # noqa: E402
+from ci.harness.test_plan import changed_files, check_execution, impact_plan  # noqa: E402
 
-GROUP = "P0 BI Product E2E"
+GROUP = "Superset Product Tests"
+NODEIDS = (
+    "tests/integration/tools/test_bi_chart_lifecycle.py::test_table_grouping_repair_and_deleted_chart_validation",
+    "tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries",
+    "tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticExecution::test_creates_a_persisted_queryable_dashboard",
+)
+SOURCE_REVISIONS = {
+    "bi_adapters": "efb72734df1e8a3f43a8b89454f9004a849d8f0b",
+    "plugins": "b2b39d2d7024461bd03f71137365beba828ea066",
+}
 COMPOSE_UP_TIMEOUT_SECONDS = 1500
 PYTEST_TIMEOUT_SECONDS = 1800
 COMPOSE_LOGS_TIMEOUT_SECONDS = 60
@@ -38,7 +46,7 @@ def snapshot(root: Path, external: Path) -> dict:
         sha = subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True).strip()
         diff = subprocess.check_output(["git", "-C", str(path), "diff", "HEAD", "--binary"])
         if name != "agent":
-            if sha != load_profile()["release_sources"][name] or diff:
+            if sha != SOURCE_REVISIONS[name] or diff:
                 raise ValueError(f"BI dependency must be clean and match its pinned SHA: {name}")
         result[name] = {"sha": sha, "patch_sha256": hashlib.sha256(diff).hexdigest()}
         if name == "agent":
@@ -78,9 +86,11 @@ def verify(work: Path, sources: dict) -> dict:
     report = json.loads((work / "execution.json").read_text())
     if report.get("source_id") != identity:
         raise ValueError("BI execution receipt is not bound to these sources")
-    coverage = check_p0_execution([work / "execution.json"], {GROUP: load_profile()["groups"][GROUP]})
+    coverage = check_execution(
+        [work / "execution.json"], "nightly", {"execution": {"core_nodeids": NODEIDS}, "flow_groups": {}}
+    )
     if coverage["status"] != "success" or receipt.get("status") != "success":
-        raise ValueError(f"BI P0 did not pass: {coverage['errors']}")
+        raise ValueError(f"BI product validation did not pass: {coverage['errors']}")
     return coverage
 
 
@@ -118,7 +128,7 @@ def run(work: Path, external: Path) -> None:
     config_file = work / "agent.yml"
     config_file.write_text(yaml.safe_dump(config))
     env["DATUS_ACCEPTANCE_CONFIG"] = str(config_file)
-    nodeids = load_profile()["groups"][GROUP]["nodeids"]
+    nodeids = NODEIDS
     command = [
         sys.executable,
         "-m",
@@ -144,7 +154,7 @@ def run(work: Path, external: Path) -> None:
     ]
     try:
         if not env.get("DEEPSEEK_API_KEY"):
-            raise ValueError("BI real-model P0 requires DEEPSEEK_API_KEY")
+            raise ValueError("BI real-model validation requires DEEPSEEK_API_KEY")
         with (work / "services.log").open("w") as log:
             subprocess.run(
                 [*compose, "up", "-d", "--wait", "--wait-timeout", "1200"],
@@ -168,13 +178,15 @@ def run(work: Path, external: Path) -> None:
             )
         receipt["pytest_exit"] = result.returncode
         if result.returncode:
-            raise RuntimeError("BI P0 failed; see pytest.log and cases/")
+            raise RuntimeError("BI product validation failed; see pytest.log and cases/")
         if snapshot(ROOT, external) != sources:
             raise ValueError("BI sources changed during execution")
         report = json.loads((work / "execution.json").read_text())
-        coverage = check_p0_execution([work / "execution.json"], {GROUP: load_profile()["groups"][GROUP]})
+        coverage = check_execution(
+            [work / "execution.json"], "nightly", {"execution": {"core_nodeids": NODEIDS}, "flow_groups": {}}
+        )
         if report.get("source_id") != identity or coverage["status"] != "success":
-            raise ValueError("Incomplete BI P0 execution evidence")
+            raise ValueError("Incomplete BI product validation execution evidence")
         receipt["status"] = "success"
     finally:
         (work / "result.json").write_text(json.dumps(receipt, indent=2) + "\n")

@@ -102,7 +102,7 @@ def validate_integration_consumers(data: dict, root: Path = ROOT) -> list[str]:
 
 
 def nightly_pr_contracts() -> list[str]:
-    """Legacy dual-marked local Dosi contracts also belong to scheduled P0 suites.
+    """Legacy dual-marked local Dosi contracts also belong to scheduled Nightly suites.
 
     Keep their Nightly registration; these use the installed binding and local
     DuckDB fixtures, without credentials, remote models or service provisioning.

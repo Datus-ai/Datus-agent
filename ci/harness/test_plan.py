@@ -198,6 +198,7 @@ def impact_plan(changed: Iterable[str], data: dict | None = None) -> dict:
         "reasons": [r["id"] for r in matched],
         "unit_targets": unit_test_plan(files, data)["targets"],
         "live_targets": sorted({p for r in matched for p in r.get("live_targets", [])}),
+        "required_targets": sorted({p for r in matched for p in r.get("required_targets", [])}),
         "nightly_groups": sorted({p for r in matched for p in r.get("nightly_groups", [])}),
     }
 
@@ -283,14 +284,7 @@ def product_group_filter(plan: dict) -> str:
 
 def check_product_execution(plan: dict, reports: list[Path]) -> dict:
     """Every planned file/nodeid must contribute successfully executed tests."""
-    required = list(plan.get("live_targets", []))
-    if plan.get("nightly_groups"):
-        from ci.p0_plan import load_profile
-
-        groups = load_profile()["groups"]
-        for name in plan["nightly_groups"]:
-            if name in groups:
-                required.extend(groups[name]["nodeids"])
+    required = [*plan.get("live_targets", []), *plan.get("required_targets", [])]
     if not required:
         return {"status": "failure", "errors": ["The product plan has no live targets"], "evidence": {}}
     return check_execution(

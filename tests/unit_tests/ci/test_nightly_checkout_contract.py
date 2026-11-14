@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -83,7 +84,7 @@ def test_targeted_group_records_executed_pytest_results(tmp_path):
             _bash_function_source("command_contains_pytest"),
             _bash_function_source("collect_pytest_suite"),
             _bash_function_source("run_logged_unfiltered"),
-            'run_logged_unfiltered "P0 Dosi Semantic Modeling E2E" "$1" -m pytest "$2" -q',
+            'run_logged_unfiltered "Semantic Modeling Product Tests" "$1" -m pytest "$2" -q',
             'exit "$test_exit_code"',
         ]
     )
@@ -96,7 +97,7 @@ def test_targeted_group_records_executed_pytest_results(tmp_path):
         timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    report = json.loads((reports / "P0_Dosi_Semantic_Modeling_E2E.json").read_text())
+    report = json.loads((reports / "Semantic_Modeling_Product_Tests.json").read_text())
     assert report["collected"] == ["test_product.py::test_product"]
     assert report["outcomes"] == {"test_product.py::test_product": "passed"}
 
@@ -269,7 +270,7 @@ def test_nightly_consumes_policy_releases_without_native_build_jobs():
     release = next(step for step in steps if step.get("id") == "policy_release")
     assert release["env"]["GH_TOKEN"] == "${{ secrets.RELEASE_BOT_TOKEN }}"
     assert release["env"]["POLICY_RELEASE"] == "${{ inputs.policy_release }}"
-    assert '--profile "$NIGHTLY_PROFILE" --release "$POLICY_RELEASE"' in release["run"]
+    assert '--release "$POLICY_RELEASE"' in release["run"]
     assert 'mktemp -d "$RUNNER_TEMP/datus-policy-release.XXXXXX"' in release["run"]
     assert not any("rust-toolchain" in step.get("uses", "") for step in steps)
     assert not any("cargo " in step.get("run", "") or "maturin" in step.get("run", "") for step in steps)
@@ -289,10 +290,33 @@ def test_nightly_policy_release_tooling_comes_from_the_workflow_revision():
     assert checkout["with"]["sparse-checkout-cone-mode"] is False
     assert set(checkout["with"]["sparse-checkout"].splitlines()) == {
         "ci/sql_policy_release.py",
-        "ci/harness/sql-policy-release.json",
     }
     prepare = next(step for step in steps if step.get("id") == "policy_release")
     assert ".venv/bin/python .nightly-workflow/ci/sql_policy_release.py" in prepare["run"]
+
+
+@pytest.mark.parametrize("status", [0, 1])
+def test_nightly_runs_the_checkout_and_preserves_status_and_diagnostics(tmp_path, status):
+    steps = yaml.safe_load(WORKFLOW.read_text())["jobs"]["run-nightly"]["steps"]
+    run = next(step for step in steps if step.get("name") == "Run nightly tests")
+    upload = next(step for step in steps if step.get("name") == "Upload test results")
+    (tmp_path / "ci").mkdir()
+    runner = tmp_path / "ci/run-nightly-tests.sh"
+    runner.write_text(
+        f"#!/bin/bash\nmkdir -p test-results/mcp\necho diagnostics > test-results/mcp/stderr.log\nexit {status}\n"
+    )
+    runner.chmod(0o755)
+    result = subprocess.run(
+        ["bash", "-e", "-c", run["run"]],
+        cwd=tmp_path,
+        env={"PATH": os.defpath},
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == status, result.stdout + result.stderr
+    assert (tmp_path / "test-results/mcp/stderr.log").read_text() == "diagnostics\n"
+    assert "test-results/mcp/" in upload["with"]["path"]
 
 
 def test_nightly_installs_new_database_adapters_from_latest_checkout():
@@ -312,40 +336,43 @@ def test_nightly_runs_postgresql_storage_adapter_tests_from_checkout():
     assert '"PostgreSQL Storage Adapter Tests"' in script.split("DOCKER_GROUPS=(", maxsplit=1)[1]
 
 
-def test_nightly_runs_p0_contracts_without_reruns_or_skips():
-    from ci.p0_plan import load_profile
+def test_nightly_product_suites_keep_required_cases_without_reruns_or_skips():
+    from ci.bi_gate import NODEIDS as bi_nodeids
+    from ci.harness.test_plan import covers, load_map
+    from ci.sql_policy_gate import NODEIDS as policy_nodeids
 
-    harness = "\n".join(
-        [
-            "set -uo pipefail",
-            "test_exit_code=0",
-            'run_logged() { printf "%s\\n" "$@"; }',
-            'run_compose_suite() { printf "%s\\n" "$@"; }',
-            _bash_function_source("run_p0_group"),
-            'run_p0_group "$1"',
-            'exit "$test_exit_code"',
+    required = {
+        "Core Acceptance Tests": load_map()["execution"]["core_nodeids"],
+        "Core Real Model Tests": [
+            "tests/integration/agent/test_core_live.py::test_question_is_answered_with_real_sql",
+            "tests/integration/agent/test_core_live.py::test_followup_keeps_the_original_question",
+            "tests/integration/agent/test_core_live.py::test_sql_node_returns_an_executable_query",
+        ],
+        "PostgreSQL Agent Storage Tests": [
+            "tests/integration/storage/test_postgresql_semantic_kb.py::test_postgresql_semantic_kb_reconcile_is_idempotent",
+            "tests/integration/storage/test_postgresql_feedback_store.py::test_postgresql_feedback_storage_write_read_update_and_delete",
+        ],
+        "SQL Policy Plugin Tests": policy_nodeids,
+        "Semantic Modeling Product Tests": [
+            "tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm",
+        ],
+        "Superset Product Tests": bi_nodeids,
+    }
+    script = NIGHTLY_SCRIPT.read_text()
+    for group, nodeids in required.items():
+        commands = [
+            shlex.split(line)
+            for line in script.splitlines()
+            if line.lstrip().startswith(("run_logged ", "run_compose_suite ")) and f'"{group}"' in line
         ]
-    )
-    for group, config in load_profile()["groups"].items():
-        result = subprocess.run(
-            ["bash", "-c", harness, "p0-group", group],
-            cwd=REPO_ROOT,
-            env={
-                **os.environ,
-                "NIGHTLY_HOME": "/tmp/p0-home",
-                "NIGHTLY_PYTEST_BASETEMP": "/tmp/p0-temp",
-                "SUPERSET_COMPOSE": "/tmp/superset.yml",
-                "UV_NO_SYNC": "1",
-            },
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        command = result.stdout.splitlines()
-        assert "--fail-on-skip" in command
-        assert "DATUS_TEST_LAYER=nightly" in command
-        assert set(config["nodeids"]) <= set(command)
-        assert "--reruns" not in command
+        assert commands, group
+        for command in commands:
+            assert "--fail-on-skip" in command
+            assert "DATUS_TEST_LAYER=nightly" in command
+            assert "--reruns" not in command
+            for nodeid in nodeids:
+                assert any(covers(target, nodeid) for target in command), (group, nodeid)
+    assert "p0_plan" not in script
 
 
 def test_nightly_filter_requires_a_matching_group():
@@ -359,7 +386,7 @@ def test_nightly_filter_requires_a_matching_group():
             "validate_nightly_group_filter",
         ]
     )
-    for pattern, expected in [("^P0 ", 0), ("^P0 DOES_NOT_EXIST$", 1), ("[", 1)]:
+    for pattern, expected in [("^Core ", 0), ("^DOES_NOT_EXIST$", 1), ("[", 1)]:
         result = subprocess.run(
             ["bash", "-c", harness, "filter", pattern],
             cwd=REPO_ROOT,
@@ -378,24 +405,29 @@ def test_nightly_tracebacks_do_not_publish_local_credentials():
     assert all("--no-showlocals" in line for line in pytest_addopts)
 
 
-def test_release_candidate_reuses_p0_nightly_on_the_release_ref():
+def test_release_candidate_runs_smoke_without_repeating_nightly():
     nightly = WORKFLOW.read_text(encoding="utf-8")
     release = RELEASE_CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
-    prepare = (REPO_ROOT / ".github" / "workflows" / "prepare-release.yml").read_text(encoding="utf-8")
 
     assert "workflow_call:" in nightly
     assert "\npermissions:\n  contents: read\n" in nightly
     assert "DATUS_AGENT_REF: ${{ inputs.datus_agent_ref || github.ref_name }}" in nightly
     assert "NIGHTLY_GROUP_FILTER: ${{ inputs.nightly_group_filter || '' }}" in nightly
-    assert "uses: ./.github/workflows/run-nightly.yml" in release
-    assert "if: ${{ github.event_name != 'pull_request' }}" in release
-    assert "datus_agent_ref: ${{ needs.package-smoke.outputs.source_sha }}" in release
-    assert "test_profile: p0" in release
-    assert "candidate_artifact: ${{ needs.package-smoke.outputs.artifact_name }}" in release
-    assert "secrets: inherit" not in release
-    assert "RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}" in release
-    assert "uses: ./.github/workflows/release-candidate.yml" in prepare
-    assert "RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}" in prepare
+
+    candidate = yaml.safe_load(release)
+    assert set(candidate["jobs"]) == {"package-smoke"}
+    assert "RELEASE_BOT_TOKEN" not in release
+    assert "test_profile:" not in nightly
+    assert "candidate_artifact:" not in nightly
+    assert "requirements-p0" not in nightly
+    for workflow_name, job_name in (
+        ("prepare-release.yml", "release-candidate-validation"),
+        ("publish-release.yml", "validate-candidate"),
+    ):
+        workflow = yaml.safe_load((REPO_ROOT / ".github/workflows" / workflow_name).read_text(encoding="utf-8"))
+        validation = workflow["jobs"][job_name]
+        assert validation["uses"] == "./.github/workflows/release-candidate.yml"
+        assert "secrets" not in validation
 
 
 def test_every_adapter_suite_is_excluded_from_the_main_nightly_run():

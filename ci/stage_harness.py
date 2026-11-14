@@ -11,7 +11,7 @@ def stage(source: Path, destination: Path, environment: Path | None = None) -> N
         shutil.copytree(
             source / name,
             destination / name,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "p0-execution.*", "product-execution.*"),
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "product-execution.*"),
         )
     for name in ("pyproject.toml", "pytest.ini"):
         shutil.copy2(source / name, destination / name)

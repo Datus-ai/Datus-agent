@@ -52,7 +52,7 @@ def verify_install(receipt: dict, checkout: Path) -> dict:
 
     module = Path(datus.__file__).resolve()
     if module.is_relative_to((checkout / "datus").resolve()):
-        raise ValueError(f"P0 imported the source checkout instead of the candidate wheel: {module}")
+        raise ValueError(f"Verification imported the source checkout instead of the candidate wheel: {module}")
     distribution = metadata.distribution("datus-agent")
     direct = json.loads(distribution.read_text("direct_url.json") or "{}")
     wheels = {name: value for name, value in receipt["distributions"].items() if name.endswith(".whl")}
@@ -83,7 +83,7 @@ def verify_install(receipt: dict, checkout: Path) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["create", "verify", "verify-install", "requirement"])
+    parser.add_argument("command", choices=["create", "verify", "verify-install"])
     parser.add_argument("--dist", type=Path, required=True)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--checkout", type=Path)
@@ -94,10 +94,6 @@ def main() -> None:
         (args.dist / "release-artifact.json").write_text(json.dumps(result, indent=2) + "\n")
     else:
         result = verify(args.dist, args.source_sha)
-    if args.command == "requirement":
-        wheel = next(name for name in result["distributions"] if name.endswith(".whl"))
-        print(f"datus-agent @ {(args.dist / wheel).resolve().as_uri()}")
-        return
     if args.command == "verify-install":
         if not args.checkout or not args.output:
             parser.error("verify-install requires --checkout and --output")
