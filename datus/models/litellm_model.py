@@ -10,14 +10,25 @@ from copy import deepcopy
 from dataclasses import replace
 from typing import Any
 
+import httpx
 import litellm
 from agents.models.chatcmpl_converter import Converter
 from agents.util._json import _to_dump_compatible
+from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
+from openai import AsyncOpenAI
 
 from datus.models.observed_model import ObservedLitellmModel
 from datus.models.output_truncation import check_chat_completion, checked_chat_completion_stream
 from datus.models.reasoning_replay import REASONING_ENDPOINT_KEY, is_kimi_model, reasoning_endpoint_identity
 from datus.utils.image_content import is_tool_image_user_message, tool_images_as_user_input
+
+
+class _TLSHTTPHandler(AsyncHTTPHandler):
+    """Keep an endpoint's TLS policy when LiteLLM recreates its HTTP client."""
+
+    def create_client(self, **kwargs: Any) -> httpx.AsyncClient:
+        kwargs["ssl_verify"] = self.ssl_verify
+        return super().create_client(**kwargs)
 
 
 def register_image_model_capabilities(model: str) -> None:
@@ -143,6 +154,16 @@ def normalize_kimi_tool_replay_items(items: Any) -> Any:
 class DatusLitellmModel(ObservedLitellmModel):
     """LiteLLM model with Datus image, reasoning, and provider compatibility."""
 
+    request_ssl_verify: Any = None
+    request_max_retries: int | None = None
+    _request_handler: Any = None
+
+    async def aclose(self) -> None:
+        """Release only the request-local client, never LiteLLM's shared pool."""
+        if self._request_handler is not None:
+            await self._request_handler.close()
+            self._request_handler = None
+
     async def get_response(self, *args: Any, **kwargs: Any) -> Any:
         """Return a response whose reasoning items record their source endpoint."""
         response = await super().get_response(*args, **kwargs)
@@ -183,30 +204,41 @@ class DatusLitellmModel(ObservedLitellmModel):
                 capacity,
                 self.capacity_payload(system_instructions, input, model_settings, tools, output_schema, handoffs),
             )
-        # Transport objects are not JSON model settings. Inject them only after
-        # SDK trace configuration and capacity serialization, at the HTTP boundary.
-        if options := getattr(self, "_datus_request_options", None):
+        # Resolve request policy at the shared HTTP boundary, after capacity
+        # and trace serialization. Chat and background callers use this path.
+        options = {}
+        if tracing.is_disabled():
+            options.update({"no-log": True, "success_callback": [], "failure_callback": []})
+        if self.request_max_retries is not None:
+            options.update(num_retries=self.request_max_retries, max_retries=self.request_max_retries)
+        if self.request_ssl_verify is not None:
+            timeout = (model_settings.extra_args or {}).get("timeout", 60)
+            if self._request_handler is None:
+                self._request_handler = _TLSHTTPHandler(timeout=timeout, ssl_verify=self.request_ssl_verify)
+            provider = litellm.get_llm_provider(model=self.model)[1]
+            client = self._request_handler
+            if provider not in {"anthropic", "gemini", "deepseek", "openrouter"}:
+                client = AsyncOpenAI(
+                    api_key=self.api_key,
+                    base_url=self.base_url,
+                    http_client=self._request_handler.client,
+                    max_retries=self.request_max_retries if self.request_max_retries is not None else 2,
+                    timeout=timeout,
+                )
+            options["client"] = client
+        if options:
             model_settings = replace(model_settings, extra_args={**(model_settings.extra_args or {}), **options})
         result = await super()._fetch_response(
             system_instructions, input, model_settings, tools, output_schema, handoffs, span, tracing, *args, **kwargs
         )
         if isinstance(result, tuple):
             response, stream = result
-            on_usage = None
-            on_finish_reason = None
-            if getattr(self, "_datus_capture_usage", False):
 
-                def on_usage(usage):
-                    """Retain provider usage for the isolated text-completion caller."""
-                    self._datus_reported_usage = usage
+            def on_usage(usage):
+                """Expose actual provider usage to standard on_llm_end hooks."""
+                self.provider_reported_usage = usage
 
-                def on_finish_reason(reason):
-                    """Retain the provider's terminal reason before SDK conversion."""
-                    self._datus_finish_reason = reason
-
-            return response, checked_chat_completion_stream(
-                stream, on_usage=on_usage, on_finish_reason=on_finish_reason
-            )
+            return response, checked_chat_completion_stream(stream, on_usage=on_usage)
         check_chat_completion(result)
         return result
 

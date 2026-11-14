@@ -6,11 +6,13 @@
 
 import asyncio
 import hashlib
+import inspect
 import json
 import os
 import threading
 import time
 from contextlib import AsyncExitStack, aclosing, asynccontextmanager, nullcontext
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
@@ -296,20 +298,8 @@ class OpenAICompatibleModel(LLMBaseModel):
         self.base_url = self._get_base_url()
         self.default_headers = dict(self.model_config.default_headers) if self.model_config.default_headers else None
 
-        # Resolve SSL/TLS verification for this endpoint (e.g. a private gateway CA).
-        # When configured, it takes priority over the SSL_VERIFY / SSL_CERT_FILE env
-        # vars (house convention: config first, env fallback). We materialize it into
-        # SSL_VERIFY so litellm honors it across both the agents-SDK LitellmModel path
-        # (whose __init__ accepts no ssl argument) and direct litellm.completion calls.
-        # The native Anthropic client (ClaudeModel) reads self.ssl_verify directly.
-        #
-        # Why a process-level env var and not a per-request kwarg: litellm does NOT
-        # thread a per-call ``ssl_verify`` into the Anthropic provider's HTTP client
-        # (verified — the kwarg is silently ignored), and a scoped set/restore around
-        # each call would break the agents-SDK streaming path (Runner.run_streamed does
-        # its network I/O after returning). A process global is the only mechanism that
-        # works across all paths. Blast radius is limited: ``SSL_VERIFY`` is a
-        # litellm-specific variable that standard libraries (requests/httpx/curl) ignore.
+        # Keep chat's existing process-level TLS setup. Isolated background
+        # callers that opt out of it need a request-local client instead.
         from datus.utils.ssl_utils import (
             is_pem_cert_content,
             materialize_ca_bundle,
@@ -336,6 +326,8 @@ class OpenAICompatibleModel(LLMBaseModel):
         else:
             self.ssl_verify = None
 
+        self._request_ssl_verify = self.ssl_verify if not kwargs.get("configure_ssl_env", True) else None
+
         # Initialize LiteLLM adapter for unified LLM calls
         self.litellm_adapter = LiteLLMAdapter(
             provider=model_config.type,
@@ -345,6 +337,8 @@ class OpenAICompatibleModel(LLMBaseModel):
             enable_thinking=model_config.enable_thinking,
             reasoning_effort=model_config.reasoning_effort,
             default_headers=self.default_headers,
+            ssl_verify=self._request_ssl_verify,
+            max_retries=0 if model_config.max_retry == 1 else None,
         )
 
         # Context for tracing ToDo: replace it with Context object
@@ -569,14 +563,6 @@ class OpenAICompatibleModel(LLMBaseModel):
         applies its own defaults for both parameters.
         """
         return getattr(self.litellm_adapter, "provider", "") in (LLMProvider.CLAUDE, LLMProvider.ANTHROPIC)
-
-    async def complete_text(
-        self, prompt: str, *, instruction: str = "", max_tokens: Optional[int] = None, timeout: float = 60
-    ) -> Dict[str, Any]:
-        """One tool-less call using chat's model, settings and response adapters."""
-        from datus.models.text_completion import complete_text
-
-        return await complete_text(self, prompt, instruction=instruction, max_tokens=max_tokens, timeout=timeout)
 
     def generate(self, prompt: Any, enable_thinking: bool | None = None, **kwargs) -> str:
         """
@@ -1050,6 +1036,8 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         litellm_model = self.litellm_adapter.get_agents_sdk_model()
         litellm_model._datus_capacity = self.request_capacity()
+        litellm_model.request_ssl_verify = getattr(self, "_request_ssl_verify", None)
+        litellm_model.request_max_retries = 0 if getattr(self.model_config, "max_retry", 3) == 1 else None
 
         # DeepSeek requires "json" keyword in prompt for JSON mode
         final_instruction = instruction
@@ -1108,6 +1096,11 @@ class OpenAICompatibleModel(LLMBaseModel):
                     self.model_name,
                 )
 
+        if self.litellm_adapter.provider == "deepseek" and effort == "none":
+            # Preserve explicit off after LiteLLM maps it to thinking.disabled,
+            # so gateways cannot inject a contradictory default effort.
+            model_settings_kwargs.setdefault("extra_args", {})["extra_body"] = {"reasoning_effort": "none"}
+
         prompt_cache_retention = self._default_prompt_cache_retention()
         if prompt_cache_retention:
             model_settings_kwargs["prompt_cache_retention"] = prompt_cache_retention
@@ -1161,6 +1154,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             # Use multiple_mcp_servers context manager with empty dict if no MCP servers
             async with (
                 multiple_mcp_servers(mcp_servers or {}) as connected_servers,
+                AsyncExitStack() as model_clients,
                 self._preserve_truncated_run_result(None, session),
             ):
                 agent_name = kwargs.get("agent_name", "default_agent")
@@ -1174,6 +1168,8 @@ class OpenAICompatibleModel(LLMBaseModel):
                     agent_name=agent_name,
                     max_tokens=kwargs.get("max_completion_tokens", kwargs.get("max_tokens")),
                 )
+                if inspect.iscoroutinefunction(close := getattr(getattr(agent, "model", None), "aclose", None)):
+                    model_clients.push_async_callback(close)
                 run_config = self._build_run_config(agent_name=agent_name)
 
                 # OpenAI Agents SDK tracing is configured by observability adapters.
@@ -1296,6 +1292,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         self._setup_custom_json_encoder()
 
         async def _stream_operation():
+            nonlocal safe_errors
             # Use multiple_mcp_servers context manager with empty dict if no MCP servers
             async with (
                 multiple_mcp_servers(mcp_servers or {}) as connected_servers,
@@ -1315,6 +1312,8 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                 tool_stream = ToolResultStream(agent.hooks)
                 agent.hooks = tool_stream
+                if inspect.iscoroutinefunction(close := getattr(getattr(agent, "model", None), "aclose", None)):
+                    tool_streams.push_async_callback(close)
 
                 run_config = self._build_run_config(
                     pending_input_queue=pending_input_queue,
@@ -1324,6 +1323,21 @@ class OpenAICompatibleModel(LLMBaseModel):
                     agent_name=agent_name,
                     context_rewriter=context_rewriter,
                 )
+                if requested_config := kwargs.get("run_config"):
+                    # Transport/tracing overrides must retain the callbacks
+                    # responsible for queued input and session compaction.
+                    run_config = replace(
+                        requested_config,
+                        call_model_input_filter=(
+                            getattr(run_config, "call_model_input_filter", None)
+                            or requested_config.call_model_input_filter
+                        ),
+                        session_input_callback=(
+                            getattr(run_config, "session_input_callback", None)
+                            or requested_config.session_input_callback
+                        ),
+                    )
+                safe_errors = not getattr(run_config, "trace_include_sensitive_data", True)
                 try:
                     with _agents_trace_baggage(agent_name):
                         result = Runner.run_streamed(
@@ -1757,6 +1771,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         # Execute the streaming operation with retry logic for connection errors
         max_retries = getattr(self.model_config, "max_retry", 3)
         retry_delay = getattr(self.model_config, "retry_interval", 2.0)
+        safe_errors = not getattr(kwargs.get("run_config"), "trace_include_sensitive_data", True)
 
         # Track already processed action IDs to prevent duplicates across retries
         processed_action_ids = set()
@@ -1788,10 +1803,18 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # LLM hallucinated a non-existent tool or produced malformed output.
                 # Retry since the LLM may behave correctly on the next attempt.
                 if attempt < max_retries - 1:
-                    logger.warning(
-                        f"Model behavior error in stream (attempt {attempt + 1}/{max_retries}): {e}. "
-                        f"Retrying in {retry_delay}s..."
-                    )
+                    if safe_errors:
+                        logger.warning(
+                            "Model behavior error in stream; retrying",
+                            error_type=type(e).__name__,
+                            attempt=attempt + 1,
+                            max_retries=max_retries,
+                        )
+                    else:
+                        logger.warning(
+                            f"Model behavior error in stream (attempt {attempt + 1}/{max_retries}): {e}. "
+                            f"Retrying in {retry_delay}s..."
+                        )
 
                     from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
@@ -1799,7 +1822,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                         role=ActionRole.ASSISTANT,
                         action_type="retry_notification",
                         messages=f"Model behavior error, retrying ({attempt + 2}/{max_retries})...",
-                        input_data={"error": str(e), "attempt": attempt + 1},
+                        input_data={"error": type(e).__name__ if safe_errors else str(e), "attempt": attempt + 1},
                         status=ActionStatus.PROCESSING,
                     )
                     action_history_manager.add_action(retry_action)
@@ -1809,15 +1832,26 @@ class OpenAICompatibleModel(LLMBaseModel):
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 2
                 else:
-                    logger.exception(f"Model behavior error after {max_retries} attempts: {type(e).__name__}: {e}")
+                    if safe_errors:
+                        logger.error("Model behavior error in stream", error_type=type(e).__name__)
+                    else:
+                        logger.exception(f"Model behavior error after {max_retries} attempts: {type(e).__name__}: {e}")
                     raise
 
             except (httpx.RemoteProtocolError, APIConnectionError, APITimeoutError, MidStreamFallbackError) as e:
                 if attempt < max_retries - 1:
-                    logger.warning(
-                        f"Stream connection error (attempt {attempt + 1}/{max_retries}): {type(e).__name__}: {e}. "
-                        f"Retrying in {retry_delay}s..."
-                    )
+                    if safe_errors:
+                        logger.warning(
+                            "Model stream connection error; retrying",
+                            error_type=type(e).__name__,
+                            attempt=attempt + 1,
+                            max_retries=max_retries,
+                        )
+                    else:
+                        logger.warning(
+                            f"Stream connection error (attempt {attempt + 1}/{max_retries}): {type(e).__name__}: {e}. "
+                            f"Retrying in {retry_delay}s..."
+                        )
 
                     # Yield a retry notification action to inform user
                     from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
@@ -1826,7 +1860,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                         role=ActionRole.ASSISTANT,
                         action_type="retry_notification",
                         messages=f"Connection interrupted, retrying ({attempt + 2}/{max_retries})...",
-                        input_data={"error": str(e), "attempt": attempt + 1},
+                        input_data={"error": type(e).__name__ if safe_errors else str(e), "attempt": attempt + 1},
                         status=ActionStatus.PROCESSING,
                     )
                     action_history_manager.add_action(retry_action)
@@ -1837,7 +1871,10 @@ class OpenAICompatibleModel(LLMBaseModel):
                     retry_delay *= 2  # Exponential backoff
                 else:
                     # All retries exhausted
-                    logger.exception(f"Stream failed after {max_retries} attempts: {type(e).__name__}: {e}")
+                    if safe_errors:
+                        logger.error("Model stream failed", error_type=type(e).__name__)
+                    else:
+                        logger.exception(f"Stream failed after {max_retries} attempts: {type(e).__name__}: {e}")
                     raise
 
     @asynccontextmanager
