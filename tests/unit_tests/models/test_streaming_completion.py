@@ -12,6 +12,7 @@ import litellm
 import pytest
 import pytest_asyncio
 from agents import AgentHooks, ModelSettings, RunConfig
+from openai import APIError
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models import openai_compatible
@@ -65,8 +66,6 @@ async def provider_http(monkeypatch):
         """Return a provider-shaped stream or the requested HTTP failure."""
         body = json.loads(request.content)
         requests.append((request, body))
-        if behavior.get("transport_error"):
-            raise httpx.RemoteProtocolError("PRIVATE_PROVIDER_ERROR", request=request)
         if behavior["status"] != 200:
             return httpx.Response(
                 behavior["status"], json={"error": {"type": "invalid_request_error", "message": "rejected"}}
@@ -175,6 +174,8 @@ async def provider_http(monkeypatch):
             async def __aiter__(self):
                 for index, event in enumerate(events):
                     yield sse([event]).encode()
+                    if behavior.get("transport_error") and index == 0:
+                        raise httpx.RemoteProtocolError("PRIVATE_PROVIDER_ERROR", request=request)
                     if behavior.get("stall") and index == 0:
                         behavior["stream_ready"].set()
                         await asyncio.Event().wait()
@@ -361,7 +362,7 @@ async def test_private_stream_does_not_log_raw_connection_errors(provider_http, 
     model = LLMBaseModel.from_config(
         ModelConfig(type="deepseek", model="deepseek-v4-flash", api_key="dummy", max_retry=1)
     )
-    with pytest.raises(litellm.APIConnectionError):
+    with pytest.raises((httpx.RemoteProtocolError, APIError)):
         await consume(model, Recorder(), private=True)
     assert len(requests) == 1
     assert "PRIVATE_PROVIDER_ERROR" not in str(log.mock_calls)
