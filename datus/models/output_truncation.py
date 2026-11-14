@@ -78,7 +78,6 @@ async def checked_chat_completion_stream(
     stream: Any,
     *,
     on_usage: Callable[[Usage | None], None] | None = None,
-    on_finish_reason: Callable[[str], None] | None = None,
 ) -> AsyncIterator[Any]:
     """Stop conversion on length while collecting trailing usage, with per-call state.
 
@@ -99,9 +98,6 @@ async def checked_chat_completion_stream(
                     if _value(choice, "index", 0) != 0:
                         continue
                     content = _value(_value(choice, "delta"), "content")
-                    reason = _value(choice, "finish_reason")
-                    if on_finish_reason is not None and isinstance(reason, str):
-                        on_finish_reason(reason)
                     if isinstance(content, str):
                         text.append(content)
                     truncated = truncated or _value(choice, "finish_reason") == "length"

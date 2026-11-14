@@ -61,6 +61,9 @@ async def provider_http(monkeypatch):
     requests, clients, tls = [], [], []
     behavior = {"reason": "stop", "status": 200}
     monkeypatch.setattr(openai_compatible, "_load_model_specs", lambda: {})
+    from datus.cli import provider_model_catalog
+
+    monkeypatch.setattr(provider_model_catalog, "resolve_model_details", lambda: {})
 
     def handle(request):
         """Return a provider-shaped stream or the requested HTTP failure."""

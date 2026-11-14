@@ -9,7 +9,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
-from agents import RunConfig
+from agents import AgentHooks, RunConfig
 from PIL import Image, ImageDraw, ImageFont
 
 from datus.configuration.agent_config import ModelConfig
@@ -179,9 +179,29 @@ def test_unknown_custom_model_uses_server_output_default_over_http(endpoint):
 async def test_single_call_text_keeps_fallback_reservation_off_wire(endpoint):
     url, requests = endpoint
     model = OpenAIModel(ModelConfig(type="openai", model="private-text", api_key="local-test", base_url=url))
-    result = await model.complete_text("hello")
-    assert result["content"] == "image reached endpoint"
-    assert result["usage"].total_tokens == 110
+    history = ActionHistoryManager()
+
+    class ReportedUsage(AgentHooks):
+        usage = None
+
+        async def on_llm_end(self, context, agent, response):
+            self.usage = agent.model.provider_reported_usage
+
+    reported = ReportedUsage()
+    async for _ in model.generate_with_tools_stream(
+        "hello",
+        tools=[],
+        max_turns=1,
+        action_history_manager=history,
+        hooks=reported,
+        run_config=RunConfig(tracing_disabled=True),
+    ):
+        pass
+    final = next(
+        action.output for action in reversed(history.get_actions()) if action.output and "usage" in action.output
+    )
+    assert final["raw_output"] == "image reached endpoint"
+    assert reported.usage.total_tokens == 110
     assert len(requests) == 1
     assert "max_tokens" not in requests[0][1]
     assert "max_completion_tokens" not in requests[0][1]
