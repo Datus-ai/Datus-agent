@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 from functools import lru_cache
+from threading import RLock
 from typing import Any, List, Optional, Union
 
 import numpy as np
@@ -17,6 +18,9 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+# Serialize cold cache misses across wrappers as well as assignment within a wrapper.
+_model_lock = RLock()
 
 
 class FastEmbedEmbeddings(BaseModel, EmbeddingFunction):
@@ -83,7 +87,9 @@ class FastEmbedEmbeddings(BaseModel, EmbeddingFunction):
     def embedding_model(self) -> TextEmbeddingBase:
         """Lazily create and cache the underlying fastembed model instance."""
         if self._model_instance is None:
-            self._model_instance = self._create_embedding_model()
+            with _model_lock:
+                if self._model_instance is None:
+                    self._model_instance = self._create_embedding_model()
         return self._model_instance
 
     def ndims(self) -> int:
@@ -114,39 +120,47 @@ class FastEmbedEmbeddings(BaseModel, EmbeddingFunction):
         embeddings = self.embedding_model.embed(texts, batch_size=self.batch_size)
         return [np.asarray(embedding, dtype=np.float32).tolist() for embedding in embeddings]
 
-    @lru_cache(maxsize=1)
     def _create_embedding_model(self) -> TextEmbeddingBase:
-        """
-        Create the fastembed ``TextEmbedding`` instance for the configured model.
-        Cached so that the model is only loaded once per process.
-        """
-        check_snapshot(self.name, self.cache_dir)
-
-        model_kwargs: dict[str, Any] = {
-            "model_name": self.name,
-            "cache_dir": self.cache_dir,
-            "threads": 1,
-            "local_files_only": True,
-        }
-        if self.device == "cuda":
-            model_kwargs["cuda"] = True
-
-        try:
-            return TextEmbedding(**model_kwargs)
-        except DatusException:
-            raise
-        except Exception as exc:  # pragma: no cover - delegated to caller
-            message = format_fastembed_download_error(
-                model_name=self.name,
-                repo_id=None,
-                cache_dir=self.cache_dir,
-                cause=exc,
-            )
-            logger.error("Failed to initialize fastembed model '%s': %s", self.name, message)
-            raise DatusException(ErrorCode.MODEL_EMBEDDING_ERROR, message=message) from exc
+        """Share a session by its effective constructor configuration, never by wrapper identity."""
+        with _model_lock:
+            return _load_embedding_model(self.name, self.device, self.cache_dir)
 
     def __hash__(self):
         return hash((self.name, self.device, self.batch_size))
+
+
+@lru_cache(maxsize=1)
+def _load_embedding_model(name: str, device: str, cache_dir: str) -> TextEmbeddingBase:
+    """Keep one warm session; callers hold _model_lock across cache lookup and construction.
+
+    Live wrappers own their sessions independently of cache eviction. Batch size and
+    normalization do not affect construction. The remaining session options (one
+    thread, local files only) are fixed below. No wrapper is retained by this cache.
+    """
+    check_snapshot(name, cache_dir)
+
+    model_kwargs: dict[str, Any] = {
+        "model_name": name,
+        "cache_dir": cache_dir,
+        "threads": 1,
+        "local_files_only": True,
+    }
+    if device == "cuda":
+        model_kwargs["cuda"] = True
+
+    try:
+        return TextEmbedding(**model_kwargs)
+    except DatusException:
+        raise
+    except Exception as exc:  # pragma: no cover - delegated to caller
+        message = format_fastembed_download_error(
+            model_name=name,
+            repo_id=None,
+            cache_dir=cache_dir,
+            cause=exc,
+        )
+        logger.error("Failed to initialize fastembed model '%s': %s", name, message)
+        raise DatusException(ErrorCode.MODEL_EMBEDDING_ERROR, message=message) from exc
 
 
 def _resolve_cache_dir() -> str:
