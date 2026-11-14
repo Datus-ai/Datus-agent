@@ -345,6 +345,77 @@ async def test_regular_chat_keeps_existing_tls_client_path(provider_http, monkey
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("with_rewriter", [False, True])
+async def test_stream_overrides_retain_queued_input_and_session_callbacks(provider_http, tmp_path, with_rewriter):
+    from types import SimpleNamespace
+
+    from datus.cli.execution_state import PendingInputQueue
+    from datus.models.sqlite_session import DatusSQLiteSession
+
+    requests, _, _, _ = provider_http
+    model = LLMBaseModel.from_config(
+        ModelConfig(type="deepseek", model="deepseek-v4-flash", api_key="dummy", max_retry=1)
+    )
+    session = DatusSQLiteSession(session_id="stream-config", db_path=str(tmp_path / "history.db"), create_tables=True)
+    queue = PendingInputQueue()
+    queue.push("Queued correction")
+    rewrites = []
+    pinned = []
+
+    async def rewrite(items):
+        rewrites.append(items)
+        items = [*items, *pinned]
+        rewriter.compactions += 1
+        await session.clear_session()
+        await session.add_items(items)
+        return items
+
+    rewriter = SimpleNamespace(
+        anchor_turn=lambda *args: None,
+        pin_insert=lambda index, item: pinned.append(item),
+        set_request_context=lambda *args: None,
+        rewrite_sdk_input=rewrite,
+        system_instruction="Return JSON.",
+        compactions=0,
+    )
+
+    def caller_callback(*args):
+        raise AssertionError("Caller override replaced a required input callback")
+
+    config = RunConfig(
+        tracing_disabled=True,
+        trace_include_sensitive_data=False,
+        model_settings=ModelSettings(temperature=0.17, extra_args={"timeout": 5}),
+        call_model_input_filter=caller_callback,
+        session_input_callback=caller_callback if with_rewriter else None,
+    )
+    try:
+        await session.add_items([{"role": "user", "content": "Earlier context"}])
+        async for _ in model.generate_with_tools_stream(
+            "Original task",
+            instruction="Return JSON.",
+            tools=[],
+            max_turns=1,
+            session=session,
+            pending_input_queue=queue,
+            context_rewriter=rewriter if with_rewriter else None,
+            run_config=config,
+        ):
+            pass
+        body = requests[0][1]
+        assert body["temperature"] == 0.17
+        wire = json.dumps(body["messages"])
+        assert all(text in wire for text in ("Earlier context", "Original task", "Queued correction"))
+        history = json.dumps(await session.get_items())
+        assert history.count("Original task") == 1
+        assert history.count("Queued correction") == 1
+        assert len(rewrites) == int(with_rewriter)
+        assert config.call_model_input_filter is caller_callback
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", ["success", "failure", "retry", "tool_rounds"])
 async def test_nonstream_closes_owned_client_after_complete_runner(provider_http, outcome):
     from agents import function_tool

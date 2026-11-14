@@ -12,6 +12,7 @@ import os
 import threading
 import time
 from contextlib import AsyncExitStack, aclosing, asynccontextmanager, nullcontext
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
@@ -1291,6 +1292,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         self._setup_custom_json_encoder()
 
         async def _stream_operation():
+            nonlocal safe_errors
             # Use multiple_mcp_servers context manager with empty dict if no MCP servers
             async with (
                 multiple_mcp_servers(mcp_servers or {}) as connected_servers,
@@ -1313,7 +1315,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 if inspect.iscoroutinefunction(close := getattr(getattr(agent, "model", None), "aclose", None)):
                     tool_streams.push_async_callback(close)
 
-                run_config = kwargs.get("run_config") or self._build_run_config(
+                run_config = self._build_run_config(
                     pending_input_queue=pending_input_queue,
                     session=session,
                     interrupt_controller=interrupt_controller,
@@ -1321,6 +1323,21 @@ class OpenAICompatibleModel(LLMBaseModel):
                     agent_name=agent_name,
                     context_rewriter=context_rewriter,
                 )
+                if requested_config := kwargs.get("run_config"):
+                    # Transport/tracing overrides must retain the callbacks
+                    # responsible for queued input and session compaction.
+                    run_config = replace(
+                        requested_config,
+                        call_model_input_filter=(
+                            getattr(run_config, "call_model_input_filter", None)
+                            or requested_config.call_model_input_filter
+                        ),
+                        session_input_callback=(
+                            getattr(run_config, "session_input_callback", None)
+                            or requested_config.session_input_callback
+                        ),
+                    )
+                safe_errors = not getattr(run_config, "trace_include_sensitive_data", True)
                 try:
                     with _agents_trace_baggage(agent_name):
                         result = Runner.run_streamed(
@@ -1786,10 +1803,18 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # LLM hallucinated a non-existent tool or produced malformed output.
                 # Retry since the LLM may behave correctly on the next attempt.
                 if attempt < max_retries - 1:
-                    logger.warning(
-                        f"Model behavior error in stream (attempt {attempt + 1}/{max_retries}): {e}. "
-                        f"Retrying in {retry_delay}s..."
-                    )
+                    if safe_errors:
+                        logger.warning(
+                            "Model behavior error in stream; retrying",
+                            error_type=type(e).__name__,
+                            attempt=attempt + 1,
+                            max_retries=max_retries,
+                        )
+                    else:
+                        logger.warning(
+                            f"Model behavior error in stream (attempt {attempt + 1}/{max_retries}): {e}. "
+                            f"Retrying in {retry_delay}s..."
+                        )
 
                     from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
@@ -1797,7 +1822,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                         role=ActionRole.ASSISTANT,
                         action_type="retry_notification",
                         messages=f"Model behavior error, retrying ({attempt + 2}/{max_retries})...",
-                        input_data={"error": str(e), "attempt": attempt + 1},
+                        input_data={"error": type(e).__name__ if safe_errors else str(e), "attempt": attempt + 1},
                         status=ActionStatus.PROCESSING,
                     )
                     action_history_manager.add_action(retry_action)
@@ -1815,10 +1840,18 @@ class OpenAICompatibleModel(LLMBaseModel):
 
             except (httpx.RemoteProtocolError, APIConnectionError, APITimeoutError, MidStreamFallbackError) as e:
                 if attempt < max_retries - 1:
-                    logger.warning(
-                        f"Stream connection error (attempt {attempt + 1}/{max_retries}): {type(e).__name__}: {e}. "
-                        f"Retrying in {retry_delay}s..."
-                    )
+                    if safe_errors:
+                        logger.warning(
+                            "Model stream connection error; retrying",
+                            error_type=type(e).__name__,
+                            attempt=attempt + 1,
+                            max_retries=max_retries,
+                        )
+                    else:
+                        logger.warning(
+                            f"Stream connection error (attempt {attempt + 1}/{max_retries}): {type(e).__name__}: {e}. "
+                            f"Retrying in {retry_delay}s..."
+                        )
 
                     # Yield a retry notification action to inform user
                     from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
@@ -1827,7 +1860,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                         role=ActionRole.ASSISTANT,
                         action_type="retry_notification",
                         messages=f"Connection interrupted, retrying ({attempt + 2}/{max_retries})...",
-                        input_data={"error": str(e), "attempt": attempt + 1},
+                        input_data={"error": type(e).__name__ if safe_errors else str(e), "attempt": attempt + 1},
                         status=ActionStatus.PROCESSING,
                     )
                     action_history_manager.add_action(retry_action)
