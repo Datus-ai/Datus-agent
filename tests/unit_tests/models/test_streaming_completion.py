@@ -17,7 +17,6 @@ from openai import APIError
 from datus.configuration.agent_config import ModelConfig
 from datus.models import openai_compatible
 from datus.models.base import LLMBaseModel
-from datus.models.output_truncation import ModelOutputTruncatedError
 
 pytestmark = pytest.mark.ci
 
@@ -513,16 +512,18 @@ async def test_shared_stream_respects_request_local_tls(provider_http, kind, nam
 
 
 @pytest.mark.asyncio
-async def test_shared_stream_rejects_truncated_text(provider_http):
+async def test_shared_stream_retains_truncated_text_and_provider_usage(provider_http):
     requests, _, _, behavior = provider_http
     behavior["reason"] = "length"
     model = LLMBaseModel.from_config(
         ModelConfig(type="deepseek", model="deepseek-v4-flash", api_key="dummy", max_retry=1)
     )
-    with pytest.raises(ModelOutputTruncatedError) as error:
-        await consume(model, Recorder())
-    assert error.value.usage_reported
-    assert error.value.usage.input_tokens == 11
+    recorder = Recorder()
+    await consume(model, recorder)
+    assert recorder.usage.input_tokens == 11
+    assert recorder.usage.output_tokens == 7
+    assert len(recorder.responses) == 1
+    assert recorder.responses[0].output[-1].content[0].text == '{"summary":"ok"}'
     assert len(requests) == 1
 
 

@@ -5,17 +5,19 @@
 
 import asyncio
 import json
-from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import litellm
 import pytest
 import pytest_asyncio
-from agents import Agent, RunConfig, Runner, function_tool
+from agents import RunConfig, Runner, function_tool
+from agents.models.interface import ModelTracing
 from litellm.litellm_core_utils.logging_worker import GLOBAL_LOGGING_WORKER
 from openai import AsyncOpenAI
 
 from datus.configuration.agent_config import ModelConfig
+from datus.models.observed_model import ObservedResponsesModel
 from datus.models.openai_model import OpenAIModel
 from datus.models.output_truncation import (
     ModelOutputTruncatedError,
@@ -23,8 +25,8 @@ from datus.models.output_truncation import (
     checked_chat_completion_stream,
 )
 from datus.models.responses_model import DatusResponsesModel
-from datus.models.sqlite_session import DatusSQLiteSession
-from datus.schemas.action_history import ActionHistoryManager, ActionStatus
+from datus.tools.func_tool.base import trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 
 pytestmark = pytest.mark.component
 ENDPOINT = "https://models.example.test/v1"
@@ -106,93 +108,74 @@ def tool_call(arguments='{"value":"unfinished'):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("streaming", [False, True])
-@pytest.mark.parametrize("kind", ["text", "reasoning", "tool"])
-async def test_sdk_rejects_length_before_tool_execution(service, streaming, kind):
+@pytest.mark.parametrize("content", [PARTIAL, None])
+async def test_legacy_length_returns_received_text_without_automatic_continuation(service, streaming, content):
     model, requests, responses = service
-    invoked = []
-
-    @function_tool
-    def write_probe(value: str) -> str:
-        """Record a write that must only execute with a complete model response."""
-        invoked.append(value)
-        return "written"
-
-    message = {"reasoning_content": REASONING, "content": PARTIAL if kind == "text" else None}
-    if kind == "tool":
-        message["tool_calls"] = [tool_call()]
-    responses.append({"message": message, "finish": "length"})
-    agent = model._build_agent("Review the skill.", str, False, {}, [write_probe])
-    with pytest.raises(ModelOutputTruncatedError) as caught:
-        if streaming:
-            result = Runner.run_streamed(agent, "Review.", run_config=RunConfig(tracing_disabled=True))
-            async for _ in result.stream_events():
-                pass
-        else:
-            await Runner.run(agent, "Review.", run_config=RunConfig(tracing_disabled=True))
-    assert caught.value.partial_response == (PARTIAL if kind == "text" else "")
-    assert caught.value.usage.total_tokens == 120
-    assert REASONING not in str(caught.value)
-    assert invoked == []
+    responses.append({"message": {"content": content, "reasoning_content": REASONING}, "finish": "length"})
+    agent = model._build_agent("Review.", str, False, {}, [])
+    if streaming:
+        result = Runner.run_streamed(agent, "Review.", run_config=RunConfig(tracing_disabled=True))
+        async for _ in result.stream_events():
+            pass
+    else:
+        result = await Runner.run(agent, "Review.", run_config=RunConfig(tracing_disabled=True))
+    assert result.final_output == (content or "")
+    assert result.context_wrapper.usage.total_tokens == 120
     assert len(requests) == 1
+
+
+def test_legacy_direct_generation_returns_truncated_text():
+    model = OpenAIModel(ModelConfig(type="openai", model="yumcode-pro", api_key="test", base_url=ENDPOINT))
+    response = litellm.ModelResponse(
+        model="yumcode-pro",
+        choices=[{"index": 0, "message": {"role": "assistant", "content": PARTIAL}, "finish_reason": "length"}],
+    )
+    with patch("litellm.completion", return_value=response) as send:
+        assert model.generate("Review.") == PARTIAL
+    assert send.call_count == 1
+    assert "max_tokens" not in send.call_args.kwargs
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("streaming", [False, True])
-async def test_retains_completed_tools_partial_answer_usage_and_resume(service, tmp_path, streaming):
+@pytest.mark.parametrize("incomplete", [False, True])
+async def test_legacy_tool_loop_corrects_arguments_without_repeating_completed_calls(service, streaming, incomplete):
     model, requests, responses = service
     invoked = []
 
-    @function_tool
-    def write_probe(value: str) -> str:
-        """Record a completed write."""
-        invoked.append(value)
-        return "written"
+    class WriteProbe:
+        @tool_contract(access="write", direct_call=True, category="filesystem_tools")
+        def write_probe(self, value: str) -> str:
+            """Record a complete write after argument validation."""
+            invoked.append(value)
+            return "written"
 
+    previous = tool_call('{"value":"previous"}')
+    previous["id"] = "previous_write"
+    cutoff = tool_call() if incomplete else tool_call('{"value":"complete"}')
     responses.extend(
         [
-            {"message": {"tool_calls": [tool_call('{"value":"complete"}')]}, "finish": "tool_calls"},
-            {"message": {"content": PARTIAL, "reasoning_content": REASONING}, "finish": "length"},
-            {"message": {"content": "Review complete."}},
+            {"message": {"tool_calls": [previous]}, "finish": "tool_calls"},
+            {"message": {"tool_calls": [cutoff]}, "finish": "length"},
         ]
     )
-    session = DatusSQLiteSession(create_tables=True, session_id="review", db_path=str(tmp_path / "review.db"))
-    manager = ActionHistoryManager()
-    try:
-        with pytest.raises(ModelOutputTruncatedError) as caught:
-            if streaming:
-                async for _ in model.generate_with_tools_stream(
-                    "Review.", tools=[write_probe], session=session, action_history_manager=manager
-                ):
-                    pass
-            else:
-                await model.generate_with_tools("Review.", tools=[write_probe], session=session)
-        assert caught.value.partial_response == PARTIAL
-        assert caught.value.usage.total_tokens == 240
-        assert caught.value.usage.requests == 2
-        assert invoked == ["complete"]
-        assert len(requests) == 2  # max_retry must not restart an output-limited run.
-        assert not any(action.action_type == "retry_notification" for action in manager.get_actions())
-        history = await session.get_items()
-        calls = [item for item in history if item.get("type") == "function_call"]
-        outputs = [item for item in history if item.get("type") == "function_call_output"]
-        assert [item["call_id"] for item in calls] == [item["call_id"] for item in outputs] == ["write_1"]
-        assert history[-1]["content"] == PARTIAL
-        assert (await session.get_turn_usage(1))["total_tokens"] == 240
-        actions = [
-            action
-            async for action in model.generate_with_tools_stream(
-                "Continue the review.",
-                tools=[write_probe],
-                session=session,
-                action_history_manager=ActionHistoryManager(),
-            )
-        ]
-        assert any(action.output.get("raw_output") == "Review complete." for action in actions if action.output)
-        assert all(action.status != ActionStatus.FAILED for action in actions)
-        assert any(message.get("content") == PARTIAL for message in requests[-1]["messages"])
-        assert invoked == ["complete"]
-    finally:
-        session.close()
+    if incomplete:
+        corrected = tool_call('{"value":"complete"}')
+        corrected["id"] = "corrected_write"
+        responses.append({"message": {"tool_calls": [corrected]}, "finish": "tool_calls"})
+    responses.append({"message": {"content": "Done."}})
+    tools = [trans_to_function_tool(WriteProbe().write_probe)]
+    if streaming:
+        actions = [action async for action in model.generate_with_tools_stream("Build.", tools=tools)]
+        assert any(action.output.get("raw_output") == "Done." for action in actions if action.output)
+        assert not any(action.action_type == "retry_notification" for action in actions)
+    else:
+        assert (await model.generate_with_tools("Build.", tools=tools))["content"] == "Done."
+    assert invoked == ["previous", "complete"]
+    assert len(requests) == (4 if incomplete else 3)
+    feedback = next(message for message in requests[2]["messages"] if message.get("tool_call_id") == "write_1")
+    expected_feedback = "not executed" if incomplete else "written"
+    assert expected_feedback in feedback["content"]
 
 
 @pytest.mark.asyncio
@@ -213,8 +196,7 @@ async def test_concurrent_streams_on_one_model_keep_termination_state_local(serv
         return result.final_output
 
     long, short = await asyncio.gather(run("long"), run("short"), return_exceptions=True)
-    assert isinstance(long, ModelOutputTruncatedError)
-    assert long.partial_response == PARTIAL
+    assert long == PARTIAL
     assert short == "done"
     assert len(requests) == 2
 
@@ -266,29 +248,9 @@ async def test_sdk_normal_stop_with_reasoning_and_no_answer_is_not_truncation(se
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("omit_usage", [False, True])
-async def test_glm_finish_chunk_retains_reported_usage_not_litellm_estimates(service, omit_usage):
-    model, requests, responses = service
-    responses.append(
-        {
-            "message": {"content": None, "reasoning_content": REASONING},
-            "finish": "length",
-            "usage_on_finish": not omit_usage,
-            "omit_usage": omit_usage,
-        }
-    )
-    with pytest.raises(ModelOutputTruncatedError) as caught:
-        async for _ in model.generate_with_tools_stream("Review."):
-            pass
-    assert caught.value.partial_response == ""
-    assert caught.value.usage.total_tokens == (0 if omit_usage else 120)
-    assert len(requests) == 1
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("streaming", [False, True])
 @pytest.mark.parametrize("truncated", [False, True])
-async def test_native_responses_status_through_sdk(streaming, truncated, tmp_path):
+async def test_native_responses_status_matches_sdk(streaming, truncated):
     invoked = []
 
     @function_tool
@@ -347,75 +309,33 @@ async def test_native_responses_status_through_sdk(streaming, truncated, tmp_pat
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http_client:
         client = AsyncOpenAI(api_key="test-key", base_url=ENDPOINT, http_client=http_client)
-        agent = Agent(
-            name="review",
-            model=DatusResponsesModel(model="gpt-test", openai_client=client),
-            tools=[write_probe],
-        )
-        session = DatusSQLiteSession(create_tables=True, session_id="native", db_path=str(tmp_path / "native.db"))
+        from agents import ModelSettings
 
-        async def run():
-            if streaming:
-                result = Runner.run_streamed(
-                    agent, "Review.", session=session, run_config=RunConfig(tracing_disabled=True)
-                )
-                async for _ in result.stream_events():
-                    pass
-                return result
-            return await Runner.run(agent, "Review.", session=session, run_config=RunConfig(tracing_disabled=True))
+        async def outcome(transport):
+            kwargs = {
+                "system_instructions": "Review.",
+                "input": "Review.",
+                "model_settings": ModelSettings(),
+                "tools": [write_probe],
+                "output_schema": None,
+                "handoffs": [],
+                "tracing": ModelTracing.DISABLED,
+            }
+            try:
+                if streaming:
+                    events = [event.model_dump() async for event in transport.stream_response(**kwargs)]
+                    return "events", events
+                response = await transport.get_response(**kwargs)
+                return "response", [item.model_dump() for item in response.output]
+            except Exception as error:
+                return type(error).__name__, str(error)
 
-        try:
-            if truncated:
-                with pytest.raises(ModelOutputTruncatedError) as caught:
-                    await run()
-                assert caught.value.partial_response == PARTIAL
-                assert caught.value.usage.total_tokens == 120
-                assert all(item.get("type") != "function_call" for item in await session.get_items())
-            else:
-                assert (await run()).final_output == PARTIAL
-            assert invoked == []
-        finally:
-            session.close()
+        expected = await outcome(ObservedResponsesModel(model="gpt-test", openai_client=client))
+        actual = await outcome(DatusResponsesModel(model="gpt-test", openai_client=client))
+        assert actual == expected
+        assert actual[0] != "ModelOutputTruncatedError"
+        assert invoked == []
 
 
 def test_responses_other_incomplete_reasons_are_not_output_exhaustion():
     assert check_responses_output({"status": "incomplete", "incomplete_details": {"reason": "content_filter"}}) is None
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["text", "reasoning", "tool"])
-async def test_node_and_parent_receive_failed_partial_result(service, real_agent_config, monkeypatch, kind):
-    from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
-    from datus.models.base import LLMBaseModel
-    from datus.schemas.gen_skill_agentic_node_models import SkillCreatorNodeInput
-    from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
-
-    model, requests, responses = service
-    message = {"content": PARTIAL if kind == "text" else None, "reasoning_content": REASONING}
-    if kind == "tool":
-        call = tool_call()
-        call["function"] = {
-            "name": "write_file",
-            "arguments": '{"path":".datus/skills/unwanted/SKILL.md","content":"unfinished',
-        }
-        message["tool_calls"] = [call]
-    responses.append({"message": message, "finish": "length"})
-    monkeypatch.setattr(LLMBaseModel, "create_model", lambda *args, **kwargs: model)
-    node = SkillCreatorAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-    node.input = SkillCreatorNodeInput(user_message="Review this skill.")
-    actions = [action async for action in node.execute_stream(ActionHistoryManager())]
-
-    assert node.result.success is False
-    assert node.result.response == (PARTIAL if kind == "text" else "")
-    assert node.result.tokens_used == 120
-    assert "truncated" in node.result.error
-    assert actions[-1].status == ActionStatus.FAILED
-    assert len(requests) == 1
-    assert not (Path(node._resolve_workspace_root()) / ".datus/skills/unwanted/SKILL.md").exists()
-    converted = SubAgentTaskTool(agent_config=real_agent_config)._convert_to_func_result(
-        node.result.model_dump(), session_id=node.session_id
-    )
-    assert converted.success == 0
-    assert converted.result["response"] == node.result.response
-    assert converted.result["tokens_used"] == 120
-    assert converted.result["session_id"] == node.session_id

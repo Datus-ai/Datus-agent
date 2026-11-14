@@ -18,7 +18,7 @@ from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
 from openai import AsyncOpenAI
 
 from datus.models.observed_model import ObservedLitellmModel
-from datus.models.output_truncation import check_chat_completion, checked_chat_completion_stream
+from datus.models.output_truncation import observed_chat_completion_stream
 from datus.models.reasoning_replay import REASONING_ENDPOINT_KEY, is_kimi_model, reasoning_endpoint_identity
 from datus.utils.image_content import is_tool_image_user_message, tool_images_as_user_input
 
@@ -238,8 +238,7 @@ class DatusLitellmModel(ObservedLitellmModel):
                 """Expose actual provider usage to standard on_llm_end hooks."""
                 self.provider_reported_usage = usage
 
-            return response, checked_chat_completion_stream(stream, on_usage=on_usage)
-        check_chat_completion(result)
+            return response, observed_chat_completion_stream(stream, on_usage=on_usage)
         return result
 
     def capacity_payload(
