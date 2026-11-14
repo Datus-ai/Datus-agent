@@ -39,7 +39,7 @@ from datus.models.litellm_adapter import (
 )
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
-from datus.models.output_truncation import ModelOutputTruncatedError, check_chat_completion
+from datus.models.output_truncation import ModelOutputTruncatedError
 from datus.models.request_capacity import DEFAULT_CONTEXT_LENGTH, DEFAULT_MAX_TOKENS
 from datus.models.tool_result_stream import ToolResultStream
 from datus.observability.manager import get_observability_manager
@@ -698,7 +698,6 @@ class OpenAICompatibleModel(LLMBaseModel):
                 call.request(effective)
                 response = litellm.completion(**effective)
                 call.response(response)
-                check_chat_completion(response)
                 message = response.choices[0].message
                 content = strip_litellm_placeholder(message.content)
 

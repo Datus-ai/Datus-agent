@@ -1,7 +1,7 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 
-"""Preserve explicit output-limit failures before SDK response conversion."""
+"""Observe provider usage and provide explicit output-truncation checks."""
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
@@ -72,6 +72,25 @@ def _received_chat_stream_usage(stream: Any, fallback: Any) -> Any:
             merged[key] = next((_value(usage, key) for usage in reversed(received) if _value(usage, key)), None)
         return merged
     return fallback
+
+
+async def observed_chat_completion_stream(
+    stream: Any,
+    *,
+    on_usage: Callable[[Usage | None], None] | None = None,
+) -> AsyncIterator[Any]:
+    """Capture reported usage while leaving completion and errors to the SDK."""
+    usage = None
+    try:
+        async with aclosing(stream):
+            async for chunk in stream:
+                if received_usage := _value(chunk, "usage"):
+                    usage = received_usage
+                yield chunk
+    finally:
+        received_usage = _received_chat_stream_usage(stream, usage)
+        if on_usage is not None:
+            on_usage(chat_completion_usage(received_usage) if received_usage is not None else None)
 
 
 async def checked_chat_completion_stream(
