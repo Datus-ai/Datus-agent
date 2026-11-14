@@ -75,6 +75,38 @@ Once the server is running, you can access:
 curl http://localhost:8000/health
 ```
 
+### Configure Legacy JWT Authentication
+
+The legacy `/auth/token`, `/workflows/run`, and `/workflows/feedback` endpoints
+require explicit client credentials and a JWT signing key. They return HTTP 503
+when `auth_clients.yml` is missing, empty, malformed, or has invalid credentials
+or JWT settings. No development credentials or signing key are supplied.
+The server, Web UI, and new API routes can still start; their existing
+`AuthProvider` behavior is unchanged. Configuring legacy JWT authentication does
+not secure the new API routes; configure their provider and deployment boundary
+separately.
+
+Copy `conf/auth_clients.yml.example` to `{agent.home}/conf/auth_clients.yml`
+(default `~/.datus/conf/auth_clients.yml`). Replace both null values with
+independently generated secrets and set your client identifier. For example,
+run this locally once for each secret:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Keep the completed file private, restrict its file permissions, and restart the
+service after configuration changes. No credentials are generated or saved by
+the server. Existing users relying on the old published defaults must configure
+new credentials and rotate the signing key; old tokens then become invalid.
+Existing explicit YAML client mappings, algorithms, and token lifetimes remain
+supported when valid.
+
+`JWT_SECRET_KEY` overrides the YAML `jwt.secret_key` when set. If unset, the YAML
+key is used. If set to an empty or whitespace-only value, legacy authentication
+is disabled: it does not fall back to YAML. Client credentials must still be
+configured in YAML even when the signing key comes from the environment.
+
 ### Get Access Token
 ```bash
 curl -X POST "http://localhost:8000/auth/token" \
