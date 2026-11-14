@@ -193,17 +193,37 @@ def provider_http(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_explicit_none_disables_deepseek_thinking_on_the_wire(provider_http):
+@pytest.mark.parametrize("base_url", ["https://api.deepseek.com", "https://gateway.example/v1"])
+async def test_explicit_none_disables_deepseek_thinking_on_the_wire(provider_http, base_url):
     """Check LiteLLM's provider translation rather than only inspecting our settings."""
     requests, clients, _, _ = provider_http
     model = LLMBaseModel.from_config(
-        ModelConfig(type="deepseek", model="deepseek-v4-pro", api_key="dummy", reasoning_effort="none")
+        ModelConfig(
+            type="deepseek", model="deepseek-v4-pro", api_key="dummy", base_url=base_url, reasoning_effort="none"
+        )
     )
     await model.complete_text("facts", max_tokens=32768, timeout=5)
     body = requests[0][1]
     assert body["thinking"] == {"type": "disabled"}
+    # Gateways can inject a conflicting default when LiteLLM consumes the effort.
+    assert body["reasoning_effort"] == "none"
     assert body["max_tokens"] == 32768
     assert len(requests) == 1
+    assert all(client.is_closed for client in clients)
+
+
+@pytest.mark.asyncio
+async def test_deepseek_enabled_reasoning_is_not_overridden_by_completion(provider_http):
+    """The explicit-off compatibility override must not turn off an enabled caller."""
+    requests, clients, _, _ = provider_http
+    model = LLMBaseModel.from_config(
+        ModelConfig(type="deepseek", model="deepseek-v4-flash", api_key="dummy", reasoning_effort="high")
+    )
+    result = await model.complete_text("facts", max_tokens=32768, timeout=5)
+    assert result["usage"].input_tokens == 11
+    assert requests[0][1]["thinking"] == {"type": "enabled"}
+    assert requests[0][1].get("reasoning_effort") != "none"
+    assert model.model_config.reasoning_effort == "high"
     assert all(client.is_closed for client in clients)
 
 

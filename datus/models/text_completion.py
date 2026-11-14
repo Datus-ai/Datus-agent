@@ -89,6 +89,11 @@ async def complete_text(
                 "success_callback": [],
                 "failure_callback": [],
             }
+            if model.litellm_adapter.provider == "deepseek" and model.litellm_adapter.reasoning_effort_level == "none":
+                # LiteLLM consumes the effort to produce thinking.disabled.
+                # Retain the explicit off value on the wire as well, otherwise
+                # gateways can inject a conflicting default reasoning effort.
+                sdk_model._datus_request_options["extra_body"] = {"reasoning_effort": "none"}
             sdk_model._datus_capture_usage = True
             sdk_model._datus_reported_usage = None
             sdk_model._datus_finish_reason = None
