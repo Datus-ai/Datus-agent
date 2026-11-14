@@ -4,7 +4,37 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import yaml
+
 MODULE_PATH = Path(__file__).resolve().parents[3] / "ci" / "audit_tests.py"
+
+
+def test_audit_workflow_only_scans_test_changes_on_hosted_runners_using_trusted_code():
+    path = MODULE_PATH.parent.parent / ".github/workflows/test-audit.yml"
+    config = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
+    assert set(config["on"]) == {"pull_request_target"}
+    event = config["on"]["pull_request_target"]
+    assert set(event["types"]) == {"opened", "synchronize", "reopened"}
+    assert set(event["paths"]) == {"tests/unit_tests/**/test_*.py", "tests/integration/**/test_*.py"}
+    job = config["jobs"]["test-audit"]
+    assert job["runs-on"] == "ubuntu-latest"
+    assert "if" not in job
+    steps = job["steps"]
+    checkouts = [s["with"] for s in steps if s.get("uses") == "actions/checkout@v4"]
+    assert checkouts[0]["path"] == "base"
+    assert checkouts[0]["ref"] == "${{ github.event.pull_request.base.sha }}"
+    assert checkouts[1]["path"] == "pr"
+    assert checkouts[1]["ref"] == "${{ github.event.pull_request.head.sha }}"
+    assert all(c["persist-credentials"] == "false" for c in checkouts)
+    audit = next(s for s in steps if s.get("id") == "audit")
+    assert audit["working-directory"] == "pr"
+    assert "python3 ../base/ci/audit_tests.py" in audit["run"]
+    assert '--diff-only "$BASE_SHA"' in audit["run"]
+    assert audit["env"]["BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
+    assert "--repo-root ." in audit["run"]
+    assert "--json ../base/ci/audit-report.json" in audit["run"]
+    comment = next(s for s in steps if s.get("name") == "Post audit comment")
+    assert "process.chdir('base')" in comment["with"]["script"]
 
 
 def _load_audit_tests():

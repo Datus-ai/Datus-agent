@@ -2675,14 +2675,10 @@ execution:
         - ci/harness/coverage-map.yml
         - ci/harness/test_plan.py
         - ci/plan-product-tests.py
-        - ci/harness/sql-policy-host.json
-        - ci/sql_policy_gate.py
         - ci/sql_policy_release.py
         - ci/release_artifact.py
         - ci/pytest_gate_plugin.py
-        - ci/stage_harness.py
         - ci/run-nightly-tests.sh
-        - .github/workflows/sql-policy-gate.yml
         - .github/workflows/merge-queue.yml
         - .github/workflows/run-nightly.yml
       required_targets:

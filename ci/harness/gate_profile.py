@@ -20,7 +20,6 @@ GATE_PATHS = (
     MAP_PATH,
     "ci/harness/",
     "ci/run-pr-tests.py",
-    "ci/run-tests-and-coverage.py",
     "ci/select_gate_profile.py",
     "ci/pytest_gate_plugin.py",
     ".github/workflows/run-ut-and-coverage.yml",

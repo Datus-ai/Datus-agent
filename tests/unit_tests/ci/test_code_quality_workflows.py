@@ -40,7 +40,7 @@ def test_each_pr_event_publishes_real_required_checks(event):
         assert "if" not in job
         name = job.get("name", job_id)
         assert "${{" not in name
-        assert job["with"]["reuse_validation"] == "${{ github.event.action == 'edited' && !github.event.changes.base }}"
+        assert "with" not in job
         called = workflow(Path(job["uses"]).name)
         for child_id, child in called["jobs"].items():
             child_name = child.get("name", child_id)
@@ -56,26 +56,20 @@ def test_merge_group_contexts_are_isolated_from_pr_events():
     assert all("if" not in job for job in config["jobs"].values())
 
 
-def test_metadata_mode_runs_tests_only_when_successful_evidence_is_not_reused():
+def test_required_validators_have_no_unreachable_metadata_reuse_mode():
     config = workflow("code-quality.yml")
     assert "github.event.pull_request.head.sha" in config["run-name"]
     assert "github.event.pull_request.base.ref" in config["run-name"]
     assert "github.event.pull_request.base.sha" in config["run-name"]
     for name in ("python-format-check.yml", "run-ut-and-coverage.yml"):
         called = workflow(name)
-        assert called["on"]["workflow_call"]["inputs"]["reuse_validation"]["default"] == "false"
+        assert not called["on"]["workflow_call"]
         for job in called["jobs"].values():
             assert "if" not in job
-            steps = job["steps"]
-            verifier = next(step for step in steps if step.get("name") == "Reuse verified validation")
-            assert verifier["id"] == "reuse"
-            assert verifier["if"] == "inputs.reuse_validation"
-            assert "reuseValidation" in verifier["with"]["script"]
-            assert "core.setOutput('reused', result.state === 'success')" in verifier["with"]["script"]
-            for step in steps:
-                if step is verifier or step.get("name") == "Checkout code":
-                    continue
-                assert "steps.reuse.outputs.reused != 'true'" in step["if"], step["name"]
+            assert all(step.get("name") != "Reuse verified validation" for step in job["steps"])
+            assert "steps.reuse" not in str(job)
+    assert "edited" not in config["on"]["pull_request"]["types"]
+    assert config["concurrency"]["cancel-in-progress"] == "true"
 
 
 def coverage_steps():
@@ -121,7 +115,7 @@ def test_threshold_gate_checks_tests_independently_of_application_coverage(appli
 def test_version_only_validation_keeps_release_checks_and_runtime_setup_is_conditional():
     steps = coverage_steps()
     metadata = next(step for step in steps if step.get("name") == "Check release metadata")
-    assert "run_tests" not in metadata["if"]
+    assert "run_tests" not in metadata.get("if", "")
     assert "ci/check_release_readiness.py" in metadata["run"]
     assert "uv lock --check" in metadata["run"]
     for name in [

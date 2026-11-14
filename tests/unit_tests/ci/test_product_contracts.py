@@ -1,6 +1,8 @@
 """Product execution evidence and installed artifact identity remain verifiable."""
 
 import json
+import os
+import subprocess
 import sys
 import zipfile
 from types import SimpleNamespace
@@ -9,8 +11,7 @@ import pytest
 import yaml
 
 from ci.harness.test_plan import ROOT, check_product_execution
-from ci.release_artifact import distributions, verify, verify_install
-from ci.stage_harness import stage
+from ci.release_artifact import distributions, verify, verify_install, verify_wheel_payload
 
 pytestmark = pytest.mark.component
 
@@ -104,19 +105,6 @@ def test_installed_candidate_matches_the_receipt(monkeypatch, tmp_path):
         verify_install(receipt, tmp_path / "checkout")
 
 
-def test_staged_harness_retains_test_resources_and_uses_the_candidate_environment(tmp_path):
-    source = tmp_path / "checkout"
-    for name in ("tests", "ci", "conf", ".venv"):
-        (source / name).mkdir(parents=True)
-    for name in ("pyproject.toml", "pytest.ini", "tests/conftest.py", "conf/agent.yml"):
-        (source / name).write_text("fixture content")
-    destination = tmp_path / "outside-checkout"
-    stage(source, destination)
-    assert (destination / "tests/conftest.py").read_text() == "fixture content"
-    assert (destination / "conf/agent.yml").read_text() == "fixture content"
-    assert (destination / ".venv").resolve() == source / ".venv"
-
-
 def test_publishing_consumes_the_validated_candidate():
     publish = yaml.safe_load((ROOT / ".github/workflows/publish-release.yml").read_text())
     assert publish["jobs"]["publish"]["needs"] == "validate-candidate"
@@ -126,3 +114,63 @@ def test_publishing_consumes_the_validated_candidate():
     assert download["with"]["name"] == "${{ needs.validate-candidate.outputs.artifact_name }}"
     verify_step = next(step for step in steps if step["name"] == "Verify and stage validated distributions")
     assert "release_artifact.py verify" in verify_step["run"]
+
+
+@pytest.mark.parametrize("changed", ["extension", "bundled-library"])
+def test_installed_native_payload_must_match_the_identified_wheel(tmp_path, changed):
+    wheel = tmp_path / "policy.whl"
+    package = tmp_path / "installed" / "datus_sql_policies"
+    package.mkdir(parents=True)
+    (package / "_native.so").write_bytes(b"native artifact")
+    bundled = package.parent / "datus_sql_policies.libs" / "libdependency.so"
+    bundled.parent.mkdir()
+    bundled.write_bytes(b"bundled native library")
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("datus_sql_policies/_native.so", b"native artifact")
+        archive.writestr("datus_sql_policies.libs/libdependency.so", b"bundled native library")
+    verify_wheel_payload(wheel, package.parent, package.name)
+    (bundled if changed == "bundled-library" else package / "_native.so").write_bytes(b"unrelated cached native file")
+    with pytest.raises(ValueError, match="payload differs"):
+        verify_wheel_payload(wheel, package.parent, package.name)
+
+
+@pytest.mark.parametrize("inherit_pytest_addopts", [False, True])
+def test_execution_report_records_the_frozen_source_identity(tmp_path, monkeypatch, inherit_pytest_addopts):
+    if inherit_pytest_addopts:
+        monkeypatch.setenv("PYTEST_ADDOPTS", f"--basetemp={tmp_path.parent}")
+    else:
+        monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+    (tmp_path / "test_probe.py").write_text("def test_probe(): pass\n")
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    report = tmp_path / "execution.json"
+    env = {
+        **os.environ,
+        "DATUS_GATE_SOURCE_ID": "source-combination",
+        "PYTHONPATH": str(ROOT),
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    }
+    # The outer pytest basetemp is an ancestor of this subprocess's working directory.
+    env.pop("PYTEST_ADDOPTS", None)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "test_probe.py",
+            "-p",
+            "ci.pytest_gate_plugin",
+            "--gate-report",
+            str(report),
+            "--rootdir",
+            str(tmp_path),
+            "-c",
+            str(tmp_path / "pytest.ini"),
+            "-q",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert json.loads(report.read_text())["source_id"] == "source-combination"
