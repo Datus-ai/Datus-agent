@@ -248,9 +248,16 @@ async def test_sdk_normal_stop_with_reasoning_and_no_answer_is_not_truncation(se
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("streaming", [False, True])
-@pytest.mark.parametrize("truncated", [False, True])
-async def test_native_responses_status_matches_sdk(streaming, truncated):
+@pytest.mark.parametrize(
+    "streaming,truncated,expected_kind,expected_output",
+    [
+        (False, False, "response", PARTIAL),
+        (False, True, "response", PARTIAL),
+        (True, False, "events", PARTIAL),
+        (True, True, "ModelBehaviorError", "max_output_tokens"),
+    ],
+)
+async def test_native_responses_status_matches_sdk(streaming, truncated, expected_kind, expected_output):
     invoked = []
 
     @function_tool
@@ -332,8 +339,9 @@ async def test_native_responses_status_matches_sdk(streaming, truncated):
 
         expected = await outcome(ObservedResponsesModel(model="gpt-test", openai_client=client))
         actual = await outcome(DatusResponsesModel(model="gpt-test", openai_client=client))
+        assert actual[0] == expected_kind
+        assert json.dumps(expected_output)[1:-1] in json.dumps(actual[1])
         assert actual == expected
-        assert actual[0] != "ModelOutputTruncatedError"
         assert invoked == []
 
 
