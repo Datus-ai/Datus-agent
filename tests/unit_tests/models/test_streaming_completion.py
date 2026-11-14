@@ -297,6 +297,22 @@ async def test_missing_usage_is_not_replaced_by_sdk_estimates(provider_http, kin
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind,name", [("deepseek", "deepseek-v4-flash"), ("openai", "gpt-4.1")])
+async def test_regular_chat_keeps_existing_tls_client_path(provider_http, monkeypatch, kind, name):
+    from unittest.mock import patch
+
+    from datus.models import litellm_model
+
+    monkeypatch.setenv("SSL_VERIFY", "True")
+    model = LLMBaseModel.from_config(ModelConfig(type=kind, model=name, api_key="dummy"))
+    assert model.litellm_adapter.ssl_verify is None
+    with patch.object(litellm_model, "_TLSHTTPHandler", side_effect=AssertionError("unexpected request-local client")):
+        recorder = Recorder()
+        await consume(model, recorder)
+    assert recorder.usage is not None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("status", [400, 403, 500])
 @pytest.mark.parametrize("kind,name", [("deepseek", "deepseek-v4-flash"), ("openai", "gpt-4.1")])
 async def test_failed_shared_stream_does_not_repeat_a_single_attempt(provider_http, status, kind, name):

@@ -297,9 +297,8 @@ class OpenAICompatibleModel(LLMBaseModel):
         self.base_url = self._get_base_url()
         self.default_headers = dict(self.model_config.default_headers) if self.model_config.default_headers else None
 
-        # Native clients and the shared SDK streaming adapter consume this TLS
-        # policy directly. Keep SSL_VERIFY for legacy synchronous completions;
-        # background callers can opt out of changing process-wide defaults.
+        # Keep chat's existing process-level TLS setup. Isolated background
+        # callers that opt out of it need a request-local client instead.
         from datus.utils.ssl_utils import (
             is_pem_cert_content,
             materialize_ca_bundle,
@@ -326,6 +325,8 @@ class OpenAICompatibleModel(LLMBaseModel):
         else:
             self.ssl_verify = None
 
+        self._request_ssl_verify = self.ssl_verify if not kwargs.get("configure_ssl_env", True) else None
+
         # Initialize LiteLLM adapter for unified LLM calls
         self.litellm_adapter = LiteLLMAdapter(
             provider=model_config.type,
@@ -335,7 +336,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             enable_thinking=model_config.enable_thinking,
             reasoning_effort=model_config.reasoning_effort,
             default_headers=self.default_headers,
-            ssl_verify=self.ssl_verify,
+            ssl_verify=self._request_ssl_verify,
             max_retries=0 if model_config.max_retry == 1 else None,
         )
 
@@ -1034,7 +1035,7 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         litellm_model = self.litellm_adapter.get_agents_sdk_model()
         litellm_model._datus_capacity = self.request_capacity()
-        litellm_model.request_ssl_verify = getattr(self, "ssl_verify", None)
+        litellm_model.request_ssl_verify = getattr(self, "_request_ssl_verify", None)
         litellm_model.request_max_retries = 0 if getattr(self.model_config, "max_retry", 3) == 1 else None
 
         # DeepSeek requires "json" keyword in prompt for JSON mode
