@@ -66,6 +66,7 @@ class _LanceOpenAIAdapter(TextEmbeddingFunction):
 
     name: str = "text-embedding-ada-002"
     dim: Optional[int] = None
+    send_dimensions: Optional[bool] = None
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     use_azure: bool = False
@@ -81,7 +82,12 @@ class _LanceOpenAIAdapter(TextEmbeddingFunction):
             from datus.storage.embedding_openai import OpenAIEmbeddings
 
             impl = OpenAIEmbeddings.create(
-                name=self.name, dim=self.dim, base_url=self.base_url, api_key=self.api_key, use_azure=self.use_azure
+                name=self.name,
+                dim=self.dim,
+                send_dimensions=self.send_dimensions,
+                base_url=self.base_url,
+                api_key=self.api_key,
+                use_azure=self.use_azure,
             )
             object.__setattr__(self, "_impl", impl)
         return self._impl
@@ -110,6 +116,7 @@ def _wrap_embedding(model: EmbeddingFunction) -> TextEmbeddingFunction:
         adapter = _LanceOpenAIAdapter.create(
             name=getattr(model, "name", ""),
             dim=getattr(model, "dim", None),
+            send_dimensions=getattr(model, "send_dimensions", None),
             base_url=getattr(model, "base_url", None),
             api_key=getattr(model, "api_key", None),
             use_azure=getattr(model, "use_azure", False),
