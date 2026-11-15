@@ -9,7 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
+from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.node_type import NodeType
+from datus.schemas.base import BaseInput
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.query_result_text import parse_query_result_text
@@ -893,7 +895,8 @@ class TestAskMetricsAgenticNode:
             )
 
         result = node._build_success_result(
-            Mock(
+            StreamRunContext(
+                user_input=BaseInput(),
                 response_content="done",
                 last_successful_output=None,
                 action_history_manager=action_history_manager,
@@ -908,7 +911,8 @@ class TestAskMetricsAgenticNode:
         node, _, _ = _make_node(real_agent_config, tree={})
 
         result = node._build_success_result(
-            Mock(
+            StreamRunContext(
+                user_input=BaseInput(),
                 response_content="",
                 last_successful_output={"response": {"value": 10}},
                 action_history_manager=ActionHistoryManager(),

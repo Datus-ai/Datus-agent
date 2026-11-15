@@ -131,7 +131,6 @@ class ActionHistoryManager:
             except Exception as e:  # pragma: no cover - defensive
                 logger.warning(f"Action enricher {enricher!r} failed: {e}")
 
-        logger.debug(f"Adding action: {action}")
         self.actions.append(action)
         self.current_action_id = action.action_id
 
@@ -147,6 +146,10 @@ class ActionHistoryManager:
     def get_actions(self) -> List[ActionHistory]:
         """Get all actions in the history"""
         return self.actions
+
+    def get_actions_since(self, checkpoint: int) -> List[ActionHistory]:
+        """Get actions appended since a checkpoint, retaining the full history."""
+        return self.actions[max(0, checkpoint) :]
 
     def clear(self) -> None:
         """Clear all actions"""
@@ -178,7 +181,7 @@ class ActionHistoryManager:
     def update_action_by_id(self, action_id: str, **kwargs) -> bool:
         """Update an action by its action_id"""
         action = self.find_action_by_id(action_id)
-        logger.debug(f"Updating action: {action_id} with kwargs: {kwargs}")
+        logger.debug("Updating action: %s, fields: %s", action_id, sorted(kwargs))
         if action:
             for key, value in kwargs.items():
                 if hasattr(action, key):

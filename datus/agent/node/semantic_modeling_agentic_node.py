@@ -415,7 +415,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
 
         tokens_used = 0
         if self.execution_mode == "interactive":
-            tokens_used = self._extract_total_tokens(ctx.action_history_manager.get_actions())
+            tokens_used = self._extract_total_tokens(ctx.get_run_actions())
         return SemanticModelingNodeResult(
             success=status != "blocked",
             error=response_content if status == "blocked" else None,

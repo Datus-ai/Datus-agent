@@ -760,7 +760,7 @@ class ChatAgenticNode(AgenticNode):
             response_content = ctx.last_tool_summary
 
         if not response_content:
-            for stream_action in reversed(ctx.action_history_manager.get_actions()):
+            for stream_action in reversed(ctx.get_run_actions()):
                 if stream_action.action_type == "summary_report" and stream_action.output:
                     if isinstance(stream_action.output, dict):
                         candidate = (
@@ -775,7 +775,7 @@ class ChatAgenticNode(AgenticNode):
         if not isinstance(response_content, str):
             response_content = str(response_content) if response_content else ""
 
-        all_actions = ctx.action_history_manager.get_actions()
+        all_actions = ctx.get_run_actions()
         tokens_used = self._extract_total_tokens(all_actions)
         tool_calls = [
             action for action in all_actions if action.role == ActionRole.TOOL and action.status == ActionStatus.SUCCESS
