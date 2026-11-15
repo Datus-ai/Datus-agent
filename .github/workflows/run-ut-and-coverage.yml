@@ -168,6 +168,7 @@ jobs:
           DATUS_CI_PYTEST_BASETEMP: ${{ runner.temp }}/datus-agent-pytest-${{ github.run_id }}-${{ github.run_attempt }}
           COMPARE_REF: ${{ steps.comparison.outputs.ref }}
         run: |
+          export IMPACTED_UNIT_PARALLEL_WORKERS="${IMPACTED_UNIT_PARALLEL_WORKERS:-$(nproc)}"
           python3 ci/run-pr-tests.py "$COMPARE_REF"
 
       - name: Plan affected real-model product validation
