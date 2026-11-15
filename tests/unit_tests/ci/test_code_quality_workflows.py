@@ -93,6 +93,47 @@ def test_all_comparisons_use_the_pinned_base():
         assert "BASE_REF" not in step["run"]
 
 
+@pytest.mark.parametrize(
+    "applicable,diff,outcome,expected",
+    [
+        ("true", "80.00", "success", 0),
+        ("true", "79.99", "success", 1),
+        ("false", "N/A", "success", 0),
+        ("false", "N/A", "failure", 1),
+        ("", "", "success", 1),
+        ("true", "nan", "success", 1),
+    ],
+)
+def test_threshold_gate_checks_tests_independently_of_application_coverage(applicable, diff, outcome, expected):
+    step = next(step for step in coverage_steps() if step.get("name") == "Check coverage thresholds")
+    script = step["run"]
+    for key, value in {
+        "steps.metrics.outputs.coverage_applicable": applicable,
+        "steps.profile.outputs.coverage_applicable": applicable,
+        "steps.metrics.outputs.diff": diff,
+        "steps.metrics.outputs.test_outcome": outcome,
+    }.items():
+        script = script.replace("${{ " + key + " }}", value)
+    result = subprocess.run(["bash", "-c", script], text=True, capture_output=True, check=False)
+    assert result.returncode == expected, result.stdout + result.stderr
+
+
+def test_version_only_validation_keeps_release_checks_and_runtime_setup_is_conditional():
+    steps = coverage_steps()
+    metadata = next(step for step in steps if step.get("name") == "Check release metadata")
+    assert "run_tests" not in metadata["if"]
+    assert "ci/check_release_readiness.py" in metadata["run"]
+    assert "uv lock --check" in metadata["run"]
+    for name in [
+        "Setup config file",
+        "Restore tracked test config",
+        "Isolate test data directory",
+        "Prepare small BIRD test fixtures",
+    ]:
+        step = next(step for step in steps if step.get("name") == name)
+        assert "steps.profile.outputs.needs_runtime_fixtures == 'true'" in step["if"]
+
+
 @pytest.fixture
 def advancing_base(tmp_path):
     remote = tmp_path / "remote"

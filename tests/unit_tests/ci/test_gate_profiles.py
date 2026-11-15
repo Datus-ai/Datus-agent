@@ -6,7 +6,13 @@ import subprocess
 import pytest
 import yaml
 
-from ci.harness.gate_profile import MAP_PATH, documentation_map_change, repository_profile, select_profile
+from ci.harness.gate_profile import (
+    MAP_PATH,
+    documentation_map_change,
+    repository_profile,
+    select_profile,
+    version_metadata_change,
+)
 
 pytestmark = pytest.mark.component
 
@@ -98,6 +104,82 @@ def test_map_comparison_uses_the_real_git_base(tmp_path):
 def test_unknown_or_empty_change_set_keeps_the_runtime_gate():
     assert select_profile([])["profile"] == "code"
     assert select_profile([MAP_PATH])["profile"] == "code"
+
+
+@pytest.mark.parametrize(
+    "name,before,after,expected",
+    [
+        (
+            "pyproject.toml",
+            '[project]\nversion="1"\ndependencies=["x==1"]',
+            '[project]\nversion="2"\ndependencies=["x==1"]',
+            True,
+        ),
+        (
+            "pyproject.toml",
+            '[project]\nversion="1"\ndependencies=["x==1"]',
+            '[project]\nversion="2"\ndependencies=["x==2"]',
+            False,
+        ),
+        ("requirements.txt", "# version 1\nx==1\n", "# version 2\nx==1\n", True),
+        ("requirements.txt", "x==1\n", "x==2\n", False),
+        ("pyproject.toml", None, '[project]\nversion="1"', False),
+        ("uv.lock", "broken", "also broken", False),
+    ],
+)
+def test_version_metadata_requires_semantic_dependency_equality(name, before, after, expected):
+    assert version_metadata_change(name, before, after) is expected
+
+
+@pytest.mark.parametrize("change", ['version = "2"', 'source = {registry = "other"}', 'hash = "sha256:new"'])
+def test_lock_dependency_version_source_and_hash_changes_keep_full_regression(change):
+    before = """[[package]]
+name = "datus-agent"
+version = "1"
+source = {editable = "."}
+[[package]]
+name = "dependency"
+version = "1"
+source = {registry = "pypi"}
+hash = "sha256:old"
+"""
+    own_version = before.replace('version = "1"', 'version = "2"', 1)
+    assert version_metadata_change("uv.lock", before, own_version)
+    dependency = (
+        own_version.replace('name = "dependency"\nversion = "1"', 'name = "dependency"\n' + change)
+        if change.startswith("version")
+        else own_version.replace(
+            'source = {registry = "pypi"}' if change.startswith("source") else 'hash = "sha256:old"', change
+        )
+    )
+    assert not version_metadata_change("uv.lock", before, dependency)
+
+
+def test_verified_version_metadata_does_not_select_dependency_owner():
+    from ci.harness.pr_test_plan import pr_test_plan
+
+    changed = ["pyproject.toml", "requirements.txt", "docs/index.md"]
+    profile = select_profile(
+        changed,
+        version_changes={
+            "pyproject.toml": ('[project]\nversion="1"', '[project]\nversion="2"'),
+            "requirements.txt": ("# version 1\nx==1", "# version 2\nx==1"),
+        },
+    )
+    plan = pr_test_plan(changed, profile=profile)
+    assert profile["profile"] == "metadata"
+    assert plan["pytest_targets"] == []
+    assert plan["coverage_applicable"] is False
+
+
+def test_real_dependency_upgrade_still_selects_all_units_and_integration_groups():
+    from ci.harness.pr_test_plan import pr_test_plan
+    from ci.harness.test_plan import load_map
+
+    plan = pr_test_plan(["pyproject.toml", "uv.lock", "requirements.txt"])
+    assert plan["targets"] == ["tests/unit_tests/"]
+    assert set(plan["integration_groups"]) == {r["id"] for r in load_map()["execution"]["integration_rules"]}
+    assert len(plan["core_nodeids"]) == 16
 
 
 @pytest.mark.parametrize(

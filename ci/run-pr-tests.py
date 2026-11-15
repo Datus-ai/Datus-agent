@@ -52,6 +52,7 @@ DEFAULT_COVERAGE_DB = os.path.join(OUT_DIR, ".coverage")
 DEFAULT_PYTEST_LOG = os.path.join(OUT_DIR, "pytest-coverage.txt")
 # Direct script execution starts with ci/ on sys.path.
 sys.path.insert(0, REPO_ROOT_DIR)
+from ci.harness.gate_profile import repository_profile  # noqa: E402
 from ci.harness.pr_test_plan import PR_MARK_EXPR, pr_test_plan  # noqa: E402
 from ci.harness.test_plan import (  # noqa: E402
     changed_files as changed_paths,
@@ -225,6 +226,7 @@ def _build_pytest_command(
     parallel: bool = False,
     dist: str | None = None,
     pr_gate: bool = False,
+    coverage: bool = True,
 ) -> list[str]:
     cmd = [
         sys.executable,
@@ -252,14 +254,11 @@ def _build_pytest_command(
             cmd.extend(["--dist", dist])
 
     cmd.extend(["-p", "ci.pytest_gate_plugin", "--gate-report", junit_xml + ".execution.json"])
-    cmd.append("--cov=datus")
-    if append:
-        cmd.append("--cov-append")
-
-    if emit_reports:
-        cmd.append(f"--cov-report=xml:{DEFAULT_COVERAGE_XML}")
-    else:
-        cmd.append("--cov-report=")
+    if coverage:
+        cmd.append("--cov=datus")
+        if append:
+            cmd.append("--cov-append")
+        cmd.append(f"--cov-report=xml:{DEFAULT_COVERAGE_XML}" if emit_reports else "--cov-report=")
 
     cmd.extend(
         [
@@ -294,6 +293,7 @@ def _run_pytest_suite(
     parallel: bool = False,
     dist: str | None = None,
     pr_gate: bool = False,
+    coverage: bool = True,
 ) -> int:
     """Run one pytest suite and stream logs to stdout and the CI log file."""
     Path(junit_xml + ".execution.json").unlink(missing_ok=True)
@@ -309,6 +309,7 @@ def _run_pytest_suite(
         parallel=parallel,
         dist=dist,
         pr_gate=pr_gate,
+        coverage=coverage,
     )
     log(f"Running {suite_name}: {' '.join(cmd)}")
     log(f"{suite_name} pytest basetemp: {basetemp}")
@@ -527,13 +528,17 @@ def list_changed_files(base_ref: str) -> list[str]:
 
 
 def resolve_pr_tests(base_ref: str) -> dict:
-    plan = pr_test_plan(list_changed_files(base_ref))
+    changed = list_changed_files(base_ref)
+    plan = pr_test_plan(changed, profile=repository_profile(changed, base_ref))
     Path(OUT_DIR, "unit-test-plan.json").write_text(json.dumps(plan, indent=2) + "\n")
     for selection in plan["selections"]:
         rule = selection["rule"] or "core only"
         if selection["fallback"]:
             rule += " (full-suite fallback)"
         log(f"{selection['path']}: {rule} -> {', '.join(selection['targets'])}")
+        log(f"  Reason: {selection['reason']}")
+    for reason in plan["broadening_reasons"]:
+        log(reason)
     log(f"Selected {len(plan['pytest_targets'])} pytest targets; integration groups: {plan['integration_groups']}")
     return plan
 
@@ -543,6 +548,9 @@ def run_tests(base_ref: str = "") -> tuple[int, list[str]]:
     _reset_report_outputs()
     try:
         plan = resolve_pr_tests(base_ref)
+        if not plan["pytest_targets"]:
+            log("No affected PR tests; application coverage is N/A")
+            return 0, []
         junit = os.path.join(OUT_DIR, "test-results-pr.xml")
         with open(DEFAULT_PYTEST_LOG, "w", encoding="utf-8") as log_file:
             code = _run_pytest_suite(
@@ -554,12 +562,21 @@ def run_tests(base_ref: str = "") -> tuple[int, list[str]]:
                 parallel=True,
                 dist="loadfile",
                 pr_gate=True,
+                coverage=plan.get("coverage_applicable", True),
             )
-        evidence = verify_gate([Path(junit + ".execution.json")], "pr_acceptance", Path(OUT_DIR) / "gate-coverage.json")
+        requirements = (
+            {} if plan.get("core_nodeids", True) else {"required": plan["required_nodeids"], "allow_excluded": True}
+        )
+        evidence = verify_gate(
+            [Path(junit + ".execution.json")], "pr_acceptance", Path(OUT_DIR) / "gate-coverage.json", **requirements
+        )
         merge_junit_results([junit])
         if os.path.exists(DEFAULT_COVERAGE_DB):
             os.remove(DEFAULT_COVERAGE_DB)
-        return int(code != 0 or evidence != 0), [junit]
+        scheduled_only = code == 5 and not plan.get("core_nodeids", True)
+        if scheduled_only and evidence == 0:
+            log("No PR-eligible cases; scheduled/quarantined exclusions are recorded in gate-coverage.json")
+        return int((code != 0 and not scheduled_only) or evidence != 0), [junit]
     finally:
         _cleanup_pytest_basetemp()
 
@@ -710,6 +727,48 @@ def write_test_report(test_results: dict[str, Any], output_path: str | None = No
     return report
 
 
+def missing_coverage_sources(tree: Any, base_ref: str) -> list[str]:
+    """diff-cover ignores absent files; changed executable application files must be reported."""
+    from coverage import Coverage
+    from coverage.files import GlobMatcher
+    from coverage.parser import PythonParser
+
+    changed = _run_cmd(
+        ["git", "diff", "--no-renames", "--diff-filter=AM", "--name-only", f"{base_ref}...HEAD", "--", "datus/"],
+        GIT_CMD_TIMEOUT,
+        cwd=REPO_ROOT_DIR,
+        capture_output=True,
+        text=True,
+    )
+    if not changed or changed.returncode:
+        raise ValueError("Unable to identify changed application sources for coverage validation")
+    root = Path(REPO_ROOT_DIR)
+    config = root / "pyproject.toml"
+    settings = Coverage(config_file=str(config) if config.is_file() else False)
+    omitted = GlobMatcher(
+        [
+            str(root / pattern) if not pattern.startswith(("*", "?")) else pattern
+            for pattern in settings.get_option("run:omit") or []
+        ]
+    )
+    sources = [root, root / "datus", *(Path(s.text) for s in tree.findall(".//sources/source") if s.text)]
+    reported = {
+        str((source / cls.attrib["filename"]).resolve()) for source in sources for cls in tree.findall(".//class")
+    }
+    missing = []
+    for name in changed.stdout.splitlines():
+        if not name.endswith(".py") or name in {"datus/cli/web/chatbot.py", "datus/cli/screen/subject_screen.py"}:
+            continue
+        path = root / name
+        if str(path.resolve()) in reported or omitted.match(str(path.resolve())):
+            continue
+        parser = PythonParser(filename=str(path))
+        parser.parse_source()
+        if parser.statements:
+            missing.append(name)
+    return missing
+
+
 def extract_coverage(base_ref: str) -> tuple[float, float]:
     """Extract overall and diff coverage metrics."""
     diff_json = os.path.join(OUT_DIR, "diff-cover.json")
@@ -725,6 +784,14 @@ def extract_coverage(base_ref: str) -> tuple[float, float]:
 
     compare_branch = find_compare_branch(base_ref)
     if compare_branch:
+        try:
+            missing = missing_coverage_sources(tree, compare_branch)
+        except Exception as exc:
+            log(f"Failed to validate coverage source inventory: {exc}")
+            return overall, 0.0
+        if missing:
+            log(f"Changed application sources absent from coverage report: {', '.join(missing)}")
+            return overall, 0.0
         log(f"Running diff-cover --compare-branch={compare_branch}")
         proc = _run_cmd(
             [
@@ -785,11 +852,15 @@ def main() -> int:
 
     test_results = parse_test_results(junit_xml_paths)
     write_test_report(test_results)
-    overall, diff_pct = extract_coverage(base_ref)
+    plan_path = Path(OUT_DIR, "unit-test-plan.json")
+    plan = json.loads(plan_path.read_text()) if plan_path.is_file() else {}
+    applicable = plan.get("coverage_applicable", True)
+    overall, diff_pct = extract_coverage(base_ref) if applicable else (None, None)
 
     outputs = {
-        "overall": f"{overall:.2f}",
-        "diff": f"{diff_pct:.2f}",
+        "coverage_applicable": str(applicable).lower(),
+        "overall": f"{overall:.2f}" if applicable else "N/A",
+        "diff": f"{diff_pct:.2f}" if applicable else "N/A",
         "test_total": str(test_results["total"]),
         "test_passed": str(test_results["passed"]),
         "test_failed": str(test_results["failed"] + test_results["errors"]),

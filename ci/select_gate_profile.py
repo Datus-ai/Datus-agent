@@ -19,14 +19,18 @@ def main() -> None:
     args = parser.parse_args()
     changed = changed_files(args.base_ref)
     result = repository_profile(changed, args.base_ref)
-    result["run_tests"] = result["profile"] != "docs" or result["ci_tests"]
-    result["needs_excel"] = pr_test_plan(changed)["needs_excel"] if result["run_tests"] else False
+    plan = pr_test_plan(changed, profile=result)
+    result["run_tests"] = bool(plan["pytest_targets"])
+    result["needs_excel"] = plan["needs_excel"]
+    result["needs_runtime_fixtures"] = plan["needs_runtime_fixtures"]
     print(json.dumps(result, indent=2))
     if args.github_output:
         with args.github_output.open("a") as output:
             output.write(f"profile={result['profile']}\nci_tests={str(result['ci_tests']).lower()}\n")
             output.write(f"run_tests={str(result['run_tests']).lower()}\n")
             output.write(f"needs_excel={str(result['needs_excel']).lower()}\n")
+            for key in ("coverage_applicable", "needs_runtime_fixtures"):
+                output.write(f"{key}={str(result[key]).lower()}\n")
 
 
 if __name__ == "__main__":

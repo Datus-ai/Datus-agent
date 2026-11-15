@@ -95,3 +95,34 @@ test('ignores malformed report data', async (t) => {
   await post(data);
   assert.equal(data.calls.length, 0);
 });
+
+test('renders non-application coverage as N/A while showing failed tests', async (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.artifactDir, { recursive: true, force: true }));
+  Object.assign(data.report.metrics, {
+    coverage_applicable: false, overall: 'N/A', diff: 'N/A',
+    test_outcome: 'failure', test_passed: '2', test_failed: '1',
+  });
+  fs.writeFileSync(path.join(data.artifactDir, 'coverage-comment.json'), JSON.stringify(data.report));
+  await post(data);
+  assert.equal(data.calls.length, 1);
+  assert.match(data.calls[0].body, /\*\*Diff Coverage\*\* \| N\/A \| - \| ℹ️/);
+  assert.match(data.calls[0].body, /2\/3 passed, 1 failed \| pass \| ❌/);
+  assert.doesNotMatch(data.calls[0].body, /null%|100%/);
+});
+
+test('N/A requires an explicit boolean and consistent metrics', () => {
+  const data = fixture();
+  try {
+    for (const metrics of [
+      { overall: 'N/A', diff: 'N/A' },
+      { coverage_applicable: 'false', overall: 'N/A', diff: 'N/A' },
+      { coverage_applicable: false, overall: '0', diff: 'N/A' },
+    ]) {
+      assert.equal(post.parseReport(JSON.stringify({ ...data.report,
+        metrics: { ...data.report.metrics, ...metrics } })), null);
+    }
+  } finally {
+    fs.rmSync(data.artifactDir, { recursive: true, force: true });
+  }
+});

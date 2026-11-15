@@ -81,9 +81,9 @@ jobs:
           uv run --no-project --with pyyaml python ci/select_gate_profile.py \
             --base-ref "$COMPARE_REF" --github-output "$GITHUB_OUTPUT"
 
-      - name: Documentation-only summary
+      - name: No affected tests summary
         if: ${{ steps.reuse.outputs.reused != 'true' && (steps.profile.outputs.run_tests != 'true') }}
-        run: echo "Documentation-only change; documentation builds run in Deploy Docs." >> "$GITHUB_STEP_SUMMARY"
+        run: echo "Documentation or project-version metadata only; application coverage is N/A." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Validate generated tool contracts
         if: ${{ steps.reuse.outputs.reused != 'true' }}
@@ -96,8 +96,14 @@ jobs:
           echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Check release metadata
-        if: ${{ steps.reuse.outputs.reused != 'true' && (steps.profile.outputs.run_tests == 'true') }}
-        run: python3 ci/check_release_readiness.py
+        if: ${{ steps.reuse.outputs.reused != 'true' }}
+        env:
+          PR_PROFILE: ${{ steps.profile.outputs.profile }}
+        run: |
+          uv run --no-project --with packaging python ci/check_release_readiness.py
+          if [ "$PR_PROFILE" = "metadata" ]; then
+            uv lock --check
+          fi
 
       - name: Set up Node.js
         if: ${{ steps.reuse.outputs.reused != 'true' && (steps.profile.outputs.run_tests == 'true') }}
@@ -125,16 +131,16 @@ jobs:
           exit "$validation_exit"
 
       - name: Setup config file
-        if: ${{ steps.reuse.outputs.reused != 'true' && (steps.profile.outputs.run_tests == 'true') }}
+        if: ${{ steps.reuse.outputs.reused != 'true' && (steps.profile.outputs.needs_runtime_fixtures == 'true') }}
         run: |
           cp conf/agent.yml.example conf/agent.yml
 
       - name: Restore tracked test config
-        if: ${{ steps.reuse.outputs.reused != 'true' && (steps.profile.outputs.run_tests == 'true') }}
+        if: ${{ steps.reuse.outputs.reused != 'true' && (steps.profile.outputs.needs_runtime_fixtures == 'true') }}
         run: git restore --source=HEAD --worktree --staged tests/conf/agent.yml
 
       - name: Isolate test data directory
-        if: ${{ steps.reuse.outputs.reused != 'true' && (steps.profile.outputs.run_tests == 'true') }}
+        if: ${{ steps.reuse.outputs.reused != 'true' && (steps.profile.outputs.needs_runtime_fixtures == 'true') }}
         run: |
           DATUS_TEST_HOME="${GITHUB_WORKSPACE}/.datus_test_data"
           echo "DATUS_TEST_HOME=$DATUS_TEST_HOME" >> "$GITHUB_ENV"
@@ -142,7 +148,7 @@ jobs:
           sed -i "s|project_root: .datus_test_data/workspace|project_root: $DATUS_TEST_HOME/workspace|g" tests/conf/agent.yml
 
       - name: Prepare small BIRD test fixtures
-        if: ${{ steps.reuse.outputs.reused != 'true' && (steps.profile.outputs.run_tests == 'true') }}
+        if: ${{ steps.reuse.outputs.reused != 'true' && (steps.profile.outputs.needs_runtime_fixtures == 'true') }}
         run: |
           DATUS_TEST_BIRD_ROOT="$RUNNER_TEMP/datus-ci-bird/dev_databases"
           python3 ci/prepare_ci_bird.py "$DATUS_TEST_BIRD_ROOT"
@@ -223,6 +229,7 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_HEAD_REPO_ID: ${{ github.event.pull_request.head.repo.id }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          METRIC_COVERAGE_APPLICABLE: ${{ steps.metrics.outputs.coverage_applicable }}
           METRIC_OVERALL: ${{ steps.metrics.outputs.overall }}
           METRIC_DIFF: ${{ steps.metrics.outputs.diff }}
           METRIC_TEST_OUTCOME: ${{ steps.metrics.outputs.test_outcome }}
@@ -253,11 +260,16 @@ jobs:
         if: ${{ steps.reuse.outputs.reused != 'true' && (always() && steps.profile.outputs.run_tests == 'true' && steps.metrics.outcome != 'cancelled') }}
         run: |
           python3 -c "
-          import sys
-          diff = float('${{ steps.metrics.outputs.diff }}')
+          import math, sys
+          applicable = '${{ steps.metrics.outputs.coverage_applicable }}'
+          expected = '${{ steps.profile.outputs.coverage_applicable }}'
+          diff = float('${{ steps.metrics.outputs.diff }}') if applicable == 'true' else None
           test_outcome = '${{ steps.metrics.outputs.test_outcome }}'
           failed = False
-          if diff < 80:
+          if applicable not in ('true', 'false') or applicable != expected:
+              print('::error::Missing or inconsistent coverage applicability result')
+              failed = True
+          if diff is not None and (not math.isfinite(diff) or diff < 80):
               print(f'::error::Diff coverage {diff}% is below the 80% threshold')
               failed = True
           if test_outcome != 'success':

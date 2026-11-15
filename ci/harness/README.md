@@ -19,8 +19,9 @@ the real-model questions additionally assess tool selection and reasoning.
 ## Selection and evidence
 
 `coverage-map.yml` contains mandatory `execution.core_nodeids`, unit ownership
-rules and additive product impact rules. The 16 exact core nodeids run for code
-changes. Core and affected tests execute in one pytest session with file-level
+rules and additive product impact rules. The 16 exact core nodeids run for runtime changes and changes to test selection,
+execution or shared fixtures. Ordinary CI/workflow changes and test-only changes
+select their owners without adding the runtime core. Core and affected tests execute in one pytest session with file-level
 xdist distribution; whole-file selections subsume their core nodeids to prevent
 duplicate execution. Recollecting the previous 71-file fixed list on this tree
 selects 1,069 cases; the fixed requirement is now the 16 core cases, with the
@@ -54,6 +55,21 @@ counts, not an estimate of elapsed CI time.
 | `tools/func_tool/dashboard_artifact_tools.py` | 553 | 29 |
 | `utils/sql_lineage.py` | 585 | 11 |
 | `configuration/agent_config.py` | 625 | 625 |
+
+The 2026-11-14 leaf audit adds `bulk_query_tools.py` (34 unit files instead of
+559) and `query_spool.py` (64 instead of 488), measured on main `6cba1e2d`.
+These retain DBFuncTool inheritance callers, BaseFuncTool cancellation/concurrency
+callers for spooling, configuration validation and capability contracts. The CLI
+and database integration contracts still run for spooling changes.
+
+Replaying historical changed paths with both selectors on the same `6cba1e2d`
+source tree gives the following file selections (not elapsed-time estimates):
+
+| PR | Previous unit files | Selected unit files | Core cases | Integration groups |
+| --- | ---: | ---: | --- | --- |
+| #1635 workflow triggers | 35 | 1 | 16 → 0 | none |
+| #1634 export limits | 560 | 64 | 16 → 16 | CLI, database retained |
+| #1638 dependency upgrade | 630 | 630 | 16 → 16 | all six retained |
 
 Strict map validation and its CI regression test audit every Python module under
 `datus/` against every `tests/unit_tests/**/test_*.py` consumer. The audit parses
@@ -114,7 +130,8 @@ in merge-group runs.
 `coverage-map.yml` owns `execution.integration_rules`: deterministic API, CLI,
 storage, database, semantic and MCP targets and their source/consumer paths.
 `ci/harness/pr_test_plan.py` selects these groups by changed paths. Shared model/config/schema
-boundaries select all groups. Changed integration tests select themselves; helper
+boundaries select all groups. Selecting the full unit suite alone does not select
+integration groups; each integration group has its own source/consumer ownership. Changed integration tests select themselves; helper
 changes retain the registered deterministic integration groups. Dashboard/metric
 artifact readers select native Dosi contracts, MCP execution helpers select the
 HTTP MCP contract, and search helpers select document-storage contracts.
@@ -133,14 +150,32 @@ integration tests require acceptance/component/llm_harness. Nightly and quaranti
 marks remain excluded, except the explicit local Dosi contracts registered in
 `nightly_pr_contracts()` (legacy dual marks retained for scheduled P0). Every mandatory core case must actually pass: a skip,
 xfail, crash, missing collection or missing execution fails PR CI. Diff coverage
-still requires 80%.
+requires 80% for changed application Python lines. Changed executable application
+files absent from the coverage XML fail this check instead of disappearing from
+diff-cover's denominator. CI, test-only, docs and dependency-only changes report
+application coverage as **N/A**; pytest failures still fail the required check.
+Explicit required files/nodeids must pass, including in scoped CI/test-only plans.
+Scheduled-only, quarantined and unclassified integration cases keep their PR
+exclusion; execution reports record the reason even when no PR-eligible cases
+remain. Such exclusions cannot satisfy an explicit mandatory core nodeid.
+Package selections permit their existing optional skips but must execute passing
+tests, and still reject failed or unexecuted cases.
 
 `ci/harness/gate_profile.py` routes ordinary documentation, image assets,
 README translations and MkDocs navigation by changed paths. Pure docs skip the
 Agent environment and runtime tests; Deploy Docs already builds both locales
-strictly on PRs. Coverage-map documentation registrations retain the runtime/CI
-checks. Runtime files, prompts, skills, dependency and workflow changes keep the
-code gate, regardless of the PR title. PR validation always publishes the stable
+strictly on PRs. Coverage-map documentation registrations retain CI tests.
+Pure project-version metadata is recognized by semantic comparisons: only
+`project.version`, the editable `datus-agent` lock entry's own version and
+requirements comments/whitespace may differ. Third-party versions, sources,
+hashes or any other configuration changes keep broad dependency regression.
+Version-only changes retain release-readiness and locked-metadata validation.
+Unknown runtime modules retain the full unit fallback and core journeys.
+Ordinary CI leaves select their exact CI tests; unknown CI leaves retain the CI
+package. Selector/runner/shared-fixture changes retain CI regression and the
+runtime core. The selection artifact records owners, targets, integration groups
+and broadening reasons. Classification uses paths and contents regardless of
+the PR title. PR validation always publishes the stable
 `format-check / format-check` and `run-coverage / coverage` contexts, including on
 title/body edits and base-branch changes. Metadata-only edits first run a
 read-only evidence check. Successful reuse skips dependency installation and

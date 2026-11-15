@@ -136,10 +136,10 @@ def test_select_impacted_unit_tests_maps_non_python_files_to_parent_directory():
     assert impacted == ["tests/unit_tests/"]
 
 
-def test_plan_records_deleted_tests_without_losing_core_journeys():
+def test_plan_records_deleted_tests_without_adding_unrelated_core_journeys():
     plan = run_pr_tests.pr_test_plan(["tests/unit_tests/test_deleted_file.py"])
     assert plan["deleted_targets"] == ["tests/unit_tests/test_deleted_file.py"]
-    assert plan["core_nodeids"]
+    assert plan["core_nodeids"] == []
     assert all(node.split("::", 1)[0] != "tests/unit_tests/test_deleted_file.py" for node in plan["pytest_targets"])
 
 
@@ -388,6 +388,105 @@ def test_suppressed_reports_disable_cov_output(tmp_path):
 
     cov_reports = [arg for arg in command if arg.startswith("--cov-report")]
     assert cov_reports == ["--cov-report="]
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_non_application_tests_execute_and_report_failures_without_coverage(tmp_path, monkeypatch, fails):
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / "test_ci.py").write_text(f"def test_contract(): assert {not fails}\n")
+    coverage_xml = tmp_path / "coverage.xml"
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_COVERAGE_XML", str(coverage_xml))
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_PYTEST_BASETEMP", str(tmp_path / "temp"))
+    report = tmp_path / "junit.xml"
+    code = run_pr_tests._run_pytest_suite(
+        [str(tmp_path / "test_ci.py")], str(report), io.StringIO(), suite_name="CI only", coverage=False
+    )
+    assert code == int(fails)
+    assert not coverage_xml.exists()
+    execution = json.loads(Path(str(report) + ".execution.json").read_text())
+    assert set(execution["outcomes"].values()) == {"failed" if fails else "passed"}
+
+
+def test_coverage_inventory_rejects_changed_executable_sources_missing_from_xml(tmp_path, monkeypatch):
+    (tmp_path / "datus").mkdir()
+    (tmp_path / "datus/new.py").write_text("VALUE = 42\n")
+    (tmp_path / "datus/empty.py").write_text("# no executable statements\n")
+    (tmp_path / "datus/omit_module.py").write_text("VALUE = 1\n")
+    nested = tmp_path / "datus/omitted/nested/helper.py"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("VALUE = 2\n")
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.coverage.run]\nomit = ["datus/omit_module.py", "datus/omitted/*"]\n'
+    )
+    monkeypatch.setattr(run_pr_tests, "REPO_ROOT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        run_pr_tests,
+        "_run_cmd",
+        lambda *a, **kw: subprocess.CompletedProcess(
+            [], 0, "datus/new.py\ndatus/empty.py\ndatus/omit_module.py\ndatus/omitted/nested/helper.py\n", ""
+        ),
+    )
+    tree = ET.parse(io.StringIO("<coverage><sources><source>datus</source></sources><packages/></coverage>"))
+    assert run_pr_tests.missing_coverage_sources(tree, "base") == ["datus/new.py"]
+    tree.getroot().append(ET.fromstring('<class filename="new.py"/>'))
+    assert run_pr_tests.missing_coverage_sources(tree, "base") == []
+
+
+def test_na_metrics_keep_test_failure_blocking(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_pr_tests, "OUT_DIR", str(tmp_path))
+    (tmp_path / "unit-test-plan.json").write_text(json.dumps({"coverage_applicable": False}))
+    monkeypatch.setattr(run_pr_tests.sys, "argv", ["run-pr-tests.py"])
+    monkeypatch.setattr(run_pr_tests, "run_tests", lambda **kw: (1, []))
+    monkeypatch.setattr(run_pr_tests, "write_test_report", lambda *a: None)
+    monkeypatch.setattr(run_pr_tests, "extract_coverage", lambda *a: pytest.fail("N/A must not run diff-cover"))
+    output = tmp_path / "output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    assert run_pr_tests.main() == 1
+    values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    assert values["overall"] == values["diff"] == "N/A"
+    assert values["coverage_applicable"] == "false"
+    assert values["test_outcome"] == "failure"
+
+
+@pytest.mark.parametrize("kind", ["nightly", "quarantine", "unclassified-integration"])
+def test_test_only_scheduled_cases_keep_their_existing_exclusion_with_execution_evidence(tmp_path, monkeypatch, kind):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    target = (
+        "tests/integration/test_scheduled.py"
+        if kind == "unclassified-integration"
+        else "tests/unit_tests/test_scheduled.py"
+    )
+    source = tmp_path / target
+    source.parent.mkdir(parents=True)
+    marker = "" if kind == "unclassified-integration" else f"@pytest.mark.{kind}\n"
+    source.write_text(
+        "import pytest\n" + marker + "def test_remote(): raise AssertionError('must not execute in PR')\n"
+    )
+    monkeypatch.setattr(run_pr_tests, "_reset_report_outputs", lambda: None)
+    monkeypatch.setattr(run_pr_tests, "OUT_DIR", str(tmp_path))
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_JUNIT_XML", str(tmp_path / "combined.xml"))
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_PYTEST_LOG", str(tmp_path / "pytest.log"))
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_COVERAGE_DB", str(tmp_path / ".coverage"))
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_PYTEST_BASETEMP", str(tmp_path / "temp"))
+    monkeypatch.setattr(run_pr_tests, "PARALLEL_WORKERS", "2")
+    monkeypatch.setattr(
+        run_pr_tests,
+        "resolve_pr_tests",
+        lambda base: {
+            "pytest_targets": [target],
+            "core_nodeids": [],
+            "required_nodeids": [target],
+            "coverage_applicable": False,
+        },
+    )
+    assert run_pr_tests.run_tests("base")[0] == 0
+    evidence = json.loads((tmp_path / "gate-coverage.json").read_text())
+    assert evidence["evidence"][target]["excluded"]
+    assert evidence["evidence"][target]["collected"] == []
 
 
 def test_run_tests_runs_acceptance_parallel_with_per_file_distribution(tmp_path, monkeypatch):
