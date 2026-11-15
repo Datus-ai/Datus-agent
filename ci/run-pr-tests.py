@@ -729,6 +729,8 @@ def write_test_report(test_results: dict[str, Any], output_path: str | None = No
 
 def missing_coverage_sources(tree: Any, base_ref: str) -> list[str]:
     """diff-cover ignores absent files; changed executable application files must be reported."""
+    from coverage import Coverage
+    from coverage.files import GlobMatcher
     from coverage.parser import PythonParser
 
     changed = _run_cmd(
@@ -741,6 +743,14 @@ def missing_coverage_sources(tree: Any, base_ref: str) -> list[str]:
     if not changed or changed.returncode:
         raise ValueError("Unable to identify changed application sources for coverage validation")
     root = Path(REPO_ROOT_DIR)
+    config = root / "pyproject.toml"
+    settings = Coverage(config_file=str(config) if config.is_file() else False)
+    omitted = GlobMatcher(
+        [
+            str(root / pattern) if not pattern.startswith(("*", "?")) else pattern
+            for pattern in settings.get_option("run:omit") or []
+        ]
+    )
     sources = [root, root / "datus", *(Path(s.text) for s in tree.findall(".//sources/source") if s.text)]
     reported = {
         str((source / cls.attrib["filename"]).resolve()) for source in sources for cls in tree.findall(".//class")
@@ -750,7 +760,7 @@ def missing_coverage_sources(tree: Any, base_ref: str) -> list[str]:
         if not name.endswith(".py") or name in {"datus/cli/web/chatbot.py", "datus/cli/screen/subject_screen.py"}:
             continue
         path = root / name
-        if str(path.resolve()) in reported:
+        if str(path.resolve()) in reported or omitted.match(str(path.resolve())):
             continue
         parser = PythonParser(filename=str(path))
         parser.parse_source()

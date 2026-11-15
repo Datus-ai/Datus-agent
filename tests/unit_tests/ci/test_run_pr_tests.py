@@ -413,11 +413,20 @@ def test_coverage_inventory_rejects_changed_executable_sources_missing_from_xml(
     (tmp_path / "datus").mkdir()
     (tmp_path / "datus/new.py").write_text("VALUE = 42\n")
     (tmp_path / "datus/empty.py").write_text("# no executable statements\n")
+    (tmp_path / "datus/omit_module.py").write_text("VALUE = 1\n")
+    nested = tmp_path / "datus/omitted/nested/helper.py"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("VALUE = 2\n")
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.coverage.run]\nomit = ["datus/omit_module.py", "datus/omitted/*"]\n'
+    )
     monkeypatch.setattr(run_pr_tests, "REPO_ROOT_DIR", str(tmp_path))
     monkeypatch.setattr(
         run_pr_tests,
         "_run_cmd",
-        lambda *a, **kw: subprocess.CompletedProcess([], 0, "datus/new.py\ndatus/empty.py\n", ""),
+        lambda *a, **kw: subprocess.CompletedProcess(
+            [], 0, "datus/new.py\ndatus/empty.py\ndatus/omit_module.py\ndatus/omitted/nested/helper.py\n", ""
+        ),
     )
     tree = ET.parse(io.StringIO("<coverage><sources><source>datus</source></sources><packages/></coverage>"))
     assert run_pr_tests.missing_coverage_sources(tree, "base") == ["datus/new.py"]
