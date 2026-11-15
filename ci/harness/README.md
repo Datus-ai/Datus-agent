@@ -148,7 +148,7 @@ only when the spreadsheet integration file is selected.
 Unit tests keep all harness marks;
 integration tests require acceptance/component/llm_harness. Nightly and quarantine
 marks remain excluded, except the explicit local Dosi contracts registered in
-`nightly_pr_contracts()` (legacy dual marks retained for scheduled P0). Every mandatory core case must actually pass: a skip,
+`nightly_pr_contracts()` (legacy dual marks retained for Nightly). Every mandatory core case must actually pass: a skip,
 xfail, crash, missing collection or missing execution fails PR CI. Diff coverage
 requires 80% for changed application Python lines. Changed executable application
 files absent from the coverage XML fail this check instead of disappearing from
@@ -176,21 +176,10 @@ package. Selector/runner/shared-fixture changes retain CI regression and the
 runtime core. The selection artifact records owners, targets, integration groups
 and broadening reasons. Classification uses paths and contents regardless of
 the PR title. PR validation always publishes the stable
-`format-check / format-check` and `run-coverage / coverage` contexts, including on
-title/body edits and base-branch changes. Metadata-only edits first run a
-read-only evidence check. Successful reuse skips dependency installation and
-Ruff/pytest. The verifier requires the same head SHA, PR number, base
-branch and base commit SHA. It selects the latest real Code Quality validation
-run and accepts only the matching job's successful outcome. Pending results
-are awaited; failed, cancelled or skipped validation cannot become green. The evidence wait
-is bounded to the existing one-hour test-command budget. Code pushes and
-base-branch changes always run real validation. Test selection, diff coverage
-and the product-test plan all use the base commit SHA recorded in that run,
-rather than a moving branch tip. If no real validation exists for that head and
-base, such as after the base advances, the metadata run performs fresh
-validation. Later edits can reuse that actual validation, but evidence-only
-copies never become sources. Missing or invalid base SHAs and API errors fail closed.
-Metadata-only events never cancel that validation.
+`format-check / format-check` and `run-coverage / coverage` contexts on PR open,
+code pushes and reopen. Title/body edits do not rerun them. Test selection, diff
+coverage and the product-test plan use the base commit SHA recorded in that run,
+rather than a moving branch tip. Missing or invalid PR base SHAs fail closed.
 Merge-queue context publication lives in a separate merge-group-only workflow,
 so skipped jobs cannot compete with the real PR check contexts.
 
@@ -237,9 +226,6 @@ credentials are not uploaded. A fresh per-run directory holds downloaded assets
 and is removed after evidence upload; credentials are scoped to the download step.
 The final notification requires both successful Release preparation and tests.
 
-The independent `sql-policy-gate.yml` source-build verifier is retained for existing
-callers, but Nightly no longer invokes it.
-
 Local reproduction in the locked Agent environment:
 
 ```sh
@@ -279,9 +265,7 @@ weekly/manual benchmarks.
 Publish And Finalize Release downloads the validated distributions, verifies their
 hashes and publishes them without rebuilding.
 
-Nightly installs the Agent and adapter repository-main source checkouts. The
-standalone SQL policy host verifier stages its own wheel harness with
-`ci/stage_harness.py`; it does not participate in release-candidate validation.
+Nightly installs the Agent and adapter repository-main source checkouts.
 
 Local commands (the complete gate requires Dosi and Docker):
 
@@ -316,14 +300,19 @@ Changes to BI tools, validation, Superset authoring/validation skills, their tes
 dependencies, or CI select `Superset Product Tests` in the product test plan. Scheduled
 Nightly runs this group; it is not a merge-queue dependency. The separate
 `merge-queue-pr.yml` workflow publishes the lightweight PR context without a
-checkout or reusable workflow call. The standalone BI gate uses pinned BI and plugin fixtures declared in `ci/bi_gate.py`, the existing
-self-hosted CI credential template, and dynamically allocated loopback Docker ports.
-It runs the deterministic chart repair/delete contract, managed plugin installation,
-and real-model dashboard creation. Missing, skipped, or failed execution receipts fail the gate.
+checkout or reusable workflow call. Nightly runs the deterministic chart
+repair/delete contract, managed plugin installation and real-model dashboard
+creation. Missing, skipped or failed required execution fails that group.
 
 Nightly runs the same deterministic repair contract. Its trace plugin captures BI
 session references inside child tasks and writes resource coordinates, tool result
 shapes, validation targets/checks, and outcomes to `nightly-bi-evidence/`. Prompts,
 SQL text, Bash arguments, credentials, and data rows are excluded. Local execution
-can use `.venv/bin/python ci/bi_gate.py run --work /absolute/new/directory`; installed
-BI packages and Chromium, Docker, source fixtures, and `DEEPSEEK_API_KEY` are required.
+uses the existing Nightly setup with
+`NIGHTLY_GROUP_FILTER='^Superset Product Tests$' ci/run-nightly-tests.sh`; installed
+BI packages, Chromium, Docker, source fixtures and `DEEPSEEK_API_KEY` are required.
+
+Test Audit runs on GitHub-hosted runners only when unit/integration test Python
+files change. It ignores title/body edits and publishes no merge-group placeholder.
+The auditor and commenter come from the trusted base commit, while the PR tree is
+only statically read as data. Comparison uses that same pinned base commit.

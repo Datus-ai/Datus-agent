@@ -337,9 +337,7 @@ def test_nightly_runs_postgresql_storage_adapter_tests_from_checkout():
 
 
 def test_nightly_product_suites_keep_required_cases_without_reruns_or_skips():
-    from ci.bi_gate import NODEIDS as bi_nodeids
     from ci.harness.test_plan import covers, load_map
-    from ci.sql_policy_gate import NODEIDS as policy_nodeids
 
     required = {
         "Core Acceptance Tests": load_map()["execution"]["core_nodeids"],
@@ -352,11 +350,17 @@ def test_nightly_product_suites_keep_required_cases_without_reruns_or_skips():
             "tests/integration/storage/test_postgresql_semantic_kb.py::test_postgresql_semantic_kb_reconcile_is_idempotent",
             "tests/integration/storage/test_postgresql_feedback_store.py::test_postgresql_feedback_storage_write_read_update_and_delete",
         ],
-        "SQL Policy Plugin Tests": policy_nodeids,
+        "SQL Policy Plugin Tests": [
+            "tests/integration/plugins/test_sql_policy_plugin.py::test_managed_sql_policy_enforces_sql_semantic_and_api_reads"
+        ],
         "Semantic Modeling Product Tests": [
             "tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm",
         ],
-        "Superset Product Tests": bi_nodeids,
+        "Superset Product Tests": [
+            "tests/integration/tools/test_bi_chart_lifecycle.py::test_table_grouping_repair_and_deleted_chart_validation",
+            "tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries",
+            "tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticExecution::test_creates_a_persisted_queryable_dashboard",
+        ],
     }
     script = NIGHTLY_SCRIPT.read_text()
     for group, nodeids in required.items():

@@ -1,27 +1,15 @@
 name: "Test Audit"
 
-# SECURITY: pull_request_target runs in the BASE repo context with access to
-# secrets and the GITHUB_TOKEN. We explicitly checkout PR code into a SEPARATE
-# directory ('pr/') and NEVER execute anything from it. Only the base-repo
-# ('base/') copy of ci/audit_tests.py is run — it does purely static AST + regex
-# analysis of files under pr/ and never imports them. This defeats the classic
-# pwn-request vector where a fork PR overwrites ci scripts to gain runner access.
-
+# The trusted base auditor statically reads PR files. PR code is never executed.
 on:
   pull_request_target:
-    types:
-      - opened
-      - synchronize
-      - reopened
-      # `edited` re-triggers the workflow when PR title / body / base ref
-      # changes. Without it, an author could create the PR with a `[Doc]`
-      # title (skipping the audit via the doc guard), then rename it to a
-      # non-doc title and merge without the audit ever running.
-      - edited
-  merge_group:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'tests/unit_tests/**/test_*.py'
+      - 'tests/integration/**/test_*.py'
 
 concurrency:
-  group: test-audit-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
+  group: test-audit-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions:
@@ -30,82 +18,62 @@ permissions:
 
 jobs:
   test-audit:
-    if: ${{ github.event_name == 'merge_group' || (github.event_name == 'pull_request_target' && !startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]')) }}
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
-      - name: Publish merge queue audit context
-        if: ${{ github.event_name == 'merge_group' }}
-        run: |
-          echo "test-audit is enforced on pull_request_target before merge queue entry."
-          echo "merge_group publishes the required context without re-running the static PR diff audit."
-
       - name: Checkout base repo (trusted code — runs the auditor)
-        if: ${{ github.event_name == 'pull_request_target' }}
         uses: actions/checkout@v4
         with:
-          # No `ref` → checks out the PR's base commit (the branch the PR targets).
-          # This guarantees ci/audit_tests.py and ci/post-audit-comment.js are the
-          # versions already on main, not whatever the PR author supplied.
+          ref: ${{ github.event.pull_request.base.sha }}
           path: base
           fetch-depth: 0
           persist-credentials: false
 
       - name: Checkout PR head (untrusted data — never executed)
-        if: ${{ github.event_name == 'pull_request_target' }}
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           path: pr
           fetch-depth: 0
           persist-credentials: false
-          # recent actions/checkout v4 releases refuse fork-PR checkouts under
-          # pull_request_target by default. Safe here by construction: the
-          # pr/ tree is data for the base-repo auditor and is never executed.
           allow-unsafe-pr-checkout: true
 
-      - name: Fetch base ref inside pr/ (needed for git diff)
-        if: ${{ github.event_name == 'pull_request_target' }}
+      - name: Fetch comparison base inside pr/
         working-directory: pr
-        run: git fetch origin ${{ github.event.pull_request.base.ref }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git fetch origin "$BASE_SHA"
 
       - name: Set up Python
-        if: ${{ github.event_name == 'pull_request_target' }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Run test audit (trusted auditor against PR data)
-        if: ${{ github.event_name == 'pull_request_target' }}
         id: audit
         working-directory: pr
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          # --repo-root . tells the auditor (which lives under ../base/) to
-          # resolve REPO_ROOT, TIER_ROOTS, and the git-diff cwd to the PR
-          # checkout at `pr/`. Without this, git diff would run inside base/
-          # where origin/<base>...HEAD is empty and the auditor would exit
-          # with "no test files to scan" — silently passing the PR.
           python3 ../base/ci/audit_tests.py \
             --repo-root . \
-            --diff-only origin/${{ github.event.pull_request.base.ref }} \
+            --diff-only "$BASE_SHA" \
             --json ../base/ci/audit-report.json \
             --github-output
 
       - name: Post audit comment
-        if: ${{ always() && github.event_name == 'pull_request_target' }}
+        if: always()
         uses: actions/github-script@v7
         with:
           script: |
-            // post-audit-comment.js reads ci/audit-report.json relative to cwd.
-            // Use the base (trusted) copy.
             process.chdir('base');
             const script = require('./ci/post-audit-comment.js');
             await script({ github, context, core });
 
       - name: Fail job if audit did not complete or found blocking issues
-        if: ${{ always() && github.event_name == 'pull_request_target' && (steps.audit.outcome != 'success' || steps.audit.outputs.audit_outcome == 'failure') }}
+        if: ${{ always() && (steps.audit.outcome != 'success' || steps.audit.outputs.audit_outcome == 'failure') }}
         run: |
           if [ "${{ steps.audit.outcome }}" != "success" ]; then
-            echo "::error::Test audit step did not complete cleanly (outcome=${{ steps.audit.outcome }}). This likely indicates an auditor bug or repository misconfiguration. Investigate before merging."
+            echo "::error::Test audit did not complete cleanly (outcome=${{ steps.audit.outcome }})."
           else
             echo "::error::Test audit found blocking issues (P0=${{ steps.audit.outputs.p0_count }}, P1=${{ steps.audit.outputs.p1_count }}). See PR comment for details."
           fi
