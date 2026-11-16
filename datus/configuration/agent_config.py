@@ -1462,6 +1462,9 @@ class AgentConfig:
                     f"Only alphanumeric characters, underscores, and hyphens are allowed.",
                 )
             db_type = db_config_dict.get("type", "")
+            stable_id = db_config_dict.get("datasource_id", "")
+            if stable_id and (not isinstance(stable_id, str) or not _SAFE_NAME_RE.fullmatch(stable_id)):
+                raise DatusException(ErrorCode.COMMON_FIELD_INVALID, message="Invalid datasource ID")
             is_default = db_config_dict.get("default", False)
 
             if db_type in (DBType.SQLITE, DBType.DUCKDB):
@@ -1472,6 +1475,9 @@ class AgentConfig:
                     )
                     if db_name in self.services.datasources:
                         self.services.datasources[db_name].datasource_id = db_config_dict.get("datasource_id", "")
+                        self.services.datasources[db_name].datasource_aliases = db_config_dict.get(
+                            "datasource_aliases", []
+                        )
                 elif "uri" in db_config_dict:
                     db_config = _parse_single_file_db(db_config_dict, db_type)
                     db_config.default = is_default
@@ -1617,10 +1623,8 @@ class AgentConfig:
     def current_db_config(self, db_name: str = "") -> DbConfig:
         """Get a datasource config by name, or the current/default one."""
         datasources = self.services.datasources
-        if db_name:
-            from datus.configuration.datasource_reference import resolve_datasource
-
-            return datasources[resolve_datasource(self, datasource=db_name)]
+        if db_name and db_name in datasources:
+            return datasources[db_name]
         if self._current_datasource and self._current_datasource in datasources:
             return datasources[self._current_datasource]
         if len(datasources) == 1:
@@ -1648,6 +1652,11 @@ class AgentConfig:
         from datus.configuration.datasource_reference import resolve_execution_context
         from datus.schemas.database_context import DatabaseExecutionContext
 
+        name = values.get("datasource")
+        if "datasource_id" not in values and name in self.services.datasources:
+            identity = self.services.datasources[name].datasource_id
+            if identity:
+                values["datasource_id"] = identity
         self._runtime_db_context = DatabaseExecutionContext.from_mapping(resolve_execution_context(self, values))
 
     def runtime_db_context(self) -> Dict[str, str]:
@@ -2800,11 +2809,15 @@ class AgentConfig:
         base = self.agentic_nodes.get(sub_agent_name, {}) or {}
         override = get_override(sub_agent_name)
         if override is None:
-            return base
+            from datus.configuration.datasource_reference import resolve_subagent_config
+
+            return resolve_subagent_config(self, base)
         # Layer override on top of YAML so non-SubAgentConfig keys
         # (model, max_turns, permissions, hooks, ...) survive.
         base_dict = dict(base) if isinstance(base, dict) else (base.model_dump() if hasattr(base, "model_dump") else {})
-        return {**base_dict, **override.model_dump(exclude_unset=True)}
+        from datus.configuration.datasource_reference import resolve_subagent_config
+
+        return resolve_subagent_config(self, {**base_dict, **override.model_dump(exclude_unset=True)})
 
     def benchmark_config(self, benchmark_platform) -> BenchmarkConfig:
         if benchmark_platform not in self.benchmark_configs:

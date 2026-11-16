@@ -472,6 +472,25 @@ class TestChatServiceDeleteSession:
 class TestChatServiceGetHistory:
     """Tests for get_history."""
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("saved_id,expected_name", [("stable", "renamed"), ("unbound", None)])
+    async def test_history_restores_id_only_context_without_rebinding(self, tmp_path, saved_id, expected_name):
+        cfg = SimpleNamespace(
+            session_dir=str(tmp_path),
+            services=SimpleNamespace(datasources={"renamed": SimpleNamespace(datasource_id="stable")}),
+            current_datasource="renamed",
+        )
+        manager = SessionManager(session_dir=str(tmp_path))
+        session = manager.get_session("chat_session_identity")
+        await session.add_items([{"role": "user", "content": "Continue"}])
+        saved = json.dumps({"datasource_id": saved_id, "database": "demo"})
+        manager.save_session_meta("chat_session_identity", "execution_context", saved)
+        result = ChatService(cfg).get_history("chat_session_identity")
+        assert result.success is True
+        assert result.data.execution_context["datasource_id"] == saved_id
+        assert result.data.execution_context.get("datasource") == expected_name
+        assert manager.load_session_meta("chat_session_identity", "execution_context") == saved
+
     def test_get_history_nonexistent_session_returns_empty(self, chat_svc):
         """get_history for unknown session returns empty messages."""
         result = chat_svc.get_history("nonexistent-session")

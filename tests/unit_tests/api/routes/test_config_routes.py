@@ -79,6 +79,7 @@ async def test_list_datasources_carries_no_credentials():
     for secret in ("s3cret", "pk-pass", "user:s3cret"):
         assert secret not in serialized
     assert set(result.data.datasources[0].model_dump()) == {
+        "datasource_id",
         "name",
         "type",
         "is_current",

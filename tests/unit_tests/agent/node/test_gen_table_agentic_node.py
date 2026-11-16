@@ -36,6 +36,27 @@ from tests.unit_tests.mock_llm_model import MockToolCall, build_simple_response,
 class TestGenTableAgenticNodeInit:
     """Tests for GenTableAgenticNode initialization."""
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("saved_name", ["before_rename", ""])
+    async def test_continuation_uses_id_after_rename(self, real_agent_config, mock_llm_create, saved_name):
+        from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+        from datus.schemas.database_context import EXECUTION_CONTEXT_META_KEY, execution_context_for_node
+
+        cfg = real_agent_config.current_db_config()
+        cfg.datasource_id = "ds-stable"
+        node = GenTableAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Continue the delivered table")
+        await node.session_manager.get_session(node.session_id).add_items([{"role": "user", "content": "Create table"}])
+        saved = execution_context_for_node(real_agent_config, node.input).to_dict()
+        saved["datasource"] = saved_name
+        node.session_manager.save_session_meta(node.session_id, EXECUTION_CONTEXT_META_KEY, json.dumps(saved))
+        assert node.continuation_target_error() is None
+
+        saved["datasource_id"] = "unbound-source"
+        saved["datasource"] = real_agent_config.current_datasource
+        node.session_manager.save_session_meta(node.session_id, EXECUTION_CONTEXT_META_KEY, json.dumps(saved))
+        assert "unavailable" in node.continuation_target_error()
+
     def test_node_name(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
 

@@ -1292,7 +1292,9 @@ class SemanticTools:
             runtime_db_context = self._runtime_db_context()
             from datus.configuration.datasource_reference import legacy_semantic_paths, resolve_execution_context
 
-            if runtime_db_context.get("datasource_id") is not None:
+            if runtime_db_context.get("datasource_id") is not None or isinstance(
+                getattr(getattr(self.agent_config, "services", None), "datasources", None), dict
+            ):
                 runtime_db_context = resolve_execution_context(self.agent_config, runtime_db_context)
             datasource = runtime_db_context.get("datasource") or self.agent_config.current_datasource
             semantic_model_path = self._selected_semantic_model_path()

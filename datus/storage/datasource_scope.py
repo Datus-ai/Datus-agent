@@ -50,7 +50,19 @@ def resolve_datasource_id(agent_config: "AgentConfig", datasource_id: Optional[s
         for name, entry in sources.items():
             stable_id = getattr(entry, "datasource_id", "")
             if isinstance(stable_id, str) and stable_id and resolved in (name, stable_id):
-                return DatasourceScope(stable_id, name, getattr(entry, "datasource_aliases", []))
+                legacy_names = [name, *getattr(entry, "datasource_aliases", [])]
+                unambiguous = [
+                    alias
+                    for alias in legacy_names
+                    if sum(
+                        alias == key
+                        or alias == getattr(value, "datasource_id", "")
+                        or alias in getattr(value, "datasource_aliases", [])
+                        for key, value in sources.items()
+                    )
+                    == 1
+                ]
+                return DatasourceScope(stable_id, name if name in unambiguous else "", unambiguous)
     return resolved
 
 

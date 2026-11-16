@@ -17,7 +17,14 @@ def datasource_identity(config: Any, name: str) -> str:
 
 
 def resolve_datasource(config: Any, *, datasource_id: Optional[str] = None, datasource: Optional[str] = None) -> str:
-    sources = config.services.datasources
+    sources = getattr(getattr(config, "services", None), "datasources", None)
+    if not isinstance(sources, dict):
+        if datasource_id is None:
+            current = getattr(config, "current_datasource", "")
+            return datasource or (current if isinstance(current, str) else "")
+        raise DatusException(
+            ErrorCode.COMMON_VALIDATION_FAILED, message="A datasource ID requires an authorized roster"
+        )
     if datasource_id is not None:
         matches = [name for name in sources if datasource_identity(config, name) == datasource_id]
         if datasource_id and len(matches) == 1:
@@ -47,7 +54,13 @@ def resolve_execution_context(config: Any, values: Mapping[str, Any]) -> dict[st
         datasource=values.get("datasource"),
     )
     result["datasource"] = name
-    if name and getattr(config.services.datasources[name], "datasource_id", ""):
+    sources = getattr(getattr(config, "services", None), "datasources", None)
+    if (
+        name
+        and isinstance(sources, dict)
+        and isinstance(getattr(sources[name], "datasource_id", None), str)
+        and sources[name].datasource_id
+    ):
         result["datasource_id"] = datasource_identity(config, name)
     return result
 
@@ -65,3 +78,22 @@ def legacy_semantic_paths(config: Any, name: str) -> list[str]:
     getter = getattr(getattr(config, "path_manager", None), "legacy_semantic_model_paths", None)
     paths = getter(name) if callable(getter) else []
     return [value for value in paths if isinstance(value, str)] if isinstance(paths, (list, tuple)) else []
+
+
+def resolve_subagent_config(config: Any, node: Any) -> Any:
+    """Translate frozen ID scopes only on a runtime copy, preserving the snapshot."""
+    if not isinstance(node, dict) or not isinstance(node.get("scoped_context"), dict):
+        return node
+    scope = node["scoped_context"]
+    if scope.get("datasource_id") is None and scope.get("tables_by_datasource_id") is None:
+        return node
+    resolved = dict(scope)
+    identity = resolved.pop("datasource_id", None)
+    if identity is not None:
+        resolved["datasource"] = resolve_datasource(config, datasource_id=identity)
+    groups = resolved.pop("tables_by_datasource_id", None)
+    if groups is not None:
+        resolved["tables_by_datasource"] = {
+            resolve_datasource(config, datasource_id=key): value for key, value in groups.items()
+        }
+    return {**node, "scoped_context": resolved}

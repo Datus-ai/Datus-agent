@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import re
 from collections import OrderedDict
 from pathlib import Path
@@ -1112,3 +1113,22 @@ def test_execution_context_metadata_database_failure_does_not_abort_the_turn(ses
     logger.debug.assert_called_once_with(
         "Failed to record execution context for session %s", node.session_id, exc_info=True
     )
+
+
+@pytest.mark.asyncio
+async def test_execution_context_records_name_snapshot_but_rename_is_not_a_target_boundary(session_manager):
+    config = _agent_config(current_datasource="renamed")
+    config.runtime_db_context = lambda: {"datasource": "renamed", "datasource_id": "ds-stable", "database": "demo"}
+    node = _SnapshotNode(session_manager, config)
+    node.input = SimpleNamespace()
+    await session_manager.get_session(node.session_id).add_items([{"role": "user", "content": "Run query"}])
+    session_manager.save_session_meta(
+        node.session_id, "execution_context", '{"datasource_id":"ds-stable","database":"demo"}'
+    )
+    node._record_execution_context()
+    assert node._previous_execution_context is None
+    assert json.loads(session_manager.load_session_meta(node.session_id, "execution_context")) == {
+        "datasource": "renamed",
+        "datasource_id": "ds-stable",
+        "database": "demo",
+    }

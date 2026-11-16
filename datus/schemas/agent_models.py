@@ -31,7 +31,13 @@ class ScopedContext(BaseModel):
     @property
     def is_empty(self) -> bool:
         """Whether no table, grouped datasource, metric, or SQL scope is configured."""
-        return self.tables_by_datasource is None and not self.tables and not self.metrics and not self.sqls
+        return (
+            self.tables_by_datasource_id is None
+            and self.tables_by_datasource is None
+            and not self.tables
+            and not self.metrics
+            and not self.sqls
+        )
 
     def as_lists(self) -> ScopedContextLists:
         def _split(value: Optional[str]) -> List[str]:

@@ -48,7 +48,9 @@ async def list_catalogs(
     """List available databases."""
     from datus.configuration.datasource_reference import resolve_datasource
 
-    target = resolve_datasource(svc.agent_config, datasource_id=datasource_ref_id, datasource=datasource_id)
+    target = resolve_datasource(
+        svc.agent_config, datasource_id=datasource_ref_id, datasource=datasource_id or svc.datasource.current_datasource
+    )
     request = ListDatabasesInput(
         datasource_id=target,
         catalog_name=catalog_name,

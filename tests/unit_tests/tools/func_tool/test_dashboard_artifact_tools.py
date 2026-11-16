@@ -1459,8 +1459,6 @@ def test_template_save_keeps_query_source_authoritative_until_finalize(dashboard
 
 def test_edit_legacy_dashboard_only_upgrades_the_modified_query(dashboard_tools, db_func_tool, project_root):
     """Editing on a new backend upgrades the executed query, never sibling files."""
-    from datus.configuration.agent_config import DbConfig
-    from datus.utils.artifact_metadata import collect_query_datasource_references
 
     directory = project_root / "dashboards" / dashboard_tools.dashboard_slug
     (directory / "render" / "app.jsx").write_text("export default function App() { return null; }")
@@ -1478,7 +1476,7 @@ def test_edit_legacy_dashboard_only_upgrades_the_modified_query(dashboard_tools,
     assert (queries / "untouched.params.json").read_bytes() == unchanged
 
     db_func_tool.agent_config = SimpleNamespace(
-        current_db_config=lambda _: DbConfig(datasource_id="ds-stable"),
+        current_db_config=lambda _: SimpleNamespace(datasource_id="ds-stable"),
     )
     result = dashboard_tools.save_query_template(
         name="edited",
@@ -1494,6 +1492,8 @@ def test_edit_legacy_dashboard_only_upgrades_the_modified_query(dashboard_tools,
     assert saved["execution_context"]["datasource_id"] == "ds-stable"
     assert saved["execution_context"]["database"] == "demo"
     assert (queries / "untouched.params.json").read_bytes() == unchanged
+
+    from datus.utils.artifact_metadata import collect_query_datasource_references
 
     paths = {f"queries/{path.name}": path for path in queries.iterdir()}
     refs = collect_query_datasource_references(paths, lambda name: paths[name].read_text())

@@ -640,18 +640,15 @@ class DBFuncTool(BulkQueryTools):
         return self._track_connector(self._db_manager.get_conn(source), source)
 
     def execution_context(self, connector, datasource: Optional[str] = "") -> Dict[str, str]:
+        from datus.configuration.datasource_reference import configured_datasource_id
         from datus.schemas.database_context import DatabaseExecutionContext
 
         return DatabaseExecutionContext.from_mapping(
             {
                 "datasource": datasource or getattr(self, "_default_datasource", ""),
-                "datasource_id": getattr(
-                    self.agent_config.current_db_config(datasource or getattr(self, "_default_datasource", "")),
-                    "datasource_id",
-                    "",
-                )
-                if getattr(self, "agent_config", None)
-                else "",
+                "datasource_id": configured_datasource_id(
+                    getattr(self, "agent_config", None), datasource or getattr(self, "_default_datasource", "")
+                ),
                 "catalog": getattr(connector, "catalog_name", ""),
                 "database": self._active_database_of(connector),
                 "schema": getattr(connector, "schema_name", ""),

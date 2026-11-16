@@ -90,6 +90,8 @@ class DashboardDetail(BaseModel):
 
 
 class SqlQueryResultEnvelope(BaseModel):
+    datasource_id: Optional[str] = None
+
     """Matches the ISqlQueryResult shape consumed by ``useQuerySql`` on the frontend.
 
     The frontend hook destructures ``data?.rows ?? []`` / ``data?.columns ?? []``

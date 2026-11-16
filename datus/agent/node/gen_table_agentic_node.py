@@ -41,6 +41,7 @@ class GenTableAgenticNode(DeliverableAgenticNode):
 
     def continuation_target_error(self) -> Optional[str]:
         """Reject a resume that would silently rebind writes to another target."""
+        from datus.configuration.datasource_reference import resolve_execution_context
         from datus.schemas.database_context import (
             EXECUTION_CONTEXT_META_KEY,
             DatabaseExecutionContext,
@@ -49,13 +50,17 @@ class GenTableAgenticNode(DeliverableAgenticNode):
 
         saved = self.session_manager.load_session_meta(self.session_id, EXECUTION_CONTEXT_META_KEY)
         try:
-            previous = DatabaseExecutionContext.from_mapping(json.loads(saved)) if saved else None
-        except (TypeError, ValueError, AttributeError):
+            previous = (
+                DatabaseExecutionContext.from_mapping(resolve_execution_context(self.agent_config, json.loads(saved)))
+                if saved
+                else None
+            )
+        except (TypeError, ValueError, AttributeError, DatusException):
             previous = None
-        if previous is None or not previous.datasource:
+        if previous is None or not (previous.datasource or previous.datasource_id):
             return "The original table's execution target is unavailable. Establish its exact datasource and database before continuing in a new specialist session."
         current = execution_context_for_node(self.agent_config, self.input)
-        if previous != current:
+        if previous.identity != current.identity:
             return (
                 f"The table session is bound to {previous.identity}, but this turn targets {current.identity}. "
                 "No continuation was executed. Restore the original execution target, or obtain an explicit "

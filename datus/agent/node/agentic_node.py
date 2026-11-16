@@ -3639,19 +3639,24 @@ class AgenticNode(Node):
 
     def _record_execution_context(self) -> None:
         """Persist effective coordinates and mark a target boundary in this turn."""
-        from datus.schemas.database_context import EXECUTION_CONTEXT_META_KEY, execution_context_for_node
+        from datus.schemas.database_context import (
+            EXECUTION_CONTEXT_META_KEY,
+            DatabaseExecutionContext,
+            execution_context_for_node,
+        )
 
         context = execution_context_for_node(getattr(self, "agent_config", None), self.input)
         self._previous_execution_context = None
-        if not context.datasource:
+        if not (context.datasource or context.datasource_id):
             return
         try:
             previous = self.session_manager.load_session_meta(self.session_id, EXECUTION_CONTEXT_META_KEY)
-            if previous and previous != context.identity:
+            if previous and DatabaseExecutionContext.from_mapping(json.loads(previous)).identity != context.identity:
                 self._previous_execution_context = previous
-            self.session_manager.save_session_meta(self.session_id, EXECUTION_CONTEXT_META_KEY, context.identity)
+            saved = json.dumps(context.to_dict(), sort_keys=True, separators=(",", ":"))
+            self.session_manager.save_session_meta(self.session_id, EXECUTION_CONTEXT_META_KEY, saved)
             turn = self.session_manager.get_max_user_turn_number(self.session_id) + 1
-            self.session_manager.save_session_meta(self.session_id, f"execution_context.turn.{turn}", context.identity)
+            self.session_manager.save_session_meta(self.session_id, f"execution_context.turn.{turn}", saved)
         except Exception:  # noqa: BLE001 — metadata bookkeeping must not abort a turn
             logger.debug("Failed to record execution context for session %s", self.session_id, exc_info=True)
 

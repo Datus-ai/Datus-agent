@@ -191,7 +191,7 @@ def get_storage(
         project,
         datasource_id or "",
         current_table_prefix(),
-        tuple(getattr(datasource_id, "legacy_names", ())),
+        **({"scope_aliases": tuple(datasource_id.legacy_names)} if getattr(datasource_id, "legacy_names", ()) else {}),
     )
 
 
@@ -213,7 +213,10 @@ def _get_subject_tree_cached(
 def get_subject_tree_store(project: str, datasource_id: str = "") -> "SubjectTreeStore":
     """Return a SubjectTreeStore instance (LRU-cached per project/datasource/prefix)."""
     return _get_subject_tree_cached(
-        project, datasource_id or "", current_table_prefix(), tuple(getattr(datasource_id, "legacy_names", ()))
+        project,
+        datasource_id or "",
+        current_table_prefix(),
+        **({"scope_aliases": tuple(datasource_id.legacy_names)} if getattr(datasource_id, "legacy_names", ()) else {}),
     )
 
 

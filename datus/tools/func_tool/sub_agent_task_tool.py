@@ -1578,7 +1578,7 @@ class SubAgentTaskTool:
 
                 # If scoped_context is configured, datasource must match current datasource
                 try:
-                    sub_config = SubAgentConfig.model_validate(config)
+                    sub_config = SubAgentConfig.model_validate(self.agent_config.sub_agent_config(name))
                     if sub_config.has_scoped_context() and not sub_config.is_in_datasource(current_datasource):
                         continue
                 except Exception as e:

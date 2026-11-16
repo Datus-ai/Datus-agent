@@ -481,7 +481,13 @@ class DatusPathManager:
         return [
             str(self.semantic_models_dir / name)
             for name in dict.fromkeys(names)
-            if self.semantic_models_dir / name != primary and (self.semantic_models_dir / name).is_dir()
+            if sum(
+                name == key or name == identity or name in self.datasource_aliases.get(key, [])
+                for key, identity in self.datasource_ids.items()
+            )
+            <= 1
+            and self.semantic_models_dir / name != primary
+            and (self.semantic_models_dir / name).is_dir()
         ]
 
     def sql_summary_path(self) -> Path:

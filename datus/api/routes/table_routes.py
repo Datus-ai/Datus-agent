@@ -81,7 +81,7 @@ async def get_tables_columns(
     from datus.configuration.datasource_reference import resolve_datasource
 
     source = resolve_datasource(svc.agent_config, datasource_id=request.datasource_id, datasource=request.datasource)
-    return await asyncio.to_thread(svc.datasource.get_tables_columns, request.tables, source)
+    return await asyncio.to_thread(svc.datasource.get_tables_columns, request.tables, source or None)
 
 
 # ========== SemanticModel Endpoints ==========

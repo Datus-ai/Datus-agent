@@ -702,6 +702,15 @@ class ChatService:
                     context = DatabaseExecutionContext.from_mapping(json.loads(raw_context)).to_dict()
                 except (ValueError, TypeError, AttributeError):
                     logger.warning("Ignoring malformed execution context for session %s", session_id)
+                if context and (context.get("datasource_id") or context.get("datasource")):
+                    from datus.configuration.datasource_reference import resolve_execution_context
+
+                    try:
+                        context = resolve_execution_context(self.agent_config, context)
+                    except DatusException:
+                        # Keep unavailable coordinates so the next turn fails closed.
+                        # History remains readable even after a source is unbound.
+                        pass
             return Result[ChatHistoryData](
                 success=True, data=ChatHistoryData(messages=sse_messages, execution_context=context)
             )

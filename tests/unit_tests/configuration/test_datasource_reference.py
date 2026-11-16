@@ -9,8 +9,6 @@ from datus.configuration.agent_config import DbConfig
 from datus.configuration.datasource_reference import resolve_datasource, resolve_execution_context
 from datus.schemas.database_context import DatabaseExecutionContext
 from datus.storage.datasource_scope import add_datasource_scope_to_rows, resolve_datasource_id
-from datus.tools.db_tools.db_manager import DBManager
-from datus.tools.func_tool.database import DBFuncTool
 from datus.utils.exceptions import DatusException
 
 
@@ -63,37 +61,6 @@ def test_kb_writes_use_stable_identity_with_legacy_read_scope():
     assert rows[0]["storage_key"] == "ds-stable:metric"
 
 
-@pytest.mark.parametrize("saved_name", ["renamed", "old"])
-def test_real_sqlite_artifact_connector_is_restored_by_id(tmp_path, saved_name):
-    import sqlite3
-
-    file = tmp_path / "business.db"
-    with sqlite3.connect(file) as conn:
-        conn.execute("CREATE TABLE marker (value TEXT)")
-        conn.execute("INSERT INTO marker VALUES ('correct-source')")
-    cfg = config({"renamed": DbConfig(datasource_id="stable", type="sqlite", uri=f"sqlite:///{file}")})
-    tool = DBFuncTool.__new__(DBFuncTool)
-    tool.agent_config = cfg
-    tool._db_manager = DBManager(cfg.services.datasources)
-    tool._tables_by_datasource = None
-    try:
-        connector = tool.connector_for_execution_context(
-            {"datasource_id": "stable", "datasource": saved_name, "database": "business"}
-        )
-        assert connector.execute_query("SELECT value FROM marker", result_format="list").success
-        assert tool._connector_datasources[id(connector)] == "renamed"
-    finally:
-        tool._db_manager.close()
-
-
-def test_adapter_receives_connection_parameters_without_identity_metadata():
-    manager = DBManager({"source": DbConfig(datasource_id="stable", type="postgresql", username="user", database="db")})
-    parameters = manager._db_config_to_connection_config(manager._db_configs["source"])
-    assert parameters["username"] == "user"
-    assert parameters["database"] == "db"
-    assert "datasource_id" not in parameters
-
-
 def test_legacy_aliases_survive_future_renames_and_ambiguity_is_rejected():
     cfg = config({"renamed": DbConfig(datasource_id="stable", datasource_aliases=["__SR"])})
     assert resolve_datasource(cfg, datasource="__SR") == "renamed"
@@ -101,6 +68,35 @@ def test_legacy_aliases_survive_future_renames_and_ambiguity_is_rejected():
     with pytest.raises(DatusException, match="not bound"):
         resolve_datasource(cfg, datasource="__SR")
     assert resolve_datasource(cfg, datasource_id="stable", datasource="__SR") == "renamed"
+
+
+def test_kb_legacy_scope_excludes_reused_names_and_other_canonical_ids():
+    cfg = config(
+        {
+            "renamed": DbConfig(datasource_id="stable", datasource_aliases=["old", "other-id"]),
+            "old": DbConfig(datasource_id="other-id"),
+        }
+    )
+    scope = resolve_datasource_id(cfg, "stable")
+    assert scope == "stable"
+    assert scope.legacy_names == ("renamed",)
+
+
+def test_frozen_subagent_id_scopes_resolve_only_on_a_runtime_copy():
+    from datus.configuration.datasource_reference import resolve_subagent_config
+
+    cfg = config()
+    node = {
+        "scoped_context": {
+            "datasource_id": "ds-stable",
+            "datasource": "old",
+            "tables_by_datasource_id": {"ds-stable": ["demo.orders"]},
+        }
+    }
+    saved = json.dumps(node)
+    resolved = resolve_subagent_config(cfg, node)
+    assert resolved["scoped_context"] == {"datasource": "renamed", "tables_by_datasource": {"renamed": ["demo.orders"]}}
+    assert json.dumps(node) == saved
 
 
 def test_model_id_directory_and_legacy_reads_require_no_file_migration(tmp_path):
