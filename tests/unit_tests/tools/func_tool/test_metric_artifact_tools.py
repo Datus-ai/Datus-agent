@@ -1117,7 +1117,7 @@ def test_metric_artifact_identity_survives_rename_without_changing_model_snapsho
     env.db.agent_config = cfg
     options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
     tools, result = _save(env, kind, **options)
-    assert result.success, result.error
+    assert result.success == 1, result.error
     path = tools.queries_dir / "sales.metric.json"
     before = path.read_bytes()
     saved = MetricQueryFile.model_validate_json(before)

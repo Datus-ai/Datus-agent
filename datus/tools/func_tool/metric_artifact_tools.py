@@ -279,7 +279,9 @@ def execute_published_metric_query(query: MetricQueryFile, *, runtime_config, db
     from types import SimpleNamespace
 
     from datus.tools.semantic_tools.dosi import DosiRuntime
+    from datus.utils.artifact_datasource import runtime_artifact_query
 
+    query = runtime_artifact_query(db_tool.agent_config, query)
     if query.model_snapshot is None:
         raise ValueError("METRIC_MODEL_SNAPSHOT_MISSING: republish a metric query with its semantic model snapshot")
     with TemporaryDirectory(prefix="datus-metric-query-") as directory:

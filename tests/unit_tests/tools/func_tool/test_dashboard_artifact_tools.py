@@ -1511,7 +1511,7 @@ async def test_saved_dashboard_executes_after_rename_without_rewriting_bundle(da
         published_version=1 if published else None,
         published_template_loader=loader if published else None,
     )
-    assert result.success, result.errorMessage
+    assert result.success is True, result.errorMessage
     assert result.data.rows == [{"answer": 42}]
     assert seen[0]["datasource"] == "renamed"
     assert (root / "rename.params.json").read_bytes() == before

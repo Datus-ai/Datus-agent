@@ -318,7 +318,8 @@ class DbConfig:
     extra: Optional[Dict] = field(default=None, init=True)  # Adapter-specific fields stored here
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        # Artifact routing metadata is not a database adapter option.
+        return {key: value for key, value in asdict(self).items() if key not in {"artifact_id", "artifact_aliases"}}
 
     @staticmethod
     def filter_kwargs(cls, kwargs) -> "DbConfig":

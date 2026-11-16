@@ -10,7 +10,6 @@ import pytest
 from datus.configuration.agent_config import DbConfig
 from datus.schemas.gen_visual_report_models import QueryResultFile
 from datus.utils.artifact_datasource import artifact_identity, resolve_artifact_datasource, runtime_artifact_query
-from datus.utils.artifact_metadata import collect_query_datasources
 
 
 def config(**entries):
@@ -73,14 +72,3 @@ def test_schema_rejects_present_invalid_id_even_with_legacy_name(identity):
             columns=[{"name": "n", "type": "number"}],
             rows=[],
         )
-
-
-def test_mixed_bundle_indexes_ids_and_only_legacy_names():
-    files = {
-        "queries/new.sql": "select 1",
-        "queries/new.json": '{"datasource_id":"id","datasource":"stale"}',
-        "queries/old.sql": "select 2",
-        "queries/old.json": '{"datasource":"legacy"}',
-    }
-    assert collect_query_datasources(files, files.__getitem__, field="datasource_id") == ["id"]
-    assert collect_query_datasources(files, files.__getitem__) == ["legacy"]

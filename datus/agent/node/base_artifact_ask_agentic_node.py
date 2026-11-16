@@ -189,6 +189,9 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         # need our own (``node_name`` from agentic_nodes, e.g. "ask_xxx") so
         # template resolution + node_config lookup land on the right entry.
         self._configured_subagent_name = node_name or self.NODE_NAME
+        entry = (getattr(agent_config, "agentic_nodes", None) or {}).get(self._configured_subagent_name, {})
+        if entry.get("artifact_datasource_error"):
+            raise ValueError(entry["artifact_datasource_error"])
 
         # Artifact ask nodes build semantic tools only when their own ``tools``
         # whitelist requests them (metric/dimension/attribution analysis).
@@ -1093,8 +1096,21 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             lines.append(f"- **Root**: `{self._artifact_root}` (anchors the filesystem tool)")
         if artifact_description:
             lines.append(f"- **Description**: {artifact_description}")
-        if manifest.get("datasources"):
-            lines.append(f"- **Datasources**: {', '.join(manifest['datasources'])}")
+        if manifest.get("datasource_ids") or manifest.get("datasources"):
+            from datus.utils.artifact_datasource import resolve_artifact_datasource
+
+            refs = [{"datasource_id": value} for value in manifest.get("datasource_ids", [])]
+            refs.extend({"datasource": value} for value in manifest.get("datasources", []))
+            names = []
+            for ref in refs:
+                try:
+                    name = resolve_artifact_datasource(self.agent_config, ref)
+                except ValueError:
+                    # Static artifact explanation remains useful without a live connection.
+                    name = f"{next(iter(ref.values()))} (unavailable for live queries)"
+                if name not in names:
+                    names.append(name)
+            lines.append(f"- **Datasources**: {', '.join(names)}")
         if manifest.get("key_tables"):
             # Code-aggregated by finalize from the SQL bodies, not an
             # LLM claim — trustworthy as long as it's present. Surfacing
