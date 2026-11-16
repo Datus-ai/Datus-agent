@@ -95,6 +95,10 @@ jobs:
           uv sync --locked --group ci
           echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
 
+      - name: Validate Subagent policy contracts
+        if: ${{ steps.reuse.outputs.reused != 'true' && (steps.profile.outputs.run_tests == 'true') }}
+        run: python -m datus.tools.registry.policy_validation --check
+
       - name: Check release metadata
         if: ${{ steps.reuse.outputs.reused != 'true' }}
         env:
