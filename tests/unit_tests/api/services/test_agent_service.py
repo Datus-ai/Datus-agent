@@ -356,9 +356,9 @@ class TestConstants:
         assert "describe_table" in VALID_TOOL_METHODS["db_tools"]
 
     @pytest.mark.parametrize("agent_type", list(SUBAGENT_TOOL_REFERENCE))
-    def test_cached_metric_reader_is_configurable_only_for_chat(self, agent_type):
+    def test_cached_metric_reader_is_configurable_for_chat_and_analytics(self, agent_type):
         reader = "semantic_tools.get_query_metrics_result"
-        expected = [] if agent_type == "chat" else [reader]
+        expected = [] if agent_type in {"chat", "analytics_explorer", "analytics_builder"} else [reader]
         assert _validate_tools([reader]) == []
         assert _validate_tools_for_agent_type([reader], agent_type) == expected
 
@@ -516,7 +516,11 @@ class TestPerAgentTypeCategoryWhitelist:
             for category in categories:
                 payload = tool_types[category]
                 assert set(payload.keys()) == {"tools"}
-                if agent_type in {"ask_report", "ask_dashboard"} and category == "filesystem_tools":
+                if agent_type in {"analytics_explorer", "analytics_builder"}:
+                    from datus.tools.registry.subagent_policy import tool_reference
+
+                    assert payload == tool_reference(agent_type)["tool_types"][category]
+                elif agent_type in {"ask_report", "ask_dashboard"} and category == "filesystem_tools":
                     # ask_* filesystem is the read-only subset — write tools
                     # must be absent and the read trio must be present.
                     assert set(payload["tools"]) == set(_ASK_AGENT_FILESYSTEM_READ_ONLY)

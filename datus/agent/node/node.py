@@ -76,6 +76,25 @@ class Node(ABC):
             SubworkflowNode,
         )
 
+        if node_type in {"analytics_explorer", "analytics_builder"}:
+            from datus.agent.node.analytics_agentic_node import (
+                AnalyticsBuilderAgenticNode,
+                AnalyticsExplorerAgenticNode,
+            )
+
+            cls = AnalyticsBuilderAgenticNode if node_type == "analytics_builder" else AnalyticsExplorerAgenticNode
+            return cls(
+                node_id,
+                description,
+                node_type,
+                input_data,
+                agent_config,
+                tools,
+                node_name=node_name,
+                execution_mode=execution_mode,
+                is_subagent=is_subagent,
+                session_id=session_id,
+            )
         if node_type == NodeType.TYPE_SCHEMA_LINKING:
             return SchemaLinkingNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_EXECUTE_SQL:
@@ -496,7 +515,11 @@ class Node(ABC):
                     input_data = OutputInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_FIX:
                     input_data = FixInput(**input_data)
-                elif node_dict["type"] == NodeType.TYPE_CHAT:
+                elif node_dict["type"] in {
+                    NodeType.TYPE_CHAT,
+                    NodeType.TYPE_ANALYTICS_EXPLORER,
+                    NodeType.TYPE_ANALYTICS_BUILDER,
+                }:
                     input_data = ChatNodeInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_SQL:
                     input_data = GenSQLNodeInput(**input_data)
