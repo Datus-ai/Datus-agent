@@ -72,7 +72,8 @@ SUBAGENT_POLICIES = {
     "gen_sql": SubagentPolicy((*GEN_SQL_DEFAULT_TOOLS, "filesystem_tools.read_file", *_FILE_WRITE_TOOLS)),
     "ask_metrics": SubagentPolicy((*ASK_METRICS_DEFAULT_TOOLS, *_FILE_WRITE_TOOLS)),
 }
-MANAGED_TYPES = frozenset(SUBAGENT_POLICIES)
+# Capability discovery only; hosts decide which types override saved choices.
+SUPPORTED_POLICY_TYPES = frozenset(SUBAGENT_POLICIES)
 
 
 def tool_patterns(raw: Any) -> tuple[str, ...]:
