@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/develop/">
       
       
         <link rel="prev" href="../training/llm_trace_usage/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/develop/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/develop/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/develop/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/develop/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -5027,6 +5021,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#subagent-tool-policy-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subagent Tool Policy Checks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#useful-references" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5311,6 +5316,27 @@
 </span></code></pre></div>
 <h2 id="observability">Observability<a class="headerlink" href="#observability" title="Permanent link">&para;</a></h2>
 <p>Observability setup and tracing examples now live in the dedicated <a href="observability/">Observability</a> guide. It covers local REPL traces, local YAML traces, OpenTelemetry-based external tracing, and adapter configuration for LangSmith, Langfuse, Datadog, Braintrust, and generic OTLP collectors.</p>
+<h2 id="subagent-tool-policy-checks">Subagent Tool Policy Checks<a class="headerlink" href="#subagent-tool-policy-checks" title="Permanent link">&para;</a></h2>
+<p><code>@tool_contract</code> declarations generate <code>datus/tools/registry/capabilities.json</code>.
+Pre-commit and packaging refresh that catalog; CI rejects stale generated data.
+Subagent policies are checked separately against their actual provider inventory
+and the reviewed <code>subagent_policy_contracts.json</code> baseline:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>datus.tools.registry.policy_validation<span class="w"> </span>--check
+</span></code></pre></div>
+<p>This check runs on code PRs independently of impacted-test selection. It rejects
+missing explicit tools, removed provider tools (including wildcard selections),
+and changes to existing tools' <code>access</code> values. Runtime filtering still rejects
+unsupported capabilities, but cannot hide a stale declaration from this check.
+Every selected tool must be recorded, including newly added tools selected by a
+wildcard. An unrecorded tool fails CI even if the policy already permits it:
+authorizing a capability and recording its contract are separate requirements.</p>
+<p>When adding a selected tool or intentionally removing/changing one, review the
+affected type policies, then explicitly regenerate and review the baseline diff:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>datus.tools.registry.policy_validation<span class="w"> </span>--update
+</span></code></pre></div>
+<p>The baseline is not automatically rewritten by commit or build hooks. This
+command records newly added tools so later deletion/access changes cannot bypass CI.
+<code>direct_call</code> describes direct API eligibility and is not an in-agent access rule.</p>
 <h2 id="useful-references">Useful References<a class="headerlink" href="#useful-references" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../getting_started/Quickstart/">Quickstart</a></li>
