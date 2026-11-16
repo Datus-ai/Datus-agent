@@ -88,6 +88,16 @@ def _subagent_datasource(agent_config: AgentConfig, name_or_id: Optional[str]) -
         entry_id = entry.get("id") if isinstance(entry, dict) else getattr(entry, "id", None)
         if name != name_or_id and entry_id != name_or_id:
             continue
+        from datus.configuration.datasource_reference import resolve_datasource
+
+        saved_scope = entry.get("scoped_context") if isinstance(entry, dict) else getattr(entry, "scoped_context", None)
+        saved_id = (
+            saved_scope.get("datasource_id")
+            if isinstance(saved_scope, dict)
+            else getattr(saved_scope, "datasource_id", None)
+        )
+        if saved_id is not None:
+            return resolve_datasource(agent_config, datasource_id=saved_id)
         config = agent_config.sub_agent_config(name)
         scope = config.get("scoped_context") if isinstance(config, dict) else getattr(config, "scoped_context", None)
         source_id = scope.get("datasource_id") if isinstance(scope, dict) else getattr(scope, "datasource_id", None)
@@ -96,7 +106,11 @@ def _subagent_datasource(agent_config: AgentConfig, name_or_id: Optional[str]) -
 
             return resolve_datasource(agent_config, datasource_id=source_id)
         datasource = scope.get("datasource") if isinstance(scope, dict) else getattr(scope, "datasource", None)
-        return datasource if isinstance(datasource, str) and datasource else None
+        return (
+            resolve_datasource(agent_config, datasource=datasource)
+            if isinstance(datasource, str) and datasource
+            else None
+        )
     return None
 
 
@@ -611,10 +625,10 @@ class ChatTaskManager:
         from datus.configuration.datasource_reference import resolve_datasource, resolve_execution_context
         from datus.utils.exceptions import DatusException
 
-        bound_datasource = _subagent_datasource(agent_config, sub_agent_id)
         # Explicit IDs never degrade to names. A scoped subagent may recover an
         # old session, but only on its own saved binding.
         try:
+            bound_datasource = _subagent_datasource(agent_config, sub_agent_id)
             if previous:
                 try:
                     previous = resolve_execution_context(agent_config, previous)
@@ -624,10 +638,12 @@ class ChatTaskManager:
                     previous = {}
             if request.datasource_id is not None:
                 requested = resolve_datasource(agent_config, datasource_id=request.datasource_id)
+            elif previous:
+                requested = previous["datasource"]
             elif bound_datasource:
-                requested = resolve_datasource(agent_config, datasource=previous.get("datasource") or bound_datasource)
+                requested = bound_datasource
             else:
-                requested = resolve_datasource(agent_config, datasource=previous.get("datasource"))
+                requested = resolve_datasource(agent_config)
             datasource = bound_datasource or requested
             if bound_datasource and requested != bound_datasource:
                 request.catalog = request.database = request.db_schema = None

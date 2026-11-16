@@ -3715,3 +3715,51 @@ async def test_user_events_and_residual_inserts_reach_client():
     assert len(residual.events) == 1
     assert residual.events[0].data.payload.role == "user"
     assert residual.events[0].data.payload.content[0].payload["content"] == "follow up"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bound", [False, True])
+@pytest.mark.parametrize("history", [False, True])
+async def test_resolved_session_and_binding_ids_survive_reused_names(real_agent_config, monkeypatch, bound, history):
+    import copy
+    import json
+
+    from datus.api.models.cli_models import StreamChatInput
+
+    source_a = real_agent_config.current_db_config()
+    source_a.datasource_id = "id-a"
+    source_a.datasource_aliases = ["sales"]
+    source_b = copy.deepcopy(source_a)
+    source_b.datasource_id = "id-b"
+    source_b.datasource_aliases = []
+    source_b.type, source_b.uri = "postgresql", ""
+    source_b.catalog, source_b.database, source_b.schema = "default_cat", "default_db", "default_schema"
+    real_agent_config.services.datasources["sales"] = source_b
+    real_agent_config.current_datasource = "sales"
+    if bound:
+        real_agent_config.agentic_nodes["bound"] = {"scoped_context": {"datasource_id": "id-b"}}
+    previous = {
+        "datasource_id": "id-b",
+        "datasource": "sales",
+        "catalog": "selected_cat",
+        "database": "selected_db",
+        "schema": "selected_schema",
+    }
+    manager = ChatTaskManager()
+    sessions = MagicMock()
+    sessions.load_session_meta.return_value = json.dumps(previous) if history else None
+    monkeypatch.setattr(manager, "_session_manager", lambda *args: sessions)
+    observed = {}
+
+    async def run(task, config, request, **kwargs):
+        observed.update(config.runtime_db_context())
+        observed["selected_id"] = config.current_db_config().datasource_id
+
+    monkeypatch.setattr(manager, "_run_loop", run)
+    request = StreamChatInput(message="continue", session_id="saved-id")
+    task = await manager.start_chat(real_agent_config, request, sub_agent_id="bound" if bound else None)
+    await task.asyncio_task
+    assert observed["selected_id"] == "id-b"
+    assert observed["datasource"] == "sales"
+    for field in ("catalog", "database", "schema"):
+        assert observed[field] == (previous[field] if history else getattr(source_b, field))
