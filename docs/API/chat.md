@@ -678,3 +678,6 @@ A terminal SSE frame can arrive before node cleanup finishes. A new turn for the
 same session waits for that cleanup before loading session metadata and starting;
 cancelling the new request does not cancel the preceding turn's cleanup. A turn
 that is still running retains the existing single-active-turn behavior.
+
+Cancellation or shutdown during node construction waits for the native constructor
+and closes its returned node before finishing task cleanup.

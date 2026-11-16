@@ -959,12 +959,25 @@ class ChatTaskManager:
                     session_id=feedback_session_id,
                 )
 
-            node = await asyncio.to_thread(_init_node)
+            async def _init_owned_node():
+                task.node = await asyncio.to_thread(_init_node)
+                return task.node
+
+            initialization = asyncio.create_task(_init_owned_node())
+            try:
+                node = await asyncio.shield(initialization)
+            except asyncio.CancelledError:
+                # A running constructor cannot be stopped by cancelling its
+                # awaiter. Adopt its result before terminal cleanup can run.
+                async def finish_initialization():
+                    await asyncio.gather(initialization, return_exceptions=True)
+
+                await self._drain_cleanup(finish_initialization())
+                raise
             # Each request owns its node, including any continuation passes.
             # An omitted request limit must preserve the configured node limit.
             if "max_turns" in request.model_fields_set:
                 node.max_turns = request.max_turns
-            task.node = node
             task.llm_session_id = node.session_id
             task.previous_message_id = await asyncio.to_thread(
                 self._max_message_id, agent_config, node.session_id, user_id

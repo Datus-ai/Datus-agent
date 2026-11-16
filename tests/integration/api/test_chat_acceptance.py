@@ -665,3 +665,57 @@ async def test_cancelling_followup_waiter_does_not_cancel_previous_cleanup(resou
         finally:
             release.set()
             await asyncio.gather(*([following] if following is not None else []), return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_http_shutdown_during_node_construction_closes_the_completed_node(resource_project, monkeypatch):
+    manager = resource_project.service.task_manager
+    create_node = manager._create_node
+    entered, release = threading.Event(), threading.Event()
+    created = []
+
+    def blocked_constructor(*args, **kwargs):
+        node = create_node(*args, **kwargs)
+        created.append(node)
+        result = node.db_func_tool.read_query("SELECT SUM(amount) AS total FROM orders", compress=False)
+        assert result.success == 1, result.error
+        assert result.result == [{"total": 350}]
+        entered.set()
+        assert release.wait(10), "The test must release node construction"
+        return node
+
+    monkeypatch.setattr(manager, "_create_node", blocked_constructor)
+    sid = "shutdown_during_construction"
+    request = asyncio.create_task(
+        resource_project.client.post(
+            "/api/v1/chat/stream", json={"message": "Create a node.", "session_id": sid, "interactive": False}
+        )
+    )
+    stopping = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 10)
+        task = manager.get_task(sid)
+        db_tool = created[0].db_func_tool
+        db_manager = db_tool._db_manager
+        assert len(db_manager._leases) == 1
+        stopping = asyncio.create_task(manager.shutdown())
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(stopping), timeout=0.05)
+        task.asyncio_task.cancel()  # Repeated cancellation must also retain construction.
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(stopping), timeout=0.05)
+        assert len(db_manager._leases) == 1
+        release.set()
+        await asyncio.wait_for(asyncio.shield(stopping), timeout=10)
+        await asyncio.wait_for(request, timeout=10)
+        assert task.status == "cancelled"
+        assert task.node is None
+        assert db_manager._leases == {}
+        assert db_tool._primary_connector is None
+        assert db_tool._borrowed_connections == {}
+    finally:
+        release.set()
+        await asyncio.gather(request, *([stopping] if stopping is not None else []), return_exceptions=True)
+        # Also clean the real node when verifying the regression on old code.
+        for node in created:
+            await node.aclose()
