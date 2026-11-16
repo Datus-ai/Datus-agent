@@ -1466,12 +1466,11 @@ async def test_saved_dashboard_executes_after_rename_without_rewriting_bundle(da
 
     from datus.api.models.base_models import Result
     from datus.api.services.dashboard_service import DashboardService
-    from datus.configuration.agent_config import DbConfig
+    from datus.configuration.agent_config import _parse_single_file_db
     from datus.tools import func_tool
 
     tool = dashboard_tools._db_func_tool
-    entry = DbConfig()
-    entry.artifact_id = "stable"
+    entry = _parse_single_file_db({"uri": ":memory:", "artifact_id": "stable"}, "sqlite")
     cfg = SimpleNamespace(services=SimpleNamespace(datasources={"default": entry}))
     tool.agent_config = cfg
     saved = dashboard_tools.save_query_template(

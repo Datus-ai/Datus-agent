@@ -16,9 +16,9 @@ def config(**entries):
     return SimpleNamespace(services=SimpleNamespace(datasources=entries))
 
 
-@pytest.mark.parametrize("reference", [{"datasource_id": "stable"}, {"datasource": "旧名字"}, {"datasource": "___"}])
+@pytest.mark.parametrize("reference", [{"datasource_id": "stable"}, {"datasource": "new"}])
 def test_rename_resolves_only_the_original_identity(reference):
-    cfg = config(new=DbConfig(artifact_id="stable", artifact_aliases=["旧名字", "___"]))
+    cfg = config(new=DbConfig(artifact_id="stable"))
     assert resolve_artifact_datasource(cfg, reference) == "new"
     assert artifact_identity(cfg, "new") == {"datasource_id": "stable"}
     assert list(cfg.services.datasources) == ["new"]
@@ -31,11 +31,12 @@ def test_explicit_invalid_id_never_falls_back_to_a_valid_name(identity):
         resolve_artifact_datasource(cfg, {"datasource_id": identity, "datasource": "valid"})
 
 
-def test_name_reuse_and_sanitization_collisions_are_ambiguous():
-    cfg = config(old=DbConfig(artifact_id="other"), renamed=DbConfig(artifact_id="original", artifact_aliases=["old"]))
-    with pytest.raises(ValueError, match="ambiguous"):
-        resolve_artifact_datasource(cfg, {"datasource": "old"})
+def test_name_reuse_does_not_redirect_explicit_identity():
+    cfg = config(old=DbConfig(artifact_id="other"), renamed=DbConfig(artifact_id="original"))
+    assert resolve_artifact_datasource(cfg, {"datasource": "old"}) == "old"
     assert resolve_artifact_datasource(cfg, {"datasource_id": "original"}) == "renamed"
+    with pytest.raises(ValueError, match="DATASOURCE_UNAVAILABLE"):
+        resolve_artifact_datasource(cfg, {"datasource": "removed"})
 
 
 def test_cli_uses_configuration_key_as_identity():

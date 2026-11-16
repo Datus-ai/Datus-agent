@@ -19,11 +19,7 @@ def resolve_artifact_datasource(config: Any, reference: Mapping[str, Any]) -> st
         matches = [name for name, entry in configs.items() if (getattr(entry, "artifact_id", "") or name) == identity]
     else:
         legacy = reference.get("datasource")
-        matches = [
-            name
-            for name, entry in configs.items()
-            if legacy and legacy in {name, *getattr(entry, "artifact_aliases", ())}
-        ]
+        matches = [name for name in configs if legacy == name]
     if len(matches) != 1:
         raise ValueError("DATASOURCE_UNAVAILABLE: artifact datasource is missing or ambiguous")
     return matches[0]

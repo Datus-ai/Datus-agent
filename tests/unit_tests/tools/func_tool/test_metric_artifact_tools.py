@@ -88,7 +88,7 @@ def environment(tmp_path):
         runtime=runtime,
         config=SimpleNamespace(
             project_root=str(tmp_path),
-            services=SimpleNamespace(datasources={"warehouse": SimpleNamespace(artifact_id="", artifact_aliases=[])}),
+            services=SimpleNamespace(datasources={"warehouse": SimpleNamespace(artifact_id="")}),
         ),
     )
 
@@ -741,7 +741,7 @@ def _install_metric_policy(env, monkeypatch, allowed, *, region="North"):
     original_binding = env.runtime.artifact_metric_binding
     env.runtime.artifact_metric_binding = lambda name: {**original_binding(name), "datasets": ["orders"]}
     env.db.agent_config = SimpleNamespace(
-        services=SimpleNamespace(datasources={"warehouse": SimpleNamespace(artifact_id="", artifact_aliases=[])}),
+        services=SimpleNamespace(datasources={"warehouse": SimpleNamespace(artifact_id="")}),
         active_plugin_names=lambda: {"scope"},
         get_plugin_profile=lambda _: {},
     )
@@ -793,7 +793,7 @@ def test_native_artifact_policies_apply_once_at_the_final_sql_boundary(environme
     env = environment
     context = {"sql_policy": {"version": "request", "policies": {}}}
     env.db.agent_config = SimpleNamespace(
-        services=SimpleNamespace(datasources={"warehouse": SimpleNamespace(artifact_id="", artifact_aliases=[])}),
+        services=SimpleNamespace(datasources={"warehouse": SimpleNamespace(artifact_id="")}),
         active_plugin_names=lambda: {"sql-policy"},
         get_plugin_profile=lambda _: {},
     )
