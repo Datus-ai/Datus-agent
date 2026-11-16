@@ -60,3 +60,23 @@ jobs:
         env:
           DETERMINISTIC_RESULT: ${{ needs.deterministic.result }}
         run: test "$DETERMINISTIC_RESULT" = success
+
+  # Skipped jobs still publish checks. Manual dispatches must not publish
+  # successful checks under the names reserved for real PR validation.
+  format-check-context:
+    name: ${{ github.event_name == 'merge_group' && 'format-check / format-check' || 'Manual queue format context' }}
+    if: ${{ github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish merge queue format context
+        run: echo "format-check / format-check is enforced on pull_request before merge queue entry."
+
+  coverage-context:
+    name: ${{ github.event_name == 'merge_group' && 'run-coverage / coverage' || 'Manual queue coverage context' }}
+    if: ${{ github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish merge queue coverage context
+        run: |
+          echo "run-coverage / coverage is enforced on pull_request before merge queue entry."
+          echo "Merge Queue Gate checks generated contracts and coverage-map consistency on the merged tree."

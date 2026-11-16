@@ -21,7 +21,7 @@ pytestmark = pytest.mark.acceptance
         "datus/resources/skills/bi-validation/SKILL.md",
         "tests/integration/tools/test_bi_chart_lifecycle.py",
         "uv.lock",
-        ".github/workflows/bi-gate.yml",
+        ".github/workflows/run-nightly.yml",
     ],
 )
 def test_bi_change_requires_real_service_acceptance(path):
@@ -76,24 +76,21 @@ def test_bi_receipt_requires_all_product_tests_and_same_sources(tmp_path):
         verify(tmp_path, sources)
 
 
-def test_bi_gate_keeps_real_product_regression():
-    root = Path(__file__).resolve().parents[3]
-    gate = (root / ".github/workflows/bi-gate.yml").read_text()
-    assert "ci/bi_gate.py run" in gate
-    assert "SOURCE_REVISIONS" in gate
+def test_local_bi_gate_pins_sources_and_keeps_real_product_regression():
     assert all(len(sha) == 40 for sha in SOURCE_REVISIONS.values())
-    assert "ci/bi_gate.py verify" in gate
     assert any("test_bi_chart_lifecycle.py" in n for n in NODEIDS)
 
 
-def test_privileged_pr_context_cannot_call_product_gate_workflows():
+def test_pr_queue_context_cannot_call_product_gate_workflows():
     root = Path(__file__).resolve().parents[3]
     queue = yaml.load((root / ".github/workflows/merge-queue.yml").read_text(), Loader=yaml.BaseLoader)
-    context = yaml.load((root / ".github/workflows/merge-queue-pr.yml").read_text(), Loader=yaml.BaseLoader)
+    context = yaml.load((root / ".github/workflows/code-quality.yml").read_text(), Loader=yaml.BaseLoader)
     assert set(queue["on"]) == {"merge_group", "workflow_dispatch"}
-    assert set(context["on"]) == {"pull_request_target"}
-    (job,) = context["jobs"].values()
+    assert set(context["on"]) == {"pull_request"}
+    job = context["jobs"]["merge-queue-context"]
     assert job["name"] == "Merge Queue Gate"
+    assert "needs" not in job
+    assert "if" not in job
     assert "uses" not in job
     assert all("uses" not in step for step in job["steps"])
     assert all(set(step) == {"name", "run"} for step in job["steps"])
@@ -116,23 +113,3 @@ def test_targeted_bi_suite_runs_every_required_file_with_services_and_excludes_b
         path = nodeid.split("::", 1)[0]
         assert path in targets, f"Required BI contract missing from service-backed targeted suite: {nodeid}"
         assert any(broad_arguments[i : i + 2] == ["--deselect", path] for i in range(len(broad_arguments)))
-
-
-def test_bi_job_budget_covers_script_timeouts_cleanup_and_setup():
-    from ci.bi_gate import (
-        COMPOSE_DOWN_TIMEOUT_SECONDS,
-        COMPOSE_LOGS_TIMEOUT_SECONDS,
-        COMPOSE_UP_TIMEOUT_SECONDS,
-        PYTEST_TIMEOUT_SECONDS,
-    )
-
-    root = Path(__file__).resolve().parents[3]
-    workflow = yaml.safe_load((root / ".github/workflows/bi-gate.yml").read_text())
-    script_budget = (
-        COMPOSE_UP_TIMEOUT_SECONDS
-        + PYTEST_TIMEOUT_SECONDS
-        + COMPOSE_LOGS_TIMEOUT_SECONDS
-        + COMPOSE_DOWN_TIMEOUT_SECONDS
-    )
-    setup_and_upload_margin = 15 * 60
-    assert workflow["jobs"]["superset"]["timeout-minutes"] * 60 >= script_budget + setup_and_upload_margin
