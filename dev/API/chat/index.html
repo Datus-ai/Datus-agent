@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/API/chat/">
       
       
         <link rel="prev" href="../deployment/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/API/chat/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/API/chat/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/API/chat/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/API/chat/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -3489,6 +3483,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Python client">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#completed-turn-resource-lifetime" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Completed-turn resource lifetime
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -5868,6 +5879,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Python client">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#completed-turn-resource-lifetime" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Completed-turn resource lifetime
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -6570,6 +6598,42 @@ send the typed string instead of an option key.</p>
 </span><span id="__span-26-23"><a id="__codelineno-26-23" name="__codelineno-26-23" href="#__codelineno-26-23"></a>                <span class="k">else</span><span class="p">:</span>
 </span><span id="__span-26-24"><a id="__codelineno-26-24" name="__codelineno-26-24" href="#__codelineno-26-24"></a>                    <span class="n">event</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
 </span></code></pre></div>
+<h3 id="completed-turn-resource-lifetime">Completed-turn resource lifetime<a class="headerlink" href="#completed-turn-resource-lifetime" title="Permanent link">&para;</a></h3>
+<p>After persistence and turn callbacks complete, the server releases the agent
+node and keeps only replay events and session metadata. The five-minute replay
+TTL starts at completion, including for turns that run longer than five minutes.
+An expiry timer removes completed entries even with no subsequent requests;
+expired entries are also rejected on lookup. Already-connected consumers can
+finish reading the task they hold.</p>
+<p>Embedded hosts can configure <code>ChatTaskManager(completed_task_ttl=300,
+max_completed_tasks=None, max_completed_bytes=None)</code>. The optional count and
+serialized-event-byte caps evict older completed entries and can shorten their
+replay window; they are disabled by default. The byte cap measures serialized
+event payloads, not total Python/native memory. Persisted history is unaffected.</p>
+<p><code>DatusServiceCache(max_size=128, idle_ttl=None, sweep_interval=30)</code> retains the
+existing default project capacity. Its sweeper re-enforces capacity after active
+work drains without requiring another insertion. Optional idle eviction is
+disabled by default; enabling it can discard replay data along with the project
+service. Requests and SSE responses retain their service until they finish.
+Service shutdown closes exclusively owned CLI/datasource managers and leaves
+shared storage/model registries under their respective owners.</p>
+<p>Requests using an older configuration generation also protect the project's
+shared task manager from idle/capacity eviction. Application shutdown stops
+chat producers before waiting for SSE consumers and database workers to drain;
+it rejects new turn registrations, including requests still loading session
+metadata when shutdown begins. Native SQL and table metadata cancellation wait
+for their worker to finish before releasing the request. Catalogue queries keep
+their 30-second response timeout: a tracked background worker retains a separate
+service borrow until native execution finishes, including after a timeout or
+client cancellation. Server shutdown can still wait for native workers to drain.
+Replay caps remove turns in completion order even when the same session completes
+again.</p>
+<p>A terminal SSE frame can arrive before node cleanup finishes. A new turn for the
+same session waits for that cleanup before loading session metadata and starting;
+cancelling the new request does not cancel the preceding turn's cleanup. A turn
+that is still running retains the existing single-active-turn behavior.</p>
+<p>Cancellation or shutdown during node construction waits for the native constructor
+and closes its returned node before finishing task cleanup.</p>
 
 
 
