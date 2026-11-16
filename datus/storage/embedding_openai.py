@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, List, Optional, Union
 
 from datus_storage_base.vector.base import EmbeddingFunction
 from openai import AzureOpenAI, BadRequestError, OpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StrictBool
 
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -29,7 +29,8 @@ class OpenAIEmbeddings(BaseModel, EmbeddingFunction):
     """
 
     name: str = "text-embedding-ada-002"
-    dim: Optional[int] = None
+    dim: Optional[int] = Field(default=None, gt=0)
+    send_dimensions: Optional[StrictBool] = None
     base_url: Optional[str] = None
     default_headers: Optional[dict] = None
     organization: Optional[str] = None
@@ -78,12 +79,23 @@ class OpenAIEmbeddings(BaseModel, EmbeddingFunction):
             return self.dim or 3072
         elif self.name == "text-embedding-3-small":
             return self.dim or 1536
+        elif self.dim is not None:
+            return self.dim
         else:
             raise DatusException(
                 ErrorCode.COMMON_UNSUPPORTED,
                 message=f"Unknown embedding model name '{self.name}'. "
-                f"Supported models: {', '.join(self.model_names())}",
+                "Configure dim_size for a custom OpenAI-compatible embedding model.",
             )
+
+    @staticmethod
+    def should_send_dimensions(name: str, dim: Optional[int], policy: Optional[bool]) -> bool:
+        """Keep local width separate from optional provider-side resizing."""
+        if dim is None or name == "text-embedding-ada-002":
+            return False
+        if policy is not None:
+            return policy
+        return name in {"text-embedding-3-small", "text-embedding-3-large"}
 
     def generate_embeddings(self, texts: Union[List[str], "np.ndarray"]) -> List["np.array"]:
         valid_texts = []
@@ -98,7 +110,7 @@ class OpenAIEmbeddings(BaseModel, EmbeddingFunction):
                 "input": valid_texts,
                 "model": self.name,
             }
-            if self.name != "text-embedding-ada-002" and self.dim is not None:
+            if self.should_send_dimensions(self.name, self.dim, self.send_dimensions):
                 kwargs["dimensions"] = self.dim
 
             logger.debug(f"Calling OpenAI API: model={self.name}, text_count={len(valid_texts)}")
