@@ -32,6 +32,15 @@ handles, so those cases assert returned borrows and detached tool connections
 without depending on asyncio timer-heap GC. Resource closure is checked before
 waiting for TTL.
 
+Review regressions also hold real SQLite metadata execution across catalogue
+timeouts, table-detail/batch cancellation and project eviction. Active SSE cases
+cover service shutdown, cache shutdown and refreshed configuration generations.
+Unit cases check replay completion order, cancelled creation waiters, creator
+draining, retired-generation request protection and rejected post-close borrows.
+Concurrency unit tests rendezvous constructors with their real Future waiters
+instead of relying on sleeps. The expiry fixture observes actual timer callbacks
+and never performs the purge itself.
+
 The native embedding cases prefetch assets before measurement, then use three
 rounds of eight concurrent inferences in a fresh interpreter. Construction count,
 wrapper collection and live native-model count are hard assertions. RSS is

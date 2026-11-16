@@ -79,6 +79,8 @@ def borrow_connector(tool, datasource, database, **kwargs):
     # Returning a naked connector outside an operation must pin it until the
     # tool closes. This includes the primary connector used by legacy helpers.
     with getattr(tool, "_connection_lock", manager._condition):
+        if _lifetime(tool).closed:
+            raise RuntimeError("Database tool is closed")
         leases = tool.__dict__.setdefault("_borrowed_connections", {})
         if key not in leases:
             leases[key] = manager.acquire_conn(datasource, database, **kwargs)

@@ -2,7 +2,6 @@
 API routes for Table and SemanticModel endpoints.
 """
 
-import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, Query
@@ -22,6 +21,7 @@ from datus.api.models.table_models import (
     ValidateSemanticModelData,
     ValidateSemanticModelInput,
 )
+from datus.utils.async_utils import drain_to_thread
 
 router = APIRouter(prefix="/api/v1", tags=["table"])
 
@@ -59,7 +59,7 @@ async def get_table_detail(
     """Get table detail."""
     # Normalized here so an omitted query param and an explicit empty one both
     # mean "the current datasource" to the service.
-    return await asyncio.to_thread(svc.datasource.get_table_schema, table, datasource or None)
+    return await drain_to_thread(svc.datasource.get_table_schema, table, datasource or None)
 
 
 @router.post(
@@ -74,7 +74,7 @@ async def get_tables_columns(
     svc: ServiceDep,
 ) -> Result[GetTablesColumnsData]:
     """Batch table columns."""
-    return await asyncio.to_thread(svc.datasource.get_tables_columns, request.tables, request.datasource)
+    return await drain_to_thread(svc.datasource.get_tables_columns, request.tables, request.datasource)
 
 
 # ========== SemanticModel Endpoints ==========
@@ -91,7 +91,7 @@ async def get_semantic_model(
     semantic_model_file: str = Query(..., description=SEMANTIC_MODEL_FILE_DESCRIPTION),
 ) -> Result[GetSemanticModelData]:
     """Get SemanticModel YAML."""
-    return await asyncio.to_thread(svc.datasource.get_semantic_model, semantic_model_file)
+    return await drain_to_thread(svc.datasource.get_semantic_model, semantic_model_file)
 
 
 @router.post(

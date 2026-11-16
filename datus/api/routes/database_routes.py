@@ -14,6 +14,7 @@ from datus.api.models.database_models import (
     ListDatabasesData,
     ListDatabasesInput,
 )
+from datus.utils.async_utils import drain_to_thread
 
 router = APIRouter(prefix="/api/v1", tags=["databases"])
 
@@ -54,7 +55,7 @@ async def list_catalogs(
     )
     try:
         databases: Result[ListDatabasesData] = await asyncio.wait_for(
-            asyncio.to_thread(svc.datasource.list_databases, request),
+            drain_to_thread(svc.datasource.list_databases, request),
             timeout=_DB_IO_TIMEOUT,
         )
     except TimeoutError:

@@ -661,3 +661,12 @@ disabled by default; enabling it can discard replay data along with the project
 service. Requests and SSE responses retain their service until they finish.
 Service shutdown closes exclusively owned CLI/datasource managers and leaves
 shared storage/model registries under their respective owners.
+
+Requests using an older configuration generation also protect the project's
+shared task manager from idle/capacity eviction. Application shutdown stops
+chat producers before waiting for SSE consumers and database workers to drain;
+it rejects new turn registrations, including requests still loading session
+metadata when shutdown begins. Native SQL and metadata cancellation/timeout
+responses wait for their worker to finish before releasing its service, so
+draining can exceed the route's timeout. Replay caps remove turns in completion
+order even when the same session completes again.

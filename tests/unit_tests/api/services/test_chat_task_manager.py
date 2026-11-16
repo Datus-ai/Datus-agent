@@ -3782,3 +3782,77 @@ async def test_repeated_stop_drains_persistence_before_releasing_node(real_agent
     assert task.session_id not in manager._tasks
     assert manager.get_task(task.session_id) is task
     await manager.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", ["count", "bytes"])
+async def test_reused_session_replay_caps_keep_latest_completed_turns(real_agent_config, limit):
+    from datus.api.models.cli_models import StreamChatInput
+
+    now = [0.0]
+    manager = ChatTaskManager(clock=lambda: now[0], max_completed_bytes=10**9)
+    manager._create_node = lambda *args, **kwargs: TestRunLoopSettlesTurn._node()
+    completed = []
+    try:
+        for sid in ("a", "b", "a", "c"):
+            now[0] += 1
+            task = ChatTask(sid, None)
+            manager._tasks[sid] = task
+            await manager._run_loop(task, real_agent_config, StreamChatInput(message="hi", session_id=sid))
+            assert task.status == "completed", task.error
+            completed.append(task)
+        newest_a, newest_c = completed[2:]
+        caps = {"count": (2, None), "bytes": (None, newest_a.replay_bytes + newest_c.replay_bytes)}
+        manager._max_completed_tasks, manager._max_completed_bytes = caps[limit]
+        manager._purge_expired_completed()
+        assert list(manager._completed_tasks) == ["a", "c"]
+        assert manager.get_task("a") is newest_a
+        assert manager.get_task("c") is newest_c
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_rejects_new_turn_registration(real_agent_config):
+    from datus.api.models.cli_models import StreamChatInput
+
+    manager = ChatTaskManager()
+    await manager.shutdown()
+    try:
+        with pytest.raises(RuntimeError, match="ChatTaskManager is shut down"):
+            await manager.start_chat(real_agent_config, StreamChatInput(message="late"))
+        assert manager._tasks == {}
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_during_metadata_loading_prevents_late_registration(real_agent_config):
+    import threading
+    from types import SimpleNamespace
+
+    from datus.api.models.cli_models import StreamChatInput
+
+    entered, release = threading.Event(), threading.Event()
+
+    def load_metadata(*args):
+        entered.set()
+        assert release.wait(timeout=5)
+        return None
+
+    manager = ChatTaskManager()
+    manager._session_manager = lambda *args: SimpleNamespace(load_session_meta=load_metadata)
+    registering = asyncio.create_task(
+        manager.start_chat(real_agent_config, StreamChatInput(message="late", session_id="late-metadata"))
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        await manager.shutdown()
+        release.set()
+        with pytest.raises(RuntimeError, match="ChatTaskManager is shut down"):
+            await registering
+        assert manager._tasks == {}
+    finally:
+        release.set()
+        await asyncio.gather(registering, return_exceptions=True)
+        await manager.shutdown()

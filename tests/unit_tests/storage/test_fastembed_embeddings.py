@@ -4,9 +4,8 @@
 
 import gc
 import threading
-import time
 import weakref
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -51,18 +50,42 @@ def tracked_embedding_factory(monkeypatch):
         def __init__(self, **kwargs):
             created.append(self)
             self.options = kwargs
-            time.sleep(0.03)  # Hold open the native-constructor boundary.
 
     monkeypatch.setattr(fastembed_embeddings, "TextEmbedding", Model)
     monkeypatch.setattr(fastembed_embeddings, "check_snapshot", lambda *args: None)
     return created
 
 
+@pytest.fixture
+def cold_model_barrier(monkeypatch):
+    """Rendezvous one constructor with seven real single-flight waiters.
+
+    With broken sharing, eight constructors instead reach the same barrier,
+    so the construction-count assertion still detects the regression.
+    """
+    barrier = threading.Barrier(8)
+
+    class WaitingFuture(Future):
+        def result(self, timeout=None):
+            barrier.wait(timeout=5)
+            return super().result(timeout)
+
+    monkeypatch.setattr(fastembed_embeddings, "Future", WaitingFuture, raising=False)
+    return barrier
+
+
 @pytest.mark.parametrize("wrapper_count", [1, 8])
-def test_concurrent_cold_model_is_shared(tracked_embedding_factory, wrapper_count):
+def test_concurrent_cold_model_is_shared(tracked_embedding_factory, cold_model_barrier, monkeypatch, wrapper_count):
     """Both one wrapper and equivalent wrappers construct one underlying session."""
     wrappers = [FastEmbedEmbeddings(batch_size=16 + i) for i in range(wrapper_count)]
     start = threading.Barrier(8)
+    factory = fastembed_embeddings.TextEmbedding
+
+    def held_constructor(**kwargs):
+        cold_model_barrier.wait(timeout=5)
+        return factory(**kwargs)
+
+    monkeypatch.setattr(fastembed_embeddings, "TextEmbedding", held_constructor)
 
     def load(index):
         start.wait(timeout=5)
@@ -123,7 +146,9 @@ def test_failed_model_initialization_can_retry(tracked_embedding_factory, monkey
     assert attempts == 2
 
 
-def test_concurrent_model_failure_wakes_waiters_and_allows_retry(tracked_embedding_factory, monkeypatch):
+def test_concurrent_model_failure_wakes_waiters_and_allows_retry(
+    tracked_embedding_factory, cold_model_barrier, monkeypatch
+):
     """One failed native allocation reaches every waiter; the key can load again."""
     original = fastembed_embeddings.TextEmbedding
     attempts = []
@@ -131,7 +156,7 @@ def test_concurrent_model_failure_wakes_waiters_and_allows_retry(tracked_embeddi
 
     def failed(**kwargs):
         attempts.append(kwargs)
-        time.sleep(0.03)
+        cold_model_barrier.wait(timeout=5)
         raise RuntimeError("injected concurrent allocation failure")
 
     monkeypatch.setattr(fastembed_embeddings, "TextEmbedding", failed)

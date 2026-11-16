@@ -1043,6 +1043,7 @@ def test_metric_artifact_replays_its_original_database_after_a_turn_switch(envir
     assert current.execute_query("SELECT SUM(amount) AS total FROM orders", result_format="list").sql_return == [
         {"total": 999.0}
     ]
+    env.db.close()
     manager.close()
 
 

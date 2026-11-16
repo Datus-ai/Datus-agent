@@ -288,3 +288,5 @@ scopes, and returns its remaining borrows in `close()`. Its `connector_cache_siz
 limits lookup entries; the manager owns native connection eviction. Close tools
 before explicitly closing their manager. Externally injected manager factories
 continue to own their managers; tool cleanup does not close a shared manager.
+Closed tools reject later operation-scoped and unscoped connection borrows;
+they cannot silently reacquire leases after returning their original borrows.

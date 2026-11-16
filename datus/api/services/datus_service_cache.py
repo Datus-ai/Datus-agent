@@ -25,6 +25,8 @@ class DatusServiceCache:
         self._max_size = max_size
         self._cache: collections.OrderedDict[str, DatusService] = collections.OrderedDict()
         self._futures: dict[str, asyncio.Future[DatusService]] = {}
+        self._creations: dict[str, asyncio.Future[None]] = {}
+        self._retired_services: set[DatusService] = set()
         self._lock = asyncio.Lock()
         self._pending_tasks: set[asyncio.Task] = set()
         self._last_access: dict[str, float] = {}
@@ -58,7 +60,7 @@ class DatusServiceCache:
                     evicted.append(svc)
             for svc in evicted:
                 try:
-                    await svc.shutdown()
+                    await self._retire(svc, svc.shutdown())
                 except Exception:
                     logger.exception("Error shutting down an expired DatusService")
         finally:
@@ -68,6 +70,13 @@ class DatusServiceCache:
         """Register a background task so drain()/shutdown() can await it."""
         self._pending_tasks.add(task)
         task.add_done_callback(self._pending_tasks.discard)
+        return task
+
+    def _retire(self, service, coroutine):
+        """Keep disposal owners reachable so application shutdown can stop them."""
+        self._retired_services.add(service)
+        task = self._track(asyncio.create_task(coroutine))
+        task.add_done_callback(lambda _done: self._retired_services.discard(service))
         return task
 
     async def get_or_create(
@@ -111,7 +120,7 @@ class DatusServiceCache:
                     self._cache.move_to_end(project_id)
                     # Dispose only the old facade's exclusive resources. The
                     # task registry belongs to the replacement generation.
-                    self._track(asyncio.create_task(cached.shutdown(shutdown_tasks=False)))
+                    self._retire(cached, cached.shutdown(shutdown_tasks=False))
                     logger.info(f"Refreshed DatusService config for project {project_id} while preserving chat tasks")
                     return refreshed
                 # Fingerprint mismatch. Rebuilding now would orphan any in-flight
@@ -139,68 +148,71 @@ class DatusServiceCache:
                 # We are the creator — register a future for waiters
                 fut = asyncio.get_running_loop().create_future()
                 self._futures[project_id] = fut
+                creation_done = self._creations[project_id] = asyncio.get_running_loop().create_future()
                 is_creator = True
-
-        if stale_svc is not None:
-            await self._dispose(project_id, stale_svc)
 
         if not is_creator:
             # Wait for the creator coroutine to finish
-            svc = await fut
+            svc = await asyncio.shield(fut)
             if agent_config is not None:
                 # The creator may have started before this request's config
                 # change. Recheck against our snapshot after it finishes.
                 return await self.get_or_create(project_id, factory, expected_fingerprint, agent_config=agent_config)
             return svc
 
-        # We are the creator — run the factory outside the lock
+        return await self._create_service(project_id, factory, fut, creation_done, stale_svc)
+
+    async def _create_service(self, project_id, factory, fut, creation_done, stale_service):
+        service = None
+        published = False
         try:
-            svc = await factory()
-        except BaseException as e:
+            if stale_service is not None:
+                await self._dispose(project_id, stale_service)
+            service = await factory()
+            async with self._lock:
+                if not self._closed:
+                    self._cache[project_id] = service
+                    self._last_access[project_id] = time.monotonic()
+                    self._cache.move_to_end(project_id)
+                    published = True
+                self._futures.pop(project_id, None)
+
+                evicted = []
+                while len(self._cache) > self._max_size:
+                    candidate_pid = next(
+                        (pid for pid, svc in self._cache.items() if pid != project_id and not svc.has_active_tasks()),
+                        None,
+                    )
+                    if candidate_pid is None:
+                        break
+                    evicted.append((candidate_pid, self._cache.pop(candidate_pid)))
+                    self._last_access.pop(candidate_pid, None)
+            if not fut.done():
+                fut.set_result(service)
+            for old_pid, old_svc in evicted:
+                logger.info(f"LRU evicting DatusService for project {old_pid}")
+                self._retire(old_svc, old_svc.shutdown())
+            if not published:
+                self._last_access.pop(project_id, None)
+                await asyncio.shield(self._retire(service, service.shutdown()))
+            return service
+        except BaseException as exc:
             async with self._lock:
                 self._futures.pop(project_id, None)
                 self._last_access.pop(project_id, None)
             if not fut.done():
-                if isinstance(e, asyncio.CancelledError):
+                if isinstance(exc, asyncio.CancelledError):
                     fut.cancel()
                 else:
-                    fut.set_exception(e)
-                    fut.exception()  # The creator also receives this exception.
+                    fut.set_exception(exc)
+                    fut.exception()
+            if service is not None and not published and service not in self._retired_services:
+                self._retire(service, service.shutdown())
             raise
-
-        async with self._lock:
-            self._cache[project_id] = svc
-            self._last_access[project_id] = time.monotonic()
-            self._cache.move_to_end(project_id)
-            self._futures.pop(project_id, None)
-
-            # Evict oldest if over capacity, but skip services with active tasks
-            evicted = []
-            while len(self._cache) > self._max_size:
-                # Find the oldest entry without active tasks
-                candidate_pid = None
-                for pid in self._cache:
-                    if pid == project_id:
-                        continue
-                    if not self._cache[pid].has_active_tasks():
-                        candidate_pid = pid
-                        break
-                if candidate_pid is None:
-                    break  # all entries have active tasks — allow cache to exceed max_size
-                old_svc = self._cache.pop(candidate_pid)
-                self._last_access.pop(candidate_pid, None)
-                evicted.append((candidate_pid, old_svc))
-
-        # Resolve the future so waiters get the result
-        if not fut.done():
-            fut.set_result(svc)
-
-        # Shutdown evicted services outside the lock
-        for old_pid, old_svc in evicted:
-            logger.info(f"LRU evicting DatusService for project {old_pid}")
-            self._track(asyncio.create_task(old_svc.shutdown()))
-
-        return svc
+        finally:
+            if self._creations.get(project_id) is creation_done:
+                self._creations.pop(project_id)
+            creation_done.set_result(None)
 
     async def evict(self, project_id: str) -> None:
         """Evict a DatusService from cache (config change).
@@ -219,7 +231,7 @@ class DatusServiceCache:
         """Shutdown a service, deferring if it still has active tasks."""
         if svc.has_active_tasks():
             logger.info(f"Evicting DatusService for project {project_id} (deferring shutdown — active tasks)")
-            self._track(asyncio.create_task(self._deferred_shutdown(project_id, svc)))
+            self._retire(svc, self._deferred_shutdown(project_id, svc))
         else:
             logger.info(f"Evicting DatusService for project {project_id}")
             await svc.shutdown()
@@ -251,17 +263,17 @@ class DatusServiceCache:
             self._sweep_handle.cancel()
             self._sweep_handle = None
         async with self._lock:
-            creating = list(self._futures.values())
+            creating = list(self._creations.values())
         if creating:
             await asyncio.gather(*(asyncio.shield(future) for future in creating), return_exceptions=True)
-        await self.drain()
         async with self._lock:
-            items = list(self._cache.items())
+            services = list(dict.fromkeys([*self._cache.values(), *self._retired_services]))
             self._cache.clear()
             self._last_access.clear()
-        for pid, svc in items:
-            try:
-                await svc.shutdown()
-            except Exception:
-                logger.exception(f"Error shutting down DatusService for project {pid}")
+        # Stop producers before awaiting deferred disposals or retired SSE users.
+        results = await asyncio.gather(*(svc.shutdown() for svc in services), return_exceptions=True)
+        for svc, result in zip(services, results):
+            if isinstance(result, BaseException):
+                logger.warning("Error shutting down DatusService %s", svc.project_id, exc_info=result)
+        await self.drain()
         logger.info("DatusServiceCache shut down")

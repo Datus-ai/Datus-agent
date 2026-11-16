@@ -523,6 +523,7 @@ class ChatTaskManager:
         self._max_completed_bytes = max_completed_bytes
         self._clock = clock
         self._expiry_handle: Optional[asyncio.TimerHandle] = None
+        self._closed = False
 
     # ------------------------------------------------------------------
     # Public API
@@ -545,6 +546,8 @@ class ChatTaskManager:
                 with ``(usage, error, status, turn_id)`` — see :meth:`_settle_turn`
         Raises ``ValueError`` if a task is already running for the session.
         """
+        if self._closed:
+            raise RuntimeError("ChatTaskManager is shut down")
         # Clone config to avoid cross-request mutation of shared AgentConfig
         agent_config = copy.deepcopy(agent_config)
         agent_config.policy_context = dict(policy_context or {})
@@ -670,6 +673,9 @@ class ChatTaskManager:
         session_id = request.session_id or f"{safe_name}_session_{str(uuid.uuid4())[:8]}"
         request.session_id = session_id
 
+        # Metadata resolution above can overlap application shutdown.
+        if self._closed:
+            raise RuntimeError("ChatTaskManager is shut down")
         if session_id in self._tasks:
             raise ValueError(f"A task is already running for session {session_id}")
 
@@ -793,6 +799,7 @@ class ChatTaskManager:
 
     async def shutdown(self) -> None:
         """Cancel every running task (called at application shutdown)."""
+        self._closed = True
         if self._expiry_handle is not None:
             self._expiry_handle.cancel()
             self._expiry_handle = None
@@ -1412,6 +1419,7 @@ class ChatTaskManager:
             self._tasks.pop(session_id, None)
             # Keep completed task for resume within TTL
             task.completed_at = self._clock()
+            self._completed_tasks.pop(session_id, None)
             self._completed_tasks[session_id] = task
             self._purge_expired_completed()
             self._schedule_expiry()

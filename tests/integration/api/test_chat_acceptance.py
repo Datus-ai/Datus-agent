@@ -3,6 +3,7 @@
 import asyncio
 import json
 import threading
+from contextlib import asynccontextmanager
 
 import pytest
 import pytest_asyncio
@@ -121,7 +122,7 @@ async def test_stop_releases_session_for_the_next_request(chat_client, chat_datu
 
 
 @pytest_asyncio.fixture
-async def resource_project(tmp_path, model_server):
+async def resource_project(tmp_path, model_server, monkeypatch):
     """Use the normal auth/config/cache boundary with isolated real project storage."""
     from functools import partial
     from types import SimpleNamespace
@@ -148,99 +149,177 @@ async def resource_project(tmp_path, model_server):
         config.current_datasource = "sales"
         factory = partial(ChatTaskManager, completed_task_ttl=1.0)
         service = DatusService(config, "default", task_manager_factory=factory)
+        expired = asyncio.Event()
+        expire = service.task_manager._expire_completed
+
+        def observe_expiry():
+            expire()
+            expired.set()
+
+        monkeypatch.setattr(service.task_manager, "_expire_completed", observe_expiry)
+
+        async def wait_for_expiry(session_ids):
+            # Observe actual timer callbacks without issuing lookups or purges.
+            async with asyncio.timeout(5):
+                while any(sid in service.task_manager._completed_tasks for sid in session_ids):
+                    await expired.wait()
+                    expired.clear()
+
         cache = DatusServiceCache(max_size=1)
         projects = Projects(config)
         async with chat_http_client(
             config, service, service_cache=cache, auth_provider=projects, task_manager_factory=factory
         ) as client:
-            yield SimpleNamespace(client=client, cache=cache, service=service, projects=projects, root=tmp_path)
+            yield SimpleNamespace(
+                client=client,
+                cache=cache,
+                service=service,
+                projects=projects,
+                root=tmp_path,
+                wait_for_expiry=wait_for_expiry,
+            )
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("outcome", ["completed", "error", "cancelled", "disconnected"])
-async def test_http_turn_resource_cleanup_preserves_resume_until_expiry(resource_project, model_server, outcome):
-    """Production node/tool creation and terminal cleanup preserve only replay state."""
-    import gc
+@asynccontextmanager
+async def _blocked_http_turn(project, model_server, outcome, first_reply, *remaining_replies):
+    """Pause a real model call while the caller exercises an explicit terminal path."""
     import weakref
-
-    from tests.helpers.product_acceptance import ModelError
+    from types import SimpleNamespace
 
     entered, release = threading.Event(), threading.Event()
 
     def reply(request):
         entered.set()
         assert release.wait(10), "The test must release the model HTTP response"
-        if outcome == "error":
-            return ModelError(400, "injected resource acceptance failure")
-        return tool_call("execute_sql", {"sql": "SELECT SUM(amount) total FROM orders"})
+        return first_reply
 
-    model_server.enqueue(reply)
-    if outcome in {"completed", "disconnected"}:
-        model_server.enqueue(answer("Total: 350."))
-    client, manager = resource_project.client, resource_project.service.task_manager
+    model_server.enqueue(reply, *remaining_replies)
     sid = f"resource_{outcome}"
     request = asyncio.create_task(
-        client.post(
+        project.client.post(
             "/api/v1/chat/stream", json={"message": "Compute the total.", "session_id": sid, "interactive": False}
         )
     )
     try:
         assert await asyncio.to_thread(entered.wait, 10)
-        task = manager.get_task(sid)
-        node = weakref.ref(task.node)
-        llm_session_id = task.node.session_id
-        db_manager = task.node.db_func_tool._db_manager
-        if outcome == "cancelled":
-            stopped = await client.post("/api/v1/chat/stop", json={"session_id": sid})
-            assert stopped.json()["success"], stopped.text
-        elif outcome == "disconnected":
-            request.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await request
-            assert task.status == "running", "Disconnect must not cancel the server-owned turn"
+        task = project.service.task_manager.get_task(sid)
+        assert task.status == "running"
+        yield SimpleNamespace(
+            project=project,
+            client=project.client,
+            manager=project.service.task_manager,
+            sid=sid,
+            request=request,
+            task=task,
+            release=release,
+            node=weakref.ref(task.node),
+            llm_session_id=task.node.session_id,
+            db_tool=task.node.db_func_tool,
+            db_manager=task.node.db_func_tool._db_manager,
+        )
     finally:
         release.set()
-    if outcome != "disconnected":
-        response = await request
-        assert response.status_code == 200, response.text
-    await asyncio.wait_for(task.asyncio_task, timeout=10)
-    expected_status = "completed" if outcome == "disconnected" else outcome
-    assert task.status == expected_status, task.error
-    assert task.node is None
-    assert not db_manager._leases, "Finished real tools must return their managed borrows"
-    if (released_node := node()) is not None:
-        assert released_node.db_func_tool._primary_connector is None
-        assert not released_node.db_func_tool._connector_cache
-        assert not released_node.db_func_tool._borrowed_connections
-    del released_node
-    resumed = await client.post("/api/v1/chat/resume", json={"session_id": sid, "from_event_id": 0})
+        await asyncio.gather(request, return_exceptions=True)
+
+
+async def _assert_terminal_turn(turn, expected_status):
+    await asyncio.wait_for(turn.task.asyncio_task, timeout=10)
+    assert turn.task.status == expected_status, turn.task.error
+    assert turn.task.node is None
+    assert not turn.db_manager._leases, "Finished real tools must return their managed borrows"
+    assert turn.db_tool._primary_connector is None
+    assert not turn.db_tool._connector_cache
+    assert not turn.db_tool._borrowed_connections
+    turn.db_tool = None
+
+
+async def _assert_replay_expires(turn):
+    from types import SimpleNamespace
+
+    resumed = await turn.client.post("/api/v1/chat/resume", json={"session_id": turn.sid, "from_event_id": 0})
     assert resumed.headers["content-type"].startswith("text/event-stream"), resumed.text
     events = parse_sse_body(resumed.text)
-    assert find_event(events, "session")["data"]["llm_session_id"] == llm_session_id
-    if expected_status == "completed":
-        assert "350" in resumed.text
-        assert find_event(events, "end") is not None
-    # Observe the retained index before making another request, so lookup expiry
-    # cannot hide a missing automatic timer.
-    await asyncio.sleep(1.1)
-    assert sid not in manager._completed_tasks
-    # Exported SDK spans must not make successful nodes accumulate. Error and
-    # cancellation tracebacks can also be held by cancelled HTTP timeout
-    # handles until asyncio prunes its timer heap; their tools are checked
-    # for released native borrows above, independently of GC timing.
+    assert find_event(events, "session")["data"]["llm_session_id"] == turn.llm_session_id
+    # No lookup or HTTP request occurs while waiting for automatic expiry.
+    await turn.project.wait_for_expiry([turn.sid])
+    assert turn.sid not in turn.manager._completed_tasks
+    expired = await turn.client.post("/api/v1/chat/resume", json={"session_id": turn.sid})
+    assert expired.json()["errorCode"] == "TASK_NOT_FOUND"
+    history = await turn.client.get("/api/v1/chat/history", params={"session_id": turn.sid})
+    assert history.json()["success"], history.text
+    return SimpleNamespace(replay=resumed.text, events=events, history=history.text)
+
+
+async def _assert_successful_node_collected(turn):
+    import gc
+
     from agents.tracing import get_trace_provider
 
+    # Failed/cancelled tasks can be retained by external HTTP timeout handles.
+    # Those scenarios assert native cleanup above without assuming immediate GC.
     await asyncio.to_thread(get_trace_provider().force_flush)
     await asyncio.sleep(0)
     gc.collect()
-    if expected_status == "completed":
-        assert node() is None
-    expired = await client.post("/api/v1/chat/resume", json={"session_id": sid})
-    assert expired.json()["errorCode"] == "TASK_NOT_FOUND"
-    history = await client.get("/api/v1/chat/history", params={"session_id": sid})
-    assert history.json()["success"], history.text
-    if expected_status == "completed":
-        assert "350" in history.text
+    assert turn.node() is None
+
+
+@pytest.mark.asyncio
+async def test_http_turn_resource_cleanup_preserves_resume_until_expiry_completed(resource_project, model_server):
+    first = tool_call("execute_sql", {"sql": "SELECT SUM(amount) total FROM orders"})
+    async with _blocked_http_turn(resource_project, model_server, "completed", first, answer("Total: 350.")) as turn:
+        turn.release.set()
+        response = await turn.request
+        assert response.status_code == 200, response.text
+        await _assert_terminal_turn(turn, "completed")
+        replay = await _assert_replay_expires(turn)
+        assert "350" in replay.replay
+        assert find_event(replay.events, "end")["event"] == "end"
+        assert "350" in replay.history
+        await _assert_successful_node_collected(turn)
+
+
+@pytest.mark.asyncio
+async def test_http_turn_resource_cleanup_preserves_resume_until_expiry_error(resource_project, model_server):
+    from tests.helpers.product_acceptance import ModelError
+
+    first = ModelError(400, "injected resource acceptance failure")
+    async with _blocked_http_turn(resource_project, model_server, "error", first) as turn:
+        turn.release.set()
+        response = await turn.request
+        assert response.status_code == 200, response.text
+        await _assert_terminal_turn(turn, "error")
+        replay = await _assert_replay_expires(turn)
+        assert "injected resource acceptance failure" in replay.replay
+
+
+@pytest.mark.asyncio
+async def test_http_turn_resource_cleanup_preserves_resume_until_expiry_cancelled(resource_project, model_server):
+    first = tool_call("execute_sql", {"sql": "SELECT SUM(amount) total FROM orders"})
+    async with _blocked_http_turn(resource_project, model_server, "cancelled", first) as turn:
+        stopped = await turn.client.post("/api/v1/chat/stop", json={"session_id": turn.sid})
+        assert stopped.json()["success"], stopped.text
+        turn.release.set()
+        response = await turn.request
+        assert response.status_code == 200, response.text
+        await _assert_terminal_turn(turn, "cancelled")
+        await _assert_replay_expires(turn)
+
+
+@pytest.mark.asyncio
+async def test_http_turn_resource_cleanup_preserves_resume_until_expiry_disconnected(resource_project, model_server):
+    first = tool_call("execute_sql", {"sql": "SELECT SUM(amount) total FROM orders"})
+    async with _blocked_http_turn(resource_project, model_server, "disconnected", first, answer("Total: 350.")) as turn:
+        turn.request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await turn.request
+        assert turn.task.status == "running", "Disconnect must not cancel the server-owned turn"
+        turn.release.set()
+        await _assert_terminal_turn(turn, "completed")
+        replay = await _assert_replay_expires(turn)
+        assert "350" in replay.replay
+        assert find_event(replay.events, "end")["event"] == "end"
+        assert "350" in replay.history
+        await _assert_successful_node_collected(turn)
 
 
 @pytest.mark.asyncio
@@ -307,13 +386,106 @@ async def test_http_eviction_waits_for_cancelled_native_sql_worker(resource_proj
         assert connector.connection is native
     finally:
         release.set()
-    try:
-        await request
-    except asyncio.CancelledError:
-        pass
+    response = await request
+    assert response.json()["errorMessage"] == "SQL execution was cancelled"
     await asyncio.wait_for(cache.drain(), timeout=10)
     assert connector.connection is None
     assert service._cli is None
+
+
+@asynccontextmanager
+async def _blocked_metadata_worker(project, method, path, *, params=None, json_body=None, timeout_patch=None):
+    """Hold actual SQLite metadata execution, rather than a mocked datasource method."""
+    from types import SimpleNamespace
+
+    service = project.service
+    connector = service.datasource.db_manager.first_conn("sales")
+    connector.execute_query("SELECT 1")
+    native = connector.connection
+    entered, release = threading.Event(), threading.Event()
+
+    def hold():
+        entered.set()
+        assert release.wait(10), "The test must release native metadata execution"
+        return 0
+
+    native.set_progress_handler(hold, 1)
+    if timeout_patch is not None:
+        from datus.api.routes import database_routes
+
+        async def timeout_after_worker_starts(awaitable, timeout):
+            worker = asyncio.create_task(awaitable)
+            assert await asyncio.to_thread(entered.wait, 10)
+            # Use the real wait_for cancellation protocol once native work is
+            # known to be running; no wall-clock startup race is required.
+            return await asyncio.wait_for(worker, timeout=0)
+
+        timeout_patch.setattr(database_routes, "asyncio", SimpleNamespace(wait_for=timeout_after_worker_starts))
+    request = asyncio.create_task(project.client.request(method, path, params=params, json=json_body))
+    try:
+        assert await asyncio.to_thread(entered.wait, 10)
+        yield SimpleNamespace(
+            service=service,
+            connector=connector,
+            native=native,
+            release=release,
+            request=request,
+        )
+    finally:
+        release.set()
+        await asyncio.gather(request, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method,path,params,json_body",
+    [
+        ("GET", "/api/v1/catalog/list", None, None),
+        ("GET", "/api/v1/table/detail", {"table": "orders"}, None),
+        ("POST", "/api/v1/table/columns", None, {"tables": ["orders"]}),
+    ],
+    ids=["catalog", "table-detail", "table-columns"],
+)
+async def test_http_metadata_eviction_waits_for_cancelled_native_worker(
+    resource_project, method, path, params, json_body
+):
+    async with _blocked_metadata_worker(resource_project, method, path, params=params, json_body=json_body) as turn:
+        try:
+            await asyncio.wait_for(resource_project.cache.evict("default"), timeout=2)
+            turn.request.cancel()
+            # The worker has entered SQLite and remains blocked throughout this
+            # observation window. Cancellation must not release the request pin.
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(turn.request), timeout=0.05)
+            assert turn.service.has_active_tasks()
+            assert turn.connector.connection is turn.native
+        finally:
+            turn.release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await turn.request
+        await asyncio.wait_for(resource_project.cache.drain(), timeout=10)
+        assert turn.connector.connection is None
+        assert turn.service._datasource is None
+
+
+@pytest.mark.asyncio
+async def test_http_catalog_timeout_drains_native_worker_before_owner_closes(resource_project, monkeypatch):
+    async with _blocked_metadata_worker(
+        resource_project, "GET", "/api/v1/catalog/list", timeout_patch=monkeypatch
+    ) as turn:
+        try:
+            await asyncio.wait_for(resource_project.cache.evict("default"), timeout=2)
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(turn.request), timeout=0.05)
+            assert turn.service.has_active_tasks()
+            assert turn.connector.connection is turn.native
+        finally:
+            turn.release.set()
+        response = await turn.request
+        assert response.json()["errorCode"] == "REQUEST_TIMEOUT"
+        await asyncio.wait_for(resource_project.cache.drain(), timeout=10)
+        assert turn.connector.connection is None
+        assert turn.service._datasource is None
 
 
 @pytest.mark.asyncio
@@ -348,11 +520,11 @@ async def test_http_repeated_turns_do_not_accumulate_nodes_or_replay(resource_pr
             assert find_event(parse_sse_body(response.text), "end") is not None, response.text
             assert "350" in response.text
         tasks = [manager.get_task(sid) for sid in ids]
-        assert all(task is not None and task.node is None for task in tasks)
+        assert [(task.session_id, task.node) for task in tasks] == [(sid, None) for sid in ids]
         references = [weakref.ref(task) for task in tasks]
         del tasks
         assert not manager.has_active_tasks()
-        await asyncio.sleep(1.1)
+        await resource_project.wait_for_expiry(ids)
         assert not manager._completed_tasks
         gc.collect()
         assert all(reference() is None for reference in references)
@@ -366,3 +538,31 @@ async def test_http_repeated_turns_do_not_accumulate_nodes_or_replay(resource_pr
             {"round": round_index, "retained_connections": retained, "completed_tasks": len(manager._completed_tasks)}
         )
     record_property("resource_rounds", json.dumps(observations))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner", ["service", "cache", "refreshed-cache"])
+async def test_http_service_shutdown_stops_active_sse_before_draining_requests(resource_project, model_server, owner):
+    async with _blocked_http_turn(resource_project, model_server, "shutdown", answer("Finished.")) as turn:
+        if owner == "refreshed-cache":
+            import copy
+            from unittest.mock import AsyncMock
+
+            await resource_project.cache.get_or_create(
+                "default",
+                AsyncMock(),
+                expected_fingerprint="changed",
+                agent_config=copy.deepcopy(resource_project.service.agent_config),
+            )
+        shutdown = resource_project.service.shutdown if owner == "service" else resource_project.cache.shutdown
+        stopping = asyncio.create_task(shutdown())
+        try:
+            await asyncio.wait_for(asyncio.shield(stopping), timeout=3)
+            response = await turn.request
+            assert response.status_code == 200
+            assert turn.task.status == "cancelled"
+            assert turn.task.node is None
+            assert resource_project.service.has_active_tasks() is False
+        finally:
+            turn.release.set()
+            await asyncio.gather(stopping, return_exceptions=True)

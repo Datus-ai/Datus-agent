@@ -1,8 +1,7 @@
 """Unit tests for db_manager.py — gen_uri, _resolve_connection_context, helpers, and DBManager."""
 
 import threading
-import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
@@ -13,6 +12,7 @@ from datus_db_core import ErrorCode as DbErrorCode
 
 from datus.configuration.agent_config import DbConfig
 from datus.schemas.database_context import DatabaseExecutionContext
+from datus.tools.db_tools import db_manager as db_manager_module
 from datus.tools.db_tools.config import DuckDBConfig, SQLiteConfig
 from datus.tools.db_tools.db_manager import (
     DBManager,
@@ -47,11 +47,19 @@ def test_concurrent_first_use_returns_one_connector(monkeypatch):
     manager = DBManager({"source": DbConfig(type="postgresql", database="db")})
     created = []
     start = threading.Barrier(4)
+    constructing = threading.Barrier(4)
+
+    class WaitingFuture(Future):
+        def result(self, timeout=None):
+            constructing.wait(timeout=5)
+            return super().result(timeout)
+
+    monkeypatch.setattr(db_manager_module, "Future", WaitingFuture, raising=False)
 
     def build(config):
         connector = _TrackedConnector()
         created.append(connector)
-        time.sleep(0.03)
+        constructing.wait(timeout=5)
         return connector
 
     monkeypatch.setattr(manager, "_build_conn", build)
