@@ -1029,6 +1029,40 @@ def test_changed_catalog_does_not_reintroduce_the_old_catalog_database_default()
         manager.get_conn("warehouse", context=context)
 
 
+@pytest.mark.parametrize("engine", ["mysql", "starrocks", "postgresql"])
+def test_resolved_context_without_a_default_database_keeps_an_unselected_connection(engine):
+    configured = DbConfig(type=engine, catalog="catalog_a")
+    manager = DBManager({"warehouse": configured})
+    manager._build_conn = Mock(
+        side_effect=lambda cfg: SimpleNamespace(database=cfg.database, catalog=cfg.catalog, schema=cfg.schema)
+    )
+    legacy = manager.get_conn("warehouse")
+    selected = manager.get_conn(
+        "warehouse", context=DatabaseExecutionContext(datasource="warehouse", catalog="catalog_a", database="selected")
+    )
+    context = DatabaseExecutionContext(datasource="warehouse", catalog="catalog_b")
+
+    unselected = manager.get_conn("warehouse", context=context)
+
+    assert (unselected.database, unselected.catalog) == ("", "catalog_b")
+    assert unselected is not selected
+    assert unselected is not legacy
+    assert manager.get_conn("warehouse", context=context) is unselected
+    assert (configured.database, configured.catalog) == ("", "catalog_a")
+    assert manager._build_conn.call_count == 3
+
+
+@pytest.mark.parametrize("engine", ["mysql", "starrocks", "postgresql"])
+def test_resolved_empty_database_cannot_restore_a_database_from_a_connection_uri(engine):
+    manager = DBManager({"warehouse": DbConfig(type=engine, uri=f"{engine}://localhost/configured")})
+    manager._build_conn = Mock()
+
+    with pytest.raises(ValueError, match="Select a database explicitly"):
+        manager.get_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse"))
+
+    manager._build_conn.assert_not_called()
+
+
 @pytest.mark.parametrize("engine", ["postgresql", "mysql", "starrocks", "sqlite", "duckdb"])
 def test_resolved_empty_database_cannot_reuse_a_configured_or_cached_database(engine):
     configured = DbConfig(type=engine, catalog="cat_a", database="analytics", schema="tenant_a")

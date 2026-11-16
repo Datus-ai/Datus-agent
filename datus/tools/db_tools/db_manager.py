@@ -297,8 +297,9 @@ class DBManager:
         """Connector for ``(datasource, database)``.
 
         Without ``context``, ``database`` empty selects the datasource default.
-        A resolved ``context`` is authoritative and requires a concrete database;
-        an empty one is rejected before opening or reusing a connection.
+        A resolved ``context`` is authoritative. An empty database is allowed for
+        server profiles without a default target, but cannot restore a configured
+        database or select a file database.
         For a glob (``path_pattern``)
         datasource each matched file is a database; for server DBs ``database`` overrides the
         configured one (cloned into the connection URI).
@@ -419,9 +420,20 @@ class DBManager:
             if context.datasource != datasource or (database and database != context.database):
                 raise ValueError("Connection context does not match its datasource/database")
             if not context.database:
-                raise ValueError(
-                    "Select a database explicitly; a resolved empty database cannot use a connection default"
-                )
+                configured = self._db_configs.get(datasource)
+                # Server adapters may connect without selecting a database. Only
+                # reject an empty binding when resolution could restore a target
+                # from configuration, a URI, or a file datasource.
+                if (
+                    configured is None
+                    or configured.database
+                    or configured.uri
+                    or configured.path_pattern
+                    or _normalize_dialect_name(configured.type) in (DBType.SQLITE, DBType.DUCKDB)
+                ):
+                    raise ValueError(
+                        "Select a database explicitly; a resolved empty database cannot use a connection default"
+                    )
             # Only the context-free legacy path interprets an empty argument
             # as a request for the configured default.
             database = context.database
