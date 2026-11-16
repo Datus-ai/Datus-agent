@@ -15,9 +15,15 @@ module writes the tree one node per line, indented by level:
     issue warning <code>: <message> → <suggested action>
     note <a note of the tool's own>
 
-    <metric> = <formula> | <baseline> → <current> | <effect> (<share>)
-      <input> [input] | <baseline> → <current> | <effect> (<share>)
+    <metric> | <baseline> → <current> | <effect> (<share>)
+      (<formula>) | <baseline> → <current> | <effect> (<share>)
+        <input> | <baseline> → <current> | <effect> (<share>)
     <input> in all, <n> places | <effect> (<share>)
+
+A metric is written by its name alone: get_metric has its formula, condition
+included. A part of a formula with no name of its own is written as the
+formula, in parentheses. An input, an aggregate read from data, is a node with
+nothing under it, written the same way.
 
 and the dimension tree as ``- <group> | <baseline> → <current> | <effect>
 (<share>) | <n> below``. The tools' docstrings say how to read it; the two must
@@ -30,7 +36,7 @@ import math
 import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-# A formula longer than this is cut: get_metric shows it in full.
+# A part of a formula longer than this is cut.
 EXPRESSION_MAX_CHARS = 80
 # Significant digits of every value and effect.
 SIGNIFICANT_DIGITS = 6
@@ -175,28 +181,31 @@ _NAME = re.compile(r"[^\s()]+")
 def _input_name(node: Mapping[str, Any]) -> str:
     """An input by its model metric: the one it can be queried as, else the
     metric it is written as (a member with a fill of its own reads the bare
-    aggregate here), else the aggregate itself."""
+    aggregate here). Without one, the aggregate in parentheses, under the
+    condition it is computed with, which no name then carries."""
     if node.get("metric"):
         return str(node["metric"])
     label = str(node.get("label") or "")
     if _NAME.fullmatch(label):
         return label
-    return str(node["atom"])
+    binding = node.get("binding") if isinstance(node.get("binding"), Mapping) else {}
+    filters = [str(f) for f in binding.get("filters") or []]
+    aggregate = _one_line(str(node.get("expression") or node["atom"]))
+    if filters:
+        aggregate += f" FILTER (WHERE {' AND '.join(filters)})"
+    if len(aggregate) > EXPRESSION_MAX_CHARS:
+        aggregate = aggregate[: EXPRESSION_MAX_CHARS - 1] + "…"
+    return f"({aggregate})"
 
 
-def _metric_head(node: Mapping[str, Any], *, root: bool = False) -> str:
-    """``<metric> = <formula>``, ``(<formula>)`` without a metric, ``<input>
-    [input]`` for an aggregate read from data. The top line always names its
-    metric and formula, even when it is itself one input."""
+def _metric_head(node: Mapping[str, Any]) -> str:
+    """``<metric>``, its formula being get_metric's; ``(<formula>)`` for a part
+    of a formula with no metric. An input is written the same way: its metric,
+    else its aggregate in parentheses."""
     if node.get("atom"):
-        binding = node.get("binding") if isinstance(node.get("binding"), Mapping) else {}
-        filters = [str(f) for f in binding.get("filters") or []]
-        tag = "input" + (f", filter {' AND '.join(filters)}" if filters else "")
-        if root and node.get("metric"):
-            return f"{node['metric']} = {_expression(node)} [{tag}]"
-        return f"{_input_name(node)} [{tag}]"
+        return _input_name(node)
     if node.get("metric"):
-        return f"{node['metric']} = {_expression(node)}"
+        return str(node["metric"])
     return f"({_expression(node)})"
 
 
@@ -221,7 +230,7 @@ def render_attribute_metrics(result: Mapping[str, Any], notes: Sequence[str] = (
         return "\n".join(lines)
     root = _coordinates(tree.get("coordinates"))
     lines.append("")
-    lines.append(f"{_metric_head(tree, root=True)} | {_values(tree)} | {_effect(tree)}")
+    lines.append(f"{_metric_head(tree)} | {_values(tree)} | {_effect(tree)}")
     if root:
         lines.append(f"row {_write_coordinates(root)}")
 
@@ -369,15 +378,17 @@ def summarize_attribution_text(text: Any) -> str:
             parsed = _effect_of(_drop_tail(line))
             if parsed and (best is None or abs(parsed[0]) > abs(best[1])):
                 best = (line[2:].split(" | ", 1)[0], parsed[0], parsed[1])
-    else:  # metric tree: inputs, summed over their lines
+    else:  # metric tree: inputs, the lines nothing is under, summed over their lines
         totals: Dict[str, List[float]] = {}
-        for line in body[1:]:
-            if " [input" not in line:
+        nodes = [line for line in body[1:] if line.startswith("  ")]
+        depths = [len(line) - len(line.lstrip(" ")) for line in nodes]
+        for i, line in enumerate(nodes):
+            if i + 1 < len(nodes) and depths[i + 1] > depths[i]:
                 continue
             parsed = _effect_of(line)
             if parsed is None:
                 continue
-            name = line.strip().split(" [input", 1)[0]
+            name = line.strip().split(" | ", 1)[0].split(" @ ", 1)[0]
             total = totals.setdefault(name, [0.0, 0.0])
             total[0] += parsed[0]
             total[1] += parsed[1]

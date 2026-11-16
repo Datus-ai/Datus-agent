@@ -53,21 +53,28 @@ def test_metric_tree_one_node_per_line():
     assert text.splitlines() == [
         "status complete",
         "",
-        "store_sales_vs_channel_average = store_sales_amount / channel_average_sales_amount * 100"
-        " | 144.239 → 145.32 | +1.08095 (100.0%)",
-        "  store_sales_amount [input] | 1019954026 → 1024805507 | +0.68702 (63.6%)",
-        "  channel_average_sales_amount = all_channel_sales_amount / 3 | 707127542 → 705206136 | +0.393926 (36.4%)",
-        "    all_channel_sales_amount = CASE WHEN store_sales_amount IS NULL AND catalog_sales_amount IS NULL AND web_s…"
-        " | 2121382626 → 2115618407 | +0.393926 (36.4%)",
-        "      web_sales_amount [input] | 373090522 → 365010650 | +0.552182 (51.1%)",
-        "      store_sales_amount [input] | 1019954026 → 1024805507 | -0.331556 (-30.7%)",
-        "      catalog_sales_amount [input] | 728338078 → 725802250 | +0.1733 (16.0%)",
+        "store_sales_vs_channel_average | 144.239 → 145.32 | +1.08095 (100.0%)",
+        "  store_sales_amount | 1019954026 → 1024805507 | +0.68702 (63.6%)",
+        "  channel_average_sales_amount | 707127542 → 705206136 | +0.393926 (36.4%)",
+        "    all_channel_sales_amount | 2121382626 → 2115618407 | +0.393926 (36.4%)",
+        "      web_sales_amount | 373090522 → 365010650 | +0.552182 (51.1%)",
+        "      store_sales_amount | 1019954026 → 1024805507 | -0.331556 (-30.7%)",
+        "      catalog_sales_amount | 728338078 → 725802250 | +0.1733 (16.0%)",
         # An input read in two places gets its whole effect on one line, so
         # the model quotes the sum rather than one of the parts.
         "store_sales_amount in all, 2 places | +0.355464 (32.9%)",
     ]
-    # What a model does not act on stays out.
-    for absent in ("schema_version", "exact_subset", "queries_executed", "store_sales.ss", "date_dim"):
+    # What a model does not act on stays out, a metric's formula included:
+    # get_metric has it.
+    for absent in (
+        "schema_version",
+        "exact_subset",
+        "queries_executed",
+        "store_sales.ss",
+        "date_dim",
+        "channel_average_sales_amount * 100",
+        "CASE WHEN",
+    ):
         assert absent not in text
 
 
@@ -105,21 +112,19 @@ def test_an_input_is_named_by_its_metric_even_when_it_cannot_be_queried_as_it():
         },
     }
     lines = render_attribute_metrics(result).splitlines()
-    assert lines[3] == "  late_orders [input] | 58 → 179 | -0.0965352 (86.9%)"
+    assert lines[3] == "  late_orders | 58 → 179 | -0.0965352 (86.9%)"
 
 
 def test_metric_tree_of_a_grouped_target_names_its_row_once():
     text = render_attribute_metrics(_load("metrics_offset_row"))
 
     assert text.splitlines()[2:] == [
-        "inventory_on_hand_variation_next_month = inventory_on_hand_variation 1 month later"
-        " | 0.743596 → 1.01516 | +0.271563 (100.0%)",
+        "inventory_on_hand_variation_next_month | 0.743596 → 1.01516 | +0.271563 (100.0%)",
         "row d_date__month=2000-01-01 / 2001-01-01, inv_item_sk=265, inv_warehouse_sk=1",
         "  (inventory_on_hand_stddev * 1.000 / NULLIF(inventory_avg_on_hand, 0)) @ d_date__month=2000-02-01 / 2001-02-01"
         " | 0.743596 → 1.01516 | +0.271563 (100.0%)",
-        "    inventory_on_hand_stddev [input] @ d_date__month=2000-02-01 / 2001-02-01"
-        " | 214.341 → 333.987 | +0.38937 (143.4%)",
-        "    inventory_avg_on_hand [input] @ d_date__month=2000-02-01 / 2001-02-01 | 288.25 → 329 | -0.117808 (-43.4%)",
+        "    inventory_on_hand_stddev @ d_date__month=2000-02-01 / 2001-02-01 | 214.341 → 333.987 | +0.38937 (143.4%)",
+        "    inventory_avg_on_hand @ d_date__month=2000-02-01 / 2001-02-01 | 288.25 → 329 | -0.117808 (-43.4%)",
     ]
 
 
@@ -181,7 +186,7 @@ def test_notes_follow_the_issues():
     assert text.splitlines()[:3] == ["status complete", "note the periods differ in length", ""]
 
 
-def test_missing_values_say_why_and_filters_are_shown_on_the_input():
+def test_missing_values_say_why_and_a_named_input_carries_its_condition_in_its_name():
     result = copy.deepcopy(_load("metrics_ratio"))
     leaf = result["tree"]["children"][0]
     leaf["baseline"] = None
@@ -190,8 +195,20 @@ def test_missing_values_say_why_and_filters_are_shown_on_the_input():
 
     line = render_attribute_metrics(result).splitlines()[3]
 
+    assert line == "  store_sales_amount | missing_row → 1024805507 | +0.68702 (63.6%)"
+
+
+def test_an_input_with_no_name_is_its_aggregate_under_its_condition():
+    result = copy.deepcopy(_load("metrics_ratio"))
+    leaf = result["tree"]["children"][0]
+    leaf["metric"] = None
+    leaf["label"] = leaf["atom"] = leaf["expression"] = "SUM(ss_sales_price)"
+    leaf["binding"]["filters"] = ["store_sales.ss_quantity > 0"]
+
+    line = render_attribute_metrics(result).splitlines()[3]
+
     assert line == (
-        "  store_sales_amount [input, filter store_sales.ss_quantity > 0] | missing_row → 1024805507 | +0.68702 (63.6%)"
+        "  (SUM(ss_sales_price) FILTER (WHERE store_sales.ss_quantity > 0)) | 1019954026 → 1024805507 | +0.68702 (63.6%)"
     )
 
 

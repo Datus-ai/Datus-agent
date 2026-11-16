@@ -1518,7 +1518,7 @@ class TestBuildAttribution:
         a = _make(
             input_data={"function_name": name},
             output_data={
-                "raw_output": '{"success": 1, "result": "status complete\\n\\nm = a / b | 2 \\u2192 3 | +1 (100.0%)\\n  a [input] | 2 \\u2192 4 | +1.5 (150.0%)\\n  b [input] | 1 \\u2192 1.3333 | -0.5 (-50.0%)"}'
+                "raw_output": '{"success": 1, "result": "status complete\\n\\nm = a / b | 2 \\u2192 3 | +1 (100.0%)\\n  a | 2 \\u2192 4 | +1.5 (150.0%)\\n  b | 1 \\u2192 1.3333 | -0.5 (-50.0%)"}'
             },
         )
         tc = _build_attribution(a, verbose=False)

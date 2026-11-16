@@ -2498,9 +2498,9 @@ class TestAttributionTools:
             "current": {"start": "2024-01-08", "end": "2024-01-15"},
         }
         assert result.result.splitlines()[2:] == [
-            "avg_order_value = revenue / order_count | 50 → 60 | +10 (100.0%)",
-            "  revenue [input] | 1000 → 1500 | +22.5 (225.0%)",
-            "  order_count [input] | 20 → 25 | -12.5 (-125.0%)",
+            "avg_order_value | 50 → 60 | +10 (100.0%)",
+            "  revenue | 1000 → 1500 | +22.5 (225.0%)",
+            "  order_count | 20 → 25 | -12.5 (-125.0%)",
         ]
 
     def test_periods_of_different_length_get_a_note(self, semantic_tools_with_runtime):

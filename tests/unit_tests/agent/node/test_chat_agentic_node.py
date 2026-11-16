@@ -552,9 +552,9 @@ class TestChatMetricTools:
             "status complete",
             "note the periods differ in length (31 days and 29 days); values are not scaled to one length",
             "",
-            "net = SUM(ledger.x) - SUM(ledger.y) | 120 → 140 | +20 (100.0%)",
-            "  x_total [input] | 150 → 230 | +80 (400.0%)",
-            "  SUM(y) [input] | 30 → 90 | -60 (-300.0%)",
+            "net | 120 → 140 | +20 (100.0%)",
+            "  x_total | 150 → 230 | +80 (400.0%)",
+            "  (SUM(y)) | 30 → 90 | -60 (-300.0%)",
         ]
         by_group = await invoke(
             "attribute_dimensions", {"metric": "net", "dimensions": ["ledger.cat"], **_ATTRIBUTION_PERIODS}

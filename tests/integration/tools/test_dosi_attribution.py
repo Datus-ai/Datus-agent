@@ -103,9 +103,9 @@ def test_two_term_metric_by_formula_and_by_group(attribution_tool):
     by_formula = _by_formula(attribution_tool, "net")
     assert by_formula.result.splitlines()[:2] == ["status complete", UNEQUAL]
     assert _tree(by_formula) == [
-        "net = SUM(ledger.x) - SUM(ledger.y) | 120 → 140 | +20 (100.0%)",
-        "  x_total [input] | 150 → 230 | +80 (400.0%)",
-        "  SUM(y) [input] | 30 → 90 | -60 (-300.0%)",
+        "net | 120 → 140 | +20 (100.0%)",
+        "  x_total | 150 → 230 | +80 (400.0%)",
+        "  (SUM(y)) | 30 → 90 | -60 (-300.0%)",
     ]
     assert _tree(_by_groups(attribution_tool, "net")) == [
         "net by ledger.cat | 120 → 140 | change +20",
@@ -116,7 +116,7 @@ def test_two_term_metric_by_formula_and_by_group(attribution_tool):
 
 def test_a_ratio_splits_its_change_between_groups_whose_own_value_did_not_move(attribution_tool):
     assert _tree(_by_formula(attribution_tool, "avg_x")) == [
-        "avg_x = AVG(x) [input] | 75 → 76.6667 | +1.66667 (100.0%)",
+        "avg_x | 75 → 76.6667 | +1.66667 (100.0%)",
     ]
     # a's average stayed at 100 but its weight grew: its effect is not its own change.
     assert _tree(_by_groups(attribution_tool, "avg_x")) == [
@@ -129,9 +129,9 @@ def test_a_ratio_splits_its_change_between_groups_whose_own_value_did_not_move(a
 def test_a_product_shares_its_change_between_its_factors(attribution_tool):
     # Shapley over the two inputs: (230 - 150) * (30 + 90) / 2 and (90 - 30) * (150 + 230) / 2.
     assert _tree(_by_formula(attribution_tool, "xy")) == [
-        "xy = SUM(ledger.x) * SUM(ledger.y) | 4500 → 20700 | +16200 (100.0%)",
-        "  SUM(y) [input] | 30 → 90 | +11400 (70.4%)",
-        "  x_total [input] | 150 → 230 | +4800 (29.6%)",
+        "xy | 4500 → 20700 | +16200 (100.0%)",
+        "  (SUM(y)) | 30 → 90 | +11400 (70.4%)",
+        "  x_total | 150 → 230 | +4800 (29.6%)",
     ]
 
 
@@ -200,7 +200,7 @@ def test_an_endpoint_without_a_value_is_not_computable(attribution_tool):
     lines = result.result.splitlines()
     assert lines[0] == "status not_computable"
     assert lines[1].startswith("issue error undefined_endpoint: the target is NULL in the baseline period")
-    assert lines[-1] == "avg_x = AVG(x) | null_value → 76.6667 | effect n/a"
+    assert lines[-1] == "avg_x | null_value → 76.6667 | effect n/a"
 
 
 @pytest.mark.parametrize(

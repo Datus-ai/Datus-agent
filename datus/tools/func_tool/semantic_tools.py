@@ -2707,21 +2707,22 @@ class SemanticTools:
         The result is text: a `status` line, `issue` lines when something is
         missing or refused, then the formula tree, one node per line, indented
         by level:
-          <metric> = <formula> | <baseline> → <current> | <effect> (<share>)
+          <metric> | <baseline> → <current> | <effect> (<share>)
         - effect is the node's contribution to the top line's change, in the
           metric's unit. A parent's effect is the sum of its children's; share
           is effect over the top line's change. A node's own change is not its
           effect: a growing denominator has a negative effect.
-        - `[input]` is an aggregate read from data, named by its metric. One
-          input can sit under several parents (a ratio's numerator and
-          denominator); a last line `<input> in all, <n> places | <effect>`
+        - A node with nothing under it is an input: an aggregate read from
+          data. One input can sit under several parents (a ratio's numerator
+          and denominator); a last line `<input> in all, <n> places | <effect>`
           then gives its whole effect. Quote that, not one of its lines.
         - To say what drove the change, compare the inputs by their whole
           effects. A formula node in between (a numerator, a denominator, an
           average of channels) only groups inputs; it is not a cause itself.
-        - A node written `<metric> = …` or `<metric> [input]` can be passed as
-          `metric` to attribute_dimensions with the same other arguments; a
-          formula in parentheses cannot.
+        - A node is written by its metric's name (get_metric has its formula),
+          or as `(<formula>)` when it has no name of its own. A node with a
+          metric's name can be passed as `metric` to attribute_dimensions with
+          the same other arguments; a formula in parentheses cannot.
         - `row` is the row the top line reads, for a metric with group_by;
           `@ field=value` is the row or period a node reads where it differs
           (the month before, the row being ranked).
