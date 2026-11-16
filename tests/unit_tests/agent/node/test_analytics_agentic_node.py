@@ -112,9 +112,27 @@ def test_analytics_defaults_and_wildcards_respect_type_policy(real_agent_config,
         data_tools = {d.tool_id for d in definitions if d.access != "session" and d.category != "skills"}
         assert data_tools <= catalog
         assert {"db_tools.execute_sql", "filesystem_tools.read_file", "semantic_tools.query_metrics"} <= data_tools
+        assert {
+            "semantic_tools.describe_concept",
+            "semantic_tools.find_concept_paths",
+            "semantic_tools.select_records",
+        } <= data_tools
         assert ("filesystem_tools.write_file" in data_tools) == (kind == "analytics_builder")
         assert not data_tools & {"semantic_tools.validate_semantic", "filesystem_tools.delete_file"}
         assert "ask_user" in {tool.name for tool in node.tools}
+        node._rebuild_tools()
+
+
+@pytest.mark.parametrize("kind", ["analytics_explorer", "analytics_builder"])
+def test_analytics_mounts_select_records_only_scope(real_agent_config, mock_llm_create, kind):
+    from datus.tools.registry.contracts import tool_definition
+
+    real_agent_config.agentic_nodes = {"analyst": {"node_class": kind, "tools": "semantic_tools.select_records"}}
+    node = create_interactive_node("analyst", real_agent_config, execution_mode="workflow")
+    for _ in range(2):
+        definitions = [tool_definition(tool) for tool in node.tools]
+        data_tools = {d.tool_id for d in definitions if d.access != "session" and d.category != "skills"}
+        assert data_tools == {"semantic_tools.select_records"}
         node._rebuild_tools()
 
 

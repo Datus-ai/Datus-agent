@@ -36,6 +36,13 @@ class AnalyticsExplorerAgenticNode(ChatAgenticNode):
         supported = {pattern.split(".", 1)[0] for pattern in SUBAGENT_POLICIES[self.NODE_NAME].tools}
         return ((super()._selected_tool_families() or set()) & supported) | {"skills"}
 
+    def _setup_semantic_tools(self) -> None:
+        super()._setup_semantic_tools()
+        if self.semantic_tools is not None:
+            # Chat defers runtime loading, so enable ontology before mounting or
+            # the first call initializes the runtime without the advertised tools.
+            self.semantic_tools.ontology_enabled = True
+
     def _rebuild_tools(self):
         super()._rebuild_tools()
         definitions = [tool_definition(tool) for tool in self.tools]
