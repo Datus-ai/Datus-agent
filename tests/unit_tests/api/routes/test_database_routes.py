@@ -206,6 +206,7 @@ async def test_catalog_identity_is_authoritative_and_unknown_ids_are_http_400():
     from fastapi import HTTPException
 
     from datus.configuration.agent_config import DbConfig
+    from datus.utils.exceptions import DatusException
 
     svc = _make_svc(Result(success=True, data=ListDatabasesData(databases=[], total_count=0)))
     svc.agent_config = SimpleNamespace(
@@ -230,5 +231,5 @@ async def test_catalog_identity_is_authoritative_and_unknown_ids_are_http_400():
     with pytest.raises(HTTPException) as exc:
         await list_catalogs(svc, datasource_id="missing")
     assert exc.value.status_code == 400 and "missing" in exc.value.detail
-    assert exc.value.__cause__ is not None
+    assert isinstance(exc.value.__cause__, DatusException)
     svc.datasource.list_databases.assert_not_called()
