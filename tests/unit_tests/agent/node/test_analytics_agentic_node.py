@@ -38,3 +38,17 @@ def test_analytics_scope_and_read_only_sql(real_agent_config, mock_llm_create, k
     prompt = node._get_system_prompt()
     assert "Analytics Role" in prompt
     assert "read-only" in prompt.lower()
+
+
+@pytest.mark.parametrize("kind", ["analytics_explorer", "analytics_builder"])
+@pytest.mark.parametrize("mode", ["interactive", "workflow"])
+def test_analytics_interaction_tools_survive_data_tool_filter(real_agent_config, mock_llm_create, kind, mode):
+    real_agent_config.agentic_nodes = {"analyst": {"node_class": kind, "tools": "filesystem_tools.read_file"}}
+    node = create_interactive_node("analyst", real_agent_config, execution_mode=mode)
+    for _ in range(2):
+        names = {tool.name for tool in node.tools}
+        assert ("ask_user" in names) == (mode == "interactive")
+        assert {"todo_list", "todo_read", "todo_write", "todo_update"} <= names
+        assert "read_file" in names
+        assert "write_file" not in names
+        node._rebuild_tools()
