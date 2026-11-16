@@ -102,7 +102,15 @@ def chat_datus_service(chat_agent_config):
 
 
 @asynccontextmanager
-async def chat_http_client(chat_agent_config, chat_datus_service, *, config_path="tests/conf/agent.yml"):
+async def chat_http_client(
+    chat_agent_config,
+    chat_datus_service,
+    *,
+    config_path="tests/conf/agent.yml",
+    service_cache=None,
+    auth_provider=None,
+    task_manager_factory=None,
+):
     """AsyncClient wired to the full FastAPI app with real DatusService."""
     import datus.api.deps as deps_mod
     from datus.api.auth import HeaderContextProvider
@@ -129,8 +137,9 @@ async def chat_http_client(chat_agent_config, chat_datus_service, *, config_path
         deps_mod._default_source,
         deps_mod._default_interactive,
         deps_mod._stream_thinking,
+        deps_mod._task_manager_factory,
     )
-    cache = DatusServiceCache(max_size=4)
+    cache = service_cache if service_cache is not None else DatusServiceCache(max_size=4)
 
     async def _factory():
         return chat_datus_service
@@ -140,7 +149,12 @@ async def chat_http_client(chat_agent_config, chat_datus_service, *, config_path
     # patched module state and shut the cache down cleanly.
     try:
         mod.service = DatusAPIService(agent_args)
-        init_deps(HeaderContextProvider(), cache, datasource=chat_agent_config.current_datasource or "bird_school")
+        init_deps(
+            auth_provider or HeaderContextProvider(),
+            cache,
+            datasource=chat_agent_config.current_datasource or "bird_school",
+            task_manager_factory=task_manager_factory,
+        )
         await cache.get_or_create("default", _factory)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=120.0) as c:
@@ -154,6 +168,7 @@ async def chat_http_client(chat_agent_config, chat_datus_service, *, config_path
             deps_mod._default_source,
             deps_mod._default_interactive,
             deps_mod._stream_thinking,
+            deps_mod._task_manager_factory,
         ) = saved_deps
         # Shut the cache down last so if it raises the globals are already restored.
         await cache.shutdown()

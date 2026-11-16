@@ -638,3 +638,46 @@ async def stream_chat(message: str, user_id: str = "alice"):
                 else:
                     event[key] = value
 ```
+
+### Completed-turn resource lifetime
+
+After persistence and turn callbacks complete, the server releases the agent
+node and keeps only replay events and session metadata. The five-minute replay
+TTL starts at completion, including for turns that run longer than five minutes.
+An expiry timer removes completed entries even with no subsequent requests;
+expired entries are also rejected on lookup. Already-connected consumers can
+finish reading the task they hold.
+
+Embedded hosts can configure `ChatTaskManager(completed_task_ttl=300,
+max_completed_tasks=None, max_completed_bytes=None)`. The optional count and
+serialized-event-byte caps evict older completed entries and can shorten their
+replay window; they are disabled by default. The byte cap measures serialized
+event payloads, not total Python/native memory. Persisted history is unaffected.
+
+`DatusServiceCache(max_size=128, idle_ttl=None, sweep_interval=30)` retains the
+existing default project capacity. Its sweeper re-enforces capacity after active
+work drains without requiring another insertion. Optional idle eviction is
+disabled by default; enabling it can discard replay data along with the project
+service. Requests and SSE responses retain their service until they finish.
+Service shutdown closes exclusively owned CLI/datasource managers and leaves
+shared storage/model registries under their respective owners.
+
+Requests using an older configuration generation also protect the project's
+shared task manager from idle/capacity eviction. Application shutdown stops
+chat producers before waiting for SSE consumers and database workers to drain;
+it rejects new turn registrations, including requests still loading session
+metadata when shutdown begins. Native SQL and table metadata cancellation wait
+for their worker to finish before releasing the request. Catalogue queries keep
+their 30-second response timeout: a tracked background worker retains a separate
+service borrow until native execution finishes, including after a timeout or
+client cancellation. Server shutdown can still wait for native workers to drain.
+Replay caps remove turns in completion order even when the same session completes
+again.
+
+A terminal SSE frame can arrive before node cleanup finishes. A new turn for the
+same session waits for that cleanup before loading session metadata and starting;
+cancelling the new request does not cancel the preceding turn's cleanup. A turn
+that is still running retains the existing single-active-turn behavior.
+
+Cancellation or shutdown during node construction waits for the native constructor
+and closes its returned node before finishing task cleanup.

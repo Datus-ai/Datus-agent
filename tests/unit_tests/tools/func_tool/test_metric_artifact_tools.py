@@ -1043,6 +1043,7 @@ def test_metric_artifact_replays_its_original_database_after_a_turn_switch(envir
     assert current.execute_query("SELECT SUM(amount) AS total FROM orders", result_format="list").sql_return == [
         {"total": 999.0}
     ]
+    env.db.close()
     manager.close()
 
 
@@ -1093,3 +1094,83 @@ def test_metric_save_and_finalize_share_the_query_source_contract(environment, k
         actions=[],
     )
     assert json.loads((root / "manifest.json").read_text())["datasources"] == ["warehouse"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+async def test_cancelled_metric_save_finishes_before_database_tool_cleanup(environment, monkeypatch, kind):
+    import asyncio
+    import threading
+    from functools import wraps
+
+    from datus.tools.db_tools.connection_scope import _lifetime
+    from datus.tools.func_tool.base import trans_to_function_tool
+
+    env = environment
+    connector = env.db.connector
+    connector.execute_query("SELECT 1")
+    entered, release, draining, finished = (threading.Event() for _ in range(4))
+
+    def hold():
+        entered.set()
+        assert release.wait(timeout=10)
+        return 0
+
+    connector.connection.set_progress_handler(hold, 1)
+    cls = {"report": ReportArtifactTools, "dashboard": DashboardArtifactTools}[kind]
+    artifact = cls(agent_config=env.config, db_func_tool=env.db, semantic_tools=env.semantic)
+    start = getattr(artifact, {"report": "start_new_report", "dashboard": "start_new_dashboard"}[kind])
+    assert start("resource", "Resource lifetime", "Verify metric save lifetime").success == 1
+    name = {"report": "save_metric_query", "dashboard": "save_metric_query_template"}[kind]
+    save = getattr(cls, name)
+    results = []
+
+    @wraps(save)
+    def observe_save(self, *args, **kwargs):
+        try:
+            result = save(self, *args, **kwargs)
+            results.append(result)
+            return result
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(cls, name, observe_save)
+    condition = _lifetime(env.db).condition
+    wait = condition.wait
+
+    def observe_drain(timeout=None):
+        draining.set()
+        return wait(timeout)
+
+    monkeypatch.setattr(condition, "wait", observe_drain)
+    arguments = {
+        "name": "total",
+        "query": {"metric": REF},
+        "goal": "Revenue",
+        "hypothesis": "Revenue is 25",
+        **{"report": {}, "dashboard": {"params": [], "sample_params": {}}}[kind],
+    }
+    function = trans_to_function_tool(getattr(artifact, name), strict_mode=False)
+    invocation = asyncio.create_task(function.on_invoke_tool(None, json.dumps(arguments)))
+    closing = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 5), [result.model_dump() for result in results]
+        invocation.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await invocation
+        closing = asyncio.create_task(asyncio.to_thread(env.db.close))
+        assert await asyncio.to_thread(draining.wait, 5)
+        assert env.db.connector is connector
+        release.set()
+        await asyncio.wait_for(closing, timeout=5)
+        assert await asyncio.to_thread(finished.wait, 5)
+        assert len(results) == 1
+        assert results[0].success == 1, results[0].error
+        assert results[0].result["preview_rows"] == [{"revenue": 25.0}]
+        assert env.db.connector is None
+    finally:
+        release.set()
+        invocation.cancel()
+        await asyncio.gather(invocation, *([closing] if closing is not None else []), return_exceptions=True)
+        await asyncio.to_thread(env.db.close)
+        await asyncio.to_thread(connector.close)

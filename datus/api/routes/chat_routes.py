@@ -49,6 +49,7 @@ from datus.api.models.cli_models import (
     UserInteractionInput,
 )
 from datus.api.services.background_drain import track_background_task
+from datus.api.utils.service_stream import ServiceStreamingResponse
 from datus.api.utils.stream_errors import humanize_stream_error
 from datus.tools.policy_runtime import PolicyRuntime
 from datus.utils.exceptions import DatusException
@@ -173,7 +174,7 @@ async def stream_chat(
         ):
             yield chunk
 
-    return StreamingResponse(generate_sse(), media_type="text/event-stream", headers=_sse_headers())
+    return ServiceStreamingResponse(generate_sse(), service=svc, media_type="text/event-stream", headers=_sse_headers())
 
 
 # ========== Reaction-triggered Feedback ==========
@@ -227,7 +228,7 @@ async def stream_chat_feedback(
         ):
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
 
-    return StreamingResponse(generate_sse(), media_type="text/event-stream", headers=_sse_headers())
+    return ServiceStreamingResponse(generate_sse(), service=svc, media_type="text/event-stream", headers=_sse_headers())
 
 
 # ========== Resume Chat ==========
@@ -262,12 +263,11 @@ async def resume_chat(
     async def generate_sse():
         """Serialize buffered events while omitting transient diffs on ordinary session entry."""
         # A resumed stream can begin after the original session frame.
-        if task.node is not None:
+        llm_session_id = task.llm_session_id or (task.node.session_id if task.node is not None else None)
+        if llm_session_id is not None:
             from datus.api.models.cli_models import SSESessionData
 
-            session = SSESessionData(
-                session_id=task.session_id, llm_session_id=task.node.session_id, run_id=task.run_id
-            )
+            session = SSESessionData(session_id=task.session_id, llm_session_id=llm_session_id, run_id=task.run_id)
             yield f"event: session\ndata: {session.model_dump_json()}\n\n"
         async for event in task_manager.consume_events(task, start_from=request.from_event_id):
             if (
@@ -278,7 +278,7 @@ async def resume_chat(
                 continue
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
 
-    return StreamingResponse(generate_sse(), media_type="text/event-stream", headers=_sse_headers())
+    return ServiceStreamingResponse(generate_sse(), service=svc, media_type="text/event-stream", headers=_sse_headers())
 
 
 # ========== Stop Chat ==========

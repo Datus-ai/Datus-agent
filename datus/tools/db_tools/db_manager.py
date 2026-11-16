@@ -4,8 +4,12 @@
 
 import dataclasses
 import threading
+import time
+from collections import OrderedDict
+from concurrent.futures import Future
 from enum import StrEnum
 from typing import Callable, Dict, Optional, Set, Tuple, Union
+from weakref import finalize
 
 from datus_db_core import BaseSqlConnector, ConnectionConfig, DatusDbException, connector_registry
 from sqlalchemy.engine.url import URL, make_url
@@ -285,11 +289,52 @@ def get_connection(
     return connections[name]
 
 
+class ConnectionLease:
+    """A borrowed connector; releasing it never closes another borrower's work."""
+
+    def __init__(self, manager: "DBManager", key: tuple, connector: BaseSqlConnector):
+        self.connector = connector
+        self._released = False
+        self._lock = threading.Lock()
+        self._finalizer = finalize(self, manager._release_connection, key)
+
+    def release(self) -> None:
+        with self._lock:
+            if self._released:
+                return
+            self._released = True
+        self._finalizer()
+
+    def __enter__(self):
+        return self.connector
+
+    def __exit__(self, *args):
+        self.release()
+
+
 class DBManager:
-    def __init__(self, db_configs: Dict[str, DbConfig]):
+    def __init__(self, db_configs: Dict[str, DbConfig], *, max_connections: int = 8, idle_ttl: Optional[float] = None):
         # {datasource: {database: connector}} — a datasource may serve multiple databases.
         self._conn_dict: Dict[str, Dict[Union[str, Tuple[str, str, str]], BaseSqlConnector]] = {}
+        if max_connections < 0 or (idle_ttl is not None and idle_ttl < 0):
+            raise ValueError("Connection capacity and idle TTL must be non-negative")
         self._db_configs: Dict[str, DbConfig] = db_configs
+        self._condition = threading.Condition(threading.RLock())
+        self._building: dict[tuple, Future] = {}
+        self._leases: dict[tuple, int] = {}
+        # Legacy callers receive naked connectors, so their lifetime is unknown.
+        self._legacy_keys: set[tuple] = set()
+        self._last_used = OrderedDict()
+        self._max_connections = max_connections
+        self._idle_ttl = idle_ttl
+        self._closing = False
+
+    def acquire_conn(
+        self, datasource: str, database: str = "", *, context: Optional[DatabaseExecutionContext] = None
+    ) -> ConnectionLease:
+        """Borrow a connector until release(), including result iteration."""
+        key, connector = self._get_connection(datasource, database, context=context, _leased=True)
+        return ConnectionLease(self, key, connector)
 
     def get_conn(
         self, datasource: str, database: str = "", *, context: Optional[DatabaseExecutionContext] = None
@@ -416,6 +461,16 @@ class DBManager:
     def _init_connection(
         self, datasource: str, database: str, *, context: Optional[DatabaseExecutionContext] = None
     ) -> BaseSqlConnector:
+        return self._get_connection(datasource, database, context=context)[1]
+
+    def _get_connection(
+        self,
+        datasource: str,
+        database: str,
+        *,
+        context: Optional[DatabaseExecutionContext] = None,
+        _leased: bool = False,
+    ) -> Tuple[tuple, BaseSqlConnector]:
         if context is not None:
             if context.datasource != datasource or (database and database != context.database):
                 raise ValueError("Connection context does not match its datasource/database")
@@ -452,23 +507,98 @@ class DBManager:
                 raise ValueError("Connection context does not match its datasource/database")
             db_config = dataclasses.replace(db_config, catalog=context.catalog, schema=context.schema)
             cache_key = (db_name, context.catalog, context.schema)
-        # Self-heal: a caller may have nulled this datasource's entry to mark its
-        # connectors closed (e.g. an external pool on eviction). setdefault keeps
-        # an existing None, so rebuild a fresh group rather than calling .get on it.
-        group = self._conn_dict.get(datasource)
-        if not isinstance(group, dict):
-            group = {}
-            self._conn_dict[datasource] = group
-        cached = group.get(cache_key)
-        if cached is not None:
-            return cached
-        conn = self._build_conn(db_config)
-        if _normalize_dialect_name(db_config.type) == DBType.DUCKDB:
-            # Native schema selection must succeed before this binding is
-            # visible to other threads or saved as an artifact query target.
-            conn.connect()
-        group[cache_key] = conn
-        return conn
+        key = (datasource, cache_key)
+        with self._condition:
+            while self._closing:
+                self._condition.wait()
+            group = self._conn_dict.get(datasource)
+            if not isinstance(group, dict):
+                group = self._conn_dict[datasource] = {}
+            cached = group.get(cache_key)
+            if cached is not None:
+                return self._borrow_locked(key, cached, _leased)
+            future = self._building.get(key)
+            creator = future is None
+            if creator:
+                future = self._building[key] = Future()
+        if not creator:
+            future.result()
+            return self._get_connection(datasource, database, context=context, _leased=_leased)
+
+        conn = None
+        try:
+            conn = self._build_conn(db_config)
+            if _normalize_dialect_name(db_config.type) == DBType.DUCKDB:
+                conn.connect()
+        except BaseException as exc:
+            if conn is not None:
+                self._close_connectors([conn])
+            with self._condition:
+                self._building.pop(key)
+                self._condition.notify_all()
+            future.set_exception(exc)
+            raise
+        with self._condition:
+            self._conn_dict[datasource][cache_key] = conn
+            result = self._borrow_locked(key, conn, _leased)
+            self._building.pop(key)
+            self._condition.notify_all()
+        future.set_result(conn)
+        return result
+
+    def _borrow_locked(self, key, connector, leased):
+        self._last_used[key] = time.monotonic()
+        self._last_used.move_to_end(key)
+        if leased:
+            self._leases[key] = self._leases.get(key, 0) + 1
+        else:
+            self._legacy_keys.add(key)
+        return key, connector
+
+    def _release_connection(self, key):
+        with self._condition:
+            count = self._leases.get(key, 0)
+            if count <= 1:
+                self._leases.pop(key, None)
+            else:
+                self._leases[key] = count - 1
+            self._last_used[key] = time.monotonic()
+            self._last_used.move_to_end(key)
+            evicted = self._evict_idle_locked()
+            self._condition.notify_all()
+        self._close_connectors(evicted)
+
+    def _evict_idle_locked(self):
+        evicted = []
+        now = time.monotonic()
+        total = sum(len(group) for group in self._conn_dict.values() if isinstance(group, dict))
+        for key, last_used in list(self._last_used.items()):
+            if key in self._legacy_keys or self._leases.get(key, 0):
+                continue
+            expired = self._idle_ttl is not None and now - last_used >= self._idle_ttl
+            if not expired and (self._max_connections <= 0 or total <= self._max_connections):
+                continue
+            self._last_used.pop(key, None)
+            group = self._conn_dict.get(key[0])
+            connector = group.pop(key[1], None) if isinstance(group, dict) else None
+            if connector is not None:
+                evicted.append(connector)
+                total -= 1
+        return evicted
+
+    def purge_idle_connections(self):
+        """Apply the owner limit to idle managed connections, never legacy pins."""
+        with self._condition:
+            evicted = self._evict_idle_locked()
+        self._close_connectors(evicted)
+
+    @staticmethod
+    def _close_connectors(connectors):
+        for connector in {id(conn): conn for conn in connectors}.values():
+            try:
+                connector.close()
+            except Exception:
+                logger.warning("Error closing database connector", exc_info=True)
 
     def _build_conn(self, db_config: DbConfig) -> BaseSqlConnector:
         """Build a connector from a (fully-resolved) DbConfig via the registry."""
@@ -565,19 +695,27 @@ class DBManager:
             return filtered_config
 
     def close(self):
-        """Close all database connections."""
-        for datasource, group in list(self._conn_dict.items()):
-            if not isinstance(group, dict):
-                continue
-            for db_name, conn in list(group.items()):
-                if conn is None:
-                    continue
-                try:
-                    conn.close()
-                except Exception as e:
-                    logger.warning(f"Error closing connection {datasource}.{db_name}: {str(e)}")
-                finally:
-                    group.pop(db_name, None)
+        """Drain managed users and close cached connections; later use may rebuild."""
+        with self._condition:
+            # A running operation may need another connection before it can
+            # return its first lease (e.g. a transfer). Only gate new borrows
+            # during the actual close, after all current operations drain.
+            while self._closing or self._building or self._leases:
+                self._condition.wait()
+            self._closing = True
+            connectors = []
+            for group in self._conn_dict.values():
+                if isinstance(group, dict):
+                    connectors.extend(conn for conn in group.values() if conn is not None)
+                    group.clear()
+            self._legacy_keys.clear()
+            self._last_used.clear()
+        try:
+            self._close_connectors(connectors)
+        finally:
+            with self._condition:
+                self._closing = False
+                self._condition.notify_all()
 
     def __enter__(self):
         """Context manager entry point."""
@@ -600,6 +738,7 @@ _factory: Optional[Callable[[Dict[str, DbConfig]], DBManager]] = None
 # CLI-mode cache: keyed by frozenset of datasource names to avoid creating
 # duplicate DBManager instances (and leaking connections) for the same config.
 _cli_cache: Dict[frozenset, DBManager] = {}
+_cli_cache_lock = threading.RLock()
 
 
 def set_db_manager_factory(factory: Optional[Callable[[Dict[str, DbConfig]], "DBManager"]] = None) -> None:
@@ -616,9 +755,10 @@ def set_db_manager_factory(factory: Optional[Callable[[Dict[str, DbConfig]], "DB
         factory: Callable that accepts ``db_configs`` and returns a ``DBManager``.
     """
     global _factory
-    _factory = factory
-    # Clear CLI cache when switching modes
-    _cli_cache.clear()
+    with _cli_cache_lock:
+        _factory = factory
+        # Existing tools may still borrow these managers; do not close them.
+        _cli_cache.clear()
 
 
 def db_manager_instance(
@@ -632,13 +772,13 @@ def db_manager_instance(
       dimension lives inside DBManager (get_conn(datasource, database)), so the
       manager is shared across databases of the same datasource set.
     """
-    if _factory is not None:
-        return _factory(db_configs or {})
-    configs = db_configs or {}
-    cache_key = frozenset(configs.keys())
-    cached = _cli_cache.get(cache_key)
-    if cached is not None:
-        return cached
-    manager = DBManager(configs)
-    _cli_cache[cache_key] = manager
-    return manager
+    with _cli_cache_lock:
+        factory = _factory
+        if factory is None:
+            configs = db_configs or {}
+            cache_key = frozenset(configs.keys())
+            cached = _cli_cache.get(cache_key)
+            if cached is None:
+                cached = _cli_cache[cache_key] = DBManager(configs)
+            return cached
+    return factory(db_configs or {})

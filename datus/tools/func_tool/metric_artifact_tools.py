@@ -15,6 +15,7 @@ from datus.schemas.analysis_artifacts import QueryBrief, SubjectRefs
 from datus.schemas.gen_visual_dashboard_models import QueryTemplateMetaFile, TemplateParamDecl
 from datus.schemas.gen_visual_report_models import ColumnSemanticType, QueryColumnMeta, QueryResultFile
 from datus.schemas.metric_artifact_query import MetricQueryFile, MetricQueryRequest, ParamRef
+from datus.tools.db_tools.connection_scope import connection_scope
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.registry.contracts import tool_contract
 from datus.utils.async_utils import run_async
@@ -388,6 +389,7 @@ class MetricArtifactToolsMixin:
         """
         return self._save_metric_artifact(name, query, goal, hypothesis, caveats, params, sample_params)
 
+    @connection_scope(owner_attr="_db_func_tool")
     def _save_metric_artifact(self, name, query, goal, hypothesis, caveats, params, sample_params) -> FuncToolResult:
         """Persist a metric recipe and query result, then refresh the manifest timestamp."""
         from datus.api.services.dashboard_service import _validate_params

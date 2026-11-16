@@ -3,7 +3,9 @@
 | Tests | Execution | Boundary and assertions |
 | --- | --- | --- |
 | `tests/integration/agent/test_core_acceptance.py` | Code PRs | Production model adapter, Agents SDK, node loop, tools, SQLite and filesystem. Only remote model responses are scripted over HTTP. Covers chat, metadata discovery, SQL results, joins, follow-up context, tool error recovery, memory across sessions, init knowledge reuse, read-only enforcement, bounded tool results, plan confirmation and a queryable table product with its validator. |
-| `tests/integration/api/test_chat_acceptance.py` | Code PRs | Real FastAPI routes, task manager, chat service and model transport. Covers SQL, follow-up, history, session listing/deletion, user isolation, stop and subsequent reuse. |
+| `tests/integration/api/test_chat_acceptance.py` | Affected code PRs; Nightly core acceptance | Real FastAPI routes, task manager, chat service and model transport. Covers SQL, follow-up, history, user isolation, stop/reuse, terminal cleanup, replay expiry, project eviction and cancelled native SQL workers. |
+| `test_real_tool_concurrent_cold_connection_and_owner_eviction` in `test_func_tools_db.py` | Affected code PRs | Fully initialized database tools, real SQLite/DuckDB connections and concurrent queries. Checks one cold construction, bounded owner eviction, reopening and independent borrowers. No model calls. |
+| `tests/integration/storage/test_fastembed_lancedb_smoke.py` | Existing main Nightly group | Real FastEmbed/ONNX inference and LanceDB. Fresh-process concurrent loading and repeated wrapper lifetimes check one native session and emit RSS observations. No remote LLM calls; model assets must be available. |
 | `test_dosi_authoring_validates_reconciles_and_queries_without_llm` in `test_semantic_modeling_agentic.py` | Code PRs; existing dedicated Nightly group | Real Dosi authoring, validation, reconciliation and metric execution. No external model required. |
 | Capacity, image round-trip and native observability model contracts | Affected model / shared-runtime PRs | Real initialized adapters and SDK paths with external IO replaced. Includes nested JSON tool schemas and native model calls. |
 | Remaining affected unit tests | PR diff | Exact-file / longest-prefix unit owners retain explicit consumers, including harness-marked unit tests. Shared model adapters include observability and node consumers. |
@@ -15,6 +17,45 @@ three orders total 350, East customers contribute 150 and West customers 200.
 Assertions check rows, files and persisted state, rather than exact answer wording
 or exact generated SQL. Scripted acceptance verifies runtime wiring and effects;
 the real-model questions additionally assess tool selection and reasoning.
+
+Resource regressions for #1639–#1641 reuse these fixtures and execution groups.
+The HTTP cases drive real model adapters and tools using scripted local HTTP
+responses, including an actual provider error, stop and client disconnect. They
+check immediate connection returns, resume before a one-second test TTL, automatic
+expiry without another request, persisted history and repeated concurrent turns.
+Native SQL cancellation blocks inside SQLite itself to prove eviction waits for
+the worker. Project eviction verifies the original native handles are closed and
+that the next request rebuilds a working service. Object collection of successful
+nodes is checked after tracing drains. Error/cancel
+tracebacks can temporarily survive in the HTTP client's cancelled timeout
+handles, so those cases assert returned borrows and detached tool connections
+without depending on asyncio timer-heap GC. Resource closure is checked before
+waiting for TTL.
+
+Review regressions also hold real SQLite metadata execution across catalogue
+timeouts, table-detail/batch cancellation and project eviction. Active SSE cases
+cover service shutdown, cache shutdown and refreshed configuration generations.
+Unit cases check replay completion order, cancelled creation waiters, creator
+draining, retired-generation request protection and rejected post-close borrows.
+Concurrency unit tests rendezvous constructors with their real Future waiters
+instead of relying on sleeps. The expiry fixture observes actual timer callbacks
+and never performs the purge itself.
+
+Catalogue deadline cases require a timeout response while native SQLite remains
+blocked, then verify that a worker-owned service borrow prevents early disposal.
+Artifact-save cancellation cases invoke real function tools and SQL/metric save
+paths; under connection pressure, tool cleanup must wait for the save before the
+native connection can be evicted. Follow-up cases receive the previous `end`
+while cleanup is held, then verify next-turn admission and cancellation isolation.
+Device-isolation tests explicitly set CPU/CUDA inputs and cover a CUDA default.
+Faulted teardown checks release their leases in `finally` before executor join.
+
+The native embedding cases prefetch assets before measurement, then use three
+rounds of eight concurrent inferences in a fresh interpreter. Construction count,
+wrapper collection and live native-model count are hard assertions. RSS is
+reported as evidence without a platform-dependent memory threshold. These cases
+retain their existing `nightly` mark and are excluded from PR selection; the
+deterministic HTTP and database cases are selected through the existing map.
 
 ## Selection and evidence
 

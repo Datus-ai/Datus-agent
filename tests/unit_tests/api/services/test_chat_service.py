@@ -35,6 +35,7 @@ async def test_history_keeps_streamed_tool_duration_after_batch_persistence(
     storage = SessionManager(session_dir=str(tmp_path))
     session = storage.get_session(session_id)
     task = ChatTask(session_id=session_id, asyncio_task=MagicMock())
+    task.previous_message_id = storage.get_max_message_id(session_id)
     manager = ChatTaskManager()
     started = datetime(2026, 1, 1)
     action = ActionHistory(

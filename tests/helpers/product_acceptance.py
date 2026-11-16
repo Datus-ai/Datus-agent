@@ -8,9 +8,12 @@ import sqlite3
 import threading
 from collections import deque
 from contextlib import contextmanager
+from dataclasses import dataclass
+from functools import wraps
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
+from weakref import WeakSet
 
 from datus.configuration.agent_config import AgentConfig
 
@@ -20,7 +23,9 @@ def local_telemetry():
     """Keep tracing active without uploading test conversations."""
     from agents.tracing import get_trace_provider
 
-    with patch("agents.tracing.processors.BackendSpanExporter.export"):
+    # A recording Mock would retain exported spans, model tasks and their
+    # exception tracebacks, creating an artificial leak in lifecycle tests.
+    with patch("agents.tracing.processors.BackendSpanExporter.export", new=lambda self, spans: None):
         try:
             yield
         finally:
@@ -33,19 +38,50 @@ def local_telemetry():
 def isolated_connectors():
     """Give each temporary CLI project its own production connector cache."""
     from datus.tools.db_tools import db_manager
+    from datus.tools.func_tool.database import DBFuncTool
+
+    tools = WeakSet()
+    tools_lock = threading.Lock()
+    initialize_tool = DBFuncTool.__init__
+
+    @wraps(initialize_tool)
+    def initialize_owned_tool(tool, *args, **kwargs):
+        initialize_tool(tool, *args, **kwargs)
+        with tools_lock:
+            tools.add(tool)
 
     # CLI caches are process-wide and keyed by datasource names. Each test
     # represents a fresh CLI invocation, even when its datasource is "sales".
-    with patch.object(db_manager, "_cli_cache", {}), patch.object(db_manager, "_factory", None):
+    with (
+        patch.object(db_manager, "_cli_cache", {}),
+        patch.object(db_manager, "_factory", None),
+        patch.object(DBFuncTool, "__init__", initialize_owned_tool),
+    ):
         try:
             yield
         finally:
+            # Direct-node tests own their tools until fixture teardown. Return
+            # those borrows before draining their shared manager, just as a
+            # production node/service owner does. HTTP cleanup assertions run
+            # before this fallback and cannot be satisfied by fixture cleanup.
+            with tools_lock:
+                remaining_tools = list(tools)
+            for tool in remaining_tools:
+                tool.close()
             for manager in db_manager._cli_cache.values():
                 manager.close()
 
 
 def answer(text: str) -> dict:
     return {"role": "assistant", "content": text}
+
+
+@dataclass(frozen=True)
+class ModelError:
+    """An expected remote-model failure, passed through the real HTTP adapter."""
+
+    status: int
+    message: str
 
 
 def tool_call(name: str, arguments: dict, call_id: str = "call_1") -> dict:
@@ -81,6 +117,16 @@ class ModelServer:
                             raise AssertionError("Unexpected model request: script exhausted")
                         reply = owner.replies.popleft()
                     message = reply(request) if callable(reply) else reply
+                    if isinstance(message, ModelError):
+                        data = json.dumps(
+                            {"error": {"message": message.message, "type": "invalid_request_error"}}
+                        ).encode()
+                        self.send_response(message.status)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Content-Length", str(len(data)))
+                        self.end_headers()
+                        self.wfile.write(data)
+                        return
                     response = {
                         "id": f"chatcmpl-{len(owner.requests)}",
                         "object": "chat.completion",
@@ -149,7 +195,14 @@ class ModelServer:
             self.thread.join(timeout=5)
 
 
-def product_config(root: Path, base_url: str, *, project: str = "core", live_model: dict | None = None) -> AgentConfig:
+def product_config(
+    root: Path,
+    base_url: str,
+    *,
+    project: str = "core",
+    live_model: dict | None = None,
+    datasources: dict | None = None,
+) -> AgentConfig:
     """An independent business oracle: orders total 350, East 150, West 200."""
     root.mkdir(parents=True, exist_ok=True)
     workspace = root / "workspace"
@@ -180,7 +233,11 @@ def product_config(root: Path, base_url: str, *, project: str = "core", live_mod
                 "max_tokens": 2048,
             }
         },
-        services={"datasources": {"sales": {"type": "sqlite", "uri": str(database), "default": True}}},
+        services={
+            "datasources": datasources
+            if datasources is not None
+            else {"sales": {"type": "sqlite", "uri": str(database), "default": True}}
+        },
         agentic_nodes={
             "chat": {"system_prompt": "chat", "max_turns": 12},
             "gen_sql": {"system_prompt": "gen_sql", "tools": "db_tools.*", "max_turns": 12},

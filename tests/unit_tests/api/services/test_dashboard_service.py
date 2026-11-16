@@ -924,4 +924,5 @@ async def test_sql_dashboard_legacy_default_and_saved_context_use_the_actual_dat
         assert result.data.rows == [{"region": "APAC", "amount": 25 if saved_context is None else 999}]
         assert result.data.execution_context["database"] == ("configured" if saved_context is None else "selected")
     finally:
+        tool.close()
         manager.close()

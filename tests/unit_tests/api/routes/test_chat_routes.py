@@ -47,6 +47,7 @@ def _mock_svc(task=None):
     """Build a mock DatusService with task_manager."""
     svc = MagicMock()
     svc.task_manager.get_task.return_value = task
+    svc.task_manager._max_completed_bytes = None
     return svc
 
 
@@ -932,7 +933,9 @@ async def test_resume_stream_is_scoped_to_the_task_owner(user, status):
     manager._completed_tasks[task.session_id] = task
     app = FastAPI()
     app.include_router(router)
-    app.dependency_overrides[get_datus_service] = lambda: SimpleNamespace(task_manager=manager)
+    app.dependency_overrides[get_datus_service] = lambda: SimpleNamespace(
+        task_manager=manager, acquire_request=lambda **kwargs: True, release_request=lambda: None
+    )
 
     def context(request: Request):
         return SimpleNamespace(user_id=request.headers["x-user"])

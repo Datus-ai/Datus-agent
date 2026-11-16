@@ -4,10 +4,12 @@ Consolidates all agent services (chat, cli, database, explorer, mcp, kb)
 and a project-scoped ChatTaskManager into a single cached instance.
 """
 
+import asyncio
 import dataclasses
 import hashlib
 import json
 from typing import TYPE_CHECKING, Any, Dict, Optional
+from weakref import WeakSet
 
 from datus.configuration.agent_config import AgentConfig
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -101,6 +103,12 @@ class DatusService:
         self._success_story = None
         self._dashboard = None
         self._report = None
+        self._generations = WeakSet([self])
+        self._request_count = 0
+        self._requests_drained = asyncio.Event()
+        self._requests_drained.set()
+        self._closing = False
+        self._shutdown_task = None
 
     # ------------------------------------------------------------------
     # Read-only properties
@@ -147,8 +155,23 @@ class DatusService:
         return self._task_manager
 
     def has_active_tasks(self) -> bool:
-        """Return True if any chat task is still running."""
-        return self._task_manager.has_active_tasks()
+        """Include non-chat requests when deciding whether eviction is safe."""
+        return (
+            any(generation._request_count > 0 for generation in self._generations)
+            or self._task_manager.has_active_tasks()
+        )
+
+    def acquire_request(self, *, allow_closing: bool = False) -> bool:
+        if self._closing and not (allow_closing and self._request_count > 0):
+            return False
+        self._request_count += 1
+        self._requests_drained.clear()
+        return True
+
+    def release_request(self) -> None:
+        self._request_count -= 1
+        if self._request_count == 0:
+            self._requests_drained.set()
 
     def with_config(self, agent_config: AgentConfig) -> "DatusService":
         """Build a fresh config facade without replacing the project's tasks.
@@ -158,11 +181,14 @@ class DatusService:
         lazy sub-services, while every generation uses the same task registry.
         Only the cached generation owns shutdown of that shared manager.
         """
-        return DatusService(
+        refreshed = DatusService(
             agent_config=agent_config,
             project_id=self._project_id,
             task_manager=self._task_manager,
         )
+        refreshed._generations = self._generations
+        self._generations.add(refreshed)
+        return refreshed
 
     # ------------------------------------------------------------------
     # Lazy service properties
@@ -322,9 +348,39 @@ class DatusService:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def shutdown(self):
-        """Shutdown all sub-services. Called when evicted from cache."""
+    async def shutdown(self, *, shutdown_tasks: bool = True):
+        """Release owned resources once, after request users have drained."""
+        if self._shutdown_task is None:
+            self._closing = True
+            self._shutdown_task = asyncio.create_task(self._shutdown(shutdown_tasks))
+        await asyncio.shield(self._shutdown_task)
+
+    async def _shutdown(self, shutdown_tasks):
+        # Producers must stop before waiting for the SSE consumers they feed.
         try:
-            await self._task_manager.shutdown()
+            if shutdown_tasks:
+                await self._task_manager.shutdown()
         except Exception:
             logger.exception(f"Error shutting down task_manager for project {self._project_id}")
+        generations = list(self._generations) if shutdown_tasks else [self]
+        await asyncio.gather(*(generation._requests_drained.wait() for generation in generations))
+        for service in (self._cli, self._datasource):
+            if service is not None:
+                try:
+                    await asyncio.to_thread(service.close)
+                except Exception:
+                    logger.exception("Error releasing owned database resources for %s", self._project_id)
+        self._explorers.clear()
+        self._tools.clear()
+        for slot in (
+            "_chat",
+            "_cli",
+            "_datasource",
+            "_mcp",
+            "_kb",
+            "_visualization",
+            "_success_story",
+            "_dashboard",
+            "_report",
+        ):
+            setattr(self, slot, None)
