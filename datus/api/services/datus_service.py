@@ -248,9 +248,10 @@ class DatusService:
 
             source = resolve_datasource(self._agent_config, datasource_id=datasource_id)
             if sub_agent_name:
-                scope = self._agent_config.sub_agent_config(sub_agent_name).get("scoped_context") or {}
-                bound = scope.get("datasource")
-                if bound and resolve_datasource(self._agent_config, datasource=bound) != source:
+                from datus.api.services.chat_task_manager import _subagent_datasource
+
+                bound = _subagent_datasource(self._agent_config, sub_agent_name)
+                if bound and bound != source:
                     raise DatusException(
                         ErrorCode.COMMON_VALIDATION_FAILED, message="Datasource does not match the Subagent binding"
                     )

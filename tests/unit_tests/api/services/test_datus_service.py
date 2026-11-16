@@ -387,3 +387,37 @@ def test_host_manager_factory_owns_chat_from_construction(real_agent_config):
     factory.assert_called_once_with(default_source="web", default_interactive=False, stream_thinking=True)
     assert service.task_manager is manager
     assert service.chat._task_manager is manager
+
+
+@pytest.mark.parametrize("primary", ["renamed", "sales"])
+@pytest.mark.parametrize("binding", ["stable_id", "legacy_alias", "ambiguous_legacy_name"])
+@pytest.mark.parametrize("requested_id", ["id-a", "id-b"])
+def test_explorer_binding_preserves_ids_when_a_legacy_name_is_reused(real_agent_config, primary, binding, requested_id):
+    import copy
+
+    source_a = copy.deepcopy(real_agent_config.current_db_config())
+    source_a.datasource_id, source_a.datasource_aliases = "id-a", ["sales"]
+    source_b = copy.deepcopy(source_a)
+    source_b.datasource_id, source_b.datasource_aliases = "id-b", ["old_b"]
+    real_agent_config.services.datasources = {"renamed": source_a, "sales": source_b}
+    real_agent_config.current_datasource = primary
+    scope = {
+        "stable_id": {"datasource_id": "id-b"},
+        "legacy_alias": {"datasource": "old_b"},
+        "ambiguous_legacy_name": {"datasource": "sales"},
+    }[binding]
+    real_agent_config.agentic_nodes["analyst"] = {"scoped_context": copy.deepcopy(scope)}
+    service = DatusService(agent_config=real_agent_config, project_id="project")
+
+    if requested_id != "id-b" or binding == "ambiguous_legacy_name":
+        with pytest.raises(DatusException):
+            service.explorer_for("analyst", datasource_id=requested_id)
+        assert service._explorers == {}
+        return
+
+    explorer = service.explorer_for("analyst", datasource_id=requested_id)
+    assert explorer.agent_config.current_datasource == "sales"
+    assert explorer.agent_config.current_db_config().datasource_id == "id-b"
+    assert explorer.sub_agent_name == explorer.metric_rag.sub_agent_name == "analyst"
+    assert real_agent_config.current_datasource == primary
+    assert real_agent_config.agentic_nodes["analyst"]["scoped_context"] == scope
