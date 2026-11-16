@@ -98,6 +98,15 @@ def test_runtime_setter_does_not_overwrite_an_explicit_camel_case_id(tmp_path):
     assert cfg.runtime_db_context()["datasource"] == "renamed"
 
 
+def test_unknown_display_label_cannot_acquire_the_primary_identity():
+    from datus.configuration.datasource_reference import configured_datasource_id
+
+    cfg = config()
+    cfg.current_db_config = lambda _: cfg.services.datasources["renamed"]
+    assert configured_datasource_id(cfg, "old") is None
+    assert configured_datasource_id(cfg, "renamed") == "ds-stable"
+
+
 def test_frozen_subagent_id_scopes_resolve_only_on_a_runtime_copy():
     from datus.configuration.datasource_reference import resolve_subagent_config
 

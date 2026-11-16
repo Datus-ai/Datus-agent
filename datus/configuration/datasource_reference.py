@@ -67,6 +67,14 @@ def resolve_execution_context(config: Any, values: Mapping[str, Any]) -> dict[st
 
 def configured_datasource_id(config: Any, name: str) -> Optional[str]:
     """Only hosts supplying a concrete ID opt into ID-bearing persistence."""
+    sources = getattr(getattr(config, "services", None), "datasources", None)
+    if isinstance(sources, dict):
+        # current_db_config also accepts physical database names and may return
+        # the primary config for an unknown key. Never use that fallback to
+        # assign an identity to a stale artifact label.
+        entry = sources.get(name)
+        value = getattr(entry, "datasource_id", None)
+        return value if isinstance(value, str) and value else None
     getter = getattr(config, "current_db_config", None)
     if not callable(getter):
         return None

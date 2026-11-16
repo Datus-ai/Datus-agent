@@ -2710,6 +2710,21 @@ class TestDBFuncToolExecuteReadEnforced:
         assert result.success is True
         assert connector.execute_query.call_args[0][0] == "SELECT 1 AS n LIMIT 100"
 
+    def test_policy_receives_resolved_connector_source_instead_of_saved_label(self):
+        connector = self._connector()
+        tool = self._make_tool(connector)
+        tool._track_connector(connector, "renamed")
+        runtime = Mock()
+        runtime.before_sql_read.return_value = SimpleNamespace(allowed=True, sql=None, applied_policies=[])
+        runtime.after_read_result.side_effect = lambda result, **kwargs: SimpleNamespace(
+            allowed=True, result=result, applied_policies=[]
+        )
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
+            result = tool.execute_read_enforced("SELECT 1 AS n", connector, datasource="old")
+        assert result.sql_return == [{"n": 1}]
+        assert runtime.before_sql_read.call_args.kwargs["datasource"] == "renamed"
+        assert runtime.after_read_result.call_args.kwargs["datasource"] == "renamed"
+
     def test_policy_denial_surfaces_as_failure_without_executing(self):
         connector = self._connector()
         tool = self._make_tool(connector)
@@ -4340,6 +4355,39 @@ def test_single_connector_cannot_ignore_an_unbound_explicit_id(restore):
             tool.connector_for_execution_context({"datasource_id": "unbound", "datasource": "renamed"})
         else:
             tool.connector_for_datasource_default("renamed", datasource_id="unbound")
+
+
+def test_replayed_secondary_source_context_never_acquires_the_primary_id(tmp_path):
+    import sqlite3
+
+    sources = {}
+    for name, identity in [("primary", "primary-id"), ("renamed", "secondary-id")]:
+        file = tmp_path / f"{name}.db"
+        with sqlite3.connect(file) as connection:
+            connection.execute("CREATE TABLE marker (value TEXT)")
+            connection.execute("INSERT INTO marker VALUES (?)", (identity,))
+        sources[name] = DbConfig(datasource_id=identity, type="sqlite", uri=f"sqlite:///{file}")
+    cfg = SimpleNamespace(
+        current_datasource="primary",
+        services=SimpleNamespace(datasources=sources),
+        current_db_config=lambda name: sources.get(name, sources["primary"]),
+    )
+    tool = DBFuncTool.__new__(DBFuncTool)
+    tool.agent_config = cfg
+    tool._db_manager = DBManager(sources)
+    tool._tables_by_datasource = None
+    try:
+        connector = tool.connector_for_execution_context(
+            {"datasource_id": "secondary-id", "datasource": "old", "database": "renamed"}
+        )
+        assert connector.execute_query("SELECT value FROM marker", result_format="list").sql_return == [
+            {"value": "secondary-id"}
+        ]
+        context = tool.execution_context(connector, "old")
+        assert context["datasource_id"] == "secondary-id"
+        assert context["datasource"] == "renamed"
+    finally:
+        tool._db_manager.close()
 
 
 def test_adapter_receives_connection_parameters_without_identity_metadata():

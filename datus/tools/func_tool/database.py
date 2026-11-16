@@ -651,6 +651,7 @@ class DBFuncTool(BulkQueryTools):
         from datus.configuration.datasource_reference import configured_datasource_id
         from datus.schemas.database_context import DatabaseExecutionContext
 
+        datasource = self._datasource_for_connector(connector, datasource)
         return DatabaseExecutionContext.from_mapping(
             {
                 "datasource": datasource or getattr(self, "_default_datasource", ""),
@@ -691,6 +692,14 @@ class DBFuncTool(BulkQueryTools):
             self._connector_datasources = {}
         self._connector_datasources[id(connector)] = datasource
         return connector
+
+    def _datasource_for_connector(self, connector: BaseSqlConnector, datasource: Optional[str] = "") -> str:
+        """Use the resolved connector owner before a persisted display label."""
+        return (
+            getattr(self, "_connector_datasources", {}).get(id(connector))
+            or datasource
+            or getattr(self, "_default_datasource", "")
+        )
 
     def _patterns_for_connector(self, connector: Optional[BaseSqlConnector] = None) -> List[ScopedTablePattern]:
         """Resolve table patterns for the routed source, rejecting empty grouped scopes."""
@@ -3231,7 +3240,7 @@ class DBFuncTool(BulkQueryTools):
         validation_error, _ = self._validate_read_sql(sql, connector)
         if validation_error:
             return ExecuteSQLResult(success=False, error=validation_error.error, sql_query=sql)
-        effective_datasource = self._resolve_effective_datasource(datasource)
+        effective_datasource = self._resolve_effective_datasource(self._datasource_for_connector(connector, datasource))
         effective_policy_context = self.policy_context if policy_context is None else policy_context
         try:
             from datus.tools.policy_runtime import PolicyRuntime
