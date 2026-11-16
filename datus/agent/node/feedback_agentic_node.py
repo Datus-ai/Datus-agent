@@ -228,9 +228,9 @@ class FeedbackAgenticNode(AgenticNode):
 
         tokens_used = 0
         if self.execution_mode == "interactive":
-            tokens_used = self._extract_total_tokens(ctx.action_history_manager.get_actions())
+            tokens_used = self._extract_total_tokens(ctx.get_run_actions())
 
-        current_actions = ctx.action_history_manager.get_actions()
+        current_actions = ctx.get_run_actions()
         items_saved, storage_summary = self._extract_storage_info(current_actions)
 
         return FeedbackNodeResult(

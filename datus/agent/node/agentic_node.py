@@ -3699,7 +3699,9 @@ class AgenticNode(Node):
 
         Args:
             action_history_manager: Optional action history manager. A fresh
-                one is created when omitted.
+                one is created when omitted. A shared manager retains the
+                session history; result snapshots include only this invocation,
+                including all internal retry attempts.
 
         Yields:
             ActionHistory: Progress updates during execution.
@@ -3717,6 +3719,7 @@ class AgenticNode(Node):
         ctx = StreamRunContext(
             user_input=self.input,
             action_history_manager=ahm,
+            action_start=ahm.checkpoint(),
             # Tolerate test doubles that bypass ``AgenticNode.__init__``
             # and therefore don't have ``pending_input_queue`` set.
             pending_input_queue=getattr(self, "pending_input_queue", None),
@@ -3806,7 +3809,7 @@ class AgenticNode(Node):
 
             result = self._build_success_result(ctx)
             self.result = result
-            self.actions.extend(ahm.get_actions())
+            self._remember_run_actions(ctx)
 
             # Optional post-build streaming hook. Visual-artifact subagents
             # override this to interleave finalize-progress messages around
@@ -3867,7 +3870,7 @@ class AgenticNode(Node):
             # node so cross-turn helpers (``_count_session_tokens``,
             # ``get_last_turn_usage``) don't keep reading stale state after
             # a failed attempt.
-            self.actions.extend(ahm.get_actions())
+            self._remember_run_actions(ctx)
             yield error_action
         finally:
             # Drop the in-flight running snapshot once the turn ends so the
@@ -3889,6 +3892,14 @@ class AgenticNode(Node):
                             sm.clear_running_turn_usage(session_id)
                 except Exception:  # noqa: BLE001
                     logger.debug("Failed to drop running_turn_usage on turn end", exc_info=True)
+
+    def _remember_run_actions(self, ctx: "StreamRunContext") -> None:
+        """Append new run actions once, preserving cross-turn helper history."""
+        seen = {action.action_id for action in self.actions}
+        for action in ctx.get_run_actions():
+            if action.action_id not in seen:
+                self.actions.append(action)
+                seen.add(action.action_id)
 
     async def _stream_once(self, ctx: "StreamRunContext") -> AsyncGenerator[ActionHistory, None]:
         """Run the model once and yield every action while collecting state.
@@ -4130,7 +4141,7 @@ class AgenticNode(Node):
             kwargs["response"] = strip_litellm_placeholder(exc.partial_response)
             kwargs["tokens_used"] = exc.usage.total_tokens
         if "action_history" in getattr(self.result_class, "model_fields", {}):
-            kwargs["action_history"] = [a.model_dump() for a in ctx.action_history_manager.get_actions()]
+            kwargs["action_history"] = [a.model_dump() for a in ctx.get_run_actions()]
         return self.result_class(**kwargs)
 
     def _get_or_create_broker(self) -> "InteractionBroker":

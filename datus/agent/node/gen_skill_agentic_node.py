@@ -306,7 +306,7 @@ class SkillCreatorAgenticNode(AgenticNode):
             skill_name = ctx.last_successful_output.get("skill_name")
             skill_path = ctx.last_successful_output.get("skill_path")
 
-        all_actions = ctx.action_history_manager.get_actions()
+        all_actions = ctx.get_run_actions()
         tool_calls = [a for a in all_actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
         tokens_used = self._extract_total_tokens(all_actions)
 

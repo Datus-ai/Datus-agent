@@ -536,7 +536,7 @@ class AskMetricsAgenticNode(AgenticNode):
                 or str(ctx.last_successful_output)
             )
 
-        all_actions = ctx.action_history_manager.get_actions()
+        all_actions = ctx.get_run_actions()
         tokens_used = self._extract_total_tokens(all_actions)
         tool_calls = [a for a in all_actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
         if not isinstance(response_content, str):
@@ -645,6 +645,7 @@ class AskMetricsAgenticNode(AgenticNode):
         actions = getattr(self.result, "action_history", None) or []
         require_selection = getattr(self, "require_final_result_selection", False)
         require_selection = require_selection if isinstance(require_selection, bool) else False
+        cached_result = None
 
         if require_selection:
             selected_result_id = self._selected_final_result_id_from_actions(actions)
@@ -655,18 +656,27 @@ class AskMetricsAgenticNode(AgenticNode):
                 return {"success": False, "message": "final query_metrics result was not selected"}
             action = self._select_query_metrics_action_by_result_id(actions, selected_result_id)
             if not action:
-                logger.warning("Selected query_metrics result_id was not found: %s", selected_result_id)
-                return {"success": False, "message": f"selected query_metrics result not found: {selected_result_id}"}
+                # A selected result can belong to an earlier invocation. Keep
+                # its trace out of this result and recheck cache authorization.
+                if self.semantic_tools and hasattr(self.semantic_tools, "get_cached_query_metrics_result"):
+                    cached_result = self.semantic_tools.get_cached_query_metrics_result(selected_result_id)
+                if not isinstance(cached_result, dict) or not cached_result.get("csv"):
+                    logger.warning("Selected query_metrics result_id was not found: %s", selected_result_id)
+                    return {
+                        "success": False,
+                        "message": f"selected query_metrics result not found: {selected_result_id}",
+                    }
         else:
             action = self._select_last_query_metrics_action(actions)
 
         parsed = parse_query_result_text(self._query_result_payload(action)) if action else None
-        if parsed is not None and parsed.columns:
+        if (parsed is not None and parsed.columns) or cached_result is not None:
             # The full result the text previews; the preview itself only when
             # the cache no longer holds it.
-            cached_result = None
             if (
-                parsed.result_id
+                cached_result is None
+                and parsed is not None
+                and parsed.result_id
                 and self.semantic_tools
                 and hasattr(self.semantic_tools, "get_cached_query_metrics_result")
             ):
@@ -677,19 +687,21 @@ class AskMetricsAgenticNode(AgenticNode):
             sql_query = ""
             if isinstance(cached_result, dict) and cached_result.get("csv"):
                 sql_return = cached_result["csv"]
-                row_count = cached_result.get("row_count", parsed.row_count)
+                row_count = cached_result.get("row_count", parsed.row_count if parsed is not None else 0)
+                column_count = len(cached_result.get("columns") or []) if parsed is None else len(parsed.columns)
                 # The result text leaves the compiled SQL out; the cache keeps it.
                 sql_query = str((cached_result.get("metadata") or {}).get("sql") or "")
             else:
                 sql_return = parsed.csv
                 row_count = parsed.row_count
+                column_count = len(parsed.columns)
 
             from datus.schemas.node_models import SQLContext
 
             workflow.context.sql_contexts.append(
                 SQLContext(sql_query=sql_query, sql_return=sql_return, row_count=row_count)
             )
-            logger.info("Captured query_metrics result: %d columns, %d rows", len(parsed.columns), row_count)
+            logger.info("Captured query_metrics result: %d columns, %d rows", column_count, row_count)
             return {"success": True, "message": "query_metrics result captured"}
 
         return super().update_context(workflow)

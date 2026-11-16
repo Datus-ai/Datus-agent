@@ -219,7 +219,7 @@ class CompareAgenticNode(AgenticNode):
             response_content = ctx.last_successful_output.get("raw_output", "")
 
         result_dict = self._parse_comparison_output(response_content)
-        tokens_used = self._extract_total_tokens(ctx.action_history_manager.get_actions())
+        tokens_used = self._extract_total_tokens(ctx.get_run_actions())
         return CompareResult(
             success=True,
             explanation=result_dict.get("explanation", "No explanation provided"),

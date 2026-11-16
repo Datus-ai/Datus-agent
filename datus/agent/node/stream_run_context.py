@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from agents.extensions.memory import AdvancedSQLiteSession
 
     from datus.cli.execution_state import PendingInputQueue
-    from datus.schemas.action_history import ActionHistoryManager
+    from datus.schemas.action_history import ActionHistory, ActionHistoryManager
     from datus.schemas.base import BaseInput
 
 
@@ -76,3 +76,11 @@ class StreamRunContext:
     # ``_stream_once`` and handed to the model layer so the context can be
     # rewritten before each model call.
     context_rewriter: Optional[Any] = None
+
+    # Captured before the initial USER action; includes every internal retry
+    # while excluding prior execute_stream calls on the same manager.
+    action_start: int = 0
+
+    def get_run_actions(self) -> list["ActionHistory"]:
+        """Return this invocation's actions without discarding session history."""
+        return self.action_history_manager.get_actions_since(self.action_start)

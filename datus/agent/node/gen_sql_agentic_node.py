@@ -683,12 +683,12 @@ class GenSQLAgenticNode(AgenticNode):
         return None
 
     def _build_success_result(self, ctx: StreamRunContext) -> GenSQLNodeResult:
-        # GenSQL's parsing scans the full action history (not just the last
+        # GenSQL's parsing scans this run's action history (not just the last
         # assistant action) so it can recover SQL stashed in summary_report
         # actions when the assistant returned a markdown overview instead.
-        response_content, sql_content = self._collect_final_response(ctx.action_history_manager)
+        response_content, sql_content = self._collect_final_response(ctx.action_history_manager, start=ctx.action_start)
 
-        all_actions = ctx.action_history_manager.get_actions()
+        all_actions = ctx.get_run_actions()
         tokens_used = self._extract_total_tokens(all_actions)
         tool_calls = [
             action for action in all_actions if action.role == ActionRole.TOOL and action.status == ActionStatus.SUCCESS
@@ -820,6 +820,7 @@ class GenSQLAgenticNode(AgenticNode):
     def _collect_final_response(
         self,
         action_history_manager: ActionHistoryManager,
+        start: int = 0,
     ) -> tuple[str, Optional[str]]:
         """Collect final response text and SQL from accumulated action history.
 
@@ -830,7 +831,8 @@ class GenSQLAgenticNode(AgenticNode):
 
         response_content = ""
         last_successful_output = None
-        for stream_action in action_history_manager.get_actions():
+        actions = action_history_manager.get_actions_since(start)
+        for stream_action in actions:
             if (
                 stream_action.role == ActionRole.ASSISTANT
                 and stream_action.status == ActionStatus.SUCCESS
@@ -863,7 +865,7 @@ class GenSQLAgenticNode(AgenticNode):
                 response_content = str(last_successful_output)
 
         sql_content = None
-        for stream_action in reversed(action_history_manager.get_actions()):
+        for stream_action in reversed(actions):
             if stream_action.action_type == "summary_report" and stream_action.output:
                 if isinstance(stream_action.output, dict):
                     sql_content = stream_action.output.get("sql")

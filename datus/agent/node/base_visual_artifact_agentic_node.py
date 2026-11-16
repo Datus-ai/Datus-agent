@@ -714,12 +714,12 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         # One manager can span several runs (the backend's mid-run-insert
         # continuation loop reuses it), so record where this run starts:
         # classification below must not see a previous pass's actions.
-        ctx.extras["artifact_run_action_start"] = ctx.action_history_manager.checkpoint()
+        ctx.extras["artifact_run_action_start"] = len(ctx.get_run_actions())
         # Bind artifact tools for this run (regenerates artifact id every call).
         self._prepare_artifacts(ctx.user_input)
 
     def _build_success_result(self, ctx: "StreamRunContext") -> ResultT:
-        all_actions = ctx.action_history_manager.get_actions()
+        all_actions = ctx.get_run_actions()
         tool_calls = [a for a in all_actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
         tokens_used = self._extract_total_tokens(all_actions)
 
