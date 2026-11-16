@@ -285,3 +285,19 @@ def test_athena_connection_preserves_typed_identity_and_result_budgets(tmp_path)
     assert connection["aws"]["profile"] == "test"
     assert isinstance(connection["page_size"], int)
     assert isinstance(connection["query_timeout_seconds"], float)
+
+
+def test_multi_root_files_are_deduplicated_by_physical_file_not_relative_name(tmp_path):
+    from pathlib import Path
+
+    from datus.tools.semantic_tools.dosi.engine import resolve_model_files
+
+    primary, legacy = tmp_path / "id", tmp_path / "old"
+    primary.mkdir()
+    legacy.mkdir()
+    (primary / "shop.yml").write_text("name: current")
+    (legacy / "shop.yml").write_text("name: historical")
+    link = tmp_path / "alias"
+    link.symlink_to(primary, target_is_directory=True)
+    config = DosiConfig(semantic_models_path=str(primary), legacy_semantic_models_paths=[str(legacy), str(link)])
+    assert {Path(path).resolve() for path in resolve_model_files(config)} == {primary / "shop.yml", legacy / "shop.yml"}

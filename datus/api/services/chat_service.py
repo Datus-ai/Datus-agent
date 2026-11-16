@@ -712,7 +712,13 @@ class ChatService:
                         # History remains readable even after a source is unbound.
                         pass
             return Result[ChatHistoryData](
-                success=True, data=ChatHistoryData(messages=sse_messages, execution_context=context)
+                success=True,
+                data=ChatHistoryData(
+                    messages=sse_messages,
+                    execution_context=(
+                        DatabaseExecutionContext.from_mapping(context).transport_dict() if context is not None else None
+                    ),
+                ),
             )
 
         except Exception as e:

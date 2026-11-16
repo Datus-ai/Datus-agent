@@ -54,7 +54,9 @@ class KbService:
         mutating the shared config, which is cached per project and read
         concurrently by every other request.
         """
-        requested = (getattr(request, "datasource", None) or "").strip()
+        from datus.configuration.datasource_reference import resolve_datasource
+
+        requested = resolve_datasource(self.agent_config, datasource_id=request.datasource_id)
         if not requested or requested == self.agent_config.current_datasource:
             return self.agent_config
 

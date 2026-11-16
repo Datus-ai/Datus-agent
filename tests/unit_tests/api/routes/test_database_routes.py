@@ -29,7 +29,20 @@ def _make_svc(
     current_datasource: str = "default_ds",
 ) -> MagicMock:
     svc = MagicMock()
+    from types import SimpleNamespace
+
+    from datus.configuration.agent_config import DbConfig
+
     svc.datasource.current_datasource = current_datasource
+    svc.agent_config = SimpleNamespace(
+        current_datasource=current_datasource,
+        services=SimpleNamespace(
+            datasources={
+                current_datasource: DbConfig(),
+                "explicit_ds": DbConfig(),
+            }
+        ),
+    )
     if list_databases_return is not None:
         svc.datasource.list_databases.return_value = list_databases_return
     return svc
@@ -44,7 +57,7 @@ async def _timeout_wait_for(awaitable, timeout):
 
 async def _call(
     svc: MagicMock,
-    datasource_id: str = "",
+    datasource_id: Optional[str] = None,
     catalog_name: Optional[str] = None,
     database_name: str = "",
     schema_name: str = "",
@@ -149,11 +162,11 @@ class TestListCatalogs:
         )
         svc = _make_svc(list_databases_return=list_result, current_datasource="my_ds")
 
-        await _call(svc, datasource_id="")
+        await _call(svc)
 
         call_arg = svc.datasource.list_databases.call_args[0][0]
         assert isinstance(call_arg, ListDatabasesInput)
-        assert call_arg.datasource_id == "my_ds"
+        assert call_arg.datasource_name == "my_ds"
 
     @pytest.mark.asyncio
     async def test_uses_explicit_datasource_id_when_provided(self):
@@ -167,7 +180,7 @@ class TestListCatalogs:
 
         call_arg = svc.datasource.list_databases.call_args[0][0]
         assert isinstance(call_arg, ListDatabasesInput)
-        assert call_arg.datasource_id == "explicit_ds"
+        assert call_arg.datasource_name == "explicit_ds"
 
     @pytest.mark.asyncio
     async def test_multiple_databases_all_returned(self):
@@ -184,3 +197,38 @@ class TestListCatalogs:
         assert len(result.data.databases) == 3
         assert result.data.databases[0].name == "db_0"
         assert result.data.databases[2].name == "db_2"
+
+
+@pytest.mark.asyncio
+async def test_catalog_identity_is_authoritative_and_unknown_ids_are_http_400():
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from datus.configuration.agent_config import DbConfig
+
+    svc = _make_svc(Result(success=True, data=ListDatabasesData(databases=[], total_count=0)))
+    svc.agent_config = SimpleNamespace(
+        current_datasource="primary",
+        services=SimpleNamespace(
+            datasources={
+                "primary": DbConfig(datasource_id="id-a"),
+                "renamed": DbConfig(datasource_id="id-b"),
+            }
+        ),
+    )
+    await list_catalogs(
+        svc,
+        datasource_id="id-b",
+        catalog_name="",
+        database_name="",
+        schema_name="",
+        include_sys_schemas=False,
+    )
+    assert svc.datasource.list_databases.call_args.args[0].datasource_name == "renamed"
+    svc.datasource.list_databases.reset_mock()
+    with pytest.raises(HTTPException) as exc:
+        await list_catalogs(svc, datasource_id="missing")
+    assert exc.value.status_code == 400 and "missing" in exc.value.detail
+    assert exc.value.__cause__ is not None
+    svc.datasource.list_databases.assert_not_called()

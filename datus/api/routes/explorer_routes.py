@@ -130,7 +130,9 @@ async def get_metric_dimensions(
     sub_agent: SubAgentDep,
 ) -> Result[MetricDimensionsData]:
     """List a metric's queryable dimensions."""
-    return await svc.explorer_for(sub_agent).get_metric_dimensions(request)
+    return await svc.explorer_for(
+        sub_agent, **({"datasource_id": request.datasource_id} if request.datasource_id is not None else {})
+    ).get_metric_dimensions(request)
 
 
 @router.post(
@@ -149,7 +151,9 @@ async def preview_metric(
     # The compiled SQL is handed straight to the result panel, which runs it —
     # so a metric row policy has to narrow it here, while the datasets it
     # matches on are still known. Nothing downstream can put it back.
-    return await svc.explorer_for(sub_agent).preview_metric(request, policy_context=ctx.policy_context)
+    return await svc.explorer_for(
+        sub_agent, **({"datasource_id": request.datasource_id} if request.datasource_id is not None else {})
+    ).preview_metric(request, policy_context=ctx.policy_context)
 
 
 @router.post(

@@ -3,7 +3,7 @@
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 # ========== Catalog Models ==========
 
@@ -140,6 +140,9 @@ class EditMetricInput(BaseModel):
 class MetricPreviewInput(BaseModel):
     """Preview a saved metric by compiling it to SQL (dry-run)."""
 
+    datasource_id: Optional[str] = Field(
+        None, min_length=1, validation_alias=AliasChoices("datasourceId", "datasource_id")
+    )
     subject_path: List[str] = Field(..., description="Path to the saved metric; the leaf is the metric name")
     catalog: Optional[str] = Field(None, description="Current catalog context")
     database: Optional[str] = Field(None, description="Current database context")
@@ -265,6 +268,9 @@ class ReferenceSQLInput(ReferenceSQLInfo):
 class SubjectPathInput(BaseModel):
     """Subject path input."""
 
+    datasource_id: Optional[str] = Field(
+        None, min_length=1, validation_alias=AliasChoices("datasourceId", "datasource_id")
+    )
     subject_path: List[str] = Field(..., description="Subject path name")
     catalog: Optional[str] = Field(None, description="Current catalog context")
     database: Optional[str] = Field(None, description="Current database context")

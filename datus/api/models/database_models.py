@@ -13,7 +13,7 @@ class DatabaseInfo(BaseModel):
     # Which configured datasource this database came from. A project can bind
     # several, and a client rendering them in one tree cannot address a table
     # without knowing which connection profile to reach it through.
-    datasource: str = Field("", description="Name of the datasource (connection profile) serving this database")
+    datasource_name: str = Field("", description="Name of the datasource (connection profile) serving this database")
     uri: str = Field(..., description="Database connection URI")
     type: str = Field(..., description="Database type (sqlite, duckdb, postgresql, etc.)")
     current: bool = Field(..., description="Whether this is the current database")
@@ -31,7 +31,7 @@ class DatabaseInfo(BaseModel):
 class ListDatabasesInput(BaseModel):
     """Input model for listing databases."""
 
-    datasource_id: str = Field(
+    datasource_name: str = Field(
         "", description="Name of the datasource to list databases from; empty means the current one"
     )
     catalog_name: Optional[str] = Field(None, description="Catalog name")

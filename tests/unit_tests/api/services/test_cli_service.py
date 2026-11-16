@@ -164,7 +164,7 @@ class TestCLIServiceExecuteSQL:
         """Naming the current datasource is the same as omitting it."""
         request = ExecuteSQLInput(
             sql_query="SELECT COUNT(*) FROM schools",
-            datasource=real_agent_config.current_datasource,
+            datasource_id=real_agent_config.current_datasource,
         )
         result = await cli_svc.execute_sql(request)
         assert result.success is True
@@ -176,7 +176,7 @@ class TestCLIServiceExecuteSQL:
         Running it on the project's default instead would answer the editor tab
         with plausible rows from the wrong warehouse.
         """
-        request = ExecuteSQLInput(sql_query="SELECT 1", datasource="not_bound")
+        request = ExecuteSQLInput(sql_query="SELECT 1", datasource_id="not_bound")
         result = await cli_svc.execute_sql(request)
         assert result.success is False
         assert "not_bound" in result.errorMessage
@@ -228,7 +228,7 @@ class TestCLIServiceExecuteSQL:
             "first_conn_with_name",
             side_effect=DatusException(ErrorCode.COMMON_UNSUPPORTED, message_args={}),
         ):
-            result = await cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT 1", datasource="broken"))
+            result = await cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT 1", datasource_id="broken"))
 
         assert result.success is False
         assert result.errorCode == ApiErrorCode.DATABASE_CONNECTION_ERROR

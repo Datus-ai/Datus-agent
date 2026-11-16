@@ -378,3 +378,32 @@ def test_a_sync_that_lands_while_waiting_for_the_lock_is_not_repeated(project, m
     _reconcile_with(agent_config, counting_sync)
 
     assert calls == [str(orders.resolve())]
+
+
+def test_reconcile_keeps_canonical_id_directory_and_skips_ambiguous_legacy_directory(tmp_path):
+    from types import SimpleNamespace
+
+    from datus.configuration.agent_config import DbConfig
+    from datus.storage.semantic_model.reconcile import SemanticReconcileResult, _files_to_sync
+
+    root = tmp_path / "subject" / "semantic_models"
+    files = {}
+    for directory in ["stable-a", "legacy-shared", "current-c"]:
+        path = root / directory / "model.yml"
+        path.parent.mkdir(parents=True)
+        path.write_text("name: model\ndatasets: []\n")
+        files[directory] = path
+    config = SimpleNamespace(
+        project_root=str(tmp_path),
+        services=SimpleNamespace(
+            datasources={
+                "a": DbConfig(datasource_id="stable-a", datasource_aliases=["legacy-shared"]),
+                "stable-a": DbConfig(datasource_id="stable-b", datasource_aliases=["legacy-shared"]),
+                "current-c": DbConfig(datasource_id="stable-c"),
+            }
+        ),
+    )
+    result = SemanticReconcileResult()
+    selected = _files_to_sync(config, root, [str(root)], list(config.services.datasources), result)
+    assert selected == {"a": [files["stable-a"]], "current-c": [files["current-c"]]}
+    assert result.failures == {}

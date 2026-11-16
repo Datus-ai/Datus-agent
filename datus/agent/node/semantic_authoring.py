@@ -39,10 +39,11 @@ def _osi_semantic_model_dir(agent_config: Any = None) -> Optional[Path]:
         return None
 
     datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
+    identity = datasource
     if agent_config is not None and hasattr(agent_config, "services"):
         from datus.configuration.datasource_reference import datasource_identity
 
-        datasource = datasource_identity(agent_config, datasource)
+        identity = datasource_identity(agent_config, datasource)
     path_manager = getattr(agent_config, "path_manager", None)
     semantic_model_path = getattr(path_manager, "semantic_model_path", None)
     if callable(semantic_model_path):
@@ -55,7 +56,7 @@ def _osi_semantic_model_dir(agent_config: Any = None) -> Optional[Path]:
     if not isinstance(project_root, (str, Path)):
         project_root = getattr(path_manager, "project_root", None)
     if project_root:
-        return Path(str(project_root)).expanduser() / "subject" / "semantic_models" / datasource
+        return Path(str(project_root)).expanduser() / "subject" / "semantic_models" / identity
     return None
 
 

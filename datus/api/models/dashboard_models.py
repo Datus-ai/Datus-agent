@@ -102,7 +102,7 @@ class SqlQueryResultEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     executed_at: str = Field(..., description="ISO 8601 UTC timestamp of the executing query")
-    datasource: str = Field(..., description="Logical datasource the query ran against")
+    datasource_id: Optional[str] = None
     execution_context: Optional[Dict[str, str]] = None
     source: Optional[Dict[str, Any]] = None
     row_count: int = Field(..., ge=0)

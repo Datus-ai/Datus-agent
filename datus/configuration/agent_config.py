@@ -29,6 +29,15 @@ if TYPE_CHECKING:
 # Regex for validating platform/identifier names (no special chars that break paths)
 _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
 
+
+def _normalize_datasource_aliases(value: Any) -> List[str]:
+    return (
+        [name for name in value if isinstance(name, str) and _SAFE_NAME_RE.fullmatch(name)]
+        if isinstance(value, list)
+        else []
+    )
+
+
 # Character class accepted by the backend-side ``_safe_path_segment`` validators
 # (datus.storage.rdb.sqlite_backend / datus.storage.vector.lance_backend).  Any
 # character outside this class in a CWD-derived project name would cause
@@ -334,11 +343,7 @@ class DbConfig:
                     extra_params[k] = _resolve_nested_value(v)
                 continue
             if k == "datasource_aliases":
-                params[k] = (
-                    [name for name in v if isinstance(name, str) and _SAFE_NAME_RE.fullmatch(name)]
-                    if isinstance(v, list)
-                    else []
-                )
+                params[k] = _normalize_datasource_aliases(v)
             elif not v:
                 params[k] = v
             else:
@@ -721,7 +726,7 @@ def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
         uri = f"{dialect}:///{os.path.expanduser(uri)}"
     return DbConfig(
         datasource_id=db_config.get("datasource_id", ""),
-        datasource_aliases=db_config.get("datasource_aliases", []),
+        datasource_aliases=_normalize_datasource_aliases(db_config.get("datasource_aliases")),
         type=dialect,
         uri=uri,
         database=db_name,
@@ -1475,8 +1480,8 @@ class AgentConfig:
                     )
                     if db_name in self.services.datasources:
                         self.services.datasources[db_name].datasource_id = db_config_dict.get("datasource_id", "")
-                        self.services.datasources[db_name].datasource_aliases = db_config_dict.get(
-                            "datasource_aliases", []
+                        self.services.datasources[db_name].datasource_aliases = _normalize_datasource_aliases(
+                            db_config_dict.get("datasource_aliases")
                         )
                 elif "uri" in db_config_dict:
                     db_config = _parse_single_file_db(db_config_dict, db_type)
@@ -1487,12 +1492,7 @@ class AgentConfig:
                 db_config.default = is_default
                 self.services.datasources[db_name] = db_config
 
-        self.path_manager.datasource_ids = {
-            name: cfg.datasource_id or name for name, cfg in self.services.datasources.items()
-        }
-        self.path_manager.datasource_aliases = {
-            name: cfg.datasource_aliases for name, cfg in self.services.datasources.items()
-        }
+        self._sync_path_manager_datasources()
 
     def _parse_glob_pattern(
         self, base_name: str, path_pattern: str, db_type: str, is_default: bool = False, default_database: str = ""
@@ -2342,10 +2342,22 @@ class AgentConfig:
             project_name=self._project_name,
             project_root=self._project_root,
         )
+        self._sync_path_manager_datasources()
+        set_current_path_manager(self.path_manager)
+
+    def _sync_path_manager_datasources(self) -> None:
         sources = getattr(getattr(self, "services", None), "datasources", {})
+        owners = {}
+        for name, cfg in sources.items():
+            identity = cfg.datasource_id or name
+            if identity in owners and owners[identity] != name:
+                raise DatusException(
+                    ErrorCode.COMMON_FIELD_INVALID,
+                    message=f"Datasource identity {identity!r} is shared by {owners[identity]!r} and {name!r}",
+                )
+            owners[identity] = name
         self.path_manager.datasource_ids = {name: cfg.datasource_id or name for name, cfg in sources.items()}
         self.path_manager.datasource_aliases = {name: cfg.datasource_aliases for name, cfg in sources.items()}
-        set_current_path_manager(self.path_manager)
 
     def _current_db_config(self) -> Dict[str, DbConfig]:
         """Backward-compat: returns all datasource configs."""

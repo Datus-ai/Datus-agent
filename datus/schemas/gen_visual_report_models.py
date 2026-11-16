@@ -71,11 +71,16 @@ class QueryResultFile(BaseModel):
     def _row_count_matches(self) -> "QueryResultFile":
         if self.datasource_id is not None and not self.datasource_id.strip():
             raise ValueError("datasource_id must not be empty")
-        if self.execution_context and self.datasource_id is not None:
+        if self.execution_context is not None and self.datasource_id is not None:
             nested_id = self.execution_context.get("datasource_id")
             if nested_id is not None and nested_id != self.datasource_id:
                 raise ValueError("query execution context must match its datasource ID")
-        if self.execution_context and self.execution_context.get("datasource") != self.datasource:
+        if (
+            self.execution_context
+            and not self.datasource_id
+            and self.execution_context.get("datasource") is not None
+            and self.execution_context.get("datasource") != self.datasource
+        ):
             raise ValueError("query execution context must match its datasource")
         if len(self.rows) != self.row_count:
             raise ValueError(f"row_count={self.row_count} does not match len(rows)={len(self.rows)}")

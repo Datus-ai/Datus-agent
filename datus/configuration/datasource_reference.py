@@ -51,7 +51,7 @@ def resolve_execution_context(config: Any, values: Mapping[str, Any]) -> dict[st
     name = resolve_datasource(
         config,
         datasource_id=values.get("datasource_id", values.get("datasourceId")),
-        datasource=values.get("datasource"),
+        datasource=values.get("datasource_name", values.get("datasourceName", values.get("datasource"))),
     )
     result["datasource"] = name
     sources = getattr(getattr(config, "services", None), "datasources", None)
@@ -72,6 +72,11 @@ def configured_datasource_id(config: Any, name: str) -> Optional[str]:
         # current_db_config also accepts physical database names and may return
         # the primary config for an unknown key. Never use that fallback to
         # assign an identity to a stale artifact label.
+        if name not in sources:
+            try:
+                name = resolve_datasource(config, datasource=name)
+            except DatusException:
+                return None
         entry = sources.get(name)
         value = getattr(entry, "datasource_id", None)
         return value if isinstance(value, str) and value else None

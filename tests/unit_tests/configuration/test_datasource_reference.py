@@ -122,3 +122,41 @@ def test_frozen_subagent_id_scopes_resolve_only_on_a_runtime_copy():
     resolved = resolve_subagent_config(cfg, node)
     assert resolved["scoped_context"] == {"datasource": "renamed", "tables_by_datasource": {"renamed": ["demo.orders"]}}
     assert json.dumps(node) == saved
+
+
+@pytest.mark.parametrize("aliases", [None, "old", 1, {"old": True}, ["old", "../bad", None, "中文", 12]])
+def test_file_and_server_aliases_use_the_same_safe_list_contract(tmp_path, aliases):
+    from datus.configuration.agent_config import _parse_single_file_db
+
+    expected = ["old"] if isinstance(aliases, list) else []
+    raw = {"type": "sqlite", "uri": str(tmp_path / "db.sqlite"), "datasource_aliases": aliases}
+    assert _parse_single_file_db(raw, "sqlite").datasource_aliases == expected
+    assert DbConfig.filter_kwargs(DbConfig, raw).datasource_aliases == expected
+    cfg = AgentConfig(nodes={}, home=str(tmp_path), skip_init_dirs=True)
+    cfg._init_services_config({"files": {**raw, "uri": str(tmp_path / "*.sqlite")}})
+    assert cfg.services.datasources["files"].datasource_aliases == expected
+
+
+@pytest.mark.parametrize(
+    "sources",
+    [
+        {"a": DbConfig(datasource_id="shared"), "b": DbConfig(datasource_id="shared")},
+        {"shared": DbConfig(), "b": DbConfig(datasource_id="shared")},
+    ],
+)
+def test_canonical_identity_collisions_fail_before_building_path_maps(tmp_path, sources):
+    cfg = AgentConfig(nodes={}, home=str(tmp_path), skip_init_dirs=True)
+    cfg.services.datasources = sources
+    with pytest.raises(DatusException, match="shared") as exc:
+        cfg._sync_path_manager_datasources()
+    assert all(name in str(exc.value) for name in sources)
+
+
+def test_configured_id_resolves_unique_alias_but_never_an_ambiguous_or_missing_name():
+    from datus.configuration.datasource_reference import configured_datasource_id
+
+    cfg = config({"renamed": DbConfig(datasource_id="stable", datasource_aliases=["old"])})
+    assert configured_datasource_id(cfg, "old") == "stable"
+    assert configured_datasource_id(cfg, "missing") is None
+    cfg.services.datasources["other"] = DbConfig(datasource_id="other-id", datasource_aliases=["old"])
+    assert configured_datasource_id(cfg, "old") is None

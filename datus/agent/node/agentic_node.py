@@ -3651,8 +3651,17 @@ class AgenticNode(Node):
             return
         try:
             previous = self.session_manager.load_session_meta(self.session_id, EXECUTION_CONTEXT_META_KEY)
-            if previous and DatabaseExecutionContext.from_mapping(json.loads(previous)).identity != context.identity:
-                self._previous_execution_context = previous
+            if previous:
+                from datus.configuration.datasource_reference import resolve_execution_context
+                from datus.utils.exceptions import DatusException
+
+                saved_context = json.loads(previous)
+                try:
+                    saved_context = resolve_execution_context(self.agent_config, saved_context)
+                except DatusException:
+                    pass
+                if DatabaseExecutionContext.from_mapping(saved_context).identity != context.identity:
+                    self._previous_execution_context = previous
             saved = json.dumps(context.to_dict(), sort_keys=True, separators=(",", ":"))
             self.session_manager.save_session_meta(self.session_id, EXECUTION_CONTEXT_META_KEY, saved)
             turn = self.session_manager.get_max_user_turn_number(self.session_id) + 1

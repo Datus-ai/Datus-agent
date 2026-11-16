@@ -237,9 +237,7 @@ class CLIService:
             try:
                 from datus.configuration.datasource_reference import resolve_datasource
 
-                target = resolve_datasource(
-                    self.agent_config, datasource_id=request.datasource_id, datasource=request.datasource
-                )
+                target = resolve_datasource(self.agent_config, datasource_id=request.datasource_id)
                 datasource, connector = self._execution_target(target)
             except DatusException as e:
                 return Result(

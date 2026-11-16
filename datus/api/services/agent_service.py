@@ -26,6 +26,7 @@ from datus.tools.func_tool.semantic_model_editing_tools import SemanticModelEdit
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.tools.func_tool.sub_agent_task_tool import BUILTIN_SUBAGENT_DESCRIPTIONS
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
+from datus.utils.exceptions import DatusException
 from datus.utils.loggings import get_logger
 from datus.utils.node_utils import validate_node_class
 
@@ -773,6 +774,19 @@ class AgentService:
             )
         return Result(success=True, data=SUBAGENT_TOOL_REFERENCE[agent_type])
 
+    @staticmethod
+    def _agent_binding_id(agent_config, agent):
+        from datus.configuration.datasource_reference import datasource_identity, resolve_datasource
+
+        scope = agent.get("scoped_context") or {}
+        try:
+            name = resolve_datasource(
+                agent_config, datasource_id=scope.get("datasource_id"), datasource=scope.get("datasource")
+            )
+            return datasource_identity(agent_config, name) if name else None
+        except DatusException:
+            return scope.get("datasource_id")
+
     async def get_agent(
         self,
         agent_id: str,
@@ -788,6 +802,7 @@ class AgentService:
                 data={
                     "agent": {
                         "id": agent_id,
+                        "datasource_id": self._agent_binding_id(agent_config, {}),
                         "name": agent_id,
                         "type": "builtin",
                         "description": BUILTIN_SUBAGENT_DESCRIPTIONS.get(agent_id, ""),
@@ -830,6 +845,7 @@ class AgentService:
             data={
                 "agent": {
                     "id": agent_id,
+                    "datasource_id": self._agent_binding_id(agent_config, agent),
                     "name": agent_id,
                     "type": agent_type,
                     "description": _read_description(agent),
@@ -961,28 +977,12 @@ class AgentService:
             "rules": request.rules or [],
             "created_at": _utc_now_iso(),
         }
-        # Bind the subagent to the active datasource (mirrors the wizard so
-        # ``SubAgentConfig.is_in_datasource`` can gate task delegation at runtime).
-        # ``request.datasource_id`` wins when set, then ``datasource_name``;
-        # otherwise fall back to the AgentConfig's current datasource.
-        #
-        # The two are the same thing here: a datasource is addressed by its
-        # namespace key in a standalone agent, and the SaaS-side ids the name
-        # form exists for do not reach this service. Honouring it matters
-        # anyway — silently ignoring a field the request set would bind the
-        # agent to a different warehouse than the caller asked for.
-        datasource = (
-            request.datasource_id
-            or (getattr(request, "datasource_name", None) or "")
-            or getattr(agent_config, "current_datasource", "")
-            or ""
-        )
-        if datasource and datasource not in getattr(agent_config, "datasource_configs", {}):
-            return Result(
-                success=False,
-                errorCode="INVALID_DATASOURCE",
-                errorMessage=f"Unknown datasource '{datasource}'",
-            )
+        from datus.configuration.datasource_reference import datasource_identity, resolve_datasource
+
+        try:
+            datasource = resolve_datasource(agent_config, datasource_id=request.datasource_id)
+        except DatusException as exc:
+            return Result(success=False, errorCode="INVALID_DATASOURCE", errorMessage=str(exc))
         subject_buckets = (
             _classify_subject_paths(
                 agent_config,
@@ -999,6 +999,7 @@ class AgentService:
             subject_buckets=subject_buckets,
         )
         if scoped_ctx:
+            scoped_ctx["datasource_id"] = datasource_identity(agent_config, datasource)
             agent_entry["scoped_context"] = scoped_ctx
         # ask_* agents carry their bound artifact's slug directly on the
         # agentic_nodes entry — the node reads it via ``self.node_config``
@@ -1127,9 +1128,9 @@ class AgentService:
         # because excluding it also hides it from ``scope_touched``: an edit
         # carrying only this field would then fall through to the no-op return
         # and report success without moving the binding.
-        datasource_name_input = request.datasource_name
+        datasource_id_input = request.datasource_id
         update_data = request.model_dump(
-            exclude={"id", "name", "channels", "datasource_name"},
+            exclude={"id", "name", "channels", "datasource_id"},
             exclude_none=True,
         )
         if "description" in update_data:
@@ -1155,7 +1156,7 @@ class AgentService:
         catalogs_input = update_data.pop("catalogs", None)
         subjects_input = update_data.pop("subjects", None)
         scope_touched = (
-            datasource_name_input is not None
+            datasource_id_input is not None
             or catalogs_input is not None
             or subjects_input is not None
             or "scoped_context" in update_data
@@ -1182,28 +1183,18 @@ class AgentService:
             # fall back to "no datasource → all metrics" and silently
             # mis-bucket subjects against a binding that's about to be
             # re-persisted by ``_build_scoped_context``.
-            # Request first, then the agent's own saved binding, then the
-            # active datasource. The saved one has to outrank the active one:
-            # ``EditAgentInput`` says an omitted ``datasource_name`` leaves the
-            # binding untouched, so an agent bound to B must not be silently
-            # rebound to A just because someone edited its catalogs while A was
-            # current.
-            datasource = (
-                (datasource_name_input or "")
-                or base_ctx.get("datasource")
-                or getattr(agent_config, "current_datasource", "")
-                or ""
-            )
+            from datus.configuration.datasource_reference import datasource_identity, resolve_datasource
 
-            # Only the explicit input is validated. A saved binding whose
-            # datasource has since left the config is historical data and falls
-            # through to the active one; a name the caller just typed should not.
-            if datasource_name_input and datasource_name_input not in getattr(agent_config, "datasource_configs", {}):
-                return Result(
-                    success=False,
-                    errorCode="INVALID_DATASOURCE",
-                    errorMessage=f"Unknown datasource '{datasource_name_input}'",
+            try:
+                datasource = resolve_datasource(
+                    agent_config,
+                    datasource_id=(
+                        datasource_id_input if datasource_id_input is not None else base_ctx.get("datasource_id")
+                    ),
+                    datasource=base_ctx.get("datasource"),
                 )
+            except DatusException as exc:
+                return Result(success=False, errorCode="INVALID_DATASOURCE", errorMessage=str(exc))
             subject_buckets = None
             if subjects_input is not None:
                 subject_buckets = _classify_subject_paths(
@@ -1218,6 +1209,7 @@ class AgentService:
                 subject_buckets=subject_buckets,
             )
             if merged:
+                merged["datasource_id"] = datasource_identity(agent_config, datasource)
                 update_data["scoped_context"] = merged
             elif agent.pop("scoped_context", None) is not None:
                 # Scope was fully cleared — record the deletion so the

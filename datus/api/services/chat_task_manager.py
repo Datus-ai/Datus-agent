@@ -619,22 +619,18 @@ class ChatTaskManager:
                 try:
                     previous = resolve_execution_context(agent_config, previous)
                 except DatusException:
-                    if not (bound_datasource or request.datasource_id is not None or request.datasource):
+                    if not (bound_datasource or request.datasource_id is not None):
                         raise
                     previous = {}
             if request.datasource_id is not None:
                 requested = resolve_datasource(agent_config, datasource_id=request.datasource_id)
             elif bound_datasource:
-                requested = request.datasource or previous.get("datasource") or agent_config.current_datasource
+                requested = resolve_datasource(agent_config, datasource=previous.get("datasource") or bound_datasource)
             else:
-                requested = resolve_datasource(
-                    agent_config, datasource=request.datasource or previous.get("datasource")
-                )
+                requested = resolve_datasource(agent_config, datasource=previous.get("datasource"))
             datasource = bound_datasource or requested
             if bound_datasource and requested != bound_datasource:
                 request.catalog = request.database = request.db_schema = None
-            if bound_datasource:
-                request.datasource = bound_datasource
         except DatusException as exc:
             raise ValueError(str(exc)) from exc
         if datasource:

@@ -311,7 +311,7 @@ class TestChannelBridge:
         request = call_args.args[1]
         # Channel datasource override selects the connection profile via ``datasource``,
         # never ``database`` (which would mis-set the connection's physical database).
-        assert request.datasource == "prod"
+        assert request.datasource_id == "prod"
         assert request.database is None
         assert call_args.kwargs.get("sub_agent_id") == "agent_x"
 

@@ -33,9 +33,7 @@ async def bootstrap_kb(
     """Start KB bootstrap with SSE progress streaming."""
     from datus.configuration.datasource_reference import resolve_datasource
 
-    request.datasource = resolve_datasource(
-        svc.agent_config, datasource_id=request.datasource_id, datasource=request.datasource
-    )
+    resolve_datasource(svc.agent_config, datasource_id=request.datasource_id)
     stream_id = str(uuid.uuid4())
     cancel_event = create_cancel_token(stream_id)
 

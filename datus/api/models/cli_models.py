@@ -11,30 +11,30 @@ from datus.utils.time_utils import now_utc_iso
 
 # SQL Execution models
 class ExecuteSQLInput(BaseModel):
+    """Input model for SQL execution."""
+
     datasource_id: Optional[str] = Field(
         None, min_length=1, validation_alias=AliasChoices("datasourceId", "datasource_id")
     )
 
-    """Input model for SQL execution."""
-
     model_config = ConfigDict(
+        extra="forbid",
         json_schema_extra={
             "example": {
-                "datasource": "prod_warehouse",
+                "datasourceId": "warehouse-id",
                 "database_name": "sales_db",
                 "sql_query": "SELECT * FROM users WHERE status = 'active'",
                 "result_format": "csv",
                 "system": False,
                 "execute_task_id": "caller-generated-task-id",
             }
-        }
+        },
     )
 
     # Which connection profile to run against. A project can bind several, and
     # the dotted table names in the SQL carry no datasource level — so the
     # editor tab's datasource has to travel with the statement or it silently
     # runs on the project's default warehouse instead.
-    datasource: Optional[str] = Field(None, description="Datasource to execute against; null means the current one")
     database_name: Optional[str] = Field(None, description="Database name")
     sql_query: str = Field(..., description="SQL query to execute")
     result_format: str = Field("arrow", description="Result format (arrow, csv, json)")
@@ -80,15 +80,16 @@ class ExecuteContextInput(BaseModel):
     """Input model for context commands."""
 
     model_config = ConfigDict(
+        extra="forbid",
         json_schema_extra={
             "example": {
                 "context_type": "tables",
-                "datasource": "prod_warehouse",
+                "datasourceId": "warehouse-id",
                 "database_name": "sales_db",
                 "schema_name": "public",
                 "args": "",
             }
-        }
+        },
     )
 
     context_type: str = Field(..., description="Type of context command")
@@ -125,13 +126,14 @@ class ExecuteContextData(BaseModel):
 
 
 class ChatInput(BaseModel):
+    """Enhanced input model for chat commands with ChatAgenticNode support."""
+
     datasource_id: Optional[str] = Field(
         None, min_length=1, validation_alias=AliasChoices("datasourceId", "datasource_id")
     )
 
-    """Enhanced input model for chat commands with ChatAgenticNode support."""
-
     model_config = ConfigDict(
+        extra="forbid",
         json_schema_extra={
             "example": {
                 "message": "Show me total sales for last month",
@@ -145,7 +147,7 @@ class ChatInput(BaseModel):
                 "subagent_id": None,
                 "max_turns": 200,
             }
-        }
+        },
     )
 
     # Core message fields
@@ -188,10 +190,6 @@ class ChatInput(BaseModel):
     )
 
     # Database context fields
-    datasource: Optional[str] = Field(
-        None,
-        description="Datasource (connection profile) override; selects which configured datasource to use",
-    )
     catalog: Optional[str] = Field(
         None, description="Catalog; omit/null to inherit, empty to clear; changes reset database/schema"
     )

@@ -942,3 +942,41 @@ class TestSubjectTreeConstructionWrites:
 
         migrated = seed._table.query(SubjectNodeRecord, where=[("node_id", WhereOp.EQ, node_id)])
         assert [row.parent_id for row in migrated] == [ROOT_PARENT_ID]
+
+
+def test_identity_upgrade_reuses_legacy_tree_and_mutates_only_selected_rows(storage_test_project):
+    from datus.storage.datasource_scope import DatasourceScope
+
+    old = SubjectTreeStore(storage_test_project, datasource_id="warehouse")
+    leaf = old.find_or_create_path(["Finance", "Revenue", "Monthly", "Net"])
+    upgraded = SubjectTreeStore(
+        storage_test_project, datasource_id=DatasourceScope("stable-id", "renamed", ["warehouse"])
+    )
+    assert upgraded.get_node(leaf)["name"] == "Net"
+    assert upgraded.find_or_create_path(["Finance", "Revenue", "Monthly", "Net"]) == leaf
+    assert upgraded.get_full_path(leaf) == ["Finance", "Revenue", "Monthly", "Net"]
+    assert upgraded.update_node(leaf, description="Edited after upgrade")
+    assert old.get_node(leaf)["description"] == "Edited after upgrade"
+    # Reads and edits do not rewrite old storage identities.
+    assert old.get_node(leaf)["datasource_id"] == "warehouse"
+    created = upgraded.create_node(leaf, "New")
+    assert created["datasource_id"] == "stable-id"
+    assert upgraded.delete_node(leaf)
+    assert old.get_node(leaf) is None
+    assert upgraded.get_node(created["node_id"]) is None
+
+
+def test_same_name_legacy_and_canonical_tree_nodes_remain_addressable(storage_test_project):
+    from datus.storage.datasource_scope import DatasourceScope
+
+    legacy = SubjectTreeStore(storage_test_project, datasource_id="warehouse")
+    current = SubjectTreeStore(storage_test_project, datasource_id="stable-id")
+    old_root = legacy.create_node(None, "Finance")
+    new_root = current.create_node(None, "Finance")
+    legacy.create_node(old_root["node_id"], "Old")
+    current.create_node(new_root["node_id"], "New")
+    current.datasource_id = DatasourceScope("stable-id", "warehouse")
+    roots = current.get_tree_structure()
+    assert {node["node_id"] for node in roots.values()} == {old_root["node_id"], new_root["node_id"]}
+    assert set(current.get_matched_children_id(["Finance"], False)) == {old_root["node_id"], new_root["node_id"]}
+    assert current.find_or_create_path(["Finance"]) == new_root["node_id"]

@@ -53,16 +53,27 @@ def _file_config(path: str | Path, agent_config: Any) -> DosiConfig:
     context_provider = getattr(agent_config, "runtime_db_context", None)
     context = context_provider() if callable(context_provider) else {}
     datasource = context.get("datasource") or datasource
+    from datus.configuration.datasource_reference import resolve_datasource
+    from datus.utils.exceptions import DatusException
+
+    if isinstance(getattr(getattr(agent_config, "services", None), "datasources", None), dict):
+        datasource = resolve_datasource(agent_config, datasource_id=context.get("datasource_id"), datasource=datasource)
     manager = getattr(agent_config, "path_manager", None)
     root = getattr(manager, "semantic_models_dir", None)
     if isinstance(root, (str, Path)):
         try:
             relative = Path(path).resolve().relative_to(Path(root).resolve())
-            if len(relative.parts) > 1 and relative.parts[0] != datasource:
-                datasource = relative.parts[0]
-                context = {}
         except ValueError:
-            pass
+            relative = None
+        if relative is not None and len(relative.parts) > 1:
+            directory = relative.parts[0]
+            try:
+                file_datasource = resolve_datasource(agent_config, datasource_id=directory)
+            except DatusException:
+                file_datasource = resolve_datasource(agent_config, datasource=directory)
+            if file_datasource != datasource:
+                context = {}
+            datasource = file_datasource
     profile_provider = getattr(agent_config, "current_db_config", None)
     profile = None
     if callable(profile_provider):

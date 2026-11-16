@@ -18,23 +18,35 @@ from datus.api.models.table_models import (
 from datus.api.routes.table_routes import get_table_detail, get_tables_columns
 
 
+def _make_svc():
+    from types import SimpleNamespace
+
+    from datus.configuration.agent_config import DbConfig
+
+    svc = MagicMock()
+    svc.agent_config = SimpleNamespace(
+        current_datasource="", services=SimpleNamespace(datasources={"lake": DbConfig(datasource_id="id-lake")})
+    )
+    return svc
+
+
 class TestGetTableDetail:
     @pytest.mark.asyncio
     async def test_delegates_to_service(self):
-        svc = MagicMock()
+        svc = _make_svc()
         svc.datasource.get_table_schema.return_value = Result(success=True)
 
-        result = await get_table_detail(svc, table="db.public.orders", datasource="")
+        result = await get_table_detail(svc, table="db.public.orders", datasource_id=None)
 
         assert result.success is True
         svc.datasource.get_table_schema.assert_called_once_with("db.public.orders", None)
 
     @pytest.mark.asyncio
     async def test_passes_the_requested_datasource_through(self):
-        svc = MagicMock()
+        svc = _make_svc()
         svc.datasource.get_table_schema.return_value = Result(success=True)
 
-        await get_table_detail(svc, table="db.public.orders", datasource="lake")
+        await get_table_detail(svc, table="db.public.orders", datasource_id="id-lake")
 
         svc.datasource.get_table_schema.assert_called_once_with("db.public.orders", "lake")
 
@@ -42,7 +54,7 @@ class TestGetTableDetail:
 class TestGetTablesColumns:
     @pytest.mark.asyncio
     async def test_delegates_to_service_with_tables(self):
-        svc = MagicMock()
+        svc = _make_svc()
         data = GetTablesColumnsData(
             tables=[
                 TableColumns(
@@ -62,10 +74,10 @@ class TestGetTablesColumns:
 
     @pytest.mark.asyncio
     async def test_passes_the_batch_datasource_through(self):
-        svc = MagicMock()
+        svc = _make_svc()
         svc.datasource.get_tables_columns.return_value = Result(success=True, data=GetTablesColumnsData(tables=[]))
 
-        request = GetTablesColumnsInput(tables=["db.public.orders"], datasource="lake")
+        request = GetTablesColumnsInput(tables=["db.public.orders"], datasource_id="id-lake")
         await get_tables_columns(request, svc)
 
         svc.datasource.get_tables_columns.assert_called_once_with(["db.public.orders"], "lake")

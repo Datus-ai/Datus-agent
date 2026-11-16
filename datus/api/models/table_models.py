@@ -62,9 +62,6 @@ class GetTablesColumnsInput(BaseModel):
     datasource_id: Optional[str] = Field(
         None, min_length=1, validation_alias=AliasChoices("datasourceId", "datasource_id")
     )
-    datasource: Optional[str] = Field(
-        None, description="Datasource to resolve these tables against; null means the current one"
-    )
 
 
 class TableColumnBrief(BaseModel):

@@ -227,7 +227,9 @@ class DatusService:
             message_args={"your_value": sub_agent_name, "field_name": "sub_agent_name"},
         )
 
-    def explorer_for(self, sub_agent_name: Optional[str] = None) -> "ExplorerService":
+    def explorer_for(
+        self, sub_agent_name: Optional[str] = None, *, datasource_id: Optional[str] = None
+    ) -> "ExplorerService":
         """ExplorerService scoped to ``sub_agent_name`` (``None`` = unscoped).
 
         One instance per name. A single lazy slot would be worse than the
@@ -239,6 +241,26 @@ class DatusService:
         :meth:`_require_known_sub_agent`.
         """
         self._require_known_sub_agent(sub_agent_name)
+        if datasource_id is not None:
+            import copy
+
+            from datus.configuration.datasource_reference import resolve_datasource
+
+            source = resolve_datasource(self._agent_config, datasource_id=datasource_id)
+            if sub_agent_name:
+                scope = self._agent_config.sub_agent_config(sub_agent_name).get("scoped_context") or {}
+                bound = scope.get("datasource")
+                if bound and resolve_datasource(self._agent_config, datasource=bound) != source:
+                    raise DatusException(
+                        ErrorCode.COMMON_VALIDATION_FAILED, message="Datasource does not match the Subagent binding"
+                    )
+            if source != self._agent_config.current_datasource:
+                from datus.api.services.explorer_service import ExplorerService
+
+                config = copy.copy(self._agent_config)
+                config.current_datasource = source
+                config.set_runtime_db_context({"datasource_id": datasource_id})
+                return ExplorerService(agent_config=config, sub_agent_name=sub_agent_name)
         if sub_agent_name not in self._explorers:
             from datus.api.services.explorer_service import ExplorerService
 

@@ -335,9 +335,9 @@ async def test_run_query_without_published_version_uses_local_template(monkeypat
 
     assert result.success is True
     assert result.data.row_count == 1
-    assert result.data.datasource == "warehouse"
+    assert result.data.datasource_id is None
     assert result.data.execution_context == {
-        "datasource": "warehouse",
+        "datasource_name": "warehouse",
         "database": "live_database",
         "schema": "live_schema",
     }

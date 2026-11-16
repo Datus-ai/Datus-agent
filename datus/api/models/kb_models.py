@@ -22,7 +22,7 @@ class BootstrapKbInput(BaseModel):
     Mirrors the subset of `datus-agent bootstrap-kb` options exposed by the backend API.
     """
 
-    model_config = ConfigDict(use_enum_values=True)
+    model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
     components: list[KbComponent] = Field(
         ...,
@@ -58,15 +58,10 @@ class BootstrapKbInput(BaseModel):
         ),
     )
     datasource_id: Optional[str] = Field(
-        None, min_length=1, validation_alias=AliasChoices("datasourceId", "datasource_id")
-    )
-    datasource: Optional[str] = Field(
-        default=None,
-        description=(
-            "Which configured datasource to index. Null means the project's current one. "
-            "Each datasource has its own metadata and its own KB rows, so a project bound to "
-            "several needs one bootstrap per datasource."
-        ),
+        None,
+        min_length=1,
+        validation_alias=AliasChoices("datasourceId", "datasource_id"),
+        description="Stable datasource identity. Omit to use the current datasource.",
     )
     catalog: str = Field(
         default="",
@@ -129,7 +124,7 @@ class BootstrapDocInput(BaseModel):
     matching ``DocumentConfig`` in ``agent.yml`` (``agent.document.<platform>``).
     """
 
-    model_config = ConfigDict(use_enum_values=True)
+    model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
     platform: str = Field(..., description="Platform name, e.g. 'snowflake', 'duckdb', 'postgresql'.")
     build_mode: Literal["overwrite", "check"] = Field(
@@ -154,7 +149,7 @@ class BootstrapDocInput(BaseModel):
 class BootstrapKbEvent(BaseModel):
     """SSE event envelope sent to the client."""
 
-    model_config = ConfigDict(use_enum_values=True)
+    model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
     stream_id: str
     component: str

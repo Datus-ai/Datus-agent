@@ -180,7 +180,7 @@ def _normalize_tool_result_payload(
     if isinstance(raw_result, dict) and isinstance(raw_result.get("execution_context"), dict):
         from datus.schemas.database_context import DatabaseExecutionContext
 
-        coordinates = DatabaseExecutionContext.from_mapping(raw_result["execution_context"]).to_dict()
+        coordinates = DatabaseExecutionContext.from_mapping(raw_result["execution_context"]).transport_dict()
         if coordinates:
             payload["execution_context"] = coordinates
     return payload

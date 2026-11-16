@@ -30,17 +30,7 @@ class CreateAgentInput(BaseModel):
     """Input for creating a new sub-agent."""
 
     name: str = Field(..., min_length=1, description="Agent name (unique within workspace)")
-    datasource_id: str = Field(default="", description="Datasource ID this agent is bound to")
-    # Same binding by namespace name instead of id. A web client picking the
-    # datasource out of the catalog tree only ever sees the namespace name, and
-    # `catalogs` below is scoped to it — the ids live on the saas side.
-    datasource_name: Optional[str] = Field(
-        default=None,
-        description=(
-            "Datasource namespace name this agent is bound to, resolved against the project's "
-            "bindings. Ignored when `datasource_id` is given; both omitted means the project's primary."
-        ),
-    )
+    datasource_id: Optional[str] = Field(None, min_length=1, description="Stable datasource identity")
     type: str = Field(
         default="gen_sql", description="Node class: gen_sql / gen_visual_report / ask_report / ask_dashboard / ..."
     )
@@ -176,14 +166,8 @@ class EditAgentInput(BaseModel):
         default=None,
         description="Catalog access patterns (e.g., 'production_db.*', 'production_db.public.*')",
     )
-    # `catalogs` above is matched against exactly one datasource, so re-pointing
-    # the agent at another one has to travel with the patterns that describe it.
-    datasource_name: Optional[str] = Field(
-        default=None,
-        description=(
-            "Datasource namespace name to re-bind this agent to, resolved against the project's "
-            "bindings. Omit to leave the binding untouched."
-        ),
+    datasource_id: Optional[str] = Field(
+        None, min_length=1, description="Stable datasource identity; omit to preserve the binding"
     )
     subjects: Optional[List[str]] = Field(
         default=None, description="Subject access patterns (e.g., 'Finance.Revenue.*')"

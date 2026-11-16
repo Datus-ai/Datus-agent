@@ -54,3 +54,25 @@ def test_synced_metrics_can_be_read_and_mutated_without_rewrapping(tmp_path, suf
     expected = copy.deepcopy(original)
     expected["metrics"] = []
     assert yaml.safe_load(path.read_text()) == expected
+
+
+def test_multi_root_authoring_edits_legacy_files_in_place_and_creates_in_primary(tmp_path):
+    primary, legacy = tmp_path / "stable-id", tmp_path / "old"
+    primary.mkdir()
+    legacy.mkdir()
+
+    def model(name, metric):
+        return {"version": "0.2.0.dev0", "name": name, "datasets": [], "metrics": [{"name": metric}]}
+
+    old_file, new_file = legacy / "shop.yml", primary / "shop.yml"
+    old_file.write_text(yaml.safe_dump(model("old", "old_metric")))
+    new_file.write_text(yaml.safe_dump(model("current", "current_metric")))
+    author = MetricAuthor(str(primary), legacy_semantic_models_paths=[str(legacy)], load_model=lambda _: None)
+    assert author.read("old_metric").file_path == str(old_file)
+    author.write("old_metric", yaml.safe_dump({"name": "old_metric", "description": "Edited"}))
+    assert yaml.safe_load(old_file.read_text())["metrics"][0]["description"] == "Edited"
+    assert yaml.safe_load(new_file.read_text())["metrics"] == [{"name": "current_metric"}]
+    author.write("new_metric", yaml.safe_dump({"name": "new_metric"}), create=True)
+    assert author.read("new_metric").file_path == str(new_file)
+    author.delete("old_metric")
+    assert yaml.safe_load(old_file.read_text())["metrics"] == []

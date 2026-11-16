@@ -211,9 +211,11 @@ class MetricAuthor:
         schema_version: str = DEFAULT_SCHEMA_VERSION,
         error_cls: type[Exception] = MetricAuthoringError,
         load_model: Optional[Callable[[str], Any]] = None,
+        legacy_semantic_models_paths: Optional[List[str]] = None,
     ):
         self._load_model = load_model
         self._root = semantic_models_path
+        self._legacy_roots = legacy_semantic_models_paths or []
         self._validate_document = validate_document or default_validate_document
         self._schema_version = schema_version
         self._error_cls = error_cls
@@ -234,8 +236,22 @@ class MetricAuthor:
             raise self._error_cls(f"semantic_models_path is not a directory or file: {self._root}")
         return self._root
 
+    def _files(self) -> List[str]:
+        roots = [self._root, *self._legacy_roots]
+        if not any(root and os.path.exists(root) for root in roots):
+            self._require_root()
+        files = {}
+        for root in roots:
+            if root:
+                for path in _model_files(root):
+                    relative = Path(path).relative_to(root) if os.path.isdir(root) else Path(path).name
+                    if "metrics" not in Path(relative).parts:
+                        files.setdefault(os.path.realpath(path), path)
+        return list(files.values())
+
     def _locate(self, metric_name: str) -> Optional[_MetricLocation]:
-        for file_path in _model_files(self._require_root()):
+        found = None
+        for file_path in self._files():
             try:
                 docs = self._read_docs(file_path)
             except (yaml.YAMLError, json.JSONDecodeError):
@@ -243,14 +259,22 @@ class MetricAuthor:
             for doc_index, model_index, model in _iter_core_models(docs):
                 for metric_index, metric in enumerate(model.get("metrics") or []):
                     if isinstance(metric, dict) and metric.get("name") == metric_name:
-                        return _MetricLocation(file_path, docs, doc_index, model_index, metric_index)
-        return None
+                        if found is not None:
+                            raise self._error_cls(f"Metric `{metric_name}` is declared in multiple model files.")
+                        found = _MetricLocation(file_path, docs, doc_index, model_index, metric_index)
+        return found
+
+    def _new_metric_files(self) -> List[str]:
+        # New metrics use primary models when available. A legacy-only source
+        # stays writable in place; no file is copied into the ID directory.
+        primary = _model_files(self._root)
+        return primary or self._files()
 
     def _model_owning_dataset(self, dataset: Optional[str]) -> Optional[Tuple[str, List[Any], int, int]]:
         """Find (file_path, docs, doc_index, model_index) whose model declares ``dataset``."""
         if not dataset:
             return None
-        for file_path in _model_files(self._require_root()):
+        for file_path in self._new_metric_files():
             try:
                 docs = self._read_docs(file_path)
             except (yaml.YAMLError, json.JSONDecodeError):
@@ -263,7 +287,7 @@ class MetricAuthor:
 
     def _sole_model(self) -> Optional[Tuple[str, List[Any], int, int]]:
         found: List[Tuple[str, List[Any], int, int]] = []
-        for file_path in _model_files(self._require_root()):
+        for file_path in self._new_metric_files():
             try:
                 docs = self._read_docs(file_path)
             except (yaml.YAMLError, json.JSONDecodeError):

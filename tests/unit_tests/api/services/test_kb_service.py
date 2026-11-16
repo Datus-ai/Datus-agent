@@ -309,7 +309,7 @@ class TestKbServiceBootstrapStream:
         import asyncio
 
         svc = KbService(agent_config=real_agent_config)
-        request = BootstrapKbInput(components=["metadata"], strategy="check", datasource="not_bound")
+        request = BootstrapKbInput(components=["metadata"], strategy="check", datasource_id="not_bound")
 
         events = []
         async for event in svc.bootstrap_stream(request, "s", asyncio.Event(), str(real_agent_config.home)):
@@ -326,7 +326,9 @@ class TestKbServiceBootstrapStream:
 
         assert svc._config_for(BootstrapKbInput(components=["metadata"])) is real_agent_config
         assert (
-            svc._config_for(BootstrapKbInput(components=["metadata"], datasource=real_agent_config.current_datasource))
+            svc._config_for(
+                BootstrapKbInput(components=["metadata"], datasource_id=real_agent_config.current_datasource)
+            )
             is real_agent_config
         )
 
@@ -339,7 +341,7 @@ class TestKbServiceBootstrapStream:
         current = real_agent_config.current_datasource
         real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
 
-        clone = svc._config_for(BootstrapKbInput(components=["metadata"], datasource="second"))
+        clone = svc._config_for(BootstrapKbInput(components=["metadata"], datasource_id="second"))
 
         assert clone is not real_agent_config
         assert clone.current_datasource == "second"

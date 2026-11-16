@@ -282,13 +282,19 @@ def _files_to_sync(
     from datus.storage.semantic_model.semantic_model_init import semantic_yaml_files
 
     project_root = Path(str(agent_config.project_root)).expanduser().resolve(strict=False)
+    canonical_sources = {agent_config.services.datasources[name].datasource_id or name: name for name in datasources}
     directory_sources = {}
     for name in datasources:
         cfg = agent_config.services.datasources[name]
         for directory in [name, getattr(cfg, "datasource_id", "") or name, *getattr(cfg, "datasource_aliases", [])]:
+            if directory in canonical_sources:
+                directory_sources[directory] = canonical_sources[directory]
+                continue
             if directory in directory_sources and directory_sources[directory] != name:
-                raise ValueError(f"Ambiguous semantic datasource directory {directory!r}")
-            directory_sources[directory] = name
+                directory_sources[directory] = None
+            else:
+                directory_sources[directory] = name
+    directory_sources = {directory: name for directory, name in directory_sources.items() if name is not None}
     found: Dict[str, Set[Path]] = {}
     for raw in paths:
         target = Path(str(raw)).expanduser()

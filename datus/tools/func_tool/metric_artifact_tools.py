@@ -194,9 +194,23 @@ def execute_metric_artifact_query(
     db_config = getattr(config, "db_config", None)
     coordinates = saved.execution_context if saved else None
     if not coordinates and isinstance(db_config, dict):
+        from datus.configuration.agent_config import _db_config_to_dosi_profile
+        from datus.configuration.datasource_reference import configured_datasource_id
         from datus.schemas.database_context import DatabaseExecutionContext
 
-        coordinates = DatabaseExecutionContext.from_mapping({**db_config, "datasource": datasource}).to_dict()
+        runtime_source = getattr(config, "datasource", None) or getattr(config, "connection", None)
+        if runtime_source != datasource:
+            sources = getattr(getattr(db_tool.agent_config, "services", None), "datasources", {})
+            if not isinstance(sources, dict) or datasource not in sources:
+                raise ValueError("Metric connector profile does not belong to the saved datasource")
+            db_config = _db_config_to_dosi_profile(sources[datasource])
+        coordinates = DatabaseExecutionContext.from_mapping(
+            {
+                **db_config,
+                "datasource": datasource,
+                "datasource_id": configured_datasource_id(db_tool.agent_config, datasource),
+            }
+        ).to_dict()
     connector = (
         db_tool.connector_for_execution_context(coordinates) if coordinates else db_tool._get_connector(datasource)
     )
@@ -279,6 +293,21 @@ def execute_published_metric_query(query: MetricQueryFile, *, runtime_config, db
     from datus.configuration.datasource_reference import resolve_datasource
 
     source = resolve_datasource(db_tool.agent_config, datasource_id=query.datasource_id, datasource=query.datasource)
+    from datus.configuration.agent_config import _apply_runtime_db_context_to_dosi_profile, _db_config_to_dosi_profile
+
+    sources = getattr(getattr(db_tool.agent_config, "services", None), "datasources", {})
+    if isinstance(sources, dict) and source in sources:
+        profile = _apply_runtime_db_context_to_dosi_profile(
+            _db_config_to_dosi_profile(sources[source]),
+            query.execution_context or {},
+        )
+    elif (
+        runtime_config.db_config is None
+        or (getattr(runtime_config, "datasource", None) or getattr(runtime_config, "connection", None)) == source
+    ):
+        profile = runtime_config.db_config
+    else:
+        raise ValueError("Metric connector profile does not belong to the saved datasource")
     with TemporaryDirectory(prefix="datus-metric-query-") as directory:
         root = Path(directory)
         model = root / query.model_path
@@ -290,6 +319,7 @@ def execute_published_metric_query(query: MetricQueryFile, *, runtime_config, db
                 "semantic_models_path": None,
                 "datasource": source,
                 "connection": source,
+                "db_config": profile,
             }
         )
         return execute_metric_artifact_query(
@@ -309,19 +339,26 @@ class MetricArtifactToolsMixin:
     def _validate_metric_queries(self, kind: str) -> str | None:
         """Check complete tool-produced bundles before declaring render success."""
         try:
-            metric_revisions: dict[tuple[str, tuple[str, ...], str], str] = {}
-            model_revisions: dict[tuple[str, str], str] = {}
+            metric_revisions: dict[tuple[tuple[str, str], tuple[str, ...], str], str] = {}
+            model_revisions: dict[tuple[tuple[str, str], str], str] = {}
             for path in self.queries_dir.glob("*.metric.json"):
                 saved = MetricQueryFile.model_validate_json(path.read_text(encoding="utf-8"))
                 if saved.model_snapshot_path is not None:
                     resolve_metric_query_snapshot(saved, artifact_dir=self.queries_dir.parent)
-                identity = (saved.datasource, tuple(saved.metric.path), saved.metric.name)
+                identity = (
+                    ("id", saved.datasource_id) if saved.datasource_id else ("legacy-name", saved.datasource),
+                    tuple(saved.metric.path),
+                    saved.metric.name,
+                )
                 previous_revision = metric_revisions.setdefault(identity, saved.model_revision)
                 if previous_revision != saved.model_revision:
                     raise ValueError(
                         "one artifact cannot mix model revisions of the same metric; resave all its queries"
                     )
-                model_identity = (saved.datasource, saved.model_path)
+                model_identity = (
+                    ("id", saved.datasource_id) if saved.datasource_id else ("legacy-name", saved.datasource),
+                    saved.model_path,
+                )
                 previous_model_revision = model_revisions.setdefault(model_identity, saved.model_revision)
                 if previous_model_revision != saved.model_revision:
                     raise ValueError("one artifact cannot mix revisions of the same model; resave its metric queries")
@@ -342,6 +379,11 @@ class MetricArtifactToolsMixin:
                     if (
                         saved.parameter_names()
                         or result.datasource != saved.datasource
+                        or (
+                            result.datasource_id is not None
+                            and saved.datasource_id is not None
+                            and result.datasource_id != saved.datasource_id
+                        )
                         or result.sql != saved.generated_sql
                         or (result.source or {}).get("kind") != "metric"
                         or (result.source or {}).get("metric") != saved.metric.model_dump()
@@ -354,6 +396,11 @@ class MetricArtifactToolsMixin:
                     if (
                         meta.slug != name
                         or meta.datasource != saved.datasource
+                        or (
+                            meta.datasource_id is not None
+                            and saved.datasource_id is not None
+                            and meta.datasource_id != saved.datasource_id
+                        )
                         or saved.parameter_names() != {p.name for p in meta.params}
                     ):
                         raise ValueError(f"{name}: metric parameters do not match its recipe")

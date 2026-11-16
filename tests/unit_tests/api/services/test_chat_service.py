@@ -488,7 +488,7 @@ class TestChatServiceGetHistory:
         result = ChatService(cfg).get_history("chat_session_identity")
         assert result.success is True
         assert result.data.execution_context["datasource_id"] == saved_id
-        assert result.data.execution_context.get("datasource") == expected_name
+        assert result.data.execution_context == {"datasource_id": saved_id, "database": "demo"}
         assert manager.load_session_meta("chat_session_identity", "execution_context") == saved
 
     def test_get_history_nonexistent_session_returns_empty(self, chat_svc):

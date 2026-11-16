@@ -654,7 +654,7 @@ class TestListDatabases:
         """list_databases with datasource_id filter."""
         svc = DatasourceService(agent_config=real_agent_config)
         # datasource_id is a datasource name
-        request = ListDatabasesInput(datasource_id="california_schools")
+        request = ListDatabasesInput(datasource_name="california_schools")
         result = svc.list_databases(request)
         assert result.success is True
 
@@ -698,7 +698,7 @@ class TestListDatabases:
         svc = DatasourceService(agent_config=real_agent_config)
         result = svc.list_databases(ListDatabasesInput())
         assert result.data.current_datasource == real_agent_config.current_datasource
-        assert {db.datasource for db in result.data.databases} == {real_agent_config.current_datasource}
+        assert {db.datasource_name for db in result.data.databases} == {real_agent_config.current_datasource}
 
     def test_list_databases_rejects_an_unknown_datasource(self, real_agent_config):
         """An undeclared name is an error, not a silent fall-back.
@@ -707,7 +707,7 @@ class TestListDatabases:
         databases under the requested one in the caller's tree.
         """
         svc = DatasourceService(agent_config=real_agent_config)
-        result = svc.list_databases(ListDatabasesInput(datasource_id="not_bound"))
+        result = svc.list_databases(ListDatabasesInput(datasource_name="not_bound"))
         assert result.success is False
         assert "not_bound" in result.errorMessage
 

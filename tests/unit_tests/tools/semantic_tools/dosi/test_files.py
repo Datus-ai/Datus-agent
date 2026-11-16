@@ -199,3 +199,29 @@ def test_model_id_directory_and_legacy_reads_require_no_file_migration(tmp_path)
     )
     assert set(paths) == {str(current), str(legacy)}
     assert legacy.read_text() == "legacy model remains untouched"
+
+
+def test_identity_directory_selects_its_owner_without_losing_same_source_context(tmp_path):
+    from datus.configuration.agent_config import AgentConfig, DbConfig
+    from datus.utils.exceptions import DatusException
+
+    cfg = AgentConfig(nodes={}, home=str(tmp_path), project_root=str(tmp_path), skip_init_dirs=True)
+    cfg.services.datasources = {
+        "a": DbConfig(type="postgresql", datasource_id="id-a", database="database_a"),
+        "renamed_b": DbConfig(
+            type="postgresql", datasource_id="id-b", database="database_b", datasource_aliases=["old_b"]
+        ),
+    }
+    cfg.current_datasource = "a"
+    cfg.path_manager.datasource_ids = {"a": "id-a", "renamed_b": "id-b"}
+    root = cfg.path_manager.semantic_models_dir
+    for directory in ["id-b", "old_b"]:
+        selected = _file_config(root / directory / "model.yml", cfg)
+        assert selected.datasource == "renamed_b"
+        assert selected.db_config["database"] == "database_b"
+    cfg.set_runtime_db_context({"datasource_id": "id-a", "database": "selected_database", "schema": "selected_schema"})
+    selected = _file_config(root / "id-a" / "model.yml", cfg)
+    assert selected.db_config["database"] == "selected_database"
+    assert selected.db_config["schema"] == "selected_schema"
+    with pytest.raises(DatusException, match="not bound"):
+        _file_config(root / "unknown" / "model.yml", cfg)

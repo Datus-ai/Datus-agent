@@ -493,7 +493,7 @@ class DatasourceService:
                 )
 
             # Get connections from the specified datasource
-            datasource = self.resolve_datasource(request.datasource_id)
+            datasource = self.resolve_datasource(request.datasource_name)
             configs = getattr(self.agent_config, "datasource_configs", {}) or {}
             # Refuse an unknown name instead of quietly listing the current
             # datasource under it: a client rendering several datasources side by
@@ -522,7 +522,7 @@ class DatasourceService:
             # sites: every row in this response came from the one datasource
             # resolved above.
             for info in databases:
-                info.datasource = datasource
+                info.datasource_name = datasource
 
             data = ListDatabasesData(
                 databases=databases,

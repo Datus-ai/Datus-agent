@@ -147,6 +147,27 @@ class SubjectTreeStore:
 
         logger.info("SubjectTreeStore initialized")
 
+    def _query_nodes(
+        self, where: Optional[Dict[str, Any]] = None, *, order_by: Optional[List[str]] = None
+    ) -> List[SubjectNodeRecord]:
+        # RdbTable.query accepts equality dictionaries/tuples, not condition ASTs.
+        # Query each authorized identity explicitly rather than passing a Node.
+        identities = dict.fromkeys([str(self.datasource_id), *getattr(self.datasource_id, "legacy_names", ())])
+        rows = []
+        for identity in identities:
+            if not identity and self.datasource_id:
+                continue
+            rows.extend(
+                self._table.query(
+                    SubjectNodeRecord,
+                    where={**(where or {}), "datasource_id": identity},
+                    order_by=order_by,
+                )
+            )
+        if order_by:
+            rows.sort(key=lambda row: tuple(getattr(row, key) for key in order_by))
+        return rows
+
     def _migrate_null_parents(self):
         """Migrate existing NULL parent_id values to ROOT_PARENT_ID (-1).
 
@@ -230,7 +251,7 @@ class SubjectTreeStore:
         Returns:
             Node dict or None if not found
         """
-        rows = self._table.query(SubjectNodeRecord, where={"node_id": node_id, "datasource_id": self.datasource_id})
+        rows = self._query_nodes({"node_id": node_id})
         if rows:
             return _node_to_dict(rows[0])
         return None
@@ -299,7 +320,7 @@ class SubjectTreeStore:
         data["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         try:
-            self._table.update(data, where={"node_id": node_id, "datasource_id": self.datasource_id})
+            self._table.update(data, where={"node_id": node_id, "datasource_id": node["datasource_id"]})
             logger.info(f"Updated node {node_id}")
             return True
         except UniqueViolationError as e:
@@ -330,9 +351,11 @@ class SubjectTreeStore:
             with self._rdb.transaction():
                 for descendant in descendants:
                     child_path = self.get_full_path(descendant["node_id"])
-                    self._table.delete(where={"node_id": descendant["node_id"], "datasource_id": self.datasource_id})
+                    self._table.delete(
+                        where={"node_id": descendant["node_id"], "datasource_id": descendant["datasource_id"]}
+                    )
                     logger.info(f"Deleted child node {descendant['node_id']} ({child_path})")
-                self._table.delete(where={"node_id": node_id, "datasource_id": self.datasource_id})
+                self._table.delete(where={"node_id": node_id, "datasource_id": node["datasource_id"]})
             logger.info(f"Deleted node {node_id} ({node_path})" + (" with cascade" if cascade else ""))
             return True
         except Exception as e:
@@ -344,9 +367,8 @@ class SubjectTreeStore:
     def get_children(self, parent_id: Optional[int]) -> List[Dict[str, Any]]:
         """Get direct children of a node."""
         db_parent_id = ROOT_PARENT_ID if parent_id is None else parent_id
-        where = {"parent_id": db_parent_id, "datasource_id": self.datasource_id}
-        rows = self._table.query(
-            SubjectNodeRecord,
+        where = {"parent_id": db_parent_id}
+        rows = self._query_nodes(
             where=where,
             order_by=["name"],
         )
@@ -430,7 +452,7 @@ class SubjectTreeStore:
             pat = subject_path[level]
 
             for key, node in nodes.items():
-                if fnmatch.fnmatch(key, pat):
+                if fnmatch.fnmatch(node.get("name", key), pat):
                     if level == len(subject_path) - 1:
                         collect_all(node)
                     else:
@@ -482,15 +504,19 @@ class SubjectTreeStore:
                 }}
             }
         """
-        rows = self._table.query(SubjectNodeRecord, where={"datasource_id": self.datasource_id}, order_by=["name"])
+        rows = self._query_nodes(order_by=["name"])
         nodes = {row.node_id: {"node_id": row.node_id, "name": row.name, "children": {}} for row in rows}
         result: Dict[str, Any] = {}
         for row in rows:
             node = nodes[row.node_id]
             if row.parent_id == ROOT_PARENT_ID:
-                result[row.name] = node
+                siblings = result
             elif row.parent_id in nodes:
-                nodes[row.parent_id]["children"][row.name] = node
+                siblings = nodes[row.parent_id]["children"]
+            else:
+                continue
+            key = row.name if row.name not in siblings else f"{row.name}#{row.node_id}"
+            siblings[key] = node
         if root_id is not None:
             root = nodes.get(root_id)
             return {root["name"]: root} if root is not None else {}
@@ -577,20 +603,14 @@ class SubjectTreeStore:
         ``marketing_`` — each splitting the same content into its own subtree.
         """
         db_parent_id = ROOT_PARENT_ID if parent_id is None else parent_id
-        rows = self._table.query(
-            SubjectNodeRecord,
-            where={"parent_id": db_parent_id, "name": name, "datasource_id": self.datasource_id},
-        )
+        rows = self._query_nodes(where={"parent_id": db_parent_id, "name": name})
         if rows:
             return _node_to_dict(rows[0])
 
         target = normalize_subject_node_name(name)
         if not target:
             return None
-        siblings = self._table.query(
-            SubjectNodeRecord,
-            where={"parent_id": db_parent_id, "datasource_id": self.datasource_id},
-        )
+        siblings = self._query_nodes(where={"parent_id": db_parent_id})
         for row in siblings or []:
             node = _node_to_dict(row)
             if normalize_subject_node_name(node.get("name", "")) == target:

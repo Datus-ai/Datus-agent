@@ -35,6 +35,7 @@ from datus.api.models.dashboard_models import (
 )
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.artifact_manifest import ArtifactManifest
+from datus.schemas.database_context import DatabaseExecutionContext
 from datus.schemas.gen_visual_dashboard_models import (
     DASHBOARD_SLUG_RE,
     QUERY_SLUG_RE,
@@ -425,7 +426,17 @@ class DashboardService:
                 )
 
             payload, _ = await asyncio.to_thread(execute)
-            return Result(success=True, data=SqlQueryResultEnvelope(**payload.model_dump()))
+            return Result(
+                success=True,
+                data=SqlQueryResultEnvelope(
+                    **{
+                        **payload.model_dump(exclude={"datasource", "execution_context"}),
+                        "execution_context": DatabaseExecutionContext.from_mapping(
+                            payload.execution_context
+                        ).transport_dict(),
+                    }
+                ),
+            )
         except Exception as exc:
             if getattr(exc, "code", None) in {ErrorCode.POLICY_DENIED, ErrorCode.POLICY_DENIED.code}:
                 code = "POLICY_DENIED"
@@ -571,6 +582,9 @@ class DashboardService:
                 errorMessage=f"failed to resolve datasource {meta.datasource!r}: {exc}",
             )
 
+        resolved_context = db_tool.execution_context(connector, meta.datasource)
+        resolved_name = resolved_context.get("datasource") or meta.datasource
+
         try:
             # Enforced-read path (SQL policy + multi-statement rejection). View-time
             # re-execution runs with live user params on every dashboard open, so an
@@ -579,7 +593,7 @@ class DashboardService:
                 db_tool.execute_read_enforced,
                 rendered_sql,
                 connector,
-                datasource=meta.datasource or "",
+                datasource=resolved_name or "",
                 result_format="list",
                 policy_context=policy_context,
             )
@@ -647,9 +661,9 @@ class DashboardService:
             success=True,
             data=SqlQueryResultEnvelope(
                 executed_at=_dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                datasource=meta.datasource,
+                datasource_id=resolved_context.get("datasource_id"),
                 row_count=len(rows),
-                execution_context=db_tool.execution_context(connector, meta.datasource),
+                execution_context=DatabaseExecutionContext.from_mapping(resolved_context).transport_dict(),
                 columns=columns_meta,
                 rows=rows,
                 sql=rendered_sql,

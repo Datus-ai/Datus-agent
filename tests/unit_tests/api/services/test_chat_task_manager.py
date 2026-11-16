@@ -2801,7 +2801,7 @@ class TestStartChatDatasourceOverride:
 
         monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
         manager = ChatTaskManager()
-        request = StreamChatInput(message="hi", session_id="ds-override", datasource="analytics")
+        request = StreamChatInput(message="hi", session_id="ds-override", datasource_id="analytics")
         task = await manager.start_chat(real_agent_config, request)
         await task.asyncio_task
 
@@ -2826,7 +2826,7 @@ class TestStartChatDatasourceOverride:
         manager = ChatTaskManager()
         with pytest.raises(ValueError, match="not bound"):
             await manager.start_chat(
-                real_agent_config, StreamChatInput(message="hi", datasource="not_bound", database="picked_db")
+                real_agent_config, StreamChatInput(message="hi", datasource_id="not_bound", database="picked_db")
             )
         assert called == []
         assert real_agent_config.current_datasource == "california_schools"
@@ -2847,7 +2847,7 @@ class TestStartChatDatasourceOverride:
         request = StreamChatInput(
             message="hi",
             session_id="ds-valid-ctx",
-            datasource="california_schools",
+            datasource_id="california_schools",
             database="picked_db",
             db_schema="picked_schema",
         )
@@ -3557,10 +3557,10 @@ class TestDirectSubagentDatasource:
 
         async def run(task, config, request, **kwargs):
             observed.update(config.runtime_db_context())
-            observed["request_datasource"] = request.datasource
+            observed["request_datasource"] = config.current_datasource
 
         monkeypatch.setattr(manager, "_run_loop", run)
-        selection = {"datasource": original, "catalog": "ik_cat", "database": "ik_db", "db_schema": "ik_schema"}
+        selection = {"datasource_id": original, "catalog": "ik_cat", "database": "ik_db", "db_schema": "ik_schema"}
         request = StreamChatInput(
             message="query", session_id="direct", **(selection if stale_target == "request" else {})
         )

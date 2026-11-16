@@ -1689,6 +1689,6 @@ def test_live_and_history_tool_results_preserve_only_database_coordinates(encodi
     raw = json.dumps(result) if encoding == "json" else result
     action = _make_action(action_id="complete_sql", input={"function_name": "execute_sql"}, output={"raw_output": raw})
     content = _build_tool_result_content(action)[0]
-    assert content.payload["result"]["execution_context"] == {"datasource": "warehouse", "database": "selected"}
+    assert content.payload["result"]["execution_context"] == {"datasource_name": "warehouse", "database": "selected"}
     assert content.payload["result"]["result"] == {"rows": [{"active_database": "selected"}]}
     assert "must-not-escape" not in content.model_dump_json()

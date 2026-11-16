@@ -150,16 +150,15 @@ class ChannelBridge:
 
         request = StreamChatInput(message=msg.text, session_id=session_id, stream_response=adapter.supports_streaming)
 
-        # Apply channel-level datasource override. This selects the connection
-        # profile (datasource), not a physical database within it — routing it
-        # through ``database`` would mis-set the connection's database to the
-        # datasource name.
-        if channel_config and channel_config.datasource:
-            request.datasource = channel_config.datasource
-
         has_error = False
         # Start the agentic loop
         try:
+            if channel_config and channel_config.datasource:
+                from datus.configuration.datasource_reference import datasource_identity, resolve_datasource
+
+                source = resolve_datasource(self._agent_config, datasource=channel_config.datasource)
+                request.datasource_id = datasource_identity(self._agent_config, source)
+
             task = await self._task_manager.start_chat(
                 self._agent_config,
                 request,

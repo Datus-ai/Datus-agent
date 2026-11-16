@@ -82,14 +82,14 @@ def resolve_model_files(config: DosiConfig) -> list[str]:
         return [config.semantic_model_path]
     models_dir = config.semantic_models_path
     if models_dir:
-        by_relative_path = {}
+        by_physical_path = {}
         for directory in [models_dir, *config.legacy_semantic_models_paths]:
             for ext in _MODEL_SUFFIXES:
                 for path in sorted(glob.glob(os.path.join(directory, "**", ext), recursive=True)):
                     relative = os.path.relpath(path, directory)
                     if _METRIC_FRAGMENT_DIR not in relative.split(os.sep):
-                        by_relative_path.setdefault(relative, path)
-        candidates = sorted(by_relative_path.values())
+                        by_physical_path.setdefault(os.path.realpath(path), path)
+        candidates = sorted(by_physical_path.values())
         if candidates:
             return candidates
         raise SemanticCoreException(f"no OSI model file (*.yaml/*.yml/*.json) in {models_dir!r}")

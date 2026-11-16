@@ -178,7 +178,7 @@ async def list_datasources_endpoint(
     summaries = [
         DatasourceSummary(
             name=name,
-            datasource_id=getattr(db_config, "datasource_id", None) or None,
+            datasource_id=getattr(db_config, "datasource_id", None) or name,
             type=(db_config.type.value if hasattr(db_config.type, "value") else str(db_config.type)),
             is_current=(name == current),
             # Namespaces, not credentials: a client needs them to open a session on

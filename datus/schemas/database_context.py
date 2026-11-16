@@ -33,7 +33,7 @@ class DatabaseExecutionContext:
             return ""
 
         return cls(
-            datasource=value("datasource"),
+            datasource=value("datasource_name", "datasourceName", "datasource"),
             datasource_id=value("datasource_id", "datasourceId"),
             catalog=value("catalog", "catalog_name"),
             database=value("database", "database_name"),
@@ -53,6 +53,14 @@ class DatabaseExecutionContext:
                 if key in result:
                     result.update({name: result[key] for name in names})
         return result
+
+    def transport_dict(self) -> dict[str, str]:
+        """Public responses use identity alone; legacy-only targets name their field explicitly."""
+        values = self.to_dict()
+        name = values.pop("datasource", "")
+        if not self.datasource_id and name:
+            values["datasource_name"] = name
+        return values
 
     @property
     def identity(self) -> str:

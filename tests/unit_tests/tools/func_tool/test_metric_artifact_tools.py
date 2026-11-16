@@ -1018,7 +1018,7 @@ def test_metric_artifact_replays_its_original_database_after_a_turn_switch(envir
     env.db._connector_cache = OrderedDict()
     env.db._connector_cache_size = 8
     env.runtime.config = SimpleNamespace(
-        db_config={"database": "shop", **({"schema": "tenant_a"} if engine == "duckdb" else {})}
+        datasource="warehouse", db_config={"database": "shop", **({"schema": "tenant_a"} if engine == "duckdb" else {})}
     )
     options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
     tools, result = _save(env, kind, **options)

@@ -1147,7 +1147,11 @@ class DosiRuntime:
 
         self.initialize()
         return DosiMetricAuthor(
-            self._authoring_root(), load_model=lambda path: self.load_model(path, allow_invalid=True)
+            self._authoring_root(),
+            load_model=lambda path: self.load_model(path, allow_invalid=True),
+            legacy_semantic_models_paths=(
+                [] if self.config.semantic_model_path else self.config.legacy_semantic_models_paths
+            ),
         )
 
     def read_metric_source(

@@ -313,7 +313,7 @@ class TestProjectConfigRefresh:
             old_chat = old.chat
             old_task = await old.task_manager.start_chat(
                 old_chat.agent_config,
-                StreamChatInput(message="old turn", datasource="warehouse" if change != "add" else original_name),
+                StreamChatInput(message="old turn", datasource_id="warehouse" if change != "add" else original_name),
             )
             assert await asyncio.wait_for(started.get(), timeout=2) == old_task.session_id
 
@@ -338,7 +338,7 @@ class TestProjectConfigRefresh:
 
             selected = "warehouse" if change == "add" else "renamed_warehouse" if change == "rename" else original_name
             new_task = await refreshed.task_manager.start_chat(
-                refreshed.chat.agent_config, StreamChatInput(message="new turn", datasource=selected)
+                refreshed.chat.agent_config, StreamChatInput(message="new turn", datasource_id=selected)
             )
             assert await asyncio.wait_for(started.get(), timeout=2) == new_task.session_id
             assert set(snapshots[old_task.session_id].datasource_configs) == set(before.datasource_configs)
@@ -364,7 +364,7 @@ class TestProjectConfigRefresh:
             final_task = await refreshed.task_manager.start_chat(
                 refreshed.chat.agent_config,
                 StreamChatInput(
-                    message="next turn in the original session", session_id=old_task.session_id, datasource=selected
+                    message="next turn in the original session", session_id=old_task.session_id, datasource_id=selected
                 ),
             )
             assert await asyncio.wait_for(started.get(), timeout=2) == final_task.session_id

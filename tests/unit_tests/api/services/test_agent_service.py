@@ -696,7 +696,7 @@ class TestGetAgent:
         assert agent["name"] == "gen_sql"
         assert agent["id"] == "gen_sql"
         assert agent["type"] == "builtin"
-        assert set(agent.keys()) == self.EXPECTED_FIELDS
+        assert set(agent.keys()) == self.EXPECTED_FIELDS | {"datasource_id"}
         # All collection fields default to empty list, not None
         assert agent["tools"] == []
         assert agent["rules"] == []
@@ -723,7 +723,7 @@ class TestGetAgent:
         agent = result.data["agent"]
         assert agent["name"] == first_name
         assert agent["id"] == first_name
-        assert set(agent.keys()) == self.EXPECTED_FIELDS
+        assert set(agent.keys()) == self.EXPECTED_FIELDS | {"datasource_id"}
         assert "system_prompt" not in agent
         # tools is always a list — never a string
         assert isinstance(agent["tools"], list)
@@ -891,7 +891,7 @@ class TestCreateAgent:
                 name="agent_on_second",
                 type="gen_sql",
                 tools=["db_tools"],
-                datasource_name="second",
+                datasource_id="second",
             ),
             real_agent_config,
         )
@@ -913,7 +913,7 @@ class TestCreateAgent:
                 name="agent_nowhere",
                 type="gen_sql",
                 tools=["db_tools"],
-                datasource_name="not_bound",
+                datasource_id="not_bound",
             ),
             real_agent_config,
         )
@@ -1174,7 +1174,7 @@ class TestEditAgent:
         await svc.create_agent(CreateAgentInput(name="rebind_me", type="gen_sql"), real_agent_config)
 
         result = await svc.edit_agent(
-            EditAgentInput(id="rebind_me", name="rebind_me", datasource_name="second"),
+            EditAgentInput(id="rebind_me", name="rebind_me", datasource_id="second"),
             real_agent_config,
         )
         assert result.success is True
@@ -1202,7 +1202,7 @@ class TestEditAgent:
 
         svc = AgentService()
         await svc.create_agent(
-            CreateAgentInput(name="stay_on_second", type="gen_sql", datasource_name="second"),
+            CreateAgentInput(name="stay_on_second", type="gen_sql", datasource_id="second"),
             real_agent_config,
         )
 
@@ -1229,7 +1229,7 @@ class TestEditAgent:
         await svc.create_agent(CreateAgentInput(name="reject_edit", type="gen_sql"), real_agent_config)
 
         result = await svc.edit_agent(
-            EditAgentInput(id="reject_edit", name="reject_edit", datasource_name="not_bound"),
+            EditAgentInput(id="reject_edit", name="reject_edit", datasource_id="not_bound"),
             real_agent_config,
         )
 
@@ -1973,6 +1973,9 @@ class TestSubagentScopedContextRoundTrip:
         # Seed an entry already bound to "finance" via scoped_context, then
         # blank out the runtime's current_datasource so the only available
         # binding is the saved one.
+        import copy
+
+        real_agent_config.services.datasources["finance"] = copy.deepcopy(real_agent_config.current_db_config())
         real_agent_config.agentic_nodes["edit_with_saved_ds"] = {
             "type": "gen_sql",
             "scoped_context": {

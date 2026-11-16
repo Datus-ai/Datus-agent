@@ -74,8 +74,6 @@ class DatasourceConfig(BaseModel):
 
 
 class DatasourceSummary(BaseModel):
-    datasource_id: Optional[str] = None
-
     """One configured datasource, with nothing a caller does not need to name it.
 
     Deliberately NOT ``DatasourceConfig``: that carries the decrypted password,
@@ -83,6 +81,8 @@ class DatasourceSummary(BaseModel):
     datasources is something every client that renders a catalog does, on every
     project entry — so it must not be a path that hands out credentials.
     """
+
+    datasource_id: Optional[str] = None
 
     name: str = Field(..., description="Datasource (namespace) name")
     type: str = Field(..., description="Datasource type (postgresql, starrocks, ...)")
