@@ -309,17 +309,19 @@ This check runs on code PRs independently of impacted-test selection. It rejects
 missing explicit tools, removed provider tools (including wildcard selections),
 and changes to existing tools' `access` values. Runtime filtering still rejects
 unsupported capabilities, but cannot hide a stale declaration from this check.
-Adding a tool does not fail the baseline comparison.
+Every selected tool must be recorded, including newly added tools selected by a
+wildcard. An unrecorded tool fails CI even if the policy already permits it:
+authorizing a capability and recording its contract are separate requirements.
 
-For an intentional removal or access change, review the affected type policies,
-then explicitly regenerate and review the baseline diff:
+When adding a selected tool or intentionally removing/changing one, review the
+affected type policies, then explicitly regenerate and review the baseline diff:
 
 ```bash
 uv run python -m datus.tools.registry.policy_validation --update
 ```
 
 The baseline is not automatically rewritten by commit or build hooks. This
-command also records newly added tools for subsequent deletion/access checks.
+command records newly added tools so later deletion/access changes cannot bypass CI.
 `direct_call` describes direct API eligibility and is not an in-agent access rule.
 
 ## Useful References

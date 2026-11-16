@@ -58,15 +58,52 @@ def test_wildcard_access_change_is_detected_without_read_only_type_constraint(mo
         validation.validate_policy_contracts(baseline)
 
 
-def test_new_tool_does_not_require_baseline_update(monkeypatch, baseline):
+@pytest.fixture
+def future_reader(monkeypatch):
     tool = "db_tools.future_reader"
     monkeypatch.setitem(TOOL_CAPABILITIES, tool, ToolCapability("read"))
     providers = validation._provider_tools
-    monkeypatch.setattr(validation, "_provider_tools", lambda kind: [*providers(kind), tool])
-    current = validation.current_policy_contracts()
-    assert tool in current["gen_sql"]
+    additions = [tool]
+    monkeypatch.setattr(validation, "_provider_tools", lambda kind: [*providers(kind), *additions])
+    return tool, additions
+
+
+def test_new_tool_must_be_recorded_before_ci_passes(monkeypatch, baseline, future_reader, tmp_path):
+    tool, _ = future_reader
     assert tool not in baseline["gen_sql"]
-    validation.validate_policy_contracts(baseline)
+    with pytest.raises(ValueError, match=re.escape(tool)):
+        validation.validate_policy_contracts(baseline)
+
+    path = tmp_path / "baseline.json"
+    monkeypatch.setattr(validation, "BASELINE_PATH", path)
+    monkeypatch.setattr(sys, "argv", ["policy_validation", "--update"])
+    validation.main()
+    recorded = json.loads(path.read_text())
+    assert recorded["gen_sql"][tool] == "read"
+    validation.validate_policy_contracts(recorded)
+
+
+def test_new_tool_access_change_is_detected_after_recording(monkeypatch, future_reader):
+    tool, _ = future_reader
+    recorded = validation.current_policy_contracts()
+    assert recorded["gen_sql"][tool] == "read"
+    validation.validate_policy_contracts(recorded)
+
+    monkeypatch.setitem(TOOL_CAPABILITIES, tool, ToolCapability("write"))
+    with pytest.raises(ValueError, match=rf"{re.escape(tool)} access changed from read to write"):
+        validation.validate_policy_contracts(recorded)
+
+
+def test_new_tool_deletion_is_detected_after_recording(monkeypatch, future_reader):
+    tool, additions = future_reader
+    recorded = validation.current_policy_contracts()
+    assert recorded["gen_sql"][tool] == "read"
+    validation.validate_policy_contracts(recorded)
+
+    additions.clear()
+    monkeypatch.delitem(TOOL_CAPABILITIES, tool)
+    with pytest.raises(ValueError, match=rf"{re.escape(tool)} was removed"):
+        validation.validate_policy_contracts(recorded)
 
 
 def test_new_explicit_typo_is_rejected_before_baseline_comparison(monkeypatch, baseline):
