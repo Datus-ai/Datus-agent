@@ -1868,6 +1868,27 @@ class TestRenderMetricDetail:
         lines = render_metric_detail({**RETURNING_METRIC, "attribution": distinct}).splitlines()
         assert lines[-1] == "attribution: attribute_metrics yes; attribute_dimensions no (insufficient_state)"
 
+        # A distinct count splits only by what its field determines: every
+        # field written out, by dataset.
+        only_by = {
+            "metrics": {"supported": True},
+            "dimensions": {
+                "supported": True,
+                "only_by": [
+                    {"name": "orders", "fields": ["region", "city"]},
+                    {"name": "stores", "fields": ["store_name"]},
+                ],
+            },
+        }
+        lines = render_metric_detail({**RETURNING_METRIC, "attribution": only_by}).splitlines()
+        assert lines[-1] == (
+            "attribution: attribute_metrics yes; attribute_dimensions only by orders(region, city), stores(store_name)"
+        )
+        # An empty list says nothing more than a plain yes.
+        empty = {"metrics": {"supported": True}, "dimensions": {"supported": True, "only_by": []}}
+        lines = render_metric_detail({**RETURNING_METRIC, "attribution": empty}).splitlines()
+        assert lines[-1] == "attribution: attribute_metrics yes; attribute_dimensions yes"
+
         untimed = {
             "metrics": {"supported": False, "code": "no_time_dimension", "message": "no time field"},
             "dimensions": {"supported": False, "code": "no_time_dimension", "message": "no time field"},

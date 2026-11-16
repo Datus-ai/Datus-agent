@@ -290,8 +290,10 @@ def _render_attribution_capability(capability: Any) -> Optional[str]:
     """``attribute_metrics yes; attribute_dimensions no (<code>)``: whether
     each tool can explain the metric, with the code a call would be refused
     with. Both are always written, so a metric one tool cannot explain does
-    not read as the only one with a limit. None when the catalog says
-    nothing."""
+    not read as the only one with a limit. ``attribute_dimensions only by
+    orders(region), stores(city)`` when it splits the metric by those fields
+    alone (a distinct count, by what its field determines), every field
+    written out. None when the catalog says nothing."""
     if not isinstance(capability, Mapping):
         return None
     parts = []
@@ -299,11 +301,29 @@ def _render_attribution_capability(capability: Any) -> Optional[str]:
         support = capability.get(key)
         if not isinstance(support, Mapping) or not isinstance(support.get("supported"), bool):
             continue
-        if support["supported"]:
+        only_by = _render_only_by(support.get("only_by"))
+        if support["supported"] and only_by:
+            parts.append(f"{tool} only by {only_by}")
+        elif support["supported"]:
             parts.append(f"{tool} yes")
         else:
             parts.append(f"{tool} no ({support.get('code') or 'unsupported'})")
     return "; ".join(parts) or None
+
+
+def _render_only_by(only_by: Any) -> str:
+    """``orders(region, city), stores(store_name)``: the fields of Dosi's
+    ``only_by``, by dataset; empty when there are none."""
+    if not isinstance(only_by, list):
+        return ""
+    datasets = []
+    for dataset in only_by:
+        if not isinstance(dataset, Mapping) or not dataset.get("name"):
+            continue
+        fields = [str(field) for field in dataset.get("fields") or [] if field]
+        if fields:
+            datasets.append(f"{dataset['name']}({', '.join(fields)})")
+    return ", ".join(datasets)
 
 
 def _render_query_warning(warning: Any) -> str:
@@ -1876,8 +1896,9 @@ class SemanticTools:
           whose table has no time field (a snapshot): query it without
           time_start/time_end and pick the day it reads in ``where``.
         - ``attribution``: whether attribute_metrics and attribute_dimensions
-          can each explain this metric's change: ``yes``, or ``no (<code>)``
-          with the code a call would be refused with.
+          can each explain this metric's change: ``yes``; ``only by
+          dataset(field, ...)``, every field its change can be split by; or
+          ``no (<code>)`` with the code a call would be refused with.
 
         Args:
             name: Exact metric name from the selected model or metric catalog.
@@ -2785,7 +2806,7 @@ class SemanticTools:
             dimensions: What to split by, fields as `dataset.field[:grain]` of the datasets
                 get_metric lists under `dimension_datasets`; a field that does not exist is
                 answered with the candidates. Business categories, not ids and not the time field
-                the periods are cut on.
+                the periods are cut on. When get_metric's attribution says `only by`, only those.
             baseline_start: Start of the earlier period, YYYY-MM-DD, inclusive.
             baseline_end: End of the earlier period, exclusive.
             current_start: Start of the later period, inclusive. Make the two periods the same length.
