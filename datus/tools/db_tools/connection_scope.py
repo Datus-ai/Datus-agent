@@ -46,14 +46,18 @@ def drain_connections(tool):
             state.condition.wait()
 
 
-def connection_scope(method):
+def connection_scope(method=None, *, owner_attr=None):
+    if method is None:
+        return lambda function: connection_scope(function, owner_attr=owner_attr)
+
     @wraps(method)
     def wrapped(self, *args, **kwargs):
+        tool = getattr(self, owner_attr) if owner_attr is not None else self
         current = _scope.get()
-        if current is not None and current[0] is self:
+        if tool is None or (current is not None and current[0] is tool):
             return method(self, *args, **kwargs)
-        with _operation(self), ExitStack() as stack:
-            token = _scope.set((self, stack, {}))
+        with _operation(tool), ExitStack() as stack:
+            token = _scope.set((tool, stack, {}))
             try:
                 return method(self, *args, **kwargs)
             finally:

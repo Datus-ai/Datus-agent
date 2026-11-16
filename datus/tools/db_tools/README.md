@@ -290,3 +290,8 @@ before explicitly closing their manager. Externally injected manager factories
 continue to own their managers; tool cleanup does not close a shared manager.
 Closed tools reject later operation-scoped and unscoped connection borrows;
 they cannot silently reacquire leases after returning their original borrows.
+
+SQL and metric saves for reports and dashboards use the same connection scope
+as their node's `DBFuncTool`. The scope covers the complete synchronous save,
+including preflight SQL and result materialization. Cancelling the model's
+awaiter cannot release the database tool's leases while that save still runs.

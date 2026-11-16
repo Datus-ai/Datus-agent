@@ -130,13 +130,15 @@ def test_close_waits_for_managed_borrowers_and_allows_later_reconnect(monkeypatc
 
     with ThreadPoolExecutor(max_workers=1) as pool:
         finished = pool.submit(close)
-        assert closing.wait(timeout=5)
-        assert not finished.done()
-        assert lease.connector.close_count == 0
-        with manager.acquire_conn("source", "nested") as nested:
-            nested.connect()
+        try:
+            assert closing.wait(timeout=5)
             assert not finished.done()
-        lease.release()
+            assert lease.connector.close_count == 0
+            with manager.acquire_conn("source", "nested") as nested:
+                nested.connect()
+                assert not finished.done()
+        finally:
+            lease.release()
         finished.result(timeout=5)
     assert lease.connector.close_count == 1
     assert manager.get_conn("source", "db") is not lease.connector

@@ -107,9 +107,12 @@ def test_live_model_survives_registry_lru_eviction(tracked_embedding_factory):
     assert len(tracked_embedding_factory) == 2
 
 
-def test_model_session_options_are_isolated(tracked_embedding_factory):
+@pytest.mark.parametrize("default_device", ["cpu", "cuda"])
+def test_model_session_options_are_isolated(tracked_embedding_factory, monkeypatch, default_device):
     """The same model on another device/cache cannot accidentally reuse a session."""
+    monkeypatch.setattr(fastembed_embeddings, "get_embedding_device", lambda: default_device)
     first, second, third = FastEmbedEmbeddings(), FastEmbedEmbeddings(), FastEmbedEmbeddings()
+    first.device = third.device = "cpu"
     second.device = "cuda"
     third.cache_dir = "/different-cache"
     assert len({id(x.embedding_model) for x in (first, second, third)}) == 3

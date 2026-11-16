@@ -41,6 +41,15 @@ Concurrency unit tests rendezvous constructors with their real Future waiters
 instead of relying on sleeps. The expiry fixture observes actual timer callbacks
 and never performs the purge itself.
 
+Catalogue deadline cases require a timeout response while native SQLite remains
+blocked, then verify that a worker-owned service borrow prevents early disposal.
+Artifact-save cancellation cases invoke real function tools and SQL/metric save
+paths; under connection pressure, tool cleanup must wait for the save before the
+native connection can be evicted. Follow-up cases receive the previous `end`
+while cleanup is held, then verify next-turn admission and cancellation isolation.
+Device-isolation tests explicitly set CPU/CUDA inputs and cover a CUDA default.
+Faulted teardown checks release their leases in `finally` before executor join.
+
 The native embedding cases prefetch assets before measurement, then use three
 rounds of eight concurrent inferences in a fresh interpreter. Construction count,
 wrapper collection and live native-model count are hard assertions. RSS is

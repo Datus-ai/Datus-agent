@@ -666,7 +666,15 @@ Requests using an older configuration generation also protect the project's
 shared task manager from idle/capacity eviction. Application shutdown stops
 chat producers before waiting for SSE consumers and database workers to drain;
 it rejects new turn registrations, including requests still loading session
-metadata when shutdown begins. Native SQL and metadata cancellation/timeout
-responses wait for their worker to finish before releasing its service, so
-draining can exceed the route's timeout. Replay caps remove turns in completion
-order even when the same session completes again.
+metadata when shutdown begins. Native SQL and table metadata cancellation wait
+for their worker to finish before releasing the request. Catalogue queries keep
+their 30-second response timeout: a tracked background worker retains a separate
+service borrow until native execution finishes, including after a timeout or
+client cancellation. Server shutdown can still wait for native workers to drain.
+Replay caps remove turns in completion order even when the same session completes
+again.
+
+A terminal SSE frame can arrive before node cleanup finishes. A new turn for the
+same session waits for that cleanup before loading session metadata and starting;
+cancelling the new request does not cancel the preceding turn's cleanup. A turn
+that is still running retains the existing single-active-turn behavior.

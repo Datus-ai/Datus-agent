@@ -440,11 +440,10 @@ async def _blocked_metadata_worker(project, method, path, *, params=None, json_b
 @pytest.mark.parametrize(
     "method,path,params,json_body",
     [
-        ("GET", "/api/v1/catalog/list", None, None),
         ("GET", "/api/v1/table/detail", {"table": "orders"}, None),
         ("POST", "/api/v1/table/columns", None, {"tables": ["orders"]}),
     ],
-    ids=["catalog", "table-detail", "table-columns"],
+    ids=["table-detail", "table-columns"],
 )
 async def test_http_metadata_eviction_waits_for_cancelled_native_worker(
     resource_project, method, path, params, json_body
@@ -469,20 +468,38 @@ async def test_http_metadata_eviction_waits_for_cancelled_native_worker(
 
 
 @pytest.mark.asyncio
-async def test_http_catalog_timeout_drains_native_worker_before_owner_closes(resource_project, monkeypatch):
+async def test_http_catalog_cancellation_keeps_worker_pin_until_native_finishes(resource_project):
+    async with _blocked_metadata_worker(resource_project, "GET", "/api/v1/catalog/list") as turn:
+        try:
+            turn.request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(turn.request, timeout=1)
+            assert turn.service.has_active_tasks() is True
+            await asyncio.wait_for(resource_project.cache.evict("default"), timeout=2)
+            assert turn.connector.connection is turn.native
+        finally:
+            turn.release.set()
+        await asyncio.wait_for(resource_project.cache.drain(), timeout=10)
+        assert turn.connector.connection is None
+        assert turn.service._datasource is None
+
+
+@pytest.mark.asyncio
+async def test_http_catalog_timeout_returns_before_native_worker_finishes(resource_project, monkeypatch):
     async with _blocked_metadata_worker(
         resource_project, "GET", "/api/v1/catalog/list", timeout_patch=monkeypatch
     ) as turn:
         try:
+            # The route has hit its actual wait_for deadline, while SQLite
+            # remains blocked. The response must finish before native release.
+            response = await asyncio.wait_for(turn.request, timeout=1)
+            assert response.json()["errorCode"] == "REQUEST_TIMEOUT"
+            assert turn.release.is_set() is False
+            assert turn.service.has_active_tasks() is True
             await asyncio.wait_for(resource_project.cache.evict("default"), timeout=2)
-            with pytest.raises(TimeoutError):
-                await asyncio.wait_for(asyncio.shield(turn.request), timeout=0.05)
-            assert turn.service.has_active_tasks()
             assert turn.connector.connection is turn.native
         finally:
             turn.release.set()
-        response = await turn.request
-        assert response.json()["errorCode"] == "REQUEST_TIMEOUT"
         await asyncio.wait_for(resource_project.cache.drain(), timeout=10)
         assert turn.connector.connection is None
         assert turn.service._datasource is None
@@ -566,3 +583,85 @@ async def test_http_service_shutdown_stops_active_sse_before_draining_requests(r
         finally:
             turn.release.set()
             await asyncio.gather(stopping, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_http_next_turn_waits_for_terminal_cleanup(resource_project, model_server, monkeypatch):
+    async with _blocked_http_turn(resource_project, model_server, "slow_cleanup", answer("First reply.")) as turn:
+        entered, release = asyncio.Event(), asyncio.Event()
+        node_type = type(turn.task.node)
+        close = node_type.aclose
+
+        async def slow_close(node):
+            entered.set()
+            await release.wait()
+            await close(node)
+
+        monkeypatch.setattr(node_type, "aclose", slow_close)
+        following = None
+        try:
+            turn.release.set()
+            first_response = await asyncio.wait_for(turn.request, timeout=5)
+            assert find_event(parse_sse_body(first_response.text), "end")["event"] == "end"
+            await asyncio.wait_for(entered.wait(), timeout=5)
+            model_server.enqueue(answer("Second reply."))
+            following = asyncio.create_task(
+                turn.client.post(
+                    "/api/v1/chat/stream", json={"message": "Continue.", "session_id": turn.sid, "interactive": False}
+                )
+            )
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(following), timeout=0.05)
+            assert turn.manager.get_task(turn.sid) is turn.task
+            release.set()
+            response = await asyncio.wait_for(following, timeout=10)
+            assert response.status_code == 200
+            assert "Second reply." in response.text
+            assert find_event(parse_sse_body(response.text), "end")["event"] == "end"
+            await turn.manager.wait_all_tasks()
+            await _assert_terminal_turn(turn, "completed")
+        finally:
+            release.set()
+            await asyncio.gather(*([following] if following is not None else []), return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_cancelling_followup_waiter_does_not_cancel_previous_cleanup(resource_project, model_server, monkeypatch):
+    async with _blocked_http_turn(resource_project, model_server, "cleanup_waiter", answer("First reply.")) as turn:
+        entered, release, following_entered = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        node_type = type(turn.task.node)
+        close = node_type.aclose
+        start = turn.manager.start_chat
+
+        async def slow_close(node):
+            entered.set()
+            await release.wait()
+            await close(node)
+
+        async def observe_followup(*args, **kwargs):
+            following_entered.set()
+            return await start(*args, **kwargs)
+
+        monkeypatch.setattr(node_type, "aclose", slow_close)
+        following = None
+        try:
+            turn.release.set()
+            await asyncio.wait_for(turn.request, timeout=5)
+            await asyncio.wait_for(entered.wait(), timeout=5)
+            monkeypatch.setattr(turn.manager, "start_chat", observe_followup)
+            following = asyncio.create_task(
+                turn.client.post(
+                    "/api/v1/chat/stream", json={"message": "Continue.", "session_id": turn.sid, "interactive": False}
+                )
+            )
+            await asyncio.wait_for(following_entered.wait(), timeout=5)
+            following.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(following), timeout=1)
+            assert turn.task.asyncio_task.done() is False
+            assert turn.task.asyncio_task.cancelling() == 0
+            release.set()
+            await _assert_terminal_turn(turn, "completed")
+        finally:
+            release.set()
+            await asyncio.gather(*([following] if following is not None else []), return_exceptions=True)

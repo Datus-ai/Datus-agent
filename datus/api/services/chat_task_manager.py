@@ -548,9 +548,17 @@ class ChatTaskManager:
         """
         if self._closed:
             raise RuntimeError("ChatTaskManager is shut down")
-        # Clone config to avoid cross-request mutation of shared AgentConfig
+        # Snapshot caller-owned configuration before waiting for a previous turn.
         agent_config = copy.deepcopy(agent_config)
         agent_config.policy_context = dict(policy_context or {})
+        prior_task = self._tasks.get(request.session_id) if request.session_id else None
+        if prior_task is not None and prior_task.status != "running" and prior_task.asyncio_task is not None:
+            # A terminal SSE frame can be consumed before native cleanup ends.
+            # Wait before loading metadata or admitting the next turn; cancelling
+            # this waiter must not cancel the preceding turn's cleanup.
+            await asyncio.shield(asyncio.gather(prior_task.asyncio_task, return_exceptions=True))
+            if self._closed:
+                raise RuntimeError("ChatTaskManager is shut down")
         # API surface has no interactive broker to confirm EXTERNAL file
         # access, so force filesystem strict mode — every node constructed
         # below reads this flag via AgenticNode._resolve_filesystem_strict().

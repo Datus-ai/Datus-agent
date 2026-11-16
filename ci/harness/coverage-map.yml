@@ -1322,6 +1322,9 @@ execution:
         - tests/integration/storage/test_platform_doc.py
     - id: database
       paths:
+        - datus/tools/func_tool/dashboard_artifact_tools.py
+        - datus/tools/func_tool/report_artifact_tools.py
+        - datus/tools/func_tool/metric_artifact_tools.py
         - datus/utils/constants.py
         - datus/utils/exceptions.py
         - datus/tools/db_tools/

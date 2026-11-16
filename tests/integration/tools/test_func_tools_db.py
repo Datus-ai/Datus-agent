@@ -852,3 +852,121 @@ def test_real_tool_concurrent_cold_connection_and_owner_eviction(tmp_path, monke
             tool.close()
             manager.close()
         assert all(connector.connection is None for _, connector in created)
+
+
+@pytest.mark.acceptance
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+async def test_cancelled_artifact_worker_retains_native_connection_until_save_finishes(tmp_path, monkeypatch, kind):
+    """The outer model tool owns its DB operation after its awaiter is cancelled."""
+    import asyncio
+    import threading
+    from contextlib import ExitStack
+    from functools import wraps
+
+    from datus.tools.db_tools.connection_scope import _lifetime
+    from datus.tools.db_tools.db_manager import DBManager
+    from datus.tools.func_tool import DashboardArtifactTools, ReportArtifactTools
+    from tests.helpers.product_acceptance import isolated_connectors, product_config
+
+    for index in range(9):
+        with sqlite3.connect(tmp_path / f"db{index}.sqlite") as database:
+            database.execute("CREATE TABLE marker(value INTEGER)")
+    config = product_config(
+        tmp_path / "project",
+        "http://127.0.0.1:1/v1",
+        datasources={
+            "warehouse": {
+                "type": "sqlite",
+                "path_pattern": str(tmp_path / "*.sqlite"),
+                "database": "db0",
+                "default": True,
+            }
+        },
+    )
+    config.current_datasource = "warehouse"
+    with isolated_connectors(), ExitStack() as cleanup:
+        manager = DBManager(config.datasource_configs)
+        cleanup.callback(manager.close)
+        tool = DBFuncTool(manager, agent_config=config, default_datasource="warehouse")
+        cleanup.callback(tool.close)
+        connector = tool.connector
+        connector.execute_query("SELECT 1")
+        entered, release, draining, finished = (threading.Event() for _ in range(4))
+        cleanup.callback(release.set)
+        results = []
+        leases = [manager.acquire_conn("warehouse", f"db{index}") for index in range(1, 9)]
+
+        for lease in leases:
+            cleanup.callback(lease.release)
+
+        def hold():
+            entered.set()
+            assert release.wait(timeout=10)
+            return 350
+
+        connector.connection.create_function("artifact_hold", 0, hold)
+        artifact_type = {"report": ReportArtifactTools, "dashboard": DashboardArtifactTools}[kind]
+        artifact = artifact_type(agent_config=config, db_func_tool=tool)
+        start = getattr(artifact, {"report": "start_new_report", "dashboard": "start_new_dashboard"}[kind])
+        assert start("resource", "Resource lifetime", "Verify a native query lifetime").success == 1
+        name = {"report": "save_query", "dashboard": "save_query_template"}[kind]
+        save = getattr(artifact_type, name)
+
+        @wraps(save)
+        def observe_save(self, *args, **kwargs):
+            try:
+                result = save(self, *args, **kwargs)
+                results.append(result)
+                return result
+            finally:
+                finished.set()
+
+        monkeypatch.setattr(artifact_type, name, observe_save)
+        condition = _lifetime(tool).condition
+        wait = condition.wait
+
+        def observe_drain(timeout=None):
+            draining.set()
+            return wait(timeout)
+
+        monkeypatch.setattr(condition, "wait", observe_drain)
+        arguments = {
+            "name": "total",
+            "goal": "Compute total",
+            "hypothesis": "The total is 350",
+            "fallback_reason": "The isolated datasource has no semantic metric.",
+            **{
+                "report": {"sql": "SELECT artifact_hold() AS total"},
+                "dashboard": {"sql_template": "-- @datus-params\nSELECT artifact_hold() AS total", "sample_params": {}},
+            }[kind],
+        }
+        function = trans_to_function_tool(getattr(artifact, name), strict_mode=False)
+        invocation = asyncio.create_task(function.on_invoke_tool(None, json.dumps(arguments)))
+        closing = None
+        try:
+            assert await asyncio.to_thread(entered.wait, 5), [result.model_dump() for result in results]
+            invocation.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await invocation
+            closing = asyncio.create_task(asyncio.to_thread(tool.close))
+            assert await asyncio.to_thread(draining.wait, 5)
+            assert closing.done() is False
+            assert connector in manager._conn_dict["warehouse"].values()
+            release.set()
+            await asyncio.wait_for(closing, timeout=5)
+            assert await asyncio.to_thread(finished.wait, 5)
+            assert len(results) == 1
+            assert results[0].success == 1, results[0].error
+            assert results[0].result["preview_rows"] == [{"total": 350}]
+            # Eight other active leases leave this as the only eviction
+            # candidate. It can close only after the native artifact save.
+            assert connector.connection is None
+        finally:
+            release.set()
+            invocation.cancel()
+            await asyncio.gather(invocation, *([closing] if closing is not None else []), return_exceptions=True)
+            await asyncio.to_thread(tool.close)
+            for lease in leases:
+                lease.release()
+            await asyncio.to_thread(manager.close)

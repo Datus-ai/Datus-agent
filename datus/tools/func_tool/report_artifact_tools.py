@@ -43,6 +43,7 @@ from datus.schemas.gen_visual_report_models import (
     QueryResultFile,
     extract_query_slug,
 )
+from datus.tools.db_tools.connection_scope import connection_scope
 from datus.tools.func_tool._artifact_filesystem_base import ArtifactFilesystemFuncTool
 from datus.tools.func_tool._jsx_hooks_lint import format_hook_order_issues
 from datus.tools.func_tool._visual_artifact_cards import scan_render_cards
@@ -573,6 +574,7 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
             )
         return None
 
+    @connection_scope(owner_attr="_db_func_tool")
     @tool_contract(access="restricted", direct_call=False)
     def save_query(
         self,
