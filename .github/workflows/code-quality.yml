@@ -29,3 +29,12 @@ jobs:
     uses: ./.github/workflows/run-ut-and-coverage.yml
     with:
       reuse_validation: ${{ github.event.action == 'edited' && !github.event.changes.base }}
+
+  merge-queue-context:
+    name: Merge Queue Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish required PR context
+        run: |
+          echo "PR formatting and tests are enforced by the required Code Quality checks."
+          echo "Merged-tree consistency is enforced on merge_group before merge."

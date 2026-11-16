@@ -15,12 +15,17 @@ defaults only apply under their configured parent coordinates. A catalog-only
 switch must select a database before opening a connector if its old configured
 database belongs to another catalog; it must not silently reuse that database.
 
-Resolved execution contexts require a nonempty database when creating a SQL
-connector. Clearing the database invalidates the old selection; execution is
-refused until a database is explicitly selected again. This avoids restoring a
-configured database, choosing the first file in a glob, or relying on a driver's
-implicit database default. Context-free discovery/legacy calls may still use
-their configured defaults.
+Resolved execution contexts may leave the database unselected for server
+datasources configured without a default database or connection URI. This lets
+new chat turns initialize their tools and discover databases without requiring
+an optional initial database. The adapter still validates the connection and any
+SQL that requires a database.
+
+An empty resolved database cannot restore a configured database or URI target
+(including targets supplied through adapter options in `extra`), reuse a connector
+bound to another database, or choose a file database (including the first file in
+a glob). Such profiles still require an explicit database selection.
+Context-free discovery/legacy calls may use their configured defaults.
 
 For a first turn, omitted coordinates resolve configured defaults before the
 snapshot is frozen. File datasources without a configured database resolve the

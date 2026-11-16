@@ -2682,6 +2682,64 @@ class TestStartChatDatasourceOverride:
     connection profile without leaking into the physical ``database`` slot."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("engine", ["mysql", "starrocks"])
+    async def test_new_dashboard_chat_can_initialize_database_tools_without_a_default_database(
+        self, tmp_path, monkeypatch, engine
+    ):
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.configuration.agent_config import AgentConfig
+        from datus.tools.db_tools.db_manager import DBManager
+        from datus.tools.func_tool import database as database_module
+
+        catalog = "default_catalog" if engine == "starrocks" else ""
+        cfg = AgentConfig(
+            nodes={},
+            home=str(tmp_path / "home"),
+            skip_init_dirs=True,
+            services={"datasources": {"warehouse": {"type": engine, "catalog": catalog}}},
+            agentic_nodes={
+                "dashboard_reader": {
+                    "id": "dashboard-reader-id",
+                    "node_class": "ask_dashboard",
+                    "scoped_context": {"datasource": "warehouse"},
+                }
+            },
+        )
+        cfg.current_datasource = "warehouse"
+        connector = MagicMock(dialect=engine, database_name="", catalog_name=catalog, schema_name="")
+        connector.get_databases.return_value = ["analytics", "reporting"]
+        manager = DBManager(cfg.datasource_configs)
+        monkeypatch.setattr(manager, "_build_conn", lambda config: connector)
+        monkeypatch.setattr(database_module, "db_manager_instance", lambda configs: manager)
+        monkeypatch.setattr(database_module, "metadata_fts_enabled", lambda config: False)
+        monkeypatch.setattr(database_module, "SchemaWithValueRAG", lambda *args: None)
+        monkeypatch.setattr(database_module, "SemanticDatasetRAG", lambda *args: None)
+        monkeypatch.setattr(database_module, "_warn_once_if_projection_is_stale", lambda config: None)
+        observed = {}
+
+        async def run(task, config, request, **kwargs):
+            tool = database_module.DBFuncTool(agent_config=config, sub_agent_name="dashboard_reader", read_only=True)
+            observed.update(config.runtime_db_context())
+            assert tool.connector is connector
+            assert tool.connector.database_name == ""
+            assert tool.read_only is True
+            databases = tool.list_databases()
+            assert databases.success == 1, databases.error
+            assert databases.result == ["analytics", "reporting"]
+
+        tasks = ChatTaskManager()
+        monkeypatch.setattr(tasks, "_run_loop", run)
+        request = StreamChatInput(message="hello", subagent_id="dashboard-reader-id")
+        task = await tasks.start_chat(cfg, request, sub_agent_id=request.subagent_id)
+        await task.asyncio_task
+
+        assert observed["datasource"] == "warehouse"
+        assert observed["database"] == ""
+        assert request.database == ""
+        assert cfg.current_db_config().database == ""
+        assert cfg.runtime_db_context() == {}
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("engine", ["sqlite", "duckdb"])
     @pytest.mark.parametrize("explicit_empty", [False, True])
     async def test_glob_database_omission_uses_effective_default_but_explicit_empty_rejects(

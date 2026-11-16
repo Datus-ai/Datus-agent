@@ -191,8 +191,10 @@ base, such as after the base advances, the metadata run performs fresh
 validation. Later edits can reuse that actual validation, but evidence-only
 copies never become sources. Missing or invalid base SHAs and API errors fail closed.
 Metadata-only events never cancel that validation.
-Merge-queue context publication lives in a separate merge-group-only workflow,
-so skipped jobs cannot compete with the real PR check contexts.
+Test Audit runs on PR events only; merge groups do not launch an audit job.
+Merge-queue quality contexts live in `merge-queue.yml`, which does not handle PR
+events. They run only on `merge_group`; manual dispatches use distinct, non-required
+job names so skipped jobs cannot compete with the real PR check contexts.
 
 Merge Queue runs only generated tool catalog validation and strict coverage-map
 validation on the merged tree. It installs PyYAML without the Agent environment,
@@ -201,7 +203,8 @@ checks and propagates failures to the required `Merge Queue Gate` context. This
 catches catalog/map conflicts introduced by combining PRs; behavior tests remain
 owned by PR CI. Native packages, real services and model quality remain owned by
 Nightly, dedicated acceptance and release validation. No test-result cache is
-introduced.
+introduced. Queue failures remain visible through GitHub checks and run artifacts;
+automatic PR failure comments and Feishu notifications are no longer sent.
 
 ## SQL policy host acceptance
 
@@ -237,8 +240,8 @@ credentials are not uploaded. A fresh per-run directory holds downloaded assets
 and is removed after evidence upload; credentials are scoped to the download step.
 The final notification requires both successful Release preparation and tests.
 
-The independent `sql-policy-gate.yml` source-build verifier is retained for existing
-callers, but Nightly no longer invokes it.
+The local `ci/sql_policy_gate.py` source-build diagnostic tool remains available;
+its reusable GitHub Actions workflow has been removed. Nightly does not invoke it.
 
 Local reproduction in the locked Agent environment:
 
@@ -314,10 +317,11 @@ Live core defaults to `deepseek/deepseek-v4-flash` with `DEEPSEEK_API_KEY`.
 
 Changes to BI tools, validation, Superset authoring/validation skills, their tests,
 dependencies, or CI select `Superset Product Tests` in the product test plan. Scheduled
-Nightly runs this group; it is not a merge-queue dependency. The separate
-`merge-queue-pr.yml` workflow publishes the lightweight PR context without a
-checkout or reusable workflow call. The standalone BI gate uses pinned BI and plugin fixtures declared in `ci/bi_gate.py`, the existing
-self-hosted CI credential template, and dynamically allocated loopback Docker ports.
+Nightly runs this group; it is not a merge-queue dependency. The PR-only `Code Quality`
+workflow publishes the lightweight `Merge Queue Gate` context in a job without a
+checkout or reusable workflow call. The local `ci/bi_gate.py` diagnostic tool uses
+pinned BI and plugin fixtures and dynamically allocated loopback Docker ports;
+its reusable GitHub Actions workflow has been removed.
 It runs the deterministic chart repair/delete contract, managed plugin installation,
 and real-model dashboard creation. Missing, skipped, or failed execution receipts fail the gate.
 
