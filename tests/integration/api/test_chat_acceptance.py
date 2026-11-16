@@ -719,3 +719,59 @@ async def test_http_shutdown_during_node_construction_closes_the_completed_node(
         # Also clean the real node when verifying the regression on old code.
         for node in created:
             await node.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["constructor", "message_snapshot"])
+async def test_http_early_cancellation_preserves_previous_structured_message(
+    resource_project, model_server, monkeypatch, phase
+):
+    manager = resource_project.service.task_manager
+    sid = "cancelled_repeated_text"
+    original_parts = [
+        {"type": "markdown", "payload": {"content": "Same question."}},
+        {"type": "markdown", "payload": {"content": "Original content."}},
+    ]
+    cancelled_parts = [{"type": "markdown", "payload": {"content": "Same question.\n\nOriginal content."}}]
+    model_server.enqueue(answer("Original answer."))
+    first = await resource_project.client.post(
+        "/api/v1/chat/stream", json={"messages": original_parts, "session_id": sid, "interactive": False}
+    )
+    assert find_event(parse_sse_body(first.text), "end")["event"] == "end"
+    await manager.wait_all_tasks()
+    before_response = await resource_project.client.get("/api/v1/chat/history", params={"session_id": sid})
+    assert before_response.json()["success"] is True
+    before_messages = before_response.json()["data"]["messages"]
+    assert [message["content"] for message in before_messages if message["role"] == "user"] == [original_parts]
+    before = [(message["role"], message["content"]) for message in before_messages]
+
+    entered, release = threading.Event(), threading.Event()
+    operation = {"constructor": "_create_node", "message_snapshot": "_max_message_id"}[phase]
+    original = getattr(manager, operation)
+
+    def blocked_operation(*args, **kwargs):
+        result = original(*args, **kwargs)
+        entered.set()
+        assert release.wait(10), "The test must release initialization"
+        return result
+
+    monkeypatch.setattr(manager, operation, blocked_operation)
+    request = asyncio.create_task(
+        resource_project.client.post(
+            "/api/v1/chat/stream", json={"messages": cancelled_parts, "session_id": sid, "interactive": False}
+        )
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 10)
+        task = manager.get_task(sid)
+        task.asyncio_task.cancel()
+        release.set()
+        await asyncio.wait_for(task.asyncio_task, timeout=10)
+        await asyncio.wait_for(request, timeout=10)
+        assert task.status == "cancelled"
+        after = await resource_project.client.get("/api/v1/chat/history", params={"session_id": sid})
+        assert after.json()["success"] is True
+        assert [(message["role"], message["content"]) for message in after.json()["data"]["messages"]] == before
+    finally:
+        release.set()
+        await asyncio.gather(request, return_exceptions=True)

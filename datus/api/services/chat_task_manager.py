@@ -414,7 +414,8 @@ class ChatTask:
         self.message_contents: Dict[str, dict] = {}
         self.tool_result_contents: Dict[str, dict] = {}
         self.content_events: Dict[str, str] = {}
-        self.previous_message_id: Optional[int] = 0
+        # None means initialization has not captured a safe history boundary.
+        self.previous_message_id: Optional[int] = None
         # Whether ``/chat/insert`` may still enqueue. ``_run_loop`` flips this
         # off once it stops draining (final drain empty), so inserts arriving
         # during the run's tail (persist / usage / end events) get
