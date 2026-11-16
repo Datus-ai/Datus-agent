@@ -110,6 +110,7 @@ class QueryTemplateMetaFile(BaseModel):
 
     slug: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
     description: str = Field(default="")
+    datasource_id: Optional[str] = None
     execution_context: Optional[Dict[str, str]] = None
     datasource: str
     params: List[TemplateParamDecl] = Field(..., description="Parameters declared by the SQL template")
@@ -120,6 +121,12 @@ class QueryTemplateMetaFile(BaseModel):
 
     @model_validator(mode="after")
     def _params_unique(self) -> "QueryTemplateMetaFile":
+        if self.datasource_id is not None and not self.datasource_id.strip():
+            raise ValueError("datasource_id must not be empty")
+        if self.execution_context and self.datasource_id is not None:
+            nested_id = self.execution_context.get("datasource_id")
+            if nested_id is not None and nested_id != self.datasource_id:
+                raise ValueError("query execution context must match its datasource ID")
         if self.execution_context and self.execution_context.get("datasource") != self.datasource:
             raise ValueError("query execution context must match its datasource")
         seen: set[str] = set()

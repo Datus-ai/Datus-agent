@@ -58,6 +58,7 @@ class QueryResultFile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     executed_at: str = Field(..., description="ISO 8601 UTC")
+    datasource_id: Optional[str] = None
     execution_context: Optional[Dict[str, str]] = None
     datasource: str
     row_count: int = Field(..., ge=0)
@@ -68,6 +69,12 @@ class QueryResultFile(BaseModel):
 
     @model_validator(mode="after")
     def _row_count_matches(self) -> "QueryResultFile":
+        if self.datasource_id is not None and not self.datasource_id.strip():
+            raise ValueError("datasource_id must not be empty")
+        if self.execution_context and self.datasource_id is not None:
+            nested_id = self.execution_context.get("datasource_id")
+            if nested_id is not None and nested_id != self.datasource_id:
+                raise ValueError("query execution context must match its datasource ID")
         if self.execution_context and self.execution_context.get("datasource") != self.datasource:
             raise ValueError("query execution context must match its datasource")
         if len(self.rows) != self.row_count:

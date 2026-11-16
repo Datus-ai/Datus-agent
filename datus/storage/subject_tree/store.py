@@ -140,7 +140,7 @@ class SubjectTreeStore:
                 if idx_name not in existing_idx_names:
                     table_def.indices = table_def.indices + [IndexDef(name=idx_name, columns=[col])]
 
-        self.datasource_id = str(datasource_id or "")
+        self.datasource_id = datasource_id or ""
         self._rdb = create_rdb_for_store("subject_tree", project=project)
         self._table = self._rdb.ensure_table(table_def)
         self._migrate_null_parents()
@@ -752,7 +752,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
 
             project = get_path_manager().project_name
 
-        self.datasource_id = str(datasource_id or "")
+        self.datasource_id = datasource_id or ""
         self.subject_tree = get_subject_tree_store(project=project, datasource_id=self.datasource_id)
 
     def batch_store(

@@ -75,6 +75,8 @@ class DatusPathManager:
             project_root: Root directory for project-scoped KB content (the
                 ``subject/`` tree and ``.datus/skills``). Defaults to ``Path.cwd()``.
         """
+        self.datasource_ids = {}
+        self.datasource_aliases = {}
         self._datus_home = self.resolve_home(datus_home)
         self._project_name = self._validate_project_name_segment(project_name)
         self._project_root = Path(project_root).expanduser().resolve() if project_root else Path.cwd().resolve()
@@ -469,9 +471,18 @@ class DatusPathManager:
         Returns:
             Path: ``{project_root}/subject/semantic_models/{datasource}``
         """
-        path = self.semantic_models_dir / datasource
+        path = self.semantic_models_dir / self.datasource_ids.get(datasource, datasource)
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def legacy_semantic_model_paths(self, datasource: str) -> list[str]:
+        primary = self.semantic_model_path(datasource)
+        names = [datasource, *self.datasource_aliases.get(datasource, [])]
+        return [
+            str(self.semantic_models_dir / name)
+            for name in dict.fromkeys(names)
+            if self.semantic_models_dir / name != primary and (self.semantic_models_dir / name).is_dir()
+        ]
 
     def sql_summary_path(self) -> Path:
         """

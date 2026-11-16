@@ -523,7 +523,7 @@ class DBManager:
 
             # Remove None and empty string values, and internal fields
             # Keep False, 0, and empty containers to allow explicit configuration
-            excluded_fields = ["type", "path_pattern", "default", "extra"]
+            excluded_fields = ["type", "path_pattern", "default", "extra", "datasource_id", "datasource_aliases"]
 
             filtered_config = {
                 k: v
@@ -533,7 +533,13 @@ class DBManager:
 
             # Expand extra field to include adapter-specific config
             if db_config.extra:
-                filtered_config.update(db_config.extra)
+                filtered_config.update(
+                    {
+                        key: value
+                        for key, value in db_config.extra.items()
+                        if key not in {"datasource_id", "datasource_aliases"}
+                    }
+                )
 
             # Convert port to int if present
             if "port" in filtered_config:

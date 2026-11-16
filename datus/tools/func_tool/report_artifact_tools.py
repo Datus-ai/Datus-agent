@@ -766,6 +766,7 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
             "execution_context": self._db_func_tool.execution_context(connector, ds_label),
             "executed_at": utc_now_iso(),
             "datasource": ds_label,
+            "datasource_id": self._db_func_tool.execution_context(connector, ds_label).get("datasource_id"),
             "row_count": len(rows),
             "columns": columns_meta,
             "rows": rows,

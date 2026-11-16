@@ -9,7 +9,9 @@ from pathlib import PurePosixPath
 from typing import Callable, Iterable
 
 
-def collect_query_datasources(paths: Iterable[str], read_content: Callable[[str], str]) -> list[str]:
+def collect_query_datasources(
+    paths: Iterable[str], read_content: Callable[[str], str], *, ids: bool = False
+) -> list[str]:
     """Distinct saved-query sources, in file order, without using a stale manifest.
 
     Only metadata paired with a SQL/template/metric query contributes. The reader
@@ -32,7 +34,38 @@ def collect_query_datasources(paths: Iterable[str], read_content: Callable[[str]
             payload = json.loads(read_content(path))
         except (ValueError, TypeError):
             continue
-        label = payload.get("datasource") if isinstance(payload, dict) else None
+        label = payload.get("datasource_id" if ids else "datasource") if isinstance(payload, dict) else None
         if isinstance(label, str) and label.strip() and label.strip() not in labels:
             labels.append(label.strip())
     return labels
+
+
+def collect_query_datasource_references(
+    paths: Iterable[str], read_content: Callable[[str], str]
+) -> list[dict[str, str]]:
+    """Keep paired IDs and legacy labels when old and new queries coexist."""
+    paths = list(paths)
+    available = set(paths)
+    references = []
+    for path in paths:
+        if PurePosixPath(path).parent != PurePosixPath("queries") or not path.endswith(".json"):
+            continue
+        if path.endswith((".brief.json", ".metric.json")):
+            continue
+        stem = path.removesuffix(".params.json") if path.endswith(".params.json") else path.removesuffix(".json")
+        if not any(stem + suffix in available for suffix in (".sql", ".sql.j2", ".metric.json")):
+            continue
+        try:
+            payload = json.loads(read_content(path))
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        reference = {
+            key: payload[key]
+            for key in ("datasource_id", "datasource")
+            if isinstance(payload.get(key), str) and payload[key]
+        }
+        if reference and reference not in references:
+            references.append(reference)
+    return references

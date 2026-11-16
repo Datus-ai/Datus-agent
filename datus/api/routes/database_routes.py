@@ -3,7 +3,7 @@ API routes for Database Management endpoints.
 """
 
 import asyncio
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Query
 
@@ -43,10 +43,14 @@ async def list_catalogs(
     database_name: Optional[str] = DATABASE_NAME_QUERY,
     schema_name: Optional[str] = SCHEMA_NAME_QUERY,
     include_sys_schemas: bool = INCLUDE_SYS_SCHEMAS_QUERY,
+    datasource_ref_id: Annotated[Optional[str], Query(alias="datasourceId", min_length=1)] = None,
 ) -> Result[DatabasesData]:
     """List available databases."""
+    from datus.configuration.datasource_reference import resolve_datasource
+
+    target = resolve_datasource(svc.agent_config, datasource_id=datasource_ref_id, datasource=datasource_id)
     request = ListDatabasesInput(
-        datasource_id=datasource_id or svc.datasource.current_datasource,
+        datasource_id=target,
         catalog_name=catalog_name,
         database_name=database_name,
         schema_name=schema_name,

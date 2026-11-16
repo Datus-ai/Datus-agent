@@ -229,6 +229,18 @@ class DBFuncTool(BulkQueryTools):
             self.agent_config = agent_config
             sub_config = self._load_sub_agent_config(sub_agent_name)
             scope = sub_config.scoped_context if sub_config else None
+            if scope is not None and (scope.datasource_id is not None or scope.tables_by_datasource_id is not None):
+                from datus.configuration.datasource_reference import resolve_datasource
+
+                scope = scope.model_copy(deep=True)
+                if scope.datasource_id is not None:
+                    scope.datasource = resolve_datasource(agent_config, datasource_id=scope.datasource_id)
+                if scope.tables_by_datasource_id is not None:
+                    scope.tables_by_datasource = {
+                        resolve_datasource(agent_config, datasource_id=key): value
+                        for key, value in scope.tables_by_datasource_id.items()
+                    }
+                sub_config = sub_config.model_copy(update={"scoped_context": scope})
             if scoped_tables and scope is not None and scope.tables_by_datasource is not None:
                 raise DatusException(
                     ErrorCode.COMMON_VALIDATION_FAILED,
@@ -595,20 +607,35 @@ class DBFuncTool(BulkQueryTools):
 
     def connector_for_execution_context(self, context):
         """Restore a persisted artifact query's binding independently of this turn."""
+        from datus.configuration.datasource_reference import resolve_execution_context
         from datus.schemas.database_context import DatabaseExecutionContext
 
-        coordinates = DatabaseExecutionContext.from_mapping(context)
         if self._db_manager is None:
             return self.connector
+        config = getattr(self, "agent_config", None)
+        coordinates = DatabaseExecutionContext.from_mapping(
+            resolve_execution_context(config, context) if config is not None else context
+        )
         self._require_scoped_datasource(coordinates.datasource)
         connector = self._db_manager.get_conn(coordinates.datasource, coordinates.database, context=coordinates)
         return self._track_connector(connector, coordinates.datasource)
 
-    def connector_for_datasource_default(self, datasource: Optional[str] = None):
+    def connector_for_datasource_default(
+        self, datasource: Optional[str] = None, *, datasource_id: Optional[str] = None
+    ):
         """Replay legacy queries using configured defaults, independent of the turn."""
         if self._db_manager is None:
             return self.connector
-        source = datasource or self._default_datasource
+        from datus.configuration.datasource_reference import resolve_datasource
+
+        config = getattr(self, "agent_config", None)
+        if datasource_id is not None and config is None:
+            raise ValueError("A datasource ID requires an authorized config")
+        source = (
+            resolve_datasource(config, datasource_id=datasource_id, datasource=datasource or self._default_datasource)
+            if config is not None
+            else datasource or self._default_datasource
+        )
         self._require_scoped_datasource(source)
         return self._track_connector(self._db_manager.get_conn(source), source)
 
@@ -618,6 +645,13 @@ class DBFuncTool(BulkQueryTools):
         return DatabaseExecutionContext.from_mapping(
             {
                 "datasource": datasource or getattr(self, "_default_datasource", ""),
+                "datasource_id": getattr(
+                    self.agent_config.current_db_config(datasource or getattr(self, "_default_datasource", "")),
+                    "datasource_id",
+                    "",
+                )
+                if getattr(self, "agent_config", None)
+                else "",
                 "catalog": getattr(connector, "catalog_name", ""),
                 "database": self._active_database_of(connector),
                 "schema": getattr(connector, "schema_name", ""),

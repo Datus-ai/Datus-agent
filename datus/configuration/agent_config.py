@@ -296,6 +296,8 @@ class KbSearchConfig:
 
 @dataclass
 class DbConfig:
+    datasource_id: str = field(default="", init=True)
+    datasource_aliases: List[str] = field(default_factory=list)
     path_pattern: str = field(default="", init=True)
     type: str = field(default="", init=True)
     uri: str = field(default="", init=True)
@@ -331,7 +333,13 @@ class DbConfig:
                 if v is not None and v != "" and k not in internal_fields:
                     extra_params[k] = _resolve_nested_value(v)
                 continue
-            if not v:
+            if k == "datasource_aliases":
+                params[k] = (
+                    [name for name in v if isinstance(name, str) and _SAFE_NAME_RE.fullmatch(name)]
+                    if isinstance(v, list)
+                    else []
+                )
+            elif not v:
                 params[k] = v
             else:
                 params[k] = resolve_env(str(v))
@@ -697,7 +705,7 @@ logger = get_logger(__name__)
 
 def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
     uri = resolve_env(str(db_config["uri"]))
-    known_fields = {"uri", "name", "type", "schema", "default"}
+    known_fields = {"uri", "name", "type", "schema", "default", "datasource_id", "datasource_aliases"}
     extra = {
         key: _resolve_nested_value(value)
         for key, value in db_config.items()
@@ -712,6 +720,8 @@ def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
     if not uri.startswith(dialect):
         uri = f"{dialect}:///{os.path.expanduser(uri)}"
     return DbConfig(
+        datasource_id=db_config.get("datasource_id", ""),
+        datasource_aliases=db_config.get("datasource_aliases", []),
         type=dialect,
         uri=uri,
         database=db_name,
@@ -1460,6 +1470,8 @@ class AgentConfig:
                     self._parse_glob_pattern(
                         db_name, path_pattern, db_type, is_default, db_config_dict.get("database", "")
                     )
+                    if db_name in self.services.datasources:
+                        self.services.datasources[db_name].datasource_id = db_config_dict.get("datasource_id", "")
                 elif "uri" in db_config_dict:
                     db_config = _parse_single_file_db(db_config_dict, db_type)
                     db_config.default = is_default
@@ -1468,6 +1480,13 @@ class AgentConfig:
                 db_config = DbConfig.filter_kwargs(DbConfig, db_config_dict)
                 db_config.default = is_default
                 self.services.datasources[db_name] = db_config
+
+        self.path_manager.datasource_ids = {
+            name: cfg.datasource_id or name for name, cfg in self.services.datasources.items()
+        }
+        self.path_manager.datasource_aliases = {
+            name: cfg.datasource_aliases for name, cfg in self.services.datasources.items()
+        }
 
     def _parse_glob_pattern(
         self, base_name: str, path_pattern: str, db_type: str, is_default: bool = False, default_database: str = ""
@@ -1598,8 +1617,10 @@ class AgentConfig:
     def current_db_config(self, db_name: str = "") -> DbConfig:
         """Get a datasource config by name, or the current/default one."""
         datasources = self.services.datasources
-        if db_name and db_name in datasources:
-            return datasources[db_name]
+        if db_name:
+            from datus.configuration.datasource_reference import resolve_datasource
+
+            return datasources[resolve_datasource(self, datasource=db_name)]
         if self._current_datasource and self._current_datasource in datasources:
             return datasources[self._current_datasource]
         if len(datasources) == 1:
@@ -1624,9 +1645,10 @@ class AgentConfig:
             values.update(runtime_db_context)
         values.update({key: value for key, value in kwargs.items() if value is not None})
 
+        from datus.configuration.datasource_reference import resolve_execution_context
         from datus.schemas.database_context import DatabaseExecutionContext
 
-        self._runtime_db_context = DatabaseExecutionContext.from_mapping(values)
+        self._runtime_db_context = DatabaseExecutionContext.from_mapping(resolve_execution_context(self, values))
 
     def runtime_db_context(self) -> Dict[str, str]:
         """Return a copy of this execution's immutable database coordinates."""
@@ -2311,6 +2333,9 @@ class AgentConfig:
             project_name=self._project_name,
             project_root=self._project_root,
         )
+        sources = getattr(getattr(self, "services", None), "datasources", {})
+        self.path_manager.datasource_ids = {name: cfg.datasource_id or name for name, cfg in sources.items()}
+        self.path_manager.datasource_aliases = {name: cfg.datasource_aliases for name, cfg in sources.items()}
         set_current_path_manager(self.path_manager)
 
     def _current_db_config(self) -> Dict[str, DbConfig]:
@@ -2933,7 +2958,9 @@ def _db_config_to_dosi_profile(db_config: Optional[DbConfig]) -> Optional[Dict[s
     dosi_db_config = {
         key: value
         for key, value in raw.items()
-        if value is not None and value != "" and key not in ("extra", "path_pattern", "default")
+        if value is not None
+        and value != ""
+        and key not in ("extra", "path_pattern", "default", "datasource_id", "datasource_aliases")
     }
     # Merge connector-specific `extra` fields without overwriting explicit top-level keys
     if isinstance(extra, dict):

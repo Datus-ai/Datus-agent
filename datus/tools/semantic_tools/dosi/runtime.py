@@ -138,6 +138,7 @@ class DosiRuntime:
             _apply_runtime_db_context_to_dosi_profile,
             _db_config_to_dosi_profile,
         )
+        from datus.configuration.datasource_reference import legacy_semantic_paths
         from datus.tools.semantic_tools.dosi.engine import has_model_files
 
         context = agent_config.runtime_db_context()
@@ -150,6 +151,7 @@ class DosiRuntime:
             db_config=profile,
             timeout_seconds=float((profile or {}).get("timeout_seconds", 30)),
             semantic_models_path=str(agent_config.path_manager.semantic_model_path(datasource)),
+            legacy_semantic_models_paths=legacy_semantic_paths(agent_config, datasource),
             semantic_model_path=semantic_model_path or None,
         )
         if ontology_enabled or not has_model_files(config):

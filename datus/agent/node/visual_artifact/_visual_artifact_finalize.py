@@ -59,7 +59,7 @@ from datus.schemas.analysis_artifacts import (
 from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.tools.func_tool._visual_artifact_helpers import _atomic_write_text
 from datus.utils.artifact_files import iter_artifact_files
-from datus.utils.artifact_metadata import collect_query_datasources
+from datus.utils.artifact_metadata import collect_query_datasource_references, collect_query_datasources
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -713,7 +713,12 @@ def aggregate_referenced_tables(queries_dir: Path) -> List[str]:
 
 
 def update_manifest_query_metadata(
-    manifest_path: Path, key_tables: List[str], *, datasources: Optional[List[str]] = None
+    manifest_path: Path,
+    key_tables: List[str],
+    *,
+    datasources: Optional[List[str]] = None,
+    datasource_ids: Optional[List[str]] = None,
+    datasource_references: Optional[List[Dict[str, str]]] = None,
 ) -> Optional[str]:
     """Replace derived query indexes while preserving authored manifest fields.
 
@@ -731,12 +736,21 @@ def update_manifest_query_metadata(
         manifest = ArtifactManifest.model_validate(raw)
     except Exception as exc:
         return f"manifest schema validation failed during key_tables update: {exc}"
-    if manifest.key_tables == key_tables and (datasources is None or manifest.datasources == datasources):
+    if (
+        manifest.key_tables == key_tables
+        and (datasources is None or manifest.datasources == datasources)
+        and (datasource_ids is None or manifest.datasource_ids == datasource_ids)
+        and (datasource_references is None or manifest.datasource_references == datasource_references)
+    ):
         # No-op: skip the disk write so we don't bump mtime needlessly.
         return None
     manifest.key_tables = key_tables
     if datasources is not None:
         manifest.datasources = datasources
+    if datasource_ids is not None:
+        manifest.datasource_ids = datasource_ids
+    if datasource_references is not None:
+        manifest.datasource_references = datasource_references
     try:
         _atomic_write_text(
             manifest_path,
@@ -1331,7 +1345,15 @@ def run_finalize_analysis(
         }
         datasources = collect_query_datasources(query_paths, lambda name: query_paths[name].read_text(encoding="utf-8"))
         metadata_error = update_manifest_query_metadata(
-            artifact_dir / "manifest.json", key_tables, datasources=datasources
+            artifact_dir / "manifest.json",
+            key_tables,
+            datasources=datasources,
+            datasource_ids=collect_query_datasources(
+                query_paths, lambda name: query_paths[name].read_text(encoding="utf-8"), ids=True
+            ),
+            datasource_references=collect_query_datasource_references(
+                query_paths, lambda name: query_paths[name].read_text(encoding="utf-8")
+            ),
         )
         if metadata_error:
             warnings.append(metadata_error)

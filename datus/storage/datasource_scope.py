@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
 
-from datus_storage_base.conditions import Node, and_, eq
+from datus_storage_base.conditions import Node, and_, eq, or_
 
 from datus.utils.exceptions import DatusException, ErrorCode
 
@@ -25,6 +25,16 @@ LEGACY_DATASOURCE_ID = ""
 LEGACY_STORAGE_KEY_PREFIX = "legacy:"
 
 
+class DatasourceScope(str):
+    """Canonical write identity with an authorized legacy name for reads only."""
+
+    def __new__(cls, value: str, legacy_name: str = "", aliases=()):
+        instance = super().__new__(cls, value)
+        instance.legacy_name = legacy_name
+        instance.legacy_names = tuple(dict.fromkeys([legacy_name, *aliases]))
+        return instance
+
+
 def resolve_datasource_id(agent_config: "AgentConfig", datasource_id: Optional[str] = None) -> str:
     """Return the datasource id required by datasource-scoped KB stores."""
 
@@ -35,13 +45,23 @@ def resolve_datasource_id(agent_config: "AgentConfig", datasource_id: Optional[s
             ErrorCode.STORAGE_INVALID_ARGUMENT,
             message_args={"error_message": "datasource is required for datasource-scoped storage"},
         )
+    sources = getattr(getattr(agent_config, "services", None), "datasources", None)
+    if isinstance(sources, dict):
+        for name, entry in sources.items():
+            stable_id = getattr(entry, "datasource_id", "")
+            if isinstance(stable_id, str) and stable_id and resolved in (name, stable_id):
+                return DatasourceScope(stable_id, name, getattr(entry, "datasource_aliases", []))
     return resolved
 
 
 def datasource_condition(datasource_id: str) -> Node:
     """Build a WHERE condition for the datasource row scope."""
 
-    return eq(DATASOURCE_ID_COLUMN, datasource_id)
+    canonical = eq(DATASOURCE_ID_COLUMN, str(datasource_id))
+    aliases = [value for value in getattr(datasource_id, "legacy_names", ()) if value and value != datasource_id]
+    if aliases:
+        return or_(canonical, *(eq(DATASOURCE_ID_COLUMN, value) for value in aliases))
+    return canonical
 
 
 def combine_conditions(conditions: Iterable[Optional[Node]]) -> Optional[Node]:

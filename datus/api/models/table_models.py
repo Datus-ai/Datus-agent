@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 # ========== Table Detail Models ==========
 
@@ -59,6 +59,9 @@ class GetTablesColumnsInput(BaseModel):
     )
     # One batch resolves against one datasource: the dotted names carry no
     # datasource level, so a mixed batch would be unresolvable.
+    datasource_id: Optional[str] = Field(
+        None, min_length=1, validation_alias=AliasChoices("datasourceId", "datasource_id")
+    )
     datasource: Optional[str] = Field(
         None, description="Datasource to resolve these tables against; null means the current one"
     )

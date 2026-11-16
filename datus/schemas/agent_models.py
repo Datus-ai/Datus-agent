@@ -17,6 +17,8 @@ class ScopedContextLists(BaseModel):
 
 
 class ScopedContext(BaseModel):
+    datasource_id: Optional[str] = None
+    tables_by_datasource_id: Optional[Dict[str, str]] = None
     datasource: Optional[str] = Field(default_factory=str, description="The datasource identifier")
     tables: Optional[str] = Field(default=None, init=True, description="Tables to be used by sub-agents")
     tables_by_datasource: Optional[Dict[str, str]] = Field(

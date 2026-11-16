@@ -235,7 +235,12 @@ class CLIService:
         """Synchronous SQL execution logic (runs in a thread)."""
         try:
             try:
-                datasource, connector = self._execution_target(request.datasource)
+                from datus.configuration.datasource_reference import resolve_datasource
+
+                target = resolve_datasource(
+                    self.agent_config, datasource_id=request.datasource_id, datasource=request.datasource
+                )
+                datasource, connector = self._execution_target(target)
             except DatusException as e:
                 return Result(
                     success=False,

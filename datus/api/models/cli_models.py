@@ -3,7 +3,7 @@
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from datus.api.models.message_contents import ChatMessageContent
 from datus.utils.time_utils import now_utc_iso
@@ -11,6 +11,10 @@ from datus.utils.time_utils import now_utc_iso
 
 # SQL Execution models
 class ExecuteSQLInput(BaseModel):
+    datasource_id: Optional[str] = Field(
+        None, min_length=1, validation_alias=AliasChoices("datasourceId", "datasource_id")
+    )
+
     """Input model for SQL execution."""
 
     model_config = ConfigDict(
@@ -121,6 +125,10 @@ class ExecuteContextData(BaseModel):
 
 
 class ChatInput(BaseModel):
+    datasource_id: Optional[str] = Field(
+        None, min_length=1, validation_alias=AliasChoices("datasourceId", "datasource_id")
+    )
+
     """Enhanced input model for chat commands with ChatAgenticNode support."""
 
     model_config = ConfigDict(

@@ -3,7 +3,7 @@
 from enum import Enum
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class KbComponent(str, Enum):
@@ -56,6 +56,9 @@ class BootstrapKbInput(BaseModel):
             "Metadata-only option controlling which object types are indexed from the database. "
             "Expected values follow `datus-agent bootstrap-kb`: `table`, `view`, `mv`, or `full`."
         ),
+    )
+    datasource_id: Optional[str] = Field(
+        None, min_length=1, validation_alias=AliasChoices("datasourceId", "datasource_id")
     )
     datasource: Optional[str] = Field(
         default=None,

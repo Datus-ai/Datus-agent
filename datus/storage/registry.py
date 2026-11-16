@@ -127,6 +127,7 @@ def _get_storage_cached(
     project: str,
     datasource_id: str,
     table_prefix: str,
+    scope_aliases: tuple = (),
 ) -> BaseEmbeddingStore:
     """LRU-cached storage creation, keyed by (factory, embedding model, project, datasource, prefix).
 
@@ -190,11 +191,14 @@ def get_storage(
         project,
         datasource_id or "",
         current_table_prefix(),
+        tuple(getattr(datasource_id, "legacy_names", ())),
     )
 
 
 @lru_cache(maxsize=256)
-def _get_subject_tree_cached(project: str, datasource_id: str, table_prefix: str) -> "SubjectTreeStore":
+def _get_subject_tree_cached(
+    project: str, datasource_id: str, table_prefix: str, scope_aliases: tuple = ()
+) -> "SubjectTreeStore":
     """LRU-cached SubjectTreeStore creation, keyed by the prefix too.
 
     ``SubjectTreeStore.__init__`` reads ``get_storage_defaults()`` itself and
@@ -208,7 +212,9 @@ def _get_subject_tree_cached(project: str, datasource_id: str, table_prefix: str
 
 def get_subject_tree_store(project: str, datasource_id: str = "") -> "SubjectTreeStore":
     """Return a SubjectTreeStore instance (LRU-cached per project/datasource/prefix)."""
-    return _get_subject_tree_cached(project, datasource_id or "", current_table_prefix())
+    return _get_subject_tree_cached(
+        project, datasource_id or "", current_table_prefix(), tuple(getattr(datasource_id, "legacy_names", ()))
+    )
 
 
 def preload_all_storages(

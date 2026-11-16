@@ -1455,3 +1455,49 @@ def test_template_save_keeps_query_source_authoritative_until_finalize(dashboard
     assert query["datasource"] == "default"
     assert manifest["datasources"] == []
     assert manifest["updated_at"] == query["saved_at"]
+
+
+def test_edit_legacy_dashboard_only_upgrades_the_modified_query(dashboard_tools, db_func_tool, project_root):
+    """Editing on a new backend upgrades the executed query, never sibling files."""
+    from datus.configuration.agent_config import DbConfig
+    from datus.utils.artifact_metadata import collect_query_datasource_references
+
+    directory = project_root / "dashboards" / dashboard_tools.dashboard_slug
+    (directory / "render" / "app.jsx").write_text("export default function App() { return null; }")
+    queries = directory / "queries"
+    legacy = {"datasource": "legacy_source", "slug": "old_query"}
+    for name in ("edited", "untouched"):
+        (queries / f"{name}.sql.j2").write_text("SELECT region, revenue FROM sales")
+        (queries / f"{name}.params.json").write_text(json.dumps(legacy))
+    unchanged = (queries / "untouched.params.json").read_bytes()
+    edited_before = (queries / "edited.params.json").read_bytes()
+
+    bound = dashboard_tools.bind_existing_dashboard(dashboard_tools.dashboard_slug)
+    assert bound.success == 1
+    assert (queries / "edited.params.json").read_bytes() == edited_before
+    assert (queries / "untouched.params.json").read_bytes() == unchanged
+
+    db_func_tool.agent_config = SimpleNamespace(
+        current_db_config=lambda _: DbConfig(datasource_id="ds-stable"),
+    )
+    result = dashboard_tools.save_query_template(
+        name="edited",
+        sql_template=_REVENUE_TEMPLATE,
+        sample_params={"month_floor": "2026-01"},
+        datasource="renamed_source",
+        goal="Inspect revenue",
+        hypothesis="Revenue is present",
+    )
+    assert result.success == 1, result.error
+    saved = json.loads((queries / "edited.params.json").read_text())
+    assert saved["datasource_id"] == "ds-stable"
+    assert saved["execution_context"]["datasource_id"] == "ds-stable"
+    assert saved["execution_context"]["database"] == "demo"
+    assert (queries / "untouched.params.json").read_bytes() == unchanged
+
+    paths = {f"queries/{path.name}": path for path in queries.iterdir()}
+    refs = collect_query_datasource_references(paths, lambda name: paths[name].read_text())
+    assert {tuple(sorted(ref.items())) for ref in refs} == {
+        (("datasource", "legacy_source"),),
+        (("datasource", "renamed_source"), ("datasource_id", "ds-stable")),
+    }

@@ -903,6 +903,7 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
             "slug": name,
             "description": goal.strip(),
             "datasource": ds_label,
+            "datasource_id": self._db_func_tool.execution_context(connector, ds_label).get("datasource_id"),
             "params": [p.model_dump() for p in params_decl],
             "columns": columns_meta,
             "sample_params": sample_params,

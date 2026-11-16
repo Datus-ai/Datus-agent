@@ -39,6 +39,10 @@ def _osi_semantic_model_dir(agent_config: Any = None) -> Optional[Path]:
         return None
 
     datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
+    if agent_config is not None and hasattr(agent_config, "services"):
+        from datus.configuration.datasource_reference import datasource_identity
+
+        datasource = datasource_identity(agent_config, datasource)
     path_manager = getattr(agent_config, "path_manager", None)
     semantic_model_path = getattr(path_manager, "semantic_model_path", None)
     if callable(semantic_model_path):
@@ -248,22 +252,34 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
         }
 
     datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
-    model_root = model_dir.resolve(strict=False)
+    if agent_config is not None and hasattr(agent_config, "services"):
+        from datus.configuration.datasource_reference import datasource_identity
+
+        datasource = datasource_identity(agent_config, datasource)
+    model_roots = [model_dir]
+    legacy_paths = getattr(getattr(agent_config, "path_manager", None), "legacy_semantic_model_paths", None)
+    if callable(legacy_paths):
+        model_roots.extend(Path(path) for path in legacy_paths(agent_config.current_datasource))
     discovered: list[Dict[str, Any]] = []
     recoverable: list[Dict[str, Any]] = []
     issues: list[Dict[str, Any]] = []
     discovery_warnings: list[Dict[str, Any]] = []
     paths = sorted(
-        path
-        for path in {*model_dir.rglob("*.yml"), *model_dir.rglob("*.yaml")}
-        if "metrics" not in path.relative_to(model_dir).parts
+        {
+            path
+            for directory in model_roots
+            for suffix in ("*.yml", "*.yaml")
+            for path in directory.rglob(suffix)
+            if "metrics" not in path.relative_to(directory).parts
+        }
     )
     for path in paths:
-        relative_path = path.relative_to(model_dir).as_posix()
-        semantic_model_file = f"subject/semantic_models/{datasource}/{relative_path}"
+        owner = next(directory for directory in model_roots if path.is_relative_to(directory))
+        relative_path = path.relative_to(owner).as_posix()
+        semantic_model_file = f"subject/semantic_models/{owner.name}/{relative_path}"
         try:
             absolute_path = path.resolve(strict=True)
-            absolute_path.relative_to(model_root)
+            absolute_path.relative_to(owner.resolve(strict=False))
         except (OSError, ValueError) as exc:
             issues.append(
                 {
@@ -643,6 +659,10 @@ def plan_osi_semantic_model_target(
     if not inline_mappings or target.get("ambiguous") or target.get("exists"):
         return target
     datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
+    if agent_config is not None and hasattr(agent_config, "services"):
+        from datus.configuration.datasource_reference import datasource_identity
+
+        datasource = datasource_identity(agent_config, datasource)
     return {
         "ambiguous": True,
         "code": "semantic_model_inline_in_mapping",
@@ -679,6 +699,10 @@ def _resolve_osi_semantic_model_target(
     existing_models = inventory["models"]
     named_models = [*existing_models, *inventory["recoverable_models"], *duplicate_models]
     datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
+    if agent_config is not None and hasattr(agent_config, "services"):
+        from datus.configuration.datasource_reference import datasource_identity
+
+        datasource = datasource_identity(agent_config, datasource)
 
     explicit_name = _normalize_model_name(semantic_model_name)
     if explicit_name:

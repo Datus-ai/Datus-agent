@@ -3,7 +3,7 @@ API routes for Table and SemanticModel endpoints.
 """
 
 import asyncio
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Query
 
@@ -55,11 +55,15 @@ async def get_table_detail(
         description="Full table name e.g. 'production_db.public.frpm' or 'db.schema.table'",
     ),
     datasource: Optional[str] = DATASOURCE_QUERY,
+    datasource_id: Annotated[Optional[str], Query(alias="datasourceId", min_length=1)] = None,
 ) -> Result[GetTableDetailData]:
     """Get table detail."""
     # Normalized here so an omitted query param and an explicit empty one both
     # mean "the current datasource" to the service.
-    return await asyncio.to_thread(svc.datasource.get_table_schema, table, datasource or None)
+    from datus.configuration.datasource_reference import resolve_datasource
+
+    source = resolve_datasource(svc.agent_config, datasource_id=datasource_id, datasource=datasource)
+    return await asyncio.to_thread(svc.datasource.get_table_schema, table, source or None)
 
 
 @router.post(
@@ -74,7 +78,10 @@ async def get_tables_columns(
     svc: ServiceDep,
 ) -> Result[GetTablesColumnsData]:
     """Batch table columns."""
-    return await asyncio.to_thread(svc.datasource.get_tables_columns, request.tables, request.datasource)
+    from datus.configuration.datasource_reference import resolve_datasource
+
+    source = resolve_datasource(svc.agent_config, datasource_id=request.datasource_id, datasource=request.datasource)
+    return await asyncio.to_thread(svc.datasource.get_tables_columns, request.tables, source)
 
 
 # ========== SemanticModel Endpoints ==========

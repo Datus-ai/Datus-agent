@@ -48,6 +48,7 @@ class MetricQueryFile(MetricQueryRequest):
     name: str = Field(pattern=r"^[a-z0-9_]{1,64}$")
     goal: str = Field(min_length=1)
     datasource: str = Field(min_length=1)
+    datasource_id: str | None = None
     execution_context: dict[str, str] | None = None
     model_path: str = Field(min_length=1)
     model_revision: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -61,6 +62,12 @@ class MetricQueryFile(MetricQueryRequest):
 
     @model_validator(mode="after")
     def identity_matches(self) -> MetricQueryFile:
+        if self.datasource_id is not None and not self.datasource_id.strip():
+            raise ValueError("datasource_id must not be empty")
+        if self.execution_context and self.datasource_id is not None:
+            nested_id = self.execution_context.get("datasource_id")
+            if nested_id is not None and nested_id != self.datasource_id:
+                raise ValueError("query execution context must match its datasource ID")
         if self.execution_context and self.execution_context.get("datasource") != self.datasource:
             raise ValueError("query execution context must match its datasource")
         path = PurePosixPath(self.model_path)

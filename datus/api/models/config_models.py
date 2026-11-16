@@ -74,6 +74,8 @@ class DatasourceConfig(BaseModel):
 
 
 class DatasourceSummary(BaseModel):
+    datasource_id: Optional[str] = None
+
     """One configured datasource, with nothing a caller does not need to name it.
 
     Deliberately NOT ``DatasourceConfig``: that carries the decrypted password,

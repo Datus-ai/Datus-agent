@@ -243,6 +243,15 @@ def build_artifact_insight(manifest: dict, files: dict[str, str]) -> ArtifactIns
             metric.datasource if metric else result.datasource if result else template.datasource if template else None,
             is_template=parsed_manifest.kind == "dashboard" and metric is None,
         )
+        lineage.datasource_id = (
+            metric.datasource_id
+            if metric
+            else result.datasource_id
+            if result
+            else template.datasource_id
+            if template
+            else None
+        )
         if metric:
             if generated_sql is None and metric.metric_tables:
                 lineage.tables = list(metric.metric_tables)

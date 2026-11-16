@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,6 +26,7 @@ class DosiConfig(BaseModel):
     # <datasource>). Used when semantic_model_path is unset: discovery and
     # queries route across every top-level YAML/YML/JSON model in the directory.
     semantic_models_path: Optional[str] = None
+    legacy_semantic_models_paths: List[str] = Field(default_factory=list)
     # Named connection profile; falls back to the base-class `datasource`.
     connection: Optional[str] = None
     # Inline datasource entry (agent.yml vocabulary: type/host/port/...).

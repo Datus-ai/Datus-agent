@@ -244,6 +244,7 @@ def execute_metric_artifact_query(
     payload = QueryResultFile(
         executed_at=utc_now_iso(),
         datasource=datasource,
+        datasource_id=db_tool.execution_context(connector, datasource).get("datasource_id"),
         execution_context=db_tool.execution_context(connector, datasource),
         row_count=len(rows),
         columns=columns,
@@ -254,6 +255,7 @@ def execute_metric_artifact_query(
     tables = query_lineage(sql, None, datasource).tables
     return payload, {
         "datasource": datasource,
+        "datasource_id": payload.datasource_id,
         "execution_context": payload.execution_context,
         "model_path": relative_path,
         "model_revision": binding["model_revision"],
@@ -274,6 +276,9 @@ def execute_published_metric_query(query: MetricQueryFile, *, runtime_config, db
 
     if query.model_snapshot is None:
         raise ValueError("METRIC_MODEL_SNAPSHOT_MISSING: republish a metric query with its semantic model snapshot")
+    from datus.configuration.datasource_reference import resolve_datasource
+
+    source = resolve_datasource(db_tool.agent_config, datasource_id=query.datasource_id, datasource=query.datasource)
     with TemporaryDirectory(prefix="datus-metric-query-") as directory:
         root = Path(directory)
         model = root / query.model_path
@@ -283,8 +288,8 @@ def execute_published_metric_query(query: MetricQueryFile, *, runtime_config, db
             update={
                 "semantic_model_path": str(model),
                 "semantic_models_path": None,
-                "datasource": query.datasource,
-                "connection": query.datasource,
+                "datasource": source,
+                "connection": source,
             }
         )
         return execute_metric_artifact_query(
@@ -450,6 +455,7 @@ class MetricArtifactToolsMixin:
                     slug=name,
                     description=goal.strip(),
                     datasource=payload.datasource,
+                    datasource_id=payload.datasource_id,
                     execution_context=payload.execution_context,
                     params=declarations,
                     columns=payload.columns,

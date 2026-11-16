@@ -21,7 +21,7 @@ just says ``Untitled report``.
 from __future__ import annotations
 
 import re
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -88,6 +88,8 @@ class ArtifactManifest(BaseModel):
             "introduced deserialize cleanly with ``None``."
         ),
     )
+    datasource_references: List[Dict[str, str]] = Field(default_factory=list)
+    datasource_ids: List[str] = Field(default_factory=list)
     datasources: List[str] = Field(
         default_factory=list,
         description=(

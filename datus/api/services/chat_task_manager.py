@@ -90,6 +90,11 @@ def _subagent_datasource(agent_config: AgentConfig, name_or_id: Optional[str]) -
             continue
         config = agent_config.sub_agent_config(name)
         scope = config.get("scoped_context") if isinstance(config, dict) else getattr(config, "scoped_context", None)
+        source_id = scope.get("datasource_id") if isinstance(scope, dict) else getattr(scope, "datasource_id", None)
+        if source_id is not None:
+            from datus.configuration.datasource_reference import resolve_datasource
+
+            return resolve_datasource(agent_config, datasource_id=source_id)
         datasource = scope.get("datasource") if isinstance(scope, dict) else getattr(scope, "datasource", None)
         return datasource if isinstance(datasource, str) and datasource else None
     return None
@@ -603,17 +608,35 @@ class ChatTaskManager:
                     previous = DatabaseExecutionContext.from_mapping(json.loads(raw_context)).to_dict()
                 except (ValueError, TypeError, AttributeError):
                     logger.warning("Ignoring malformed execution context for session %s", request.session_id)
-        datasource = request.datasource or previous.get("datasource") or agent_config.current_datasource
-        # A directly addressed subagent owns its execution target. UI selections
-        # and sessions created before a rebind can still name another datasource.
-        # Drop that target's children together rather than applying them to the
-        # bound warehouse. Unscoped agents keep normal per-turn selection.
+        from datus.configuration.datasource_reference import resolve_datasource, resolve_execution_context
+        from datus.utils.exceptions import DatusException
+
         bound_datasource = _subagent_datasource(agent_config, sub_agent_id)
-        if bound_datasource:
-            if datasource != bound_datasource:
+        # Explicit IDs never degrade to names. A scoped subagent may recover an
+        # old session, but only on its own saved binding.
+        try:
+            if previous:
+                try:
+                    previous = resolve_execution_context(agent_config, previous)
+                except DatusException:
+                    if not (bound_datasource or request.datasource_id is not None or request.datasource):
+                        raise
+                    previous = {}
+            if request.datasource_id is not None:
+                requested = resolve_datasource(agent_config, datasource_id=request.datasource_id)
+            elif bound_datasource:
+                requested = request.datasource or previous.get("datasource") or agent_config.current_datasource
+            else:
+                requested = resolve_datasource(
+                    agent_config, datasource=request.datasource or previous.get("datasource")
+                )
+            datasource = bound_datasource or requested
+            if bound_datasource and requested != bound_datasource:
                 request.catalog = request.database = request.db_schema = None
-            datasource = bound_datasource
-            request.datasource = bound_datasource
+            if bound_datasource:
+                request.datasource = bound_datasource
+        except DatusException as exc:
+            raise ValueError(str(exc)) from exc
         if datasource:
             if datasource not in agent_config.services.datasources:
                 raise ValueError(f"Datasource {datasource!r} is not bound to this project; select a valid datasource")

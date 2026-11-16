@@ -1183,6 +1183,7 @@ class SemanticTools:
         normalized: Dict[str, str] = {}
         for key in (
             "datasource",
+            "datasource_id",
             "catalog",
             "catalog_name",
             "database",
@@ -1218,19 +1219,31 @@ class SemanticTools:
         self._runtime = None
         self._runtime_context_key = None
 
+    def _bound_runtime_db_context(self, values):
+        normalized = self._normalize_runtime_db_context(values)
+        if "datasource_id" in normalized:
+            from datus.configuration.datasource_reference import resolve_execution_context
+
+            return resolve_execution_context(self.agent_config, normalized)
+        return normalized
+
     def _runtime_db_context(self) -> Dict[str, str]:
         if callable(self._runtime_db_context_provider):
             try:
-                return self._normalize_runtime_db_context(self._runtime_db_context_provider())
+                return self._bound_runtime_db_context(self._runtime_db_context_provider())
+            except DatusException:
+                raise
             except Exception as e:
                 logger.debug("Failed to resolve runtime DB context for semantic runtime: %s", e)
                 return {}
         if self._runtime_db_context_static_set:
-            return dict(self._runtime_db_context_static)
+            return self._bound_runtime_db_context(self._runtime_db_context_static)
         runtime_context_getter = getattr(self.agent_config, "runtime_db_context", None)
         if callable(runtime_context_getter):
             try:
-                return self._normalize_runtime_db_context(runtime_context_getter())
+                return self._bound_runtime_db_context(runtime_context_getter())
+            except DatusException:
+                raise
             except Exception as e:
                 logger.debug("Failed to resolve AgentConfig runtime DB context for semantic runtime: %s", e)
         return {}
@@ -1254,6 +1267,7 @@ class SemanticTools:
 
     def _query_execution_context(self, runtime) -> Dict[str, str]:
         """Capture the configuration of the runtime executing this query."""
+        from datus.configuration.datasource_reference import configured_datasource_id
         from datus.schemas.database_context import DatabaseExecutionContext
 
         config = getattr(runtime, "config", None)
@@ -1262,9 +1276,13 @@ class SemanticTools:
             datasource = getattr(config, "datasource", None) or getattr(config, "connection", None)
             if not isinstance(datasource, str) or not datasource:
                 datasource = self._runtime_db_context().get("datasource") or self.agent_config.current_datasource
-            return DatabaseExecutionContext.from_mapping({**profile, "datasource": datasource}).to_dict(
-                include_empty=True
-            )
+            return DatabaseExecutionContext.from_mapping(
+                {
+                    **profile,
+                    "datasource": datasource,
+                    "datasource_id": configured_datasource_id(self.agent_config, datasource),
+                }
+            ).to_dict(include_empty=True)
         return self._runtime_db_context()
 
     @property
@@ -1272,6 +1290,10 @@ class SemanticTools:
         """Load the embedded Dosi runtime for the current datasource/model."""
         try:
             runtime_db_context = self._runtime_db_context()
+            from datus.configuration.datasource_reference import legacy_semantic_paths, resolve_execution_context
+
+            if runtime_db_context.get("datasource_id") is not None:
+                runtime_db_context = resolve_execution_context(self.agent_config, runtime_db_context)
             datasource = runtime_db_context.get("datasource") or self.agent_config.current_datasource
             semantic_model_path = self._selected_semantic_model_path()
             context_key = (
@@ -1297,6 +1319,7 @@ class SemanticTools:
                 db_config=db_config,
                 timeout_seconds=float((db_config or {}).get("timeout_seconds", 30)),
                 semantic_models_path=str(self.agent_config.path_manager.semantic_model_path(datasource)),
+                legacy_semantic_models_paths=legacy_semantic_paths(self.agent_config, datasource),
                 semantic_model_path=semantic_model_path or None,
             )
             # Ontology-aware agents always load the ontology directory. Every

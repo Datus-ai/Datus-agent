@@ -19,6 +19,7 @@ class DatabaseExecutionContext:
     catalog: str = ""
     database: str = ""
     schema: str = ""
+    datasource_id: str = ""
 
     @classmethod
     def from_mapping(cls, values: Optional[Mapping[str, Any]] = None) -> DatabaseExecutionContext:
@@ -33,6 +34,7 @@ class DatabaseExecutionContext:
 
         return cls(
             datasource=value("datasource"),
+            datasource_id=value("datasource_id", "datasourceId"),
             catalog=value("catalog", "catalog_name"),
             database=value("database", "database_name"),
             schema=value("schema", "db_schema", "schema_name"),
@@ -40,6 +42,8 @@ class DatabaseExecutionContext:
 
     def to_dict(self, *, aliases: bool = False, include_empty: bool = False) -> dict[str, str]:
         result = {key: value for key, value in asdict(self).items() if value or include_empty}
+        if not self.datasource_id:
+            result.pop("datasource_id", None)
         if aliases:
             for key, names in {
                 "catalog": ("catalog_name",),
@@ -52,7 +56,10 @@ class DatabaseExecutionContext:
 
     @property
     def identity(self) -> str:
-        return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+        values = self.to_dict()
+        if self.datasource_id:
+            values.pop("datasource", None)
+        return json.dumps(values, sort_keys=True, separators=(",", ":"))
 
 
 def execution_context_for_node(agent_config: Any, user_input: Any = None) -> DatabaseExecutionContext:
@@ -69,6 +76,7 @@ def execution_context_for_node(agent_config: Any, user_input: Any = None) -> Dat
     return DatabaseExecutionContext.from_mapping(
         {
             "datasource": datasource,
+            "datasource_id": getattr(config, "datasource_id", ""),
             "catalog": getattr(user_input, "catalog", None) or getattr(config, "catalog", None),
             "database": getattr(user_input, "database", None) or getattr(config, "database", None),
             "schema": getattr(user_input, "db_schema", None) or getattr(config, "schema", None),
