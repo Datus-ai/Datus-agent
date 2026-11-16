@@ -393,9 +393,13 @@ class DashboardService:
                 db_tool = func_tool_mod.DBFuncTool(
                     agent_config=self.agent_config, sub_agent_name="gen_visual_dashboard"
                 )
+                model_path = (Path(self.agent_config.project_root) / query.model_path).resolve()
+                if not model_path.is_relative_to(Path(self.agent_config.project_root).resolve()):
+                    raise ValueError("metric model path escapes project")
                 semantic_tools = SemanticTools(
                     agent_config=self.agent_config,
                     sub_agent_name="gen_visual_dashboard",
+                    semantic_model_path_provider=(lambda: str(model_path)) if not published else None,
                     runtime_db_context_provider=lambda: query.execution_context or {"datasource": query.datasource},
                     policy_context_provider=lambda: (
                         policy_context
@@ -516,6 +520,15 @@ class DashboardService:
                 errorCode="INVALID_PARAMS",
                 errorMessage=str(exc),
             )
+
+        from datus.utils.artifact_datasource import runtime_artifact_query
+
+        try:
+            meta = runtime_artifact_query(self.agent_config, meta)
+            if isinstance(sql_template, MetricQueryFile):
+                sql_template = runtime_artifact_query(self.agent_config, sql_template)
+        except ValueError as exc:
+            return Result(success=False, errorCode="DATASOURCE_UNAVAILABLE", errorMessage=str(exc))
 
         if isinstance(sql_template, MetricQueryFile):
             return await self._run_metric_query(

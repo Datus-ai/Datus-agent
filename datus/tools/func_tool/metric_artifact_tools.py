@@ -18,6 +18,7 @@ from datus.schemas.metric_artifact_query import MetricQueryFile, MetricQueryRequ
 from datus.tools.db_tools.connection_scope import connection_scope
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.registry.contracts import tool_contract
+from datus.utils.artifact_datasource import artifact_reference_key
 from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
@@ -113,8 +114,13 @@ def execute_metric_artifact_query(
 ) -> tuple[QueryResultFile, dict[str, Any]]:
     """The engine owns calculation; DBFuncTool owns warehouse read enforcement."""
     from datus.tools.func_tool.report_artifact_tools import _infer_column_type, _normalize_value
+    from datus.utils.artifact_datasource import artifact_identity, saved_artifact_context
     from datus.utils.artifact_insight import query_lineage
 
+    if saved is not None:
+        from datus.utils.artifact_datasource import runtime_artifact_query
+
+        saved = runtime_artifact_query(db_tool.agent_config, saved)
     runtime = semantic_tools.runtime
     if runtime is None:
         raise ValueError("metric runtime unavailable")
@@ -244,8 +250,10 @@ def execute_metric_artifact_query(
     public_sql = None if policies.has_metric_policies else sql
     payload = QueryResultFile(
         executed_at=utc_now_iso(),
-        datasource=datasource,
-        execution_context=db_tool.execution_context(connector, datasource),
+        **artifact_identity(db_tool.agent_config, datasource),
+        execution_context=saved_artifact_context(
+            db_tool.agent_config, datasource, db_tool.execution_context(connector, datasource)
+        ),
         row_count=len(rows),
         columns=columns,
         rows=rows,
@@ -254,7 +262,7 @@ def execute_metric_artifact_query(
     )
     tables = query_lineage(sql, None, datasource).tables
     return payload, {
-        "datasource": datasource,
+        **artifact_identity(db_tool.agent_config, datasource),
         "execution_context": payload.execution_context,
         "model_path": relative_path,
         "model_revision": binding["model_revision"],
@@ -272,7 +280,9 @@ def execute_published_metric_query(query: MetricQueryFile, *, runtime_config, db
     from types import SimpleNamespace
 
     from datus.tools.semantic_tools.dosi import DosiRuntime
+    from datus.utils.artifact_datasource import runtime_artifact_query
 
+    query = runtime_artifact_query(db_tool.agent_config, query)
     if query.model_snapshot is None:
         raise ValueError("METRIC_MODEL_SNAPSHOT_MISSING: republish a metric query with its semantic model snapshot")
     with TemporaryDirectory(prefix="datus-metric-query-") as directory:
@@ -311,13 +321,17 @@ class MetricArtifactToolsMixin:
                 saved = MetricQueryFile.model_validate_json(path.read_text(encoding="utf-8"))
                 if saved.model_snapshot_path is not None:
                     resolve_metric_query_snapshot(saved, artifact_dir=self.queries_dir.parent)
-                identity = (saved.datasource, tuple(saved.metric.path), saved.metric.name)
+                identity = (
+                    artifact_reference_key(saved, self._db_func_tool.agent_config),
+                    tuple(saved.metric.path),
+                    saved.metric.name,
+                )
                 previous_revision = metric_revisions.setdefault(identity, saved.model_revision)
                 if previous_revision != saved.model_revision:
                     raise ValueError(
                         "one artifact cannot mix model revisions of the same metric; resave all its queries"
                     )
-                model_identity = (saved.datasource, saved.model_path)
+                model_identity = (artifact_reference_key(saved, self._db_func_tool.agent_config), saved.model_path)
                 previous_model_revision = model_revisions.setdefault(model_identity, saved.model_revision)
                 if previous_model_revision != saved.model_revision:
                     raise ValueError("one artifact cannot mix revisions of the same model; resave its metric queries")
@@ -337,7 +351,8 @@ class MetricArtifactToolsMixin:
                     )
                     if (
                         saved.parameter_names()
-                        or result.datasource != saved.datasource
+                        or artifact_reference_key(result, self._db_func_tool.agent_config)
+                        != artifact_reference_key(saved, self._db_func_tool.agent_config)
                         or result.sql != saved.generated_sql
                         or (result.source or {}).get("kind") != "metric"
                         or (result.source or {}).get("metric") != saved.metric.model_dump()
@@ -349,7 +364,8 @@ class MetricArtifactToolsMixin:
                     )
                     if (
                         meta.slug != name
-                        or meta.datasource != saved.datasource
+                        or artifact_reference_key(meta, self._db_func_tool.agent_config)
+                        != artifact_reference_key(saved, self._db_func_tool.agent_config)
                         or saved.parameter_names() != {p.name for p in meta.params}
                     ):
                         raise ValueError(f"{name}: metric parameters do not match its recipe")
@@ -451,7 +467,7 @@ class MetricArtifactToolsMixin:
                 meta = QueryTemplateMetaFile(
                     slug=name,
                     description=goal.strip(),
-                    datasource=payload.datasource,
+                    datasource_id=payload.datasource_id,
                     execution_context=payload.execution_context,
                     params=declarations,
                     columns=payload.columns,

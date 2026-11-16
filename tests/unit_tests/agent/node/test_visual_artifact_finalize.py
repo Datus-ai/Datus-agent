@@ -2317,7 +2317,7 @@ def test_finalize_rebuilds_sources_after_switch_and_delete_even_without_narrativ
     assert json.loads(path.read_text())["datasources"] == ["new_source"]
     sql.unlink()
     finalize()
-    assert json.loads(path.read_text())["datasources"] == []
+    assert json.loads(path.read_text()).get("datasources", []) == []
     expected_calls = 0 if skip_narrative else 3
     assert model.generate_with_json_output.call_count == expected_calls
 
@@ -2376,3 +2376,62 @@ def test_finalize_keeps_previous_index_when_query_metadata_cannot_be_read(tmp_pa
     )
     assert path.read_bytes() == before
     assert any("metadata unavailable" in warning for warning in result["warnings"])
+
+
+@pytest.mark.ci
+def test_finalize_source_scans_share_one_metadata_read(tmp_path, monkeypatch):
+    """A concurrent query replacement must not mix name and ID indexes from different reads."""
+    artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+    TestRunFinalizeSkipNarrative()._seed_existing_narrative(analysis_dir)
+    metadata = queries_dir / "rev_by_region.json"
+    original_read = Path.read_text
+    reads = []
+
+    def read(path, *args, **kwargs):
+        if path == metadata:
+            reads.append(path)
+            return json.dumps({"datasource": "original"} if len(reads) == 1 else {"datasource_id": "replacement"})
+        return original_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read)
+    run_finalize_analysis(
+        model=Mock(),
+        artifact_kind="report",
+        artifact_dir=artifact_dir,
+        queries_dir=queries_dir,
+        analysis_dir=analysis_dir,
+        actions=[],
+        skip_narrative=True,
+    )
+    manifest = json.loads((artifact_dir / "manifest.json").read_text())
+    assert manifest["datasources"] == ["original"]
+    assert not manifest.get("datasource_ids")
+
+
+@pytest.mark.ci
+@pytest.mark.parametrize("identity", [None, "", " ", 42])
+def test_finalize_invalid_identity_preserves_index_and_finishes_other_outputs(tmp_path, identity):
+    """Invalid query identities warn without disabling narrative, attribution or schema baking."""
+    artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path, sql_body="SELECT * FROM Account")
+    manifest_path = artifact_dir / "manifest.json"
+    before = manifest_path.read_bytes()
+    (queries_dir / "rev_by_region.json").write_text(json.dumps({"datasource_id": identity, "datasource": "pg"}))
+    model = Mock(spec=["generate_with_json_output", "generate"])
+    model.generate_with_json_output.return_value = _full_finalize_response()
+    db_tool = _mock_describe_table_tool({"Account": {"result": {"columns": [{"name": "id", "type": "int"}]}}})
+    result = run_finalize_analysis(
+        model=model,
+        artifact_kind="report",
+        artifact_dir=artifact_dir,
+        queries_dir=queries_dir,
+        analysis_dir=analysis_dir,
+        actions=[],
+        db_func_tool=db_tool,
+    )
+    assert manifest_path.read_bytes() == before
+    assert any("Invalid artifact datasource_id" in warning for warning in result["warnings"])
+    assert result["ok"] is True
+    assert result["subject_refs_count"]["metrics"] == 1
+    assert (analysis_dir / "insights.json").is_file()
+    assert (analysis_dir / "subject_refs.json").is_file()
+    assert json.loads((analysis_dir / "key_tables_schema.json").read_text())["tables"][0]["name"] == "Account"

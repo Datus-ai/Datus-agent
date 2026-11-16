@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from datus.schemas.artifact_datasource import ArtifactDatasource
 from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.schemas.gen_visual_dashboard_models import QueryTemplateMetaFile
 from datus.schemas.gen_visual_report_models import QueryColumnMeta
@@ -89,7 +90,7 @@ class DashboardDetail(BaseModel):
     )
 
 
-class SqlQueryResultEnvelope(BaseModel):
+class SqlQueryResultEnvelope(ArtifactDatasource):
     """Matches the ISqlQueryResult shape consumed by ``useQuerySql`` on the frontend.
 
     The frontend hook destructures ``data?.rows ?? []`` / ``data?.columns ?? []``
@@ -100,7 +101,6 @@ class SqlQueryResultEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     executed_at: str = Field(..., description="ISO 8601 UTC timestamp of the executing query")
-    datasource: str = Field(..., description="Logical datasource the query ran against")
     execution_context: Optional[Dict[str, str]] = None
     source: Optional[Dict[str, Any]] = None
     row_count: int = Field(..., ge=0)

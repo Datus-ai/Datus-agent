@@ -9,7 +9,9 @@ from pathlib import PurePosixPath
 from typing import Callable, Iterable
 
 
-def collect_query_datasources(paths: Iterable[str], read_content: Callable[[str], str]) -> list[str]:
+def collect_query_datasources(
+    paths: Iterable[str], read_content: Callable[[str], str], *, field: str = "datasource"
+) -> list[str]:
     """Distinct saved-query sources, in file order, without using a stale manifest.
 
     Only metadata paired with a SQL/template/metric query contributes. The reader
@@ -32,7 +34,13 @@ def collect_query_datasources(paths: Iterable[str], read_content: Callable[[str]
             payload = json.loads(read_content(path))
         except (ValueError, TypeError):
             continue
-        label = payload.get("datasource") if isinstance(payload, dict) else None
+        if isinstance(payload, dict) and "datasource_id" in payload:
+            identity = payload["datasource_id"]
+            if not isinstance(identity, str) or not identity.strip():
+                raise ValueError("Invalid artifact datasource_id")
+        if field == "datasource" and isinstance(payload, dict) and "datasource_id" in payload:
+            continue
+        label = payload.get(field) if isinstance(payload, dict) else None
         if isinstance(label, str) and label.strip() and label.strip() not in labels:
             labels.append(label.strip())
     return labels

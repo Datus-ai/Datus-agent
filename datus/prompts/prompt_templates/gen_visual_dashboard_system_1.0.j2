@@ -425,3 +425,5 @@ sample_params for trial execution. Value fields can bind {"param":"start_date"}
 (time_start/time_end, filter.value, metric_params values). Declarations must match
 all bindings. Metric names and dimensions cannot be parameterized. A report uses
 literal values only. View-time execution reads the saved recipe, not trial rows.
+
+Saved query files use `datasource_id` as their stable identity. Save tools own this field; never author or rewrite it. The optional `datasource` tool argument still takes the current runtime datasource name from the available connections, not a saved ID.

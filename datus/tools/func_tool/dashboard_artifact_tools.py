@@ -840,7 +840,10 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
         except Exception as exc:
             return FuncToolResult(success=0, error=f"Failed to resolve datasource {datasource!r}: {exc}")
 
-        ds_label = datasource or getattr(self._db_func_tool, "_default_datasource", "") or "default"
+        ds_label = self._db_func_tool._resolve_effective_datasource(datasource)
+        from datus.utils.artifact_datasource import artifact_identity, saved_artifact_context
+
+        identity = artifact_identity(self._db_func_tool.agent_config, ds_label)
 
         # Pre-flight EXPLAIN row-count guard on the trial-rendered SQL: reject a
         # runaway template (e.g. a cross-join cartesian product) from its
@@ -901,10 +904,12 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
         # new ``goal`` arg — same semantics (one-line research question),
         # but the analysis-artifact contract names it ``goal`` everywhere.
         meta_payload = {
-            "execution_context": self._db_func_tool.execution_context(connector, ds_label),
+            "execution_context": saved_artifact_context(
+                self._db_func_tool.agent_config, ds_label, self._db_func_tool.execution_context(connector, ds_label)
+            ),
             "slug": name,
             "description": goal.strip(),
-            "datasource": ds_label,
+            **identity,
             "params": [p.model_dump() for p in params_decl],
             "columns": columns_meta,
             "sample_params": sample_params,

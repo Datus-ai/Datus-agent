@@ -305,7 +305,8 @@ class TestTouchManifestAfterSave:
         assert err is None
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
         # Saving a query updates recency while finalize owns the source index.
-        assert data["datasources"] == []
+        assert data["datasource_ids"] == []
+        assert "datasources" not in data
         assert data["updated_at"] == "2026-05-14T14:00:00Z"
 
 

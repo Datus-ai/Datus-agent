@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from datus.schemas.artifact_datasource import ArtifactDatasource
 from datus.schemas.at_context import AtContextInput
 from datus.schemas.base import BaseResult
 
@@ -52,14 +53,13 @@ class QueryColumnMeta(BaseModel):
     type: ColumnSemanticType
 
 
-class QueryResultFile(BaseModel):
+class QueryResultFile(ArtifactDatasource):
     """Schema for ``queries/<slug>.json`` files."""
 
     model_config = ConfigDict(extra="forbid")
 
     executed_at: str = Field(..., description="ISO 8601 UTC")
     execution_context: Optional[Dict[str, str]] = None
-    datasource: str
     row_count: int = Field(..., ge=0)
     columns: List[QueryColumnMeta] = Field(..., min_length=1)
     rows: List[Dict[str, Any]] = Field(...)
@@ -68,8 +68,6 @@ class QueryResultFile(BaseModel):
 
     @model_validator(mode="after")
     def _row_count_matches(self) -> "QueryResultFile":
-        if self.execution_context and self.execution_context.get("datasource") != self.datasource:
-            raise ValueError("query execution context must match its datasource")
         if len(self.rows) != self.row_count:
             raise ValueError(f"row_count={self.row_count} does not match len(rows)={len(self.rows)}")
         column_names = {c.name for c in self.columns}

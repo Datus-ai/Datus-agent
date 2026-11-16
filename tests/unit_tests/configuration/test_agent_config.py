@@ -3247,3 +3247,26 @@ def test_file_database_default_uses_the_real_file_name_without_a_connector(tmp_p
     config.current_db_config = lambda datasource="": profile
     assert config.default_database_name("warehouse") == "analytics"
     assert profile.database == database
+
+
+@pytest.mark.parametrize("dialect", ["sqlite", "duckdb"])
+@pytest.mark.parametrize("source_kind", ["uri", "path_pattern"])
+def test_file_datasource_keeps_artifact_identity_out_of_adapter_options(tmp_path, dialect, source_kind):
+    db = tmp_path / f"warehouse.{dialect}"
+    db.touch()
+    source = {
+        "type": dialect,
+        "datasource_id": "saas-stable",
+        source_kind: str(tmp_path / f"*.{dialect}") if source_kind == "path_pattern" else str(db),
+    }
+    config = AgentConfig(
+        nodes={},
+        home=str(tmp_path),
+        skip_init_dirs=True,
+        services={"datasources": {"warehouse": source}},
+    )
+    entry = config.services.datasources["warehouse"]
+    assert entry.datasource_id == "saas-stable"
+    assert "datasource_id" not in (entry.extra or {})
+    assert "datasource_id" not in entry.to_dict()
+    assert list(config.services.datasources) == ["warehouse"]
