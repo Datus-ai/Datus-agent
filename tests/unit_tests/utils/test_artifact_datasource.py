@@ -73,3 +73,17 @@ def test_schema_rejects_present_invalid_id_even_with_legacy_name(identity):
             columns=[{"name": "n", "type": "number"}],
             rows=[],
         )
+
+
+def test_legacy_runtime_copy_keeps_resolved_identity_after_name_reuse():
+    """Repeated conversion cannot redirect a previously resolved legacy query."""
+    query = QueryResultFile(
+        datasource="old", executed_at="now", row_count=0, columns=[{"name": "n", "type": "number"}], rows=[]
+    )
+    before = query.model_dump_json()
+    runtime = runtime_artifact_query(config(old=DbConfig(datasource_id="original")), query)
+    renamed = config(old=DbConfig(datasource_id="other"), new=DbConfig(datasource_id="original"))
+    repeated = runtime_artifact_query(renamed, runtime)
+    assert repeated.datasource == "new"
+    assert repeated.datasource_id == "original"
+    assert query.model_dump_json() == before

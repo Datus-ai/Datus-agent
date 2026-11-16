@@ -1339,18 +1339,23 @@ def run_finalize_analysis(
             path.relative_to(artifact_dir).as_posix(): path
             for path in iter_artifact_files(artifact_dir, artifact_kind, queries_only=True)
         }
-        datasources = collect_query_datasources(query_paths, lambda name: query_paths[name].read_text(encoding="utf-8"))
+        query_contents: Dict[str, str] = {}
+
+        def read_query_content(name: str) -> str:
+            if name not in query_contents:
+                query_contents[name] = query_paths[name].read_text(encoding="utf-8")
+            return query_contents[name]
+
+        datasources = collect_query_datasources(query_paths, read_query_content)
         metadata_error = update_manifest_query_metadata(
             artifact_dir / "manifest.json",
             key_tables,
             datasources=datasources,
-            datasource_ids=collect_query_datasources(
-                query_paths, lambda name: query_paths[name].read_text(encoding="utf-8"), field="datasource_id"
-            ),
+            datasource_ids=collect_query_datasources(query_paths, read_query_content, field="datasource_id"),
         )
         if metadata_error:
             warnings.append(metadata_error)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         warnings.append(f"Cannot aggregate artifact query metadata: {exc}")
 
     if skip_narrative and not narrative_outputs_present(analysis_dir, artifact_kind=artifact_kind):

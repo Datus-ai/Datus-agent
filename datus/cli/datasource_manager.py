@@ -74,6 +74,9 @@ def serialize_services_section(services_config) -> dict:
                         continue
                     entry.setdefault(extra_key, extra_value)
 
+        if db_config.datasource_id:
+            entry["datasource_id"] = db_config.datasource_id
+
         if db_config.default:
             entry["default"] = True
 

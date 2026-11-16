@@ -223,3 +223,17 @@ class TestDatasourceManagerDelete:
 
         assert result == 1  # 1 means failure
         mock_console.print.assert_called_with("❌ Failed to save configuration after deletion")
+
+
+@pytest.mark.parametrize("db_type", ["postgresql", "sqlite", "duckdb"])
+def test_services_serialization_preserves_datasource_identity(db_type):
+    """Configuration persistence retains routing identity without passing it to adapters."""
+    from types import SimpleNamespace
+
+    from datus.configuration.agent_config import DbConfig
+
+    entry = DbConfig(type=db_type, uri=":memory:", host="localhost", datasource_id="stable-source")
+    services = SimpleNamespace(datasources={"warehouse": entry}, bi_platforms={}, schedulers={})
+    saved = serialize_services_section(services)["datasources"]["warehouse"]
+    assert saved["datasource_id"] == entry.datasource_id
+    assert "datasource_id" not in entry.to_dict()

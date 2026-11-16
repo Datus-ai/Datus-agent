@@ -48,7 +48,9 @@ def runtime_artifact_query(config: Any, query: Any) -> Any:
     if context is not None:
         context = {key: value for key, value in context.items() if key != "datasource_id"}
         context["datasource"] = name
-    return query.model_copy(update={"datasource": name, "execution_context": context})
+    return query.model_copy(
+        update={**artifact_identity(config, name), "datasource": name, "execution_context": context}
+    )
 
 
 def artifact_reference_key(query: Any, config: Any = None) -> str:

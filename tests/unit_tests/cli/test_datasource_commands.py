@@ -12,6 +12,7 @@ from datus.cli.datasource_commands import DatasourceCommands
 
 @dataclass
 class _FakeDbConfig:
+    datasource_id: str = ""
     type: str = "duckdb"
     uri: str = ""
     host: str = ""
@@ -744,3 +745,28 @@ class TestDatasourceAppCursor:
         app._list_cursor = 5
         app._clamp_cursor(0)
         assert app._list_cursor == 0
+
+
+@pytest.mark.parametrize("identity", ["", "stable-source"])
+def test_edit_submit_preserves_datasource_identity(identity):
+    """Editing connection fields must not replace a host-assigned identity."""
+    from datus.configuration.agent_config import DbConfig
+
+    old = DbConfig(type="postgresql", host="old", default=True, datasource_id=identity)
+    cli = _make_cli(datasources={"warehouse": old}, current="warehouse")
+    cmds = DatasourceCommands(cli)
+    selection = DatasourceSelection(
+        kind="edit_submit",
+        name="warehouse",
+        payload={"type": "postgresql", "host": "new", "datasource_id": "replacement"},
+    )
+    with (
+        patch.object(cmds, "_test_connectivity", return_value=True),
+        patch.object(cmds, "_save", return_value=True),
+        patch.object(cmds, "_reload_runtime"),
+    ):
+        cmds._handle_edit_submit(selection)
+    saved = cli.agent_config.services.datasources["warehouse"]
+    assert saved.datasource_id == identity
+    assert saved.default is True
+    assert saved.host == "new"
