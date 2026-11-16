@@ -22,7 +22,7 @@ pip install lark-oapi
 5. Click **Create**.
 
 !!! note "Lark (International) users"
-    If you are using the international version (Lark), go to [open.larksuite.com](https://open.larksuite.com) instead. The setup steps are the same.
+    If you are using the international version (Lark), go to [open.larksuite.com](https://open.larksuite.com) instead and set `extra.domain: lark` in your channel configuration. Both REST requests and the WebSocket connection must use the international domain.
 
 ## Step 3: Get App Credentials
 
@@ -144,6 +144,22 @@ export FEISHU_APP_SECRET="xxxxxxxxxxxxxxxxxxxxxxxx"
 |-----|----------|-------------|
 | `app_id` | Yes | App ID from Feishu Open Platform |
 | `app_secret` | Yes | App Secret from Feishu Open Platform |
+| `domain` | No | `feishu` (default) or `lark` (international). Applies to both REST and WebSocket clients. |
+
+For international Lark, use the same adapter with an explicit domain:
+
+```yaml
+channels:
+  lark-main:
+    adapter: feishu
+    extra:
+      app_id: ${LARK_APP_ID}
+      app_secret: ${LARK_APP_SECRET}
+      domain: lark
+```
+
+An unsupported domain is rejected before connecting. An `Incorrect domain name` error usually
+means the selected region does not match the app credentials.
 
 ## Verify the Connection
 
