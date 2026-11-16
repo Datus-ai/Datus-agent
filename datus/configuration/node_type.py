@@ -46,6 +46,8 @@ class NodeType:
     TYPE_COMPARE = "compare"  # For comparing SQL with expectations
 
     # Agentic node types
+    TYPE_ANALYTICS_EXPLORER = "analytics_explorer"
+    TYPE_ANALYTICS_BUILDER = "analytics_builder"
     TYPE_CHAT = "chat"  # For conversational AI interactions
     TYPE_GEN_SQL = "gen_sql"  # For SQL generation with conversational AI
     TYPE_SEMANTIC = "semantic"  # For semantic model generation
@@ -68,6 +70,8 @@ class NodeType:
         TYPE_OUTPUT,
         TYPE_FIX,
         TYPE_COMPARE,
+        TYPE_ANALYTICS_EXPLORER,
+        TYPE_ANALYTICS_BUILDER,
         TYPE_CHAT,
         TYPE_GEN_SQL,
         TYPE_SEMANTIC,
@@ -96,6 +100,8 @@ class NodeType:
         TYPE_SELECTION: "Select best result from multiple candidates",
         TYPE_SUBWORKFLOW: "Execute a nested workflow",
         TYPE_COMPARE: "Compare SQL with expectations",
+        TYPE_ANALYTICS_EXPLORER: "Read-only analytics with shared context",
+        TYPE_ANALYTICS_BUILDER: "Analytics and file-based deliverables",
         TYPE_CHAT: "Conversational AI interactions with tool calling",
         TYPE_GEN_SQL: "SQL generation with conversational AI and tool calling",
         TYPE_SEMANTIC: "Semantic model generation with conversational AI",
@@ -142,7 +148,7 @@ class NodeType:
             input_data_cls = SubworkflowInput
         elif node_type == NodeType.TYPE_COMPARE:
             input_data_cls = CompareInput
-        elif node_type == NodeType.TYPE_CHAT:
+        elif node_type in {NodeType.TYPE_CHAT, NodeType.TYPE_ANALYTICS_EXPLORER, NodeType.TYPE_ANALYTICS_BUILDER}:
             input_data_cls = ChatNodeInput
         elif node_type == NodeType.TYPE_GEN_SQL:
             input_data_cls = GenSQLNodeInput
