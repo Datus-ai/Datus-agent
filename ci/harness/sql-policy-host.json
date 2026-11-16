@@ -8,7 +8,6 @@
     "ci/harness/sql-policy-host.json",
     "ci/sql_policy_gate.py",
     "tests/integration/conftest.py",
-    ".github/workflows/sql-policy-gate.yml",
     ".github/workflows/run-nightly.yml"
   ]
 }

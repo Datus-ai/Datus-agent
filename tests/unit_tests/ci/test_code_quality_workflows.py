@@ -28,13 +28,36 @@ def test_quality_and_title_checks_ignore_pr_metadata_edits(name, event, expected
     assert set(config["on"][event]["types"]) == expected_types
 
 
+def test_test_audit_only_handles_pr_events_and_keeps_trusted_validation():
+    config = workflow("test-audit.yml")
+    assert set(config["on"]) == {"pull_request_target"}
+    assert set(config["on"]["pull_request_target"]["types"]) == {"opened", "synchronize", "reopened", "edited"}
+    job = config["jobs"]["test-audit"]
+    assert job["if"] == (
+        "${{ !startsWith(github.event.pull_request.title, '[Doc]') && "
+        "!startsWith(github.event.pull_request.title, '[doc]') }}"
+    )
+    steps = job["steps"]
+    audit = next(step for step in steps if step.get("id") == "audit")
+    assert "python3 ../base/ci/audit_tests.py" in audit["run"]
+    assert "--repo-root ." in audit["run"]
+    assert audit["working-directory"] == "pr"
+    failure = steps[-1]
+    assert failure["if"] == (
+        "${{ always() && (steps.audit.outcome != 'success' || steps.audit.outputs.audit_outcome == 'failure') }}"
+    )
+    assert "exit 1" in failure["run"]
+
+
 @pytest.mark.parametrize("event", ["opened", "synchronize", "reopened"])
 def test_each_pr_event_publishes_real_required_checks(event):
     config = workflow("code-quality.yml")
     assert set(config["on"]) == {"pull_request"}
     assert event in config["on"]["pull_request"]["types"]
+    assert set(config["jobs"]) == {"format-check", "run-coverage", "merge-queue-context"}
     contexts = set()
-    for job_id, job in config["jobs"].items():
+    for job_id in ("format-check", "run-coverage"):
+        job = config["jobs"][job_id]
         # A skipped reusable call publishes no child context; a skipped job
         # must not satisfy a failed validation from a previous run either.
         assert "if" not in job
@@ -46,14 +69,27 @@ def test_each_pr_event_publishes_real_required_checks(event):
             child_name = child.get("name", child_id)
             contexts.add(f"{name} / {child_name}")
     assert contexts == REQUIRED
+    assert config["jobs"]["merge-queue-context"]["name"] == "Merge Queue Gate"
     assert config["jobs"]["run-coverage"]["needs"] == "format-check"
 
 
-def test_merge_group_contexts_are_isolated_from_pr_events():
-    config = workflow("merge-queue-code-quality.yml")
-    assert set(config["on"]) == {"merge_group"}
-    assert {job["name"] for job in config["jobs"].values()} == REQUIRED
-    assert all("if" not in job for job in config["jobs"].values())
+@pytest.mark.parametrize(
+    "job_id,required_name,manual_name",
+    [
+        ("format-check-context", "format-check / format-check", "Manual queue format context"),
+        ("coverage-context", "run-coverage / coverage", "Manual queue coverage context"),
+    ],
+)
+def test_merge_group_contexts_are_isolated_from_pr_and_manual_checks(job_id, required_name, manual_name):
+    config = workflow("merge-queue.yml")
+    assert set(config["on"]) == {"merge_group", "workflow_dispatch"}
+    job = config["jobs"][job_id]
+    assert job["if"] == "${{ github.event_name == 'merge_group' }}"
+    # Skipped jobs still publish checks, so dispatches must use distinct names.
+    assert job["name"] == (
+        "${{ github.event_name == 'merge_group' && '" + required_name + "' || '" + manual_name + "' }}"
+    )
+    assert manual_name not in REQUIRED | {"Merge Queue Gate"}
 
 
 def test_metadata_mode_runs_tests_only_when_successful_evidence_is_not_reused():
