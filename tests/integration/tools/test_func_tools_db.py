@@ -561,6 +561,7 @@ class TestAllToolsNameContract:
         for method in (
             "to_function_tool",
             "available_tools",
+            "close",
             "read_query",
             "execute_write",
             "execute_ddl",
@@ -764,3 +765,90 @@ def test_mixed_datasource_scopes_enforce_real_sqlite_and_duckdb_reads(tmp_path, 
     finally:
         for name in configs:
             manager.get_conn(name).close()
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("engine", ["sqlite", "duckdb"])
+def test_real_tool_concurrent_cold_connection_and_owner_eviction(tmp_path, monkeypatch, engine):
+    """Full tool construction uses one cold native connector and reopens evicted files."""
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    import duckdb
+
+    from datus.tools.db_tools.db_manager import DBManager
+    from tests.helpers.product_acceptance import isolated_connectors, product_config
+
+    connect = sqlite3.connect if engine == "sqlite" else duckdb.connect
+    markers = {"one": 11, "two": 22, "three": 33, "four": 44}
+    for name, marker in markers.items():
+        with connect(str(tmp_path / f"{name}.{engine}")) as database:
+            database.execute("CREATE TABLE marker(value INTEGER)")
+            database.execute(f"INSERT INTO marker VALUES ({marker})")
+    config = product_config(
+        tmp_path / "project",
+        "http://127.0.0.1:1/v1",
+        datasources={
+            "warehouse": {
+                "type": engine,
+                "path_pattern": str(tmp_path / f"*.{engine}"),
+                "database": "one",
+                "default": True,
+            }
+        },
+    )
+    config.current_datasource = "warehouse"
+    with isolated_connectors():
+        manager = DBManager(config.datasource_configs, max_connections=2)
+        build = manager._build_conn
+        created = []
+        lock = threading.Lock()
+
+        def observed_build(bound_config):
+            connector = build(bound_config)
+            with lock:
+                created.append((bound_config.database, connector))
+            # Keep the actual constructor's cold window open for concurrent
+            # callers; construction, connect(), queries and eviction stay real.
+            time.sleep(0.02)
+            return connector
+
+        monkeypatch.setattr(manager, "_build_conn", observed_build)
+        tool = DBFuncTool(manager, agent_config=config, default_datasource="warehouse")
+        start = threading.Barrier(4)
+
+        def query():
+            start.wait(timeout=5)
+            return tool.read_query("SELECT value FROM marker", datasource="warehouse", database="two", compress=False)
+
+        try:
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                results = [future.result(timeout=10) for future in [pool.submit(query) for _ in range(4)]]
+            assert all(result.success == 1 and result.result == [{"value": 22}] for result in results)
+            assert sum(name == "two" for name, _ in created) == 1
+            original = next(connector for name, connector in created if name == "two")
+            for name in ("three", "four"):
+                result = tool.read_query(
+                    "SELECT value FROM marker", datasource="warehouse", database=name, compress=False
+                )
+                assert result.success == 1, result.error
+                assert result.result == [{"value": markers[name]}]
+                assert len(manager._conn_dict["warehouse"]) <= 2
+            assert original.connection is None, "Owner eviction must close the real native connection"
+            result = tool.read_query("SELECT value FROM marker", datasource="warehouse", database="two", compress=False)
+            assert result.success == 1 and result.result == [{"value": 22}]
+            assert sum(name == "two" for name, _ in created) == 2
+            # Another fully initialized tool borrows the same manager. Closing
+            # its peer cannot invalidate the remaining borrower's primary DB.
+            shared = DBFuncTool(manager, agent_config=config, default_datasource="warehouse")
+            try:
+                tool.close()
+                result = shared.read_query("SELECT value FROM marker", compress=False)
+                assert result.success == 1 and result.result == [{"value": 11}]
+            finally:
+                shared.close()
+        finally:
+            tool.close()
+            manager.close()
+        assert all(connector.connection is None for _, connector in created)

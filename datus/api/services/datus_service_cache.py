@@ -6,6 +6,7 @@ the same project_id share a single factory call.
 
 import asyncio
 import collections
+import time
 from typing import Awaitable, Callable, Optional
 
 from datus.api.services.datus_service import DatusService
@@ -18,12 +19,50 @@ logger = get_logger(__name__)
 class DatusServiceCache:
     """Async LRU cache for DatusService instances."""
 
-    def __init__(self, max_size: int = 128):
+    def __init__(self, max_size: int = 128, *, idle_ttl: Optional[float] = None, sweep_interval: float = 30):
+        if sweep_interval <= 0 or (idle_ttl is not None and idle_ttl < 0):
+            raise ValueError("Sweep interval must be positive and idle TTL non-negative")
         self._max_size = max_size
         self._cache: collections.OrderedDict[str, DatusService] = collections.OrderedDict()
         self._futures: dict[str, asyncio.Future[DatusService]] = {}
         self._lock = asyncio.Lock()
         self._pending_tasks: set[asyncio.Task] = set()
+        self._last_access: dict[str, float] = {}
+        self._idle_ttl = idle_ttl
+        self._sweep_interval = sweep_interval
+        self._sweep_handle = None
+        self._closed = False
+
+    def _schedule_sweep(self):
+        if not self._closed and self._sweep_handle is None:
+            self._sweep_handle = asyncio.get_running_loop().call_later(self._sweep_interval, self._start_sweep)
+
+    def _start_sweep(self):
+        self._sweep_handle = None
+        if not self._closed:
+            self._track(asyncio.create_task(self._sweep()))
+
+    async def _sweep(self):
+        try:
+            async with self._lock:
+                evicted = []
+                now = time.monotonic()
+                for pid, svc in list(self._cache.items()):
+                    if svc.has_active_tasks():
+                        continue
+                    idle = self._idle_ttl is not None and now - self._last_access[pid] >= self._idle_ttl
+                    if len(self._cache) <= self._max_size and not idle:
+                        continue
+                    self._cache.pop(pid)
+                    self._last_access.pop(pid, None)
+                    evicted.append(svc)
+            for svc in evicted:
+                try:
+                    await svc.shutdown()
+                except Exception:
+                    logger.exception("Error shutting down an expired DatusService")
+        finally:
+            self._schedule_sweep()
 
     def _track(self, task: asyncio.Task) -> asyncio.Task:
         """Register a background task so drain()/shutdown() can await it."""
@@ -47,6 +86,9 @@ class DatusServiceCache:
         reachable and keep their snapshots; new requests use the new config.
         Fingerprint-only callers retain the deferred-rebuild behavior.
         """
+        if self._closed:
+            raise RuntimeError("DatusServiceCache is shut down")
+        self._schedule_sweep()
         if agent_config is not None and expected_fingerprint is None:
             expected_fingerprint = DatusService.compute_fingerprint(agent_config)
 
@@ -54,6 +96,9 @@ class DatusServiceCache:
         stale_svc: Optional[DatusService] = None
 
         async with self._lock:
+            if self._closed:
+                raise RuntimeError("DatusServiceCache is shut down")
+            self._last_access[project_id] = time.monotonic()
             # Fast path: cache hit
             if project_id in self._cache:
                 cached = self._cache[project_id]
@@ -64,8 +109,9 @@ class DatusServiceCache:
                     refreshed = cached.with_config(agent_config)
                     self._cache[project_id] = refreshed
                     self._cache.move_to_end(project_id)
-                    # Do not dispose the old facade: its task manager is now
-                    # owned by the replacement and still runs the old turns.
+                    # Dispose only the old facade's exclusive resources. The
+                    # task registry belongs to the replacement generation.
+                    self._track(asyncio.create_task(cached.shutdown(shutdown_tasks=False)))
                     logger.info(f"Refreshed DatusService config for project {project_id} while preserving chat tasks")
                     return refreshed
                 # Fingerprint mismatch. Rebuilding now would orphan any in-flight
@@ -110,15 +156,21 @@ class DatusServiceCache:
         # We are the creator — run the factory outside the lock
         try:
             svc = await factory()
-        except Exception as e:
+        except BaseException as e:
             async with self._lock:
                 self._futures.pop(project_id, None)
+                self._last_access.pop(project_id, None)
             if not fut.done():
-                fut.set_exception(e)
+                if isinstance(e, asyncio.CancelledError):
+                    fut.cancel()
+                else:
+                    fut.set_exception(e)
+                    fut.exception()  # The creator also receives this exception.
             raise
 
         async with self._lock:
             self._cache[project_id] = svc
+            self._last_access[project_id] = time.monotonic()
             self._cache.move_to_end(project_id)
             self._futures.pop(project_id, None)
 
@@ -136,6 +188,7 @@ class DatusServiceCache:
                 if candidate_pid is None:
                     break  # all entries have active tasks — allow cache to exceed max_size
                 old_svc = self._cache.pop(candidate_pid)
+                self._last_access.pop(candidate_pid, None)
                 evicted.append((candidate_pid, old_svc))
 
         # Resolve the future so waiters get the result
@@ -157,6 +210,7 @@ class DatusServiceCache:
         """
         async with self._lock:
             svc = self._cache.pop(project_id, None)
+            self._last_access.pop(project_id, None)
         if not svc:
             return
         await self._dispose(project_id, svc)
@@ -182,18 +236,29 @@ class DatusServiceCache:
 
     async def drain(self) -> None:
         """Await all pending background shutdown tasks before the loop closes."""
-        if self._pending_tasks:
-            results = await asyncio.gather(*list(self._pending_tasks), return_exceptions=True)
+        while self._pending_tasks:
+            pending = list(self._pending_tasks)
+            self._pending_tasks.difference_update(pending)
+            results = await asyncio.gather(*pending, return_exceptions=True)
             for result in results:
                 if isinstance(result, BaseException):
                     logger.warning("Background shutdown task failed", exc_info=result)
 
     async def shutdown(self) -> None:
         """Shutdown all cached DatusService instances (application exit)."""
+        self._closed = True
+        if self._sweep_handle is not None:
+            self._sweep_handle.cancel()
+            self._sweep_handle = None
+        async with self._lock:
+            creating = list(self._futures.values())
+        if creating:
+            await asyncio.gather(*(asyncio.shield(future) for future in creating), return_exceptions=True)
         await self.drain()
         async with self._lock:
             items = list(self._cache.items())
             self._cache.clear()
+            self._last_access.clear()
         for pid, svc in items:
             try:
                 await svc.shutdown()

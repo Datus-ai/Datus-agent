@@ -11,6 +11,7 @@ import asyncio
 import copy
 import json
 import os
+import time
 import uuid
 from contextlib import ExitStack
 from datetime import datetime
@@ -400,6 +401,9 @@ class ChatTask:
         self.status: str = "running"  # running | completed | error | cancelled
         self.condition = asyncio.Condition()
         self.created_at = datetime.now()
+        self.completed_at: Optional[float] = None
+        self.llm_session_id: Optional[str] = None
+        self.replay_bytes = 0
         self.error: Optional[str] = None
         self.consumer_offset: int = 0
         # Created up-front — before the node exists — so ``POST /chat/insert``
@@ -498,14 +502,27 @@ class ChatTaskManager:
         stream_thinking: bool = False,
         *,
         node_factory: Optional[ChatNodeFactory] = None,
+        completed_task_ttl: float = COMPLETED_TASK_TTL,
+        max_completed_tasks: Optional[int] = None,
+        max_completed_bytes: Optional[int] = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         """Create a project task registry with optional trusted node dispatch."""
         self._node_factory = node_factory
+        if completed_task_ttl < 0 or any(
+            limit is not None and limit < 0 for limit in (max_completed_tasks, max_completed_bytes)
+        ):
+            raise ValueError("Completed-task TTL and replay limits must be non-negative")
         self._tasks: Dict[str, ChatTask] = {}
         self._completed_tasks: Dict[str, ChatTask] = {}
         self._default_source = default_source
         self._default_interactive = default_interactive
         self._stream_thinking = stream_thinking
+        self._completed_task_ttl = completed_task_ttl
+        self._max_completed_tasks = max_completed_tasks
+        self._max_completed_bytes = max_completed_bytes
+        self._clock = clock
+        self._expiry_handle: Optional[asyncio.TimerHandle] = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -716,9 +733,13 @@ class ChatTaskManager:
 
     def has_active_tasks(self) -> bool:
         """Return True if any task is still running."""
-        return any(t.status == "running" for t in self._tasks.values())
+        return any(
+            t.status == "running" or (t.asyncio_task is not None and not t.asyncio_task.done())
+            for t in self._tasks.values()
+        )
 
     def get_task(self, session_id: str) -> Optional[ChatTask]:
+        self._purge_expired_completed()
         return self._tasks.get(session_id) or self._completed_tasks.get(session_id)
 
     async def consume_events(self, task: ChatTask, start_from: Optional[int] = None) -> AsyncGenerator[SSEEvent, None]:
@@ -772,6 +793,9 @@ class ChatTaskManager:
 
     async def shutdown(self) -> None:
         """Cancel every running task (called at application shutdown)."""
+        if self._expiry_handle is not None:
+            self._expiry_handle.cancel()
+            self._expiry_handle = None
         for task in list(self._tasks.values()):
             if task.asyncio_task and not task.asyncio_task.done():
                 task.asyncio_task.cancel()
@@ -780,6 +804,10 @@ class ChatTaskManager:
             await asyncio.gather(*pending, return_exceptions=True)
         self._tasks.clear()
         self._completed_tasks.clear()
+        # Finishing tasks may have scheduled an expiry while shutdown drained them.
+        if self._expiry_handle is not None:
+            self._expiry_handle.cancel()
+            self._expiry_handle = None
 
     # ------------------------------------------------------------------
     # Background loop (full agentic loop implementation)
@@ -922,6 +950,7 @@ class ChatTaskManager:
             if "max_turns" in request.model_fields_set:
                 node.max_turns = request.max_turns
             task.node = node
+            task.llm_session_id = node.session_id
             task.previous_message_id = await asyncio.to_thread(
                 self._max_message_id, agent_config, node.session_id, user_id
             )
@@ -1362,7 +1391,9 @@ class ChatTaskManager:
 
         finally:
             if task.status != "completed" and task.node is not None:
-                await self._persist_message_contents(task, agent_config, task.node.session_id, user_id)
+                await self._drain_cleanup(
+                    self._persist_message_contents(task, agent_config, task.node.session_id, user_id)
+                )
             trace_stack.close()
             self._emit_turn_stats(
                 task,
@@ -1375,12 +1406,64 @@ class ChatTaskManager:
                 turn_id=turn_id,
             )
             self._settle_turn(task, last_usage)
+            await self._drain_cleanup(self._release_task_resources(task))
             async with task.condition:
                 task.condition.notify_all()
             self._tasks.pop(session_id, None)
             # Keep completed task for resume within TTL
+            task.completed_at = self._clock()
             self._completed_tasks[session_id] = task
             self._purge_expired_completed()
+            self._schedule_expiry()
+
+    @staticmethod
+    async def _drain_cleanup(coroutine):
+        """Repeated stop/cancel requests must not abandon terminal cleanup."""
+        cleanup = asyncio.create_task(coroutine)
+        while True:
+            try:
+                return await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                if cleanup.done():
+                    return cleanup.result()
+
+    async def _release_task_resources(self, task: ChatTask) -> None:
+        """Keep replay data, not the complete agent and persistence buffers."""
+        node = task.node
+        if node is not None:
+            task.llm_session_id = node.session_id
+            close = getattr(type(node), "aclose", None)
+            if close is not None:
+                try:
+                    await close(node)
+                except Exception:
+                    logger.exception("Failed to release chat node for %s", task.session_id)
+        task.node = None
+        task.message_contents.clear()
+        task.tool_result_contents.clear()
+        task.content_events.clear()
+        task.pending_input_queue.drain()
+        task.on_turn_end = None
+        task.stats_context.clear()
+        task.live_permission_profile = None
+
+    def _schedule_expiry(self) -> None:
+        if self._expiry_handle is not None:
+            self._expiry_handle.cancel()
+            self._expiry_handle = None
+        deadlines = [
+            t.completed_at + self._completed_task_ttl
+            for t in self._completed_tasks.values()
+            if t.completed_at is not None
+        ]
+        if deadlines:
+            delay = max(0, min(deadlines) - self._clock())
+            self._expiry_handle = asyncio.get_running_loop().call_later(delay, self._expire_completed)
+
+    def _expire_completed(self) -> None:
+        self._expiry_handle = None
+        self._purge_expired_completed()
+        self._schedule_expiry()
 
     @staticmethod
     def _settle_turn(task: ChatTask, last_usage: Any) -> None:
@@ -1628,16 +1711,28 @@ class ChatTaskManager:
         logger.debug(f"Pushing event: {event}")
         async with task.condition:
             task.events.append(event)
+            if self._max_completed_bytes is not None:
+                task.replay_bytes += len(event.model_dump_json().encode("utf-8"))
             task.condition.notify_all()
 
     def _purge_expired_completed(self) -> None:
         """Remove completed tasks older than COMPLETED_TASK_TTL."""
-        now = datetime.now()
+        now = self._clock()
         expired = [
-            sid for sid, t in self._completed_tasks.items() if (now - t.created_at).total_seconds() > COMPLETED_TASK_TTL
+            sid
+            for sid, t in self._completed_tasks.items()
+            if t.completed_at is not None and now - t.completed_at >= self._completed_task_ttl
         ]
         for sid in expired:
             self._completed_tasks.pop(sid, None)
+        if self._max_completed_tasks is not None:
+            while len(self._completed_tasks) > self._max_completed_tasks:
+                self._completed_tasks.pop(next(iter(self._completed_tasks)))
+        if self._max_completed_bytes is not None:
+            total = sum(t.replay_bytes for t in self._completed_tasks.values())
+            while self._completed_tasks and total > self._max_completed_bytes:
+                task = self._completed_tasks.pop(next(iter(self._completed_tasks)))
+                total -= task.replay_bytes
 
     # ------------------------------------------------------------------
     # Node factory

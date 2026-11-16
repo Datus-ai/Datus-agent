@@ -487,3 +487,143 @@ class TestPluginChangeRebuild:
             assert await self._request(cache, real_agent_config) is not first
         finally:
             await cache.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_capacity_is_rechecked_after_active_services_drain():
+    """No subsequent insertion is needed to undo an active-work capacity overflow."""
+    cache = DatusServiceCache(max_size=1, sweep_interval=0.01)
+    first = _mock_service("first", has_active=True)
+    second = _mock_service("second", has_active=True)
+    await cache.get_or_create("first", AsyncMock(return_value=first))
+    await cache.get_or_create("second", AsyncMock(return_value=second))
+    assert len(cache._cache) == 2
+    first.has_active_tasks.return_value = False
+    for _ in range(100):
+        if first.shutdown.await_count:
+            break
+        await asyncio.sleep(0.01)
+    assert len(cache._cache) == 1
+    first.shutdown.assert_awaited_once()
+    second.shutdown.assert_not_awaited()
+    await cache.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_real_service_eviction_closes_owned_managers_once(real_agent_config):
+    """Exercise real cache/service/CLI teardown, replacing only connector allocation."""
+    from datus.api.services.cli_service import CLIService
+    from datus.api.services.datus_service import DatusService
+    from datus.tools.db_tools.db_manager import DBManager
+
+    first = DatusService(real_agent_config, "first")
+    cli = CLIService.__new__(CLIService)
+    cli.db_manager = DBManager({})
+    connector = MagicMock()
+    cli.db_manager._conn_dict["source"] = {"db": connector}
+    cli._db_tool_cache = None
+    cli._datasource_connectors = {}
+    cli.current_db_connector = connector
+    first._cli = cli
+    first._explorers[None] = object()
+    second = DatusService(real_agent_config, "second")
+    cache = DatusServiceCache(max_size=1)
+    await cache.get_or_create("first", AsyncMock(return_value=first))
+    await cache.get_or_create("second", AsyncMock(return_value=second))
+    await cache.drain()
+    await first.shutdown()
+    connector.close.assert_called_once()
+    assert not first._explorers
+    assert first._cli is None
+    await cache.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_config_refresh_disposes_facade_but_preserves_task_manager(real_agent_config):
+    """Old facade resources drain without stopping tasks shared by the new facade."""
+    from datus.api.services.datus_service import DatusService
+
+    first = DatusService(real_agent_config, "project")
+    first._cli = MagicMock()
+    cli = first._cli
+    task_shutdown = first.task_manager.shutdown = AsyncMock()
+    first.acquire_request()
+    cache = DatusServiceCache()
+    await cache.get_or_create("project", AsyncMock(return_value=first))
+    refreshed = await cache.get_or_create(
+        "project", AsyncMock(), expected_fingerprint="changed", agent_config=real_agent_config
+    )
+    assert refreshed.task_manager is first.task_manager
+    await asyncio.sleep(0)
+    cli.close.assert_not_called()
+    first.release_request()
+    await cache.drain()
+    cli.close.assert_called_once()
+    task_shutdown.assert_not_awaited()
+    await cache.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_optional_idle_ttl_expires_service_without_requests():
+    """The explicit idle policy works independently of capacity and later traffic."""
+    cache = DatusServiceCache(max_size=128, idle_ttl=0.01, sweep_interval=0.01)
+    service = _mock_service("idle")
+    await cache.get_or_create("idle", AsyncMock(return_value=service))
+    for _ in range(100):
+        if service.shutdown.await_count:
+            break
+        await asyncio.sleep(0.01)
+    service.shutdown.assert_awaited_once()
+    assert not cache._cache
+    await cache.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_drains_in_progress_creation(real_agent_config):
+    """A factory finishing during shutdown cannot leave a newly owned service behind."""
+    from datus.api.services.datus_service import DatusService
+
+    cache = DatusServiceCache()
+    service = DatusService(real_agent_config, "creating")
+    service._cli = MagicMock()
+    cli = service._cli
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def factory():
+        started.set()
+        await release.wait()
+        return service
+
+    creating = asyncio.create_task(cache.get_or_create("creating", factory))
+    await started.wait()
+    stopping = asyncio.create_task(cache.shutdown())
+    try:
+        await asyncio.sleep(0)
+        assert not stopping.done()
+    finally:
+        release.set()
+    await creating
+    await asyncio.wait_for(stopping, timeout=2)
+    cli.close.assert_called_once()
+    assert not cache._cache
+
+
+@pytest.mark.asyncio
+async def test_cancelled_factory_does_not_strand_shutdown_or_retry():
+    """Cancelled construction releases its pending slot so retries and shutdown can finish."""
+    cache = DatusServiceCache()
+    started = asyncio.Event()
+
+    async def factory():
+        started.set()
+        await asyncio.Event().wait()
+
+    creating = asyncio.create_task(cache.get_or_create("cancelled", factory))
+    await started.wait()
+    creating.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await creating
+    service = _mock_service("cancelled")
+    result = await asyncio.wait_for(cache.get_or_create("cancelled", AsyncMock(return_value=service)), timeout=2)
+    assert result is service
+    await asyncio.wait_for(cache.shutdown(), timeout=2)

@@ -256,3 +256,19 @@ def test_live_contract(): raise AssertionError('nightly only')
         "test_contract",
     }
     assert set(execution["outcomes"].values()) == {"passed"}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "datus/api/services/chat_task_manager.py",
+        "datus/api/services/datus_service_cache.py",
+        "datus/tools/db_tools/db_manager.py",
+        "datus/tools/db_tools/connection_scope.py",
+        "datus/tools/func_tool/database.py",
+        "datus/utils/async_utils.py",
+    ],
+)
+def test_resource_lifecycle_changes_select_the_complete_http_acceptance_file(source):
+    """New lifetime cases must run for their real owners, not only when the tests change."""
+    assert "tests/integration/api/test_chat_acceptance.py" in pr_test_plan([source])["pytest_targets"]

@@ -124,7 +124,22 @@ def get_app_context(request: Request) -> AppContext:
     return ctx
 
 
-ServiceDep = Annotated[DatusService, Depends(get_datus_service)]
+async def service_request(request: Request, svc: Annotated[DatusService, Depends(get_datus_service)]):
+    """Pin the service through the request, including streaming its response."""
+    # Preserve the protocol used by older host-provided facades; default
+    # DatusService instances always implement request ownership.
+    if not callable(getattr(svc, "acquire_request", None)):
+        yield svc
+        return
+    while not svc.acquire_request():
+        svc = await get_datus_service(request)
+    try:
+        yield svc
+    finally:
+        svc.release_request()
+
+
+ServiceDep = Annotated[DatusService, Depends(service_request)]
 AppContextDep = Annotated[AppContext, Depends(get_app_context)]
 
 

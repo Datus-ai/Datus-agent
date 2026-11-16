@@ -5,6 +5,7 @@ import json
 import threading
 
 import pytest
+import pytest_asyncio
 
 from tests.helpers.product_acceptance import ModelServer, answer, isolated_connectors, product_config, tool_call
 from tests.integration.api.test_api_chat import _cleanup_task, _start_task, find_event, parse_sse_body
@@ -117,3 +118,251 @@ async def test_stop_releases_session_for_the_next_request(chat_client, chat_datu
     assert find_event(events, "error") is None, response.text
     assert find_event(events, "end") is not None
     await chat_client.delete(f"/api/v1/chat/sessions/{sid}")
+
+
+@pytest_asyncio.fixture
+async def resource_project(tmp_path, model_server):
+    """Use the normal auth/config/cache boundary with isolated real project storage."""
+    from functools import partial
+    from types import SimpleNamespace
+
+    from datus.api.auth import HeaderContextProvider
+    from datus.api.services.chat_task_manager import ChatTaskManager
+    from datus.api.services.datus_service import DatusService
+    from datus.api.services.datus_service_cache import DatusServiceCache
+    from tests.integration.api.test_api_chat import chat_http_client
+
+    class Projects(HeaderContextProvider):
+        def __init__(self, config):
+            super().__init__()
+            self.configs = {"default": config}
+
+        async def authenticate(self, request):
+            context = await super().authenticate(request)
+            context.project_id = request.headers.get("X-Test-Project", "default")
+            context.config = self.configs[context.project_id]
+            return context
+
+    with isolated_connectors():
+        config = product_config(tmp_path / "default", model_server.url, project="resource_default")
+        config.current_datasource = "sales"
+        factory = partial(ChatTaskManager, completed_task_ttl=1.0)
+        service = DatusService(config, "default", task_manager_factory=factory)
+        cache = DatusServiceCache(max_size=1)
+        projects = Projects(config)
+        async with chat_http_client(
+            config, service, service_cache=cache, auth_provider=projects, task_manager_factory=factory
+        ) as client:
+            yield SimpleNamespace(client=client, cache=cache, service=service, projects=projects, root=tmp_path)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["completed", "error", "cancelled", "disconnected"])
+async def test_http_turn_resource_cleanup_preserves_resume_until_expiry(resource_project, model_server, outcome):
+    """Production node/tool creation and terminal cleanup preserve only replay state."""
+    import gc
+    import weakref
+
+    from tests.helpers.product_acceptance import ModelError
+
+    entered, release = threading.Event(), threading.Event()
+
+    def reply(request):
+        entered.set()
+        assert release.wait(10), "The test must release the model HTTP response"
+        if outcome == "error":
+            return ModelError(400, "injected resource acceptance failure")
+        return tool_call("execute_sql", {"sql": "SELECT SUM(amount) total FROM orders"})
+
+    model_server.enqueue(reply)
+    if outcome in {"completed", "disconnected"}:
+        model_server.enqueue(answer("Total: 350."))
+    client, manager = resource_project.client, resource_project.service.task_manager
+    sid = f"resource_{outcome}"
+    request = asyncio.create_task(
+        client.post(
+            "/api/v1/chat/stream", json={"message": "Compute the total.", "session_id": sid, "interactive": False}
+        )
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 10)
+        task = manager.get_task(sid)
+        node = weakref.ref(task.node)
+        llm_session_id = task.node.session_id
+        db_manager = task.node.db_func_tool._db_manager
+        if outcome == "cancelled":
+            stopped = await client.post("/api/v1/chat/stop", json={"session_id": sid})
+            assert stopped.json()["success"], stopped.text
+        elif outcome == "disconnected":
+            request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await request
+            assert task.status == "running", "Disconnect must not cancel the server-owned turn"
+    finally:
+        release.set()
+    if outcome != "disconnected":
+        response = await request
+        assert response.status_code == 200, response.text
+    await asyncio.wait_for(task.asyncio_task, timeout=10)
+    expected_status = "completed" if outcome == "disconnected" else outcome
+    assert task.status == expected_status, task.error
+    assert task.node is None
+    assert not db_manager._leases, "Finished real tools must return their managed borrows"
+    if (released_node := node()) is not None:
+        assert released_node.db_func_tool._primary_connector is None
+        assert not released_node.db_func_tool._connector_cache
+        assert not released_node.db_func_tool._borrowed_connections
+    del released_node
+    resumed = await client.post("/api/v1/chat/resume", json={"session_id": sid, "from_event_id": 0})
+    assert resumed.headers["content-type"].startswith("text/event-stream"), resumed.text
+    events = parse_sse_body(resumed.text)
+    assert find_event(events, "session")["data"]["llm_session_id"] == llm_session_id
+    if expected_status == "completed":
+        assert "350" in resumed.text
+        assert find_event(events, "end") is not None
+    # Observe the retained index before making another request, so lookup expiry
+    # cannot hide a missing automatic timer.
+    await asyncio.sleep(1.1)
+    assert sid not in manager._completed_tasks
+    # Exported SDK spans must not make successful nodes accumulate. Error and
+    # cancellation tracebacks can also be held by cancelled HTTP timeout
+    # handles until asyncio prunes its timer heap; their tools are checked
+    # for released native borrows above, independently of GC timing.
+    from agents.tracing import get_trace_provider
+
+    await asyncio.to_thread(get_trace_provider().force_flush)
+    await asyncio.sleep(0)
+    gc.collect()
+    if expected_status == "completed":
+        assert node() is None
+    expired = await client.post("/api/v1/chat/resume", json={"session_id": sid})
+    assert expired.json()["errorCode"] == "TASK_NOT_FOUND"
+    history = await client.get("/api/v1/chat/history", params={"session_id": sid})
+    assert history.json()["success"], history.text
+    if expected_status == "completed":
+        assert "350" in history.text
+
+
+@pytest.mark.asyncio
+async def test_http_project_eviction_closes_native_connections_and_rebuilds(resource_project, model_server):
+    """Real CLI and datasource initialization is reclaimed by the real service cache."""
+    import ast
+    import sqlite3
+
+    client, cache = resource_project.client, resource_project.cache
+    query = {"sql_query": "SELECT SUM(amount) total FROM orders", "result_format": "json"}
+    result = await client.post("/api/v1/sql/execute", json=query)
+    assert result.json()["success"], result.text
+    assert ast.literal_eval(result.json()["data"]["sql_return"]) == [{"total": 350}]
+    detail = await client.get("/api/v1/table/detail", params={"table": "orders"})
+    assert detail.json()["success"], detail.text
+    original = cache._cache["default"]
+    managers = [original.cli.db_manager, original.datasource.db_manager]
+    native = [manager.first_conn("sales").connection for manager in managers]
+    assert all(tuple(connection.execute("SELECT 1").fetchone()) == (1,) for connection in native)
+    resource_project.projects.configs["other"] = product_config(
+        resource_project.root / "other", model_server.url, project="resource_other"
+    )
+    resource_project.projects.configs["other"].current_datasource = "sales"
+    other = await client.post("/api/v1/sql/execute", headers={"X-Test-Project": "other"}, json=query)
+    assert other.json()["success"], other.text
+    await cache.drain()
+    assert "default" not in cache._cache
+    for manager, connection in zip(managers, native):
+        assert all(not group for group in manager._conn_dict.values())
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            connection.execute("SELECT 1")
+    rebuilt = await client.post("/api/v1/sql/execute", json=query)
+    assert rebuilt.json()["success"], rebuilt.text
+    assert ast.literal_eval(rebuilt.json()["data"]["sql_return"]) == [{"total": 350}]
+    assert cache._cache["default"] is not original
+
+
+@pytest.mark.asyncio
+async def test_http_eviction_waits_for_cancelled_native_sql_worker(resource_project):
+    """Evicting a cancelled HTTP request must wait for its actual SQLite query."""
+    client, cache = resource_project.client, resource_project.cache
+    warm = await client.post("/api/v1/sql/execute", json={"sql_query": "SELECT 1", "result_format": "json"})
+    assert warm.json()["success"], warm.text
+    service = cache._cache["default"]
+    connector = service.cli.db_manager.first_conn("sales")
+    native = connector.connection
+    entered, release = threading.Event(), threading.Event()
+
+    def hold():
+        entered.set()
+        assert release.wait(10), "The test must release the native SQLite query"
+        return 350
+
+    native.create_function("resource_hold", 0, hold)
+    request = asyncio.create_task(
+        client.post("/api/v1/sql/execute", json={"sql_query": "SELECT resource_hold() total", "result_format": "json"})
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 10)
+        await cache.evict("default")
+        request.cancel()
+        await asyncio.sleep(0)
+        assert not request.done()
+        assert connector.connection is native
+    finally:
+        release.set()
+    try:
+        await request
+    except asyncio.CancelledError:
+        pass
+    await asyncio.wait_for(cache.drain(), timeout=10)
+    assert connector.connection is None
+    assert service._cli is None
+
+
+@pytest.mark.asyncio
+async def test_http_repeated_turns_do_not_accumulate_nodes_or_replay(resource_project, model_server, record_property):
+    """Repeated real requests settle to a fixed connection count and empty replay index."""
+    import gc
+    import weakref
+
+    client, service = resource_project.client, resource_project.service
+    manager = service.task_manager
+    observations = []
+
+    def reply(request):
+        if any(message.get("role") == "tool" for message in request["messages"]):
+            return answer("Total: 350.")
+        return tool_call("execute_sql", {"sql": "SELECT SUM(amount) total FROM orders"})
+
+    for round_index in range(3):
+        ids = [f"resource_round_{round_index}_{index}" for index in range(3)]
+        model_server.enqueue(*([reply] * (2 * len(ids))))
+        responses = await asyncio.gather(
+            *(
+                client.post(
+                    "/api/v1/chat/stream", json={"message": "Compute total.", "session_id": sid, "interactive": False}
+                )
+                for sid in ids
+            )
+        )
+        await manager.wait_all_tasks()
+        for response in responses:
+            assert response.status_code == 200
+            assert find_event(parse_sse_body(response.text), "end") is not None, response.text
+            assert "350" in response.text
+        tasks = [manager.get_task(sid) for sid in ids]
+        assert all(task is not None and task.node is None for task in tasks)
+        references = [weakref.ref(task) for task in tasks]
+        del tasks
+        assert not manager.has_active_tasks()
+        await asyncio.sleep(1.1)
+        assert not manager._completed_tasks
+        gc.collect()
+        assert all(reference() is None for reference in references)
+        from datus.tools.db_tools.db_manager import db_manager_instance
+
+        owner = db_manager_instance(service.agent_config.datasource_configs)
+        assert not owner._leases
+        retained = sum(len(group) for group in owner._conn_dict.values())
+        assert retained == 1
+        observations.append(
+            {"round": round_index, "retained_connections": retained, "completed_tasks": len(manager._completed_tasks)}
+        )
+    record_property("resource_rounds", json.dumps(observations))

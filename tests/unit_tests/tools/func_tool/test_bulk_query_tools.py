@@ -73,6 +73,7 @@ def routed_environment(environment):
     try:
         yield tool, root
     finally:
+        tool.close()
         manager.close()
 
 
