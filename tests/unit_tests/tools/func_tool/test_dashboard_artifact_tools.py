@@ -1514,3 +1514,35 @@ async def test_saved_dashboard_executes_after_rename_without_rewriting_bundle(da
     assert result.data.rows == [{"answer": 42}]
     assert seen[0]["datasource"] == "renamed"
     assert (root / "rename.params.json").read_bytes() == before
+
+
+@pytest.mark.ci
+@pytest.mark.parametrize("selection", ["single", "default", "explicit"])
+@pytest.mark.parametrize("stable_id", ["", "stable-warehouse"])
+def test_single_connector_save_resolves_configured_identity(dashboard_tools, selection, stable_id):
+    """Default saves use a configured source while explicit overrides remain authoritative."""
+    import json
+
+    from datus.configuration.agent_config import DbConfig, ServicesConfig
+
+    entries = {"warehouse": DbConfig(type="sqlite", datasource_id=stable_id, default=selection != "single")}
+    if selection != "single":
+        entries["secondary"] = DbConfig(type="sqlite", datasource_id="stable-secondary")
+    tool = dashboard_tools._db_func_tool
+    tool.agent_config = SimpleNamespace(services=ServicesConfig(datasources=entries))
+    assert tool._default_datasource == ""
+    source = "secondary" if selection == "explicit" else ""
+    result = dashboard_tools.save_query_template(
+        name="configured",
+        sql_template="-- @datus-params\nSELECT 42 AS answer",
+        sample_params={},
+        datasource=source,
+        goal="Read the answer",
+        hypothesis="The answer is 42",
+    )
+    assert result.success == 1, result.error
+    payload = json.loads((dashboard_tools.queries_dir / "configured.params.json").read_text())
+    expected = "stable-secondary" if source else stable_id or "warehouse"
+    assert payload["datasource_id"] == expected
+    assert payload["execution_context"]["datasource_id"] == expected
+    assert "datasource" not in payload
