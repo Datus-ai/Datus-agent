@@ -21,10 +21,11 @@ new chat turns initialize their tools and discover databases without requiring
 an optional initial database. The adapter still validates the connection and any
 SQL that requires a database.
 
-An empty resolved database cannot restore a configured database or URI target,
-reuse a connector bound to another database, or choose a file database (including
-the first file in a glob). Such profiles still require an explicit database
-selection. Context-free discovery/legacy calls may use their configured defaults.
+An empty resolved database cannot restore a configured database or URI target
+(including targets supplied through adapter options in `extra`), reuse a connector
+bound to another database, or choose a file database (including the first file in
+a glob). Such profiles still require an explicit database selection.
+Context-free discovery/legacy calls may use their configured defaults.
 
 For a first turn, omitted coordinates resolve configured defaults before the
 snapshot is frozen. File datasources without a configured database resolve the

@@ -424,13 +424,21 @@ class DBManager:
                 # Server adapters may connect without selecting a database. Only
                 # reject an empty binding when resolution could restore a target
                 # from configuration, a URI, or a file datasource.
-                if (
+                requires_selection = bool(
                     configured is None
                     or configured.database
                     or configured.uri
                     or configured.path_pattern
                     or _normalize_dialect_name(configured.type) in (DBType.SQLITE, DBType.DUCKDB)
-                ):
+                )
+                if configured is not None and not requires_selection:
+                    # Adapter options in extra are merged last and can supply
+                    # a target even when the top-level fields are empty.
+                    effective_config = self._db_config_to_connection_config(configured)
+                    requires_selection = not isinstance(effective_config, dict) or bool(
+                        effective_config.get("database") or effective_config.get("uri")
+                    )
+                if requires_selection:
                     raise ValueError(
                         "Select a database explicitly; a resolved empty database cannot use a connection default"
                     )

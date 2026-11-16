@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import duckdb
 import pytest
-from datus_db_core import BaseSqlConnector, DatusDbException
+from datus_db_core import BaseSqlConnector, DatusDbException, connector_registry
 from datus_db_core import ErrorCode as DbErrorCode
 
 from datus.configuration.agent_config import DbConfig
@@ -1061,6 +1061,34 @@ def test_resolved_empty_database_cannot_restore_a_database_from_a_connection_uri
         manager.get_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse"))
 
     manager._build_conn.assert_not_called()
+
+
+@pytest.mark.parametrize("target", [{"database": "old_database"}, {"uri": "postgresql://localhost/old_database"}])
+def test_resolved_empty_database_cannot_restore_an_extra_target(monkeypatch, target):
+    manager = DBManager({"warehouse": DbConfig(type="postgresql", username="review_user", extra=target)})
+    factory = Mock(return_value=SimpleNamespace(database_name="old_database"))
+    monkeypatch.setattr(connector_registry, "is_registered", lambda db_type: True)
+    monkeypatch.setattr(connector_registry, "create_connector", factory)
+
+    with pytest.raises(ValueError, match="Select a database explicitly"):
+        manager.get_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse"))
+
+    factory.assert_not_called()
+    assert not manager._conn_dict
+
+
+@pytest.mark.parametrize("database", [None, ""])
+def test_resolved_empty_database_allows_empty_extra_database(monkeypatch, database):
+    manager = DBManager(
+        {"warehouse": DbConfig(type="postgresql", username="review_user", extra={"database": database})}
+    )
+    connector = SimpleNamespace(database_name="")
+    factory = Mock(return_value=connector)
+    monkeypatch.setattr(connector_registry, "is_registered", lambda db_type: True)
+    monkeypatch.setattr(connector_registry, "create_connector", factory)
+
+    assert manager.get_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse")) is connector
+    assert factory.call_args.args[1]["database"] == database
 
 
 @pytest.mark.parametrize("engine", ["postgresql", "mysql", "starrocks", "sqlite", "duckdb"])
