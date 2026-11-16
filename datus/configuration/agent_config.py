@@ -296,8 +296,8 @@ class KbSearchConfig:
 
 @dataclass
 class DbConfig:
-    # Visual-artifact persistence metadata; never a runtime/KB namespace.
-    artifact_id: str = ""
+    # Stable datasource identity supplied by the host; never a runtime/KB namespace.
+    datasource_id: str = ""
     path_pattern: str = field(default="", init=True)
     type: str = field(default="", init=True)
     uri: str = field(default="", init=True)
@@ -318,7 +318,7 @@ class DbConfig:
 
     def to_dict(self) -> Dict[str, Any]:
         # Artifact routing metadata is not a database adapter option.
-        return {key: value for key, value in asdict(self).items() if key != "artifact_id"}
+        return {key: value for key, value in asdict(self).items() if key != "datasource_id"}
 
     @staticmethod
     def filter_kwargs(cls, kwargs) -> "DbConfig":
@@ -700,7 +700,7 @@ logger = get_logger(__name__)
 
 def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
     uri = resolve_env(str(db_config["uri"]))
-    known_fields = {"uri", "name", "type", "schema", "default", "artifact_id"}
+    known_fields = {"uri", "name", "type", "schema", "default", "datasource_id"}
     extra = {
         key: _resolve_nested_value(value)
         for key, value in db_config.items()
@@ -715,7 +715,7 @@ def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
     if not uri.startswith(dialect):
         uri = f"{dialect}:///{os.path.expanduser(uri)}"
     return DbConfig(
-        artifact_id=resolve_env(str(db_config.get("artifact_id") or "")),
+        datasource_id=resolve_env(str(db_config.get("datasource_id") or "")),
         type=dialect,
         uri=uri,
         database=db_name,
@@ -1469,8 +1469,8 @@ class AgentConfig:
                     db_config.default = is_default
                     self.services.datasources[db_name] = db_config
                 if db_name in self.services.datasources:
-                    self.services.datasources[db_name].artifact_id = resolve_env(
-                        str(db_config_dict.get("artifact_id") or "")
+                    self.services.datasources[db_name].datasource_id = resolve_env(
+                        str(db_config_dict.get("datasource_id") or "")
                     )
             else:
                 db_config = DbConfig.filter_kwargs(DbConfig, db_config_dict)

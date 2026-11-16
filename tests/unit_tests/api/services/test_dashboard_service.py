@@ -38,7 +38,7 @@ from datus.utils.exceptions import ErrorCode
 
 def _artifact_config():
     config = MagicMock()
-    config.services.datasources = {"warehouse": SimpleNamespace(artifact_id="")}
+    config.services.datasources = {"warehouse": SimpleNamespace(datasource_id="")}
     return config
 
 

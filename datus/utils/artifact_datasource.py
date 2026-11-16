@@ -16,7 +16,7 @@ def resolve_artifact_datasource(config: Any, reference: Mapping[str, Any]) -> st
         identity = reference["datasource_id"]
         if not isinstance(identity, str) or not identity.strip():
             raise ValueError("DATASOURCE_UNAVAILABLE: invalid artifact datasource_id")
-        matches = [name for name, entry in configs.items() if (getattr(entry, "artifact_id", "") or name) == identity]
+        matches = [name for name, entry in configs.items() if (getattr(entry, "datasource_id", "") or name) == identity]
     else:
         legacy = reference.get("datasource")
         matches = [name for name in configs if legacy == name]
@@ -32,7 +32,7 @@ def artifact_identity(config: Any, name: str) -> dict[str, str]:
     entry = config.services.datasources.get(name)
     if entry is None:
         raise ValueError("DATASOURCE_UNAVAILABLE: artifact datasource is not configured")
-    return {"datasource_id": getattr(entry, "artifact_id", "") or name}
+    return {"datasource_id": getattr(entry, "datasource_id", "") or name}
 
 
 def saved_artifact_context(config: Any, name: str, context: dict | None) -> dict | None:

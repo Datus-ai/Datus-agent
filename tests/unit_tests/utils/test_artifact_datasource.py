@@ -18,7 +18,7 @@ def config(**entries):
 
 @pytest.mark.parametrize("reference", [{"datasource_id": "stable"}, {"datasource": "new"}])
 def test_rename_resolves_only_the_original_identity(reference):
-    cfg = config(new=DbConfig(artifact_id="stable"))
+    cfg = config(new=DbConfig(datasource_id="stable"))
     assert resolve_artifact_datasource(cfg, reference) == "new"
     assert artifact_identity(cfg, "new") == {"datasource_id": "stable"}
     assert list(cfg.services.datasources) == ["new"]
@@ -26,13 +26,13 @@ def test_rename_resolves_only_the_original_identity(reference):
 
 @pytest.mark.parametrize("identity", ["missing", "", None, " "])
 def test_explicit_invalid_id_never_falls_back_to_a_valid_name(identity):
-    cfg = config(valid=DbConfig(artifact_id="stable"))
+    cfg = config(valid=DbConfig(datasource_id="stable"))
     with pytest.raises(ValueError, match="DATASOURCE_UNAVAILABLE"):
         resolve_artifact_datasource(cfg, {"datasource_id": identity, "datasource": "valid"})
 
 
 def test_name_reuse_does_not_redirect_explicit_identity():
-    cfg = config(old=DbConfig(artifact_id="other"), renamed=DbConfig(artifact_id="original"))
+    cfg = config(old=DbConfig(datasource_id="other"), renamed=DbConfig(datasource_id="original"))
     assert resolve_artifact_datasource(cfg, {"datasource": "old"}) == "old"
     assert resolve_artifact_datasource(cfg, {"datasource_id": "original"}) == "renamed"
     with pytest.raises(ValueError, match="DATASOURCE_UNAVAILABLE"):
@@ -55,7 +55,7 @@ def test_runtime_copy_preserves_saved_bytes_and_database_coordinates():
         rows=[{"n": 1}],
     )
     before = query.model_dump_json()
-    runtime = runtime_artifact_query(config(new=DbConfig(artifact_id="stable", database="different")), query)
+    runtime = runtime_artifact_query(config(new=DbConfig(datasource_id="stable", database="different")), query)
     assert runtime.datasource == "new"
     assert runtime.execution_context == {"datasource": "new", "database": "historical", "schema": ""}
     assert query.model_dump_json() == before

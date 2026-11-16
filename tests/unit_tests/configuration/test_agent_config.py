@@ -3256,7 +3256,7 @@ def test_file_datasource_keeps_artifact_identity_out_of_adapter_options(tmp_path
     db.touch()
     source = {
         "type": dialect,
-        "artifact_id": "saas-stable",
+        "datasource_id": "saas-stable",
         source_kind: str(tmp_path / f"*.{dialect}") if source_kind == "path_pattern" else str(db),
     }
     config = AgentConfig(
@@ -3266,7 +3266,7 @@ def test_file_datasource_keeps_artifact_identity_out_of_adapter_options(tmp_path
         services={"datasources": {"warehouse": source}},
     )
     entry = config.services.datasources["warehouse"]
-    assert entry.artifact_id == "saas-stable"
-    assert "artifact_id" not in (entry.extra or {})
-    assert "artifact_id" not in entry.to_dict()
+    assert entry.datasource_id == "saas-stable"
+    assert "datasource_id" not in (entry.extra or {})
+    assert "datasource_id" not in entry.to_dict()
     assert list(config.services.datasources) == ["warehouse"]
