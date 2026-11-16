@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from datus.configuration.agent_config import DbConfig
+from datus.configuration.agent_config import AgentConfig, DbConfig
 from datus.configuration.datasource_reference import resolve_datasource, resolve_execution_context
 from datus.schemas.database_context import DatabaseExecutionContext
 from datus.storage.datasource_scope import add_datasource_scope_to_rows, resolve_datasource_id
@@ -80,6 +80,22 @@ def test_kb_legacy_scope_excludes_reused_names_and_other_canonical_ids():
     scope = resolve_datasource_id(cfg, "stable")
     assert scope == "stable"
     assert scope.legacy_names == ("renamed",)
+
+
+def test_explicit_kb_id_wins_over_another_sources_identical_display_key():
+    cfg = config({"stable": DbConfig(datasource_id="other"), "renamed": DbConfig(datasource_id="stable")})
+    assert resolve_datasource_id(cfg, "stable") == "stable"
+    assert resolve_datasource_id(cfg, "stable").legacy_names == ("renamed",)
+
+
+def test_runtime_setter_does_not_overwrite_an_explicit_camel_case_id(tmp_path):
+    cfg = AgentConfig(nodes={}, home=str(tmp_path), skip_init_dirs=True)
+    cfg.services.datasources["renamed"] = DbConfig(datasource_id="stable")
+    with pytest.raises(DatusException, match="not bound"):
+        cfg.set_runtime_db_context({"datasourceId": "unbound", "datasource": "renamed"})
+    cfg.set_runtime_db_context({"datasourceId": "stable", "datasource": "old"})
+    assert cfg.runtime_db_context()["datasource_id"] == "stable"
+    assert cfg.runtime_db_context()["datasource"] == "renamed"
 
 
 def test_frozen_subagent_id_scopes_resolve_only_on_a_runtime_copy():

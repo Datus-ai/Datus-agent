@@ -47,7 +47,15 @@ def resolve_datasource_id(agent_config: "AgentConfig", datasource_id: Optional[s
         )
     sources = getattr(getattr(agent_config, "services", None), "datasources", None)
     if isinstance(sources, dict):
-        for name, entry in sources.items():
+        id_matches = (
+            [(name, entry) for name, entry in sources.items() if getattr(entry, "datasource_id", None) == resolved]
+            if datasource_id is not None
+            else []
+        )
+        if len(id_matches) > 1:
+            raise DatusException(ErrorCode.STORAGE_INVALID_ARGUMENT, message="Ambiguous datasource ID")
+        candidates = id_matches or [(name, entry) for name, entry in sources.items() if name == resolved]
+        for name, entry in candidates:
             stable_id = getattr(entry, "datasource_id", "")
             if isinstance(stable_id, str) and stable_id and resolved in (name, stable_id):
                 legacy_names = [name, *getattr(entry, "datasource_aliases", [])]

@@ -4327,6 +4327,21 @@ def test_real_sqlite_artifact_connector_is_restored_by_id(tmp_path, saved_name):
         tool._db_manager.close()
 
 
+@pytest.mark.parametrize("restore", ["context", "default"])
+def test_single_connector_cannot_ignore_an_unbound_explicit_id(restore):
+    tool = DBFuncTool.__new__(DBFuncTool)
+    tool._db_manager = None
+    tool.agent_config = SimpleNamespace(
+        current_datasource="renamed",
+        services=SimpleNamespace(datasources={"renamed": DbConfig(datasource_id="stable")}),
+    )
+    with pytest.raises(DatusException, match="not bound"):
+        if restore == "context":
+            tool.connector_for_execution_context({"datasource_id": "unbound", "datasource": "renamed"})
+        else:
+            tool.connector_for_datasource_default("renamed", datasource_id="unbound")
+
+
 def test_adapter_receives_connection_parameters_without_identity_metadata():
     manager = DBManager({"source": DbConfig(datasource_id="stable", type="postgresql", username="user", database="db")})
     parameters = manager._db_config_to_connection_config(manager._db_configs["source"])

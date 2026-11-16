@@ -610,12 +610,16 @@ class DBFuncTool(BulkQueryTools):
         from datus.configuration.datasource_reference import resolve_execution_context
         from datus.schemas.database_context import DatabaseExecutionContext
 
-        if self._db_manager is None:
-            return self.connector
         config = getattr(self, "agent_config", None)
         coordinates = DatabaseExecutionContext.from_mapping(
             resolve_execution_context(config, context) if config is not None else context
         )
+        if self._db_manager is None:
+            if coordinates.datasource_id:
+                source = resolve_execution_context(config, coordinates.to_dict())["datasource"]
+                if source != getattr(config, "current_datasource", None):
+                    raise ValueError("A single connector cannot restore another datasource ID")
+            return self.connector
         self._require_scoped_datasource(coordinates.datasource)
         connector = self._db_manager.get_conn(coordinates.datasource, coordinates.database, context=coordinates)
         return self._track_connector(connector, coordinates.datasource)
@@ -624,13 +628,17 @@ class DBFuncTool(BulkQueryTools):
         self, datasource: Optional[str] = None, *, datasource_id: Optional[str] = None
     ):
         """Replay legacy queries using configured defaults, independent of the turn."""
-        if self._db_manager is None:
-            return self.connector
         from datus.configuration.datasource_reference import resolve_datasource
 
         config = getattr(self, "agent_config", None)
         if datasource_id is not None and config is None:
             raise ValueError("A datasource ID requires an authorized config")
+        if self._db_manager is None:
+            if datasource_id is not None:
+                source = resolve_datasource(config, datasource_id=datasource_id)
+                if source != getattr(config, "current_datasource", None):
+                    raise ValueError("A single connector cannot restore another datasource ID")
+            return self.connector
         source = (
             resolve_datasource(config, datasource_id=datasource_id, datasource=datasource or self._default_datasource)
             if config is not None

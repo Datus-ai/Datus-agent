@@ -1653,7 +1653,7 @@ class AgentConfig:
         from datus.schemas.database_context import DatabaseExecutionContext
 
         name = values.get("datasource")
-        if "datasource_id" not in values and name in self.services.datasources:
+        if "datasource_id" not in values and "datasourceId" not in values and name in self.services.datasources:
             identity = self.services.datasources[name].datasource_id
             if identity:
                 values["datasource_id"] = identity
