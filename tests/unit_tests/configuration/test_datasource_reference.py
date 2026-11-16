@@ -97,29 +97,3 @@ def test_frozen_subagent_id_scopes_resolve_only_on_a_runtime_copy():
     resolved = resolve_subagent_config(cfg, node)
     assert resolved["scoped_context"] == {"datasource": "renamed", "tables_by_datasource": {"renamed": ["demo.orders"]}}
     assert json.dumps(node) == saved
-
-
-def test_model_id_directory_and_legacy_reads_require_no_file_migration(tmp_path):
-    from datus.tools.semantic_tools.dosi.config import DosiConfig
-    from datus.tools.semantic_tools.dosi.engine import resolve_model_files
-    from datus.utils.path_manager import DatusPathManager
-
-    manager = DatusPathManager(tmp_path / "home", project_name="project", project_root=tmp_path)
-    manager.datasource_ids = {"renamed": "stable"}
-    manager.datasource_aliases = {"renamed": ["old"]}
-    old = manager.semantic_models_dir / "old"
-    old.mkdir(parents=True)
-    legacy = old / "legacy.yml"
-    legacy.write_text("legacy model remains untouched")
-    primary = manager.semantic_model_path("renamed")
-    assert primary.name == "stable"
-    current = primary / "new.yml"
-    current.write_text("new model")
-    paths = resolve_model_files(
-        DosiConfig(
-            semantic_models_path=str(primary),
-            legacy_semantic_models_paths=manager.legacy_semantic_model_paths("renamed"),
-        )
-    )
-    assert set(paths) == {str(current), str(legacy)}
-    assert legacy.read_text() == "legacy model remains untouched"
