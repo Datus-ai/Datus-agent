@@ -83,6 +83,9 @@ class DatasourceSummary(BaseModel):
     """
 
     datasource_id: Optional[str] = None
+    datasource_aliases: list[str] = Field(
+        default_factory=list, description="Historical names within this authorized datasource roster"
+    )
 
     name: str = Field(..., description="Datasource (namespace) name")
     type: str = Field(..., description="Datasource type (postgresql, starrocks, ...)")

@@ -53,11 +53,16 @@ def _file_config(path: str | Path, agent_config: Any) -> DosiConfig:
     context_provider = getattr(agent_config, "runtime_db_context", None)
     context = context_provider() if callable(context_provider) else {}
     datasource = context.get("datasource") or datasource
-    from datus.configuration.datasource_reference import resolve_datasource
+    from datus.configuration.datasource_reference import datasource_identity, resolve_datasource
     from datus.utils.exceptions import DatusException
 
-    if isinstance(getattr(getattr(agent_config, "services", None), "datasources", None), dict):
-        datasource = resolve_datasource(agent_config, datasource_id=context.get("datasource_id"), datasource=datasource)
+    sources = getattr(getattr(agent_config, "services", None), "datasources", None)
+    if isinstance(sources, dict):
+        identity = context.get("datasource_id")
+        if identity is None and not context.get("datasource") and datasource in sources:
+            # current_datasource is an internal canonical key, not a legacy reference.
+            identity = datasource_identity(agent_config, datasource)
+        datasource = resolve_datasource(agent_config, datasource_id=identity, datasource=datasource)
     manager = getattr(agent_config, "path_manager", None)
     root = getattr(manager, "semantic_models_dir", None)
     if isinstance(root, (str, Path)):

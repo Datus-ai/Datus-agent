@@ -407,3 +407,24 @@ def test_reconcile_keeps_canonical_id_directory_and_skips_ambiguous_legacy_direc
     selected = _files_to_sync(config, root, [str(root)], list(config.services.datasources), result)
     assert selected == {"a": [files["stable-a"]], "current-c": [files["current-c"]]}
     assert result.failures == {}
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_full_reconcile_syncs_id_directories_when_legacy_name_is_reused(project, explicit):
+    config, root = project
+    a = config.services.datasources[DATASOURCE]
+    a.datasource_id, a.datasource_aliases = "id-a", ["sales"]
+    b = config.services.datasources.pop(OTHER)
+    b.datasource_id = "id-b"
+    config.services.datasources["sales"] = b
+    config._sync_path_manager_datasources()
+    for directory, metric in [("id-a", "a_count"), ("id-b", "b_count"), ("sales", "ambiguous_count")]:
+        path = root / directory / "orders.yml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_model(directory.replace("-", "_"), {metric: ["Finance"]}))
+    paths = [str(root)] if explicit else []
+    result = _reconcile(config, paths)
+    assert not result.failures, result.failures
+    assert set(result.synced_files) == {str(root / "id-a" / "orders.yml"), str(root / "id-b" / "orders.yml")}
+    assert _metric_names(config, DATASOURCE) == {"a_count"}
+    assert _metric_names(config, "sales") == {"b_count"}

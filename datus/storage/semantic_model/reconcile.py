@@ -171,6 +171,7 @@ def reconcile_semantic_artifacts(
     root = root.expanduser().resolve(strict=False)
 
     files_by_datasource = _files_to_sync(agent_config, root, paths, datasources, result)
+    on_disk_by_datasource = _files_to_sync(agent_config, root, [str(root)], datasources, result)
     for datasource in datasources:
         try:
             _reconcile_datasource(
@@ -179,6 +180,7 @@ def reconcile_semantic_artifacts(
                 root,
                 files_by_datasource.get(datasource, []),
                 result,
+                on_disk=on_disk_by_datasource.get(datasource, []),
             )
         except Exception as exc:  # noqa: BLE001 - one datasource must not block the rest
             logger.exception(f"Failed to reconcile semantic artifacts for datasource '{datasource}'")
@@ -192,9 +194,11 @@ def _reconcile_datasource(
     root: Path,
     explicit: List[Path],
     result: SemanticReconcileResult,
+    *,
+    on_disk: List[Path],
 ) -> None:
     from datus.storage.semantic_model.artifact_file import semantic_artifact_lock
-    from datus.storage.semantic_model.semantic_model_init import reject_non_dosi_semantic_yaml, semantic_yaml_files
+    from datus.storage.semantic_model.semantic_model_init import reject_non_dosi_semantic_yaml
     from datus.storage.semantic_model.sync_state import (
         file_digest,
         forget_digests,
@@ -205,11 +209,6 @@ def _reconcile_datasource(
     from datus.tools.func_tool.generation_tools import GenerationTools
 
     stores = _DatasourceStores(agent_config, datasource)
-    cfg = agent_config.services.datasources[datasource]
-    directories = [getattr(cfg, "datasource_id", "") or datasource, datasource, *getattr(cfg, "datasource_aliases", [])]
-    on_disk = sorted(
-        {path.resolve(strict=False) for directory in directories for path in semantic_yaml_files(root / directory)}
-    )
     from datus.tools.semantic_tools.dosi.files import file_engine
 
     for path in on_disk:

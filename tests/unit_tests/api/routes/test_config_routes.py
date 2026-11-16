@@ -80,6 +80,7 @@ async def test_list_datasources_carries_no_credentials():
         assert secret not in serialized
     assert set(result.data.datasources[0].model_dump()) == {
         "datasource_id",
+        "datasource_aliases",
         "name",
         "type",
         "is_current",
@@ -464,3 +465,19 @@ async def test_test_datasource_connectivity_reports_error_message(monkeypatch):
 
     assert result.data["ok"] is False
     assert "connection refused" in result.data["message"]
+
+
+@pytest.mark.asyncio
+async def test_roster_preserves_authorized_aliases_even_when_another_source_reuses_the_name():
+    svc = _mock_svc(
+        datasources={
+            "renamed": SimpleNamespace(type="sqlite", datasource_id="id-a", datasource_aliases=["sales"]),
+            "sales": SimpleNamespace(type="sqlite", datasource_id="id-b", datasource_aliases=[]),
+        },
+        current_datasource="renamed",
+    )
+    result = await list_datasources_endpoint(svc)
+    assert [(row.datasource_id, row.name, row.datasource_aliases) for row in result.data.datasources] == [
+        ("id-a", "renamed", ["sales"]),
+        ("id-b", "sales", []),
+    ]
