@@ -1289,8 +1289,15 @@ execution:
     - id: api
       paths:
         - datus/api/
+        - datus/utils/path_manager.py
+        - datus/tools/db_tools/__init__.py
+        - datus/tools/db_tools/db_manager.py
+        - datus/tools/db_tools/connection_scope.py
+        - datus/tools/func_tool/database.py
+        - datus/utils/async_utils.py
       targets:
         - tests/integration/api/test_api.py
+        - tests/integration/api/test_chat_acceptance.py
     - id: cli
       paths:
         - datus/utils/constants.py
@@ -1315,6 +1322,9 @@ execution:
         - tests/integration/storage/test_platform_doc.py
     - id: database
       paths:
+        - datus/tools/func_tool/dashboard_artifact_tools.py
+        - datus/tools/func_tool/report_artifact_tools.py
+        - datus/tools/func_tool/metric_artifact_tools.py
         - datus/utils/constants.py
         - datus/utils/exceptions.py
         - datus/tools/db_tools/
@@ -1560,7 +1570,7 @@ execution:
         - tests/unit_tests/tools/
     - id: datus-api-utils
       paths: [datus/api/utils/]
-      targets: [tests/unit_tests/api/utils/]
+      targets: [tests/unit_tests/api/utils/, tests/unit_tests/api/test_deps.py]
     - id: datus-api
       paths:
         - datus/api/

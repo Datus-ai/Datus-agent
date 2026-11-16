@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import os
 import uuid
@@ -410,6 +411,29 @@ class AgenticNode(Node):
             else:
                 self._session_manager = SessionManager(session_dir=base_dir, scope=user_scope)
         return self._session_manager
+
+    async def aclose(self) -> None:
+        """Release resources owned by this finished node, leaving shared models alone."""
+        db_tool = getattr(self, "db_func_tool", None)
+        if db_tool is not None:
+            try:
+                await asyncio.to_thread(db_tool.close)
+            except Exception:
+                logger.exception("Failed to release node database tool")
+        session = getattr(self, "_session", None)
+        close = getattr(session, "close", None)
+        if callable(close):
+            try:
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                logger.exception("Failed to close node session")
+        self._session = None
+        manager = getattr(self, "_session_manager", None)
+        if manager is not None:
+            manager.close_all_sessions()
+        self._session_manager = None
 
     def relocate_session(self, *, scope: Optional[str], session_subdir: Optional[str]) -> None:
         """Point this node's session at another directory after construction.

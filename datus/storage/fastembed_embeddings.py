@@ -1,8 +1,12 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-from functools import lru_cache
+from collections import OrderedDict
+from concurrent.futures import Future
+from dataclasses import dataclass
+from threading import Lock
 from typing import Any, List, Optional, Union
+from weakref import WeakValueDictionary
 
 import numpy as np
 from datus_storage_base.vector.base import EmbeddingFunction
@@ -17,6 +21,63 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class _ModelKey:
+    name: str
+    device: str
+    cache_dir: str
+
+
+class _ModelCache:
+    """Share live models and retain at most one additional warm model.
+
+    Eviction drops a cache reference; it never closes a model another wrapper
+    is using. The weak index keeps such models discoverable after LRU eviction.
+    """
+
+    def __init__(self):
+        self._lock = Lock()
+        self._live = WeakValueDictionary()
+        self._warm = OrderedDict()
+        self._loading: dict[_ModelKey, Future] = {}
+
+    def get(self, key: _ModelKey, factory):
+        with self._lock:
+            model = self._live.get(key)
+            if model is not None:
+                self._retain(key, model)
+                return model
+            future = self._loading.get(key)
+            creator = future is None
+            if creator:
+                future = Future()
+                self._loading[key] = future
+        if not creator:
+            return future.result()
+        try:
+            model = factory()
+            with self._lock:
+                self._live[key] = model
+                self._retain(key, model)
+                self._loading.pop(key)
+        except BaseException as exc:
+            with self._lock:
+                self._loading.pop(key, None)
+            future.set_exception(exc)
+            raise
+        future.set_result(model)
+        return model
+
+    def _retain(self, key, model):
+        self._warm[key] = model
+        self._warm.move_to_end(key)
+        while len(self._warm) > 1:
+            self._warm.popitem(last=False)
+
+
+_model_cache = _ModelCache()
 
 
 class FastEmbedEmbeddings(BaseModel, EmbeddingFunction):
@@ -114,21 +175,22 @@ class FastEmbedEmbeddings(BaseModel, EmbeddingFunction):
         embeddings = self.embedding_model.embed(texts, batch_size=self.batch_size)
         return [np.asarray(embedding, dtype=np.float32).tolist() for embedding in embeddings]
 
-    @lru_cache(maxsize=1)
     def _create_embedding_model(self) -> TextEmbeddingBase:
-        """
-        Create the fastembed ``TextEmbedding`` instance for the configured model.
-        Cached so that the model is only loaded once per process.
-        """
-        check_snapshot(self.name, self.cache_dir)
+        """Initialize once per effective session configuration, across wrappers."""
+        key = _ModelKey(self.name, self.device, self.cache_dir)
+        return _model_cache.get(key, lambda: self._load_embedding_model(key))
+
+    @staticmethod
+    def _load_embedding_model(key: _ModelKey) -> TextEmbeddingBase:
+        check_snapshot(key.name, key.cache_dir)
 
         model_kwargs: dict[str, Any] = {
-            "model_name": self.name,
-            "cache_dir": self.cache_dir,
+            "model_name": key.name,
+            "cache_dir": key.cache_dir,
             "threads": 1,
             "local_files_only": True,
         }
-        if self.device == "cuda":
+        if key.device == "cuda":
             model_kwargs["cuda"] = True
 
         try:
@@ -137,12 +199,12 @@ class FastEmbedEmbeddings(BaseModel, EmbeddingFunction):
             raise
         except Exception as exc:  # pragma: no cover - delegated to caller
             message = format_fastembed_download_error(
-                model_name=self.name,
+                model_name=key.name,
                 repo_id=None,
-                cache_dir=self.cache_dir,
+                cache_dir=key.cache_dir,
                 cause=exc,
             )
-            logger.error("Failed to initialize fastembed model '%s': %s", self.name, message)
+            logger.error("Failed to initialize fastembed model '%s': %s", key.name, message)
             raise DatusException(ErrorCode.MODEL_EMBEDDING_ERROR, message=message) from exc
 
     def __hash__(self):
