@@ -1,6 +1,6 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
-"""Conversational analytics nodes; deployment hosts supply the tool policy.
+"""Conversational analytics nodes with shared builtin capability policies.
 
 Artifact delegation and isolated writable workspaces are intentionally deferred.
 """
@@ -8,12 +8,14 @@ Artifact delegation and isolated writable workspaces are intentionally deferred.
 from typing import Optional
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
+from datus.tools.registry.contracts import tool_definition
+from datus.tools.registry.subagent_policy import SUBAGENT_POLICIES, builtin_tools, resolve_tools
 
 
 class AnalyticsExplorerAgenticNode(ChatAgenticNode):
     NODE_NAME = "analytics_explorer"
-    DEFAULT_SUBAGENTS = ""
-    _db_read_only = True
+    DEFAULT_SUBAGENTS = ",".join(SUBAGENT_POLICIES[NODE_NAME].subagents)
+    _db_read_only = SUBAGENT_POLICIES[NODE_NAME].db_read_only
 
     def __init__(self, *args, node_name: Optional[str] = None, **kwargs):
         self._analytics_node_name = node_name or self.NODE_NAME
@@ -24,30 +26,30 @@ class AnalyticsExplorerAgenticNode(ChatAgenticNode):
     def get_node_name(self) -> str:
         return self._analytics_node_name
 
+    def setup_tools(self):
+        # Hosts may narrow the builtin policy (for example on publications).
+        # Missing configuration gets defaults; explicit empty scope stays empty.
+        self.node_config.setdefault("tools", ",".join(builtin_tools(self.NODE_NAME)))
+        super().setup_tools()
+
     def _selected_tool_families(self) -> set:
-        # No implicit full-chat surface when a host forgets the policy.
-        return (super()._selected_tool_families() or set()) | {"skills"}
+        supported = {pattern.split(".", 1)[0] for pattern in SUBAGENT_POLICIES[self.NODE_NAME].tools}
+        return ((super()._selected_tool_families() or set()) & supported) | {"skills"}
 
     def _rebuild_tools(self):
         super()._rebuild_tools()
-        raw = self.node_config.get("tools") or ""
-        entries = raw.split(",") if isinstance(raw, str) else raw if isinstance(raw, (list, tuple)) else [raw]
-        patterns = {str(part).strip() for part in entries if str(part).strip()}
-        groups = {}
-        for category, attr in (
-            ("db_tools", "db_func_tool"),
-            ("semantic_tools", "semantic_tools"),
-            ("filesystem_tools", "filesystem_func_tool"),
-        ):
-            instance = getattr(self, attr, None)
-            if instance:
-                groups.update({tool.name: category for tool in instance.available_tools()})
-        groups["get_query_metrics_result"] = "semantic_tools"
+        definitions = [tool_definition(tool) for tool in self.tools]
+        allowed = set(
+            resolve_tools(
+                self.NODE_NAME,
+                (definition.tool_id for definition in definitions),
+                configured=self.node_config.get("tools") or "",
+            )
+        )
         self.tools = [
             tool
-            for tool in self.tools
-            if tool.name not in groups
-            or patterns & {groups[tool.name], f"{groups[tool.name]}.*", f"{groups[tool.name]}.{tool.name}"}
+            for tool, definition in zip(self.tools, definitions)
+            if definition.tool_id in allowed or definition.access == "session" or definition.category == "skills"
         ]
 
     def _get_system_prompt(self, *args, **kwargs):
@@ -59,3 +61,5 @@ class AnalyticsExplorerAgenticNode(ChatAgenticNode):
 
 class AnalyticsBuilderAgenticNode(AnalyticsExplorerAgenticNode):
     NODE_NAME = "analytics_builder"
+    DEFAULT_SUBAGENTS = ",".join(SUBAGENT_POLICIES[NODE_NAME].subagents)
+    _db_read_only = SUBAGENT_POLICIES[NODE_NAME].db_read_only

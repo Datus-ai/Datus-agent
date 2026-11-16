@@ -23,6 +23,7 @@ from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFunc
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.tools.func_tool.semantic_tools import SemanticTools
+from datus.tools.registry.subagent_policy import GEN_SQL_DEFAULT_TOOLS
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -244,7 +245,7 @@ class GenSQLAgenticNode(AgenticNode):
         self._register_plan_mode_tools()
 
     # Default tools when not configured in agent.yml
-    DEFAULT_TOOLS = "db_tools.*, semantic_tools.*, context_search_tools.*"
+    DEFAULT_TOOLS = ", ".join(GEN_SQL_DEFAULT_TOOLS)
 
     def setup_tools(self):
         """Setup tools based on configuration, falling back to DEFAULT_TOOLS."""

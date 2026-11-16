@@ -87,3 +87,46 @@ def test_analytics_tool_sequence_keeps_exact_filter(real_agent_config, mock_llm_
         assert {"read_file", "glob"} <= names
         assert not names & {"write_file", "edit_file", "grep"}
         node._rebuild_tools()
+
+
+@pytest.mark.parametrize("kind", ["analytics_explorer", "analytics_builder"])
+@pytest.mark.parametrize(
+    "tools", [None, "db_tools.*,semantic_tools.*,filesystem_tools.*,bash_tools.*,sub_agent_tools.*"]
+)
+def test_analytics_defaults_and_wildcards_respect_type_policy(real_agent_config, mock_llm_create, kind, tools):
+    from datus.tools.registry.contracts import tool_definition
+    from datus.tools.registry.subagent_policy import tool_reference
+
+    config = {"node_class": kind}
+    if tools is not None:
+        config["tools"] = tools
+    real_agent_config.agentic_nodes = {"analyst": config}
+    node = create_interactive_node("analyst", real_agent_config, execution_mode="interactive")
+    catalog = {
+        f"{family}.{method}"
+        for family, group in tool_reference(kind)["tool_types"].items()
+        for method in group["tools"]
+    }
+    for _ in range(2):
+        definitions = [tool_definition(tool) for tool in node.tools]
+        data_tools = {d.tool_id for d in definitions if d.access != "session" and d.category != "skills"}
+        assert data_tools <= catalog
+        assert {"db_tools.execute_sql", "filesystem_tools.read_file", "semantic_tools.query_metrics"} <= data_tools
+        assert ("filesystem_tools.write_file" in data_tools) == (kind == "analytics_builder")
+        assert not data_tools & {"semantic_tools.validate_semantic", "filesystem_tools.delete_file"}
+        assert "ask_user" in {tool.name for tool in node.tools}
+        node._rebuild_tools()
+
+
+@pytest.mark.parametrize("kind", ["analytics_explorer", "analytics_builder"])
+@pytest.mark.parametrize("tools", ["", " ", []])
+def test_explicit_empty_host_scope_does_not_restore_defaults(real_agent_config, mock_llm_create, kind, tools):
+    from datus.tools.registry.contracts import tool_definition
+
+    real_agent_config.agentic_nodes = {"analyst": {"node_class": kind, "tools": tools}}
+    node = create_interactive_node("analyst", real_agent_config, execution_mode="interactive")
+    for _ in range(2):
+        definitions = [tool_definition(tool) for tool in node.tools]
+        assert all(d.access == "session" or d.category == "skills" for d in definitions)
+        assert "ask_user" in {tool.name for tool in node.tools}
+        node._rebuild_tools()

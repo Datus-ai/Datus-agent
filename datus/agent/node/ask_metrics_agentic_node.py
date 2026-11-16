@@ -32,6 +32,7 @@ from datus.tools.func_tool import (
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.tools.func_tool.semantic_tools import SemanticTools
+from datus.tools.registry.subagent_policy import ASK_METRICS_DEFAULT_TOOLS
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.query_result_text import parse_query_result_text
@@ -49,18 +50,7 @@ class AskMetricsAgenticNode(AgenticNode):
     RESULT_ACTION_TYPES = ("query_metrics",)
     #: Prompt template used when the configured one is missing; None disables the fallback.
     FALLBACK_PROMPT_TEMPLATE: Optional[str] = "ask_metrics_system"
-    DEFAULT_TOOLS = (
-        "context_search_tools.search_metrics",
-        "semantic_tools.list_metrics",
-        "semantic_tools.get_metric",
-        "semantic_tools.get_dataset",
-        "semantic_tools.query_metrics",
-        "semantic_tools.attribution_analyze",
-        "context_search_tools.list_subject_tree",
-        "filesystem_tools.read_file",
-        "filesystem_tools.glob",
-        "filesystem_tools.grep",
-    )
+    DEFAULT_TOOLS = ASK_METRICS_DEFAULT_TOOLS
 
     def __init__(
         self,
