@@ -638,3 +638,17 @@ def test_analytics_builtin_name_without_type_still_resolves(real_agent_config, m
     expected = AnalyticsBuilderAgenticNode if kind == "analytics_builder" else AnalyticsExplorerAgenticNode
     assert type(node) is expected
     assert node.get_node_name() == kind
+
+
+@pytest.mark.parametrize(
+    "name,kind",
+    [
+        ("analytics_builder", "analytics_explorer"),
+        ("analytics_explorer", "analytics_builder"),
+    ],
+)
+def test_explicit_analytics_kind_wins_over_the_other_analytics_name(real_agent_config, mock_llm_create, name, kind):
+    real_agent_config.agentic_nodes = {name: {"node_class": kind, "tools": "filesystem_tools.read_file"}}
+    node = create_interactive_node(name, real_agent_config, execution_mode="workflow")
+    assert node.NODE_NAME == kind
+    assert node.type == node.NODE_NAME

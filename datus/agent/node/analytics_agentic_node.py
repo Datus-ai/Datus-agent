@@ -31,7 +31,8 @@ class AnalyticsExplorerAgenticNode(ChatAgenticNode):
     def _rebuild_tools(self):
         super()._rebuild_tools()
         raw = self.node_config.get("tools") or ""
-        patterns = {part.strip() for part in raw.split(",") if part.strip()}
+        entries = raw.split(",") if isinstance(raw, str) else raw if isinstance(raw, (list, tuple)) else [raw]
+        patterns = {str(part).strip() for part in entries if str(part).strip()}
         groups = {}
         for category, attr in (
             ("db_tools", "db_func_tool"),
@@ -51,7 +52,8 @@ class AnalyticsExplorerAgenticNode(ChatAgenticNode):
 
     def _get_system_prompt(self, *args, **kwargs):
         # Custom instance names must use the type's builtin template.
-        self.node_config.setdefault("system_prompt", self.NODE_NAME)
+        if not self.node_config.get("system_prompt"):
+            self.node_config["system_prompt"] = self.NODE_NAME
         return super()._get_system_prompt(*args, **kwargs)
 
 

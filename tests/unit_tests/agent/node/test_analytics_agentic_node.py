@@ -52,3 +52,38 @@ def test_analytics_interaction_tools_survive_data_tool_filter(real_agent_config,
         assert "read_file" in names
         assert "write_file" not in names
         node._rebuild_tools()
+
+
+@pytest.mark.parametrize("kind", ["analytics_explorer", "analytics_builder"])
+@pytest.mark.parametrize(
+    "prompt_config", [{}, {"system_prompt": None}, {"system_prompt": ""}, {"system_prompt": "chat"}]
+)
+def test_analytics_prompt_default_and_custom_template(real_agent_config, mock_llm_create, kind, prompt_config):
+    real_agent_config.agentic_nodes = {
+        "custom_analyst": {"node_class": kind, "tools": "filesystem_tools.read_file", **prompt_config}
+    }
+    node = create_interactive_node("custom_analyst", real_agent_config, execution_mode="workflow")
+    prompt = node._get_system_prompt()
+    expected = prompt_config.get("system_prompt") or kind
+    assert node.node_config["system_prompt"] == expected
+    assert bool(prompt)
+    assert ("Analytics Role" in prompt) == (expected == kind)
+
+
+@pytest.mark.parametrize("kind", ["analytics_explorer", "analytics_builder"])
+@pytest.mark.parametrize(
+    "tools",
+    [
+        " filesystem_tools.read_file , , filesystem_tools.glob ",
+        [" filesystem_tools.read_file ", "", "  ", "filesystem_tools.glob"],
+        (" filesystem_tools.read_file ", "", "  ", "filesystem_tools.glob"),
+    ],
+)
+def test_analytics_tool_sequence_keeps_exact_filter(real_agent_config, mock_llm_create, kind, tools):
+    real_agent_config.agentic_nodes = {"analyst": {"node_class": kind, "tools": tools}}
+    node = create_interactive_node("analyst", real_agent_config, execution_mode="workflow")
+    for _ in range(2):
+        names = {tool.name for tool in node.tools}
+        assert {"read_file", "glob"} <= names
+        assert not names & {"write_file", "edit_file", "grep"}
+        node._rebuild_tools()

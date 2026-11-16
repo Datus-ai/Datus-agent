@@ -515,7 +515,11 @@ class Node(ABC):
                     input_data = OutputInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_FIX:
                     input_data = FixInput(**input_data)
-                elif node_dict["type"] == NodeType.TYPE_CHAT:
+                elif node_dict["type"] in {
+                    NodeType.TYPE_CHAT,
+                    NodeType.TYPE_ANALYTICS_EXPLORER,
+                    NodeType.TYPE_ANALYTICS_BUILDER,
+                }:
                     input_data = ChatNodeInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_SQL:
                     input_data = GenSQLNodeInput(**input_data)
