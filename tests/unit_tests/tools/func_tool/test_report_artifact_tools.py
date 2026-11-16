@@ -1073,6 +1073,6 @@ def test_save_keeps_query_source_authoritative_until_finalize(report_tools, proj
     root = project_root / "reports" / report_tools.report_slug
     query = json.loads((root / "queries/source_owner.json").read_text())
     manifest = json.loads((root / "manifest.json").read_text())
-    assert query["datasource"] == "default"
-    assert manifest["datasources"] == []
+    assert query["datasource_id"] == "default"
+    assert manifest.get("datasources", []) == []
     assert manifest["updated_at"] == query["executed_at"]

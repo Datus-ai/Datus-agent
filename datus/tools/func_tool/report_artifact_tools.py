@@ -705,6 +705,9 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
             return FuncToolResult(success=0, error=f"Failed to resolve datasource {datasource!r}: {exc}")
 
         ds_label = datasource or getattr(self._db_func_tool, "_default_datasource", "") or "default"
+        from datus.utils.artifact_datasource import artifact_identity, saved_artifact_context
+
+        identity = artifact_identity(self._db_func_tool.agent_config, ds_label)
 
         # Pre-flight EXPLAIN row-count guard: reject a runaway query (e.g. a
         # cross-join cartesian product) from its optimizer estimate before it
@@ -763,9 +766,11 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
             )
 
         payload = {
-            "execution_context": self._db_func_tool.execution_context(connector, ds_label),
+            "execution_context": saved_artifact_context(
+                self._db_func_tool.agent_config, ds_label, self._db_func_tool.execution_context(connector, ds_label)
+            ),
             "executed_at": utc_now_iso(),
-            "datasource": ds_label,
+            **identity,
             "row_count": len(rows),
             "columns": columns_meta,
             "rows": rows,

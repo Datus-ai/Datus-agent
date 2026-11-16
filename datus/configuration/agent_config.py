@@ -296,6 +296,9 @@ class KbSearchConfig:
 
 @dataclass
 class DbConfig:
+    # Visual-artifact persistence metadata; never a runtime/KB namespace.
+    artifact_id: str = ""
+    artifact_aliases: List[str] = field(default_factory=list)
     path_pattern: str = field(default="", init=True)
     type: str = field(default="", init=True)
     uri: str = field(default="", init=True)
@@ -331,7 +334,9 @@ class DbConfig:
                 if v is not None and v != "" and k not in internal_fields:
                     extra_params[k] = _resolve_nested_value(v)
                 continue
-            if not v:
+            if k == "artifact_aliases":
+                params[k] = list(v or [])
+            elif not v:
                 params[k] = v
             else:
                 params[k] = resolve_env(str(v))

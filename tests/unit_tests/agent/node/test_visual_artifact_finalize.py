@@ -2317,7 +2317,7 @@ def test_finalize_rebuilds_sources_after_switch_and_delete_even_without_narrativ
     assert json.loads(path.read_text())["datasources"] == ["new_source"]
     sql.unlink()
     finalize()
-    assert json.loads(path.read_text())["datasources"] == []
+    assert json.loads(path.read_text()).get("datasources", []) == []
     expected_calls = 0 if skip_narrative else 3
     assert model.generate_with_json_output.call_count == expected_calls
 
