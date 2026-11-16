@@ -16,6 +16,54 @@ from datus.storage.fts import FtsField, FtsIndexStatus, FtsSpec
 from datus.storage.vector.lance_backend import LanceVectorBackend, LanceVectorDatabase, LanceVectorTable
 from datus.utils.exceptions import DatusException
 
+
+@pytest.mark.parametrize("name,policy", [("custom-resizable", True), ("text-embedding-3-small", False)])
+def test_embedding_request_policy_survives_table_reopen(tmp_path, monkeypatch, name, policy):
+    """Persisted embeddings must keep their API policy when searching a reopened table."""
+    import json
+
+    import httpx
+    from openai import OpenAI
+
+    from datus.storage.embedding_openai import OpenAIEmbeddings
+    from datus.storage.vector.lance_backend import _wrap_embedding
+
+    requests = []
+
+    def respond(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "model": name,
+                "data": [{"object": "embedding", "index": 0, "embedding": [1.0, 0.0, 0.0, 0.0]}],
+                "usage": {"prompt_tokens": 1, "total_tokens": 1},
+            },
+        )
+
+    with OpenAI(api_key="test", http_client=httpx.Client(transport=httpx.MockTransport(respond))) as client:
+        monkeypatch.setattr(OpenAIEmbeddings, "_openai_client", property(lambda self: client))
+        function = _wrap_embedding(OpenAIEmbeddings(name=name, dim=4, send_dimensions=policy))
+        from lancedb.embeddings import EmbeddingFunctionConfig
+
+        db = lancedb.connect(tmp_path)
+        schema = pa.schema([pa.field("text", pa.string()), pa.field("vector", pa.list_(pa.float32(), 4))])
+        table = db.create_table(
+            "policy",
+            schema=schema,
+            embedding_functions=[
+                EmbeddingFunctionConfig(source_column="text", vector_column="vector", function=function)
+            ],
+        )
+        table.add([{"text": "hello", "vector": [1.0, 0.0, 0.0, 0.0]}])
+        reopened = lancedb.connect(tmp_path).open_table("policy")
+        assert reopened.search("hello", query_type="vector").limit(1).to_list()[0]["text"] == "hello"
+    assert len(requests) == 1
+    assert ("dimensions" in requests[0]) is policy
+
+
 # ---------------------------------------------------------------------------
 # LanceVectorTable tests
 # ---------------------------------------------------------------------------
