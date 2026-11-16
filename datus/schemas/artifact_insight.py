@@ -25,6 +25,7 @@ class ArtifactBlock(BaseModel):
 class QueryLineage(BaseModel):
     status: Literal["parsed", "partial", "unavailable"]
     origin: Literal["saved_sql", "sample_parameters", "metric_query", "metric_sample"]
+    datasource_id: str | None = None
     datasource: str | None = None
     tables: list[str] = Field(default_factory=list)
 

@@ -43,6 +43,7 @@ from datus.schemas.gen_visual_dashboard_models import (
     extract_query_slug,
     parse_datus_params_header,
 )
+from datus.tools.db_tools.connection_scope import connection_scope
 from datus.tools.func_tool._artifact_filesystem_base import ArtifactFilesystemFuncTool
 from datus.tools.func_tool._jsx_hooks_lint import format_hook_order_issues
 from datus.tools.func_tool._visual_artifact_cards import scan_render_cards
@@ -622,6 +623,7 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
 
     # -- save_query_template --------------------------------------------------
 
+    @connection_scope(owner_attr="_db_func_tool")
     @tool_contract(access="restricted", direct_call=False)
     def save_query_template(
         self,
@@ -838,7 +840,10 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
         except Exception as exc:
             return FuncToolResult(success=0, error=f"Failed to resolve datasource {datasource!r}: {exc}")
 
-        ds_label = datasource or getattr(self._db_func_tool, "_default_datasource", "") or "default"
+        ds_label = self._db_func_tool._resolve_effective_datasource(datasource)
+        from datus.utils.artifact_datasource import artifact_identity, saved_artifact_context
+
+        identity = artifact_identity(self._db_func_tool.agent_config, ds_label)
 
         # Pre-flight EXPLAIN row-count guard on the trial-rendered SQL: reject a
         # runaway template (e.g. a cross-join cartesian product) from its
@@ -899,10 +904,12 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
         # new ``goal`` arg — same semantics (one-line research question),
         # but the analysis-artifact contract names it ``goal`` everywhere.
         meta_payload = {
-            "execution_context": self._db_func_tool.execution_context(connector, ds_label),
+            "execution_context": saved_artifact_context(
+                self._db_func_tool.agent_config, ds_label, self._db_func_tool.execution_context(connector, ds_label)
+            ),
             "slug": name,
             "description": goal.strip(),
-            "datasource": ds_label,
+            **identity,
             "params": [p.model_dump() for p in params_decl],
             "columns": columns_meta,
             "sample_params": sample_params,

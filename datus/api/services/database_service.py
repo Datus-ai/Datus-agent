@@ -2,7 +2,6 @@
 Service for handling Database Management operations.
 """
 
-import asyncio
 import copy
 import stat
 import threading
@@ -44,6 +43,7 @@ from datus.storage.semantic_model.artifact_file import (
 from datus.tools.db_tools.capabilities import supports_namespace
 from datus.tools.db_tools.db_manager import DBManager
 from datus.tools.semantic_tools.dosi.model import iter_semantic_models
+from datus.utils.async_utils import drain_to_thread
 from datus.utils.config_utils import coerce_positive_int, coerce_positive_seconds
 from datus.utils.exceptions import DatusException
 from datus.utils.exceptions import ErrorCode as DbErrorCode
@@ -72,6 +72,13 @@ def _brief_columns(columns: list[ColumnInfo]) -> list[TableColumnBrief]:
 
 class DatasourceService:
     """Service for handling datasource management operations."""
+
+    def close(self) -> None:
+        """Close this service's exclusively owned database resources."""
+        if self.db_manager is not None:
+            self.db_manager.close()
+        self._datasource_connectors.clear()
+        self.current_db_connector = None
 
     def __init__(self, agent_config: Optional[AgentConfig] = None):
         """
@@ -981,7 +988,7 @@ class DatasourceService:
         """Atomically save and reconcile one semantic model artifact."""
 
         try:
-            return await asyncio.to_thread(self._save_semantic_model_sync, request)
+            return await drain_to_thread(self._save_semantic_model_sync, request)
         except Exception as exc:
             logger.error("Failed to save semantic model: %s", exc, exc_info=True)
             return Result[SaveSemanticModelData](
@@ -1216,7 +1223,7 @@ class DatasourceService:
             if request.semantic_model_name and request.semantic_model_name != model_name:
                 raise ValueError("Candidate model name does not match the target")
 
-            result = await asyncio.to_thread(
+            result = await drain_to_thread(
                 prepare_metric_definitions,
                 request.yaml,
                 request.changed_metrics,

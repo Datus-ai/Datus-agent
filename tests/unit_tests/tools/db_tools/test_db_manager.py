@@ -1,5 +1,7 @@
 """Unit tests for db_manager.py — gen_uri, _resolve_connection_context, helpers, and DBManager."""
 
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
@@ -10,6 +12,7 @@ from datus_db_core import ErrorCode as DbErrorCode
 
 from datus.configuration.agent_config import DbConfig
 from datus.schemas.database_context import DatabaseExecutionContext
+from datus.tools.db_tools import db_manager as db_manager_module
 from datus.tools.db_tools.config import DuckDBConfig, SQLiteConfig
 from datus.tools.db_tools.db_manager import (
     DBManager,
@@ -26,6 +29,132 @@ from datus.tools.db_tools.db_manager import (
 )
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException
+
+
+class _TrackedConnector:
+    def __init__(self):
+        self.close_count = 0
+
+    def close(self):
+        self.close_count += 1
+
+    def connect(self):
+        assert self.close_count == 0
+
+
+def test_concurrent_first_use_returns_one_connector(monkeypatch):
+    """The actual manager must publish one initialized connector for a cold key."""
+    manager = DBManager({"source": DbConfig(type="postgresql", database="db")})
+    created = []
+    start = threading.Barrier(4)
+    constructing = threading.Barrier(4)
+
+    class WaitingFuture(Future):
+        def result(self, timeout=None):
+            constructing.wait(timeout=5)
+            return super().result(timeout)
+
+    monkeypatch.setattr(db_manager_module, "Future", WaitingFuture, raising=False)
+
+    def build(config):
+        connector = _TrackedConnector()
+        created.append(connector)
+        constructing.wait(timeout=5)
+        return connector
+
+    monkeypatch.setattr(manager, "_build_conn", build)
+
+    def get(_):
+        start.wait(timeout=5)
+        return manager.get_conn("source", "db")
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        connectors = list(pool.map(get, range(4)))
+    assert len(created) == 1
+    assert all(connector is connectors[0] for connector in connectors)
+    manager.close()
+    assert created[0].close_count == 1
+
+
+def test_failed_connection_initialization_retries(monkeypatch):
+    """A construction failure leaves no cached connector or permanently blocked key."""
+    manager = DBManager({"source": DbConfig(type="postgresql", database="db")})
+    connector = _TrackedConnector()
+    build = Mock(side_effect=[RuntimeError("injected failure"), connector])
+    monkeypatch.setattr(manager, "_build_conn", build)
+    with pytest.raises(RuntimeError, match="injected failure"):
+        manager.get_conn("source", "db")
+    assert manager.get_conn("source", "db") is connector
+    assert build.call_count == 2
+    manager.close()
+
+
+def test_managed_eviction_closes_idle_connections_but_keeps_active_leases(monkeypatch):
+    """Capacity is enforced by the owner after drain; active borrowers remain usable."""
+    manager = DBManager({"source": DbConfig(type="postgresql")}, max_connections=2)
+    created = []
+
+    def build(config):
+        connector = _TrackedConnector()
+        created.append(connector)
+        return connector
+
+    monkeypatch.setattr(manager, "_build_conn", build)
+    active = manager.acquire_conn("source", "active")
+    shared = manager.acquire_conn("source", "active")
+    assert shared.connector is active.connector
+    active.release()
+    for name in ("one", "two", "three"):
+        with manager.acquire_conn("source", name) as connector:
+            connector.connect()
+    assert len(manager._conn_dict["source"]) == 2
+    assert active.connector.close_count == 0
+    assert sum(conn.close_count for conn in created) == 2
+    shared.release()
+    shared.release()
+    manager.close()
+    manager.close()
+    assert all(conn.close_count == 1 for conn in created)
+
+
+def test_close_waits_for_managed_borrowers_and_allows_later_reconnect(monkeypatch):
+    """Shutdown cannot close a leased connector; close retains legacy reopen semantics."""
+    manager = DBManager({"source": DbConfig(type="postgresql")})
+    monkeypatch.setattr(manager, "_build_conn", lambda _: _TrackedConnector())
+    lease = manager.acquire_conn("source", "db")
+    closing = threading.Event()
+
+    def close():
+        closing.set()
+        manager.close()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        finished = pool.submit(close)
+        try:
+            assert closing.wait(timeout=5)
+            assert not finished.done()
+            assert lease.connector.close_count == 0
+            with manager.acquire_conn("source", "nested") as nested:
+                nested.connect()
+                assert not finished.done()
+        finally:
+            lease.release()
+        finished.result(timeout=5)
+    assert lease.connector.close_count == 1
+    assert manager.get_conn("source", "db") is not lease.connector
+    manager.close()
+
+
+def test_legacy_connections_are_not_automatically_evicted(monkeypatch):
+    """A naked legacy connector may be retained by unknown callers."""
+    manager = DBManager({"source": DbConfig(type="postgresql")}, max_connections=1)
+    monkeypatch.setattr(manager, "_build_conn", lambda _: _TrackedConnector())
+    legacy = manager.get_conn("source", "legacy")
+    with manager.acquire_conn("source", "other"):
+        pass
+    assert legacy.close_count == 0
+    assert manager.get_conn("source", "legacy") is legacy
+    manager.close()
 
 
 def _cfg(**kwargs):

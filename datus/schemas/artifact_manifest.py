@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 ArtifactKind = Literal["report", "dashboard"]
 
@@ -88,6 +88,15 @@ class ArtifactManifest(BaseModel):
             "introduced deserialize cleanly with ``None``."
         ),
     )
+    datasource_ids: List[str] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def serialize_sources(self, handler):
+        result = handler(self)
+        if not self.datasources:
+            result.pop("datasources", None)
+        return result
+
     datasources: List[str] = Field(
         default_factory=list,
         description=(

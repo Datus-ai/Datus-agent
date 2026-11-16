@@ -59,3 +59,14 @@ def test_disk_read_failure_is_not_reported_as_a_complete_empty_index():
     reader = Mock(side_effect=OSError("unreadable query metadata"))
     with pytest.raises(OSError, match="unreadable"):
         collect_query_datasources(["queries/a.sql", "queries/a.json"], reader)
+
+
+def test_mixed_bundle_indexes_ids_and_only_legacy_names():
+    files = {
+        "queries/new.sql": "select 1",
+        "queries/new.json": '{"datasource_id":"id","datasource":"stale"}',
+        "queries/old.sql": "select 2",
+        "queries/old.json": '{"datasource":"legacy"}',
+    }
+    assert collect_query_datasources(files, files.__getitem__, field="datasource_id") == ["id"]
+    assert collect_query_datasources(files, files.__getitem__) == ["legacy"]

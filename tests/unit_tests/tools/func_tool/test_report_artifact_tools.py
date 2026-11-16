@@ -1073,6 +1073,37 @@ def test_save_keeps_query_source_authoritative_until_finalize(report_tools, proj
     root = project_root / "reports" / report_tools.report_slug
     query = json.loads((root / "queries/source_owner.json").read_text())
     manifest = json.loads((root / "manifest.json").read_text())
-    assert query["datasource"] == "default"
-    assert manifest["datasources"] == []
+    assert query["datasource_id"] == "default"
+    assert manifest.get("datasources", []) == []
     assert manifest["updated_at"] == query["executed_at"]
+
+
+@pytest.mark.ci
+@pytest.mark.parametrize("selection", ["single", "default", "explicit"])
+@pytest.mark.parametrize("stable_id", ["", "stable-warehouse"])
+def test_single_connector_save_resolves_configured_identity(report_tools, selection, stable_id):
+    """Default saves use a configured source while explicit overrides remain authoritative."""
+    import json
+
+    from datus.configuration.agent_config import DbConfig, ServicesConfig
+
+    entries = {"warehouse": DbConfig(type="sqlite", datasource_id=stable_id, default=selection != "single")}
+    if selection != "single":
+        entries["secondary"] = DbConfig(type="sqlite", datasource_id="stable-secondary")
+    tool = report_tools._db_func_tool
+    tool.agent_config = SimpleNamespace(services=ServicesConfig(datasources=entries))
+    assert tool._default_datasource == ""
+    source = "secondary" if selection == "explicit" else ""
+    result = report_tools.save_query(
+        name="configured",
+        sql="SELECT 42 AS answer",
+        datasource=source,
+        goal="Read the answer",
+        hypothesis="The answer is 42",
+    )
+    assert result.success == 1, result.error
+    payload = json.loads((report_tools.queries_dir / "configured.json").read_text())
+    expected = "stable-secondary" if source else stable_id or "warehouse"
+    assert payload["datasource_id"] == expected
+    assert payload["execution_context"]["datasource_id"] == expected
+    assert "datasource" not in payload

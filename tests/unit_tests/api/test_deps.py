@@ -465,3 +465,50 @@ async def test_http_and_background_share_host_factory_and_reinitialization_reset
         assert factory.call_count == 2
     finally:
         await cache.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("disconnect", [False, True])
+async def test_service_pin_covers_stream_send_and_disconnect(real_agent_config, disconnect):
+    """SSE retains ownership after dependency cleanup, including client cancellation."""
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from datus.api.deps import ServiceDep
+    from datus.api.services.datus_service import DatusService
+    from datus.api.utils.service_stream import ServiceStreamingResponse
+
+    service = DatusService(real_agent_config, "stream-owner")
+    service._cli = MagicMock()
+    cli = service._cli
+    app = FastAPI()
+    app.dependency_overrides[get_datus_service] = lambda: service
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def content():
+        started.set()
+        await release.wait()
+        yield "data: done\n\n"
+
+    @app.get("/stream")
+    async def stream(svc: ServiceDep):
+        return ServiceStreamingResponse(content(), service=svc, media_type="text/event-stream")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        request = asyncio.create_task(client.get("/stream"))
+        await asyncio.wait_for(started.wait(), timeout=2)
+        stopping = asyncio.create_task(service.shutdown())
+        await asyncio.sleep(0)
+        assert not stopping.done()
+        cli.close.assert_not_called()
+        if disconnect:
+            request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await request
+        else:
+            release.set()
+            response = await request
+            assert response.status_code == 200
+        await asyncio.wait_for(stopping, timeout=2)
+        cli.close.assert_called_once()

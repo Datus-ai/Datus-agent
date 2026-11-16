@@ -3720,6 +3720,7 @@ def test_persisted_artifact_binding_keeps_original_database_after_the_turn_switc
         persisted.execute_query("SELECT value FROM marker", result_format="list").sql_return[0]["value"] == "original"
     )
     assert tool._get_connector("warehouse") is current
+    tool.close()
     manager.close()
 
 
@@ -3924,6 +3925,7 @@ class TestDatasourceIdentity:
             assert result.result["identity"]["path"] == str((tmp_path / "b.sqlite").resolve())
             assert result.result["execution_context"]["database"] == "b"
         finally:
+            tool.close()
             manager.close()
 
     def test_attached_duckdb_identity_reports_selected_catalog_file(self, tmp_path):
@@ -4296,3 +4298,106 @@ class TestNativeCatalogPagination:
             assert getattr(connector, provider).call_count == 1
         finally:
             ACTIVE_RESULT_STORE.reset(token)
+
+
+@pytest.mark.parametrize("engine", ["sqlite", "duckdb"])
+def test_managed_tool_reopens_evicted_lookup_entries(tmp_path, engine):
+    """Real file-backed connectors remain queryable after owner eviction and lookup hits."""
+    import sqlite3
+
+    import duckdb
+
+    from datus.tools.db_tools.connection_scope import connection_scope
+
+    connect = sqlite3.connect if engine == "sqlite" else duckdb.connect
+    for name in ("one", "two", "three"):
+        with connect(str(tmp_path / f"{name}.{engine}")) as db:
+            db.execute("CREATE TABLE marker(value INTEGER)")
+            db.execute("INSERT INTO marker VALUES (42)")
+    manager = DBManager(
+        {"source": DbConfig(type=engine, path_pattern=str(tmp_path / f"*.{engine}"))}, max_connections=1
+    )
+    tool = DBFuncTool.__new__(DBFuncTool)
+    tool._db_manager = manager
+    tool._default_datasource = "source"
+    tool._default_database = "one"
+    tool._connector_cache = OrderedDict()
+    tool._connector_cache_size = 8
+
+    @connection_scope
+    def query(tool, database):
+        connector = tool._get_connector("source", database)
+        return connector.execute_query("SELECT value FROM marker", result_format="list")
+
+    try:
+        for name in ("one", "two", "three", "one"):
+            result = query(tool, name)
+            assert result.success == 1, result.error
+            assert result.sql_return == [{"value": 42}]
+            assert len(manager._conn_dict["source"]) == 1
+        assert len(tool._connector_cache) == 3
+    finally:
+        tool.close()
+        manager.close()
+
+
+def test_tool_close_drains_running_operations_before_detaching_bindings(monkeypatch):
+    """A cancelled caller's still-running worker retains its primary binding."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from datus.tools.db_tools.connection_scope import _lifetime, connection_scope
+
+    tool = DBFuncTool.__new__(DBFuncTool)
+    tool._primary_connector = object()
+    connector = tool._primary_connector
+    started, release, closing = threading.Event(), threading.Event(), threading.Event()
+
+    @connection_scope
+    def query(tool):
+        started.set()
+        assert release.wait(timeout=5)
+        assert tool.connector is connector
+        return "finished"
+
+    condition = _lifetime(tool).condition
+    wait = condition.wait
+
+    def observe_drain_wait(timeout=None):
+        closing.set()
+        return wait(timeout)
+
+    monkeypatch.setattr(condition, "wait", observe_drain_wait)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        working = pool.submit(query, tool)
+        assert started.wait(timeout=5)
+        stopped = pool.submit(tool.close)
+        assert closing.wait(timeout=5)
+        try:
+            assert not stopped.done()
+        finally:
+            release.set()
+        assert working.result(timeout=5) == "finished"
+        stopped.result(timeout=5)
+    assert tool.connector is None
+
+
+def test_closed_tool_cannot_reacquire_unscoped_connection(tmp_path):
+    """A late connector lookup cannot strand a new borrow after tool cleanup."""
+    from datus.tools.db_tools.connection_scope import borrow_connector
+
+    manager = DBManager({"source": DbConfig(type="sqlite", uri=str(tmp_path / "closed.sqlite"))})
+    tool = DBFuncTool.__new__(DBFuncTool)
+    tool._db_manager = manager
+    tool._connector_cache = OrderedDict()
+    try:
+        connector = borrow_connector(tool, "source", "")
+        assert connector.execute_query("SELECT 42 AS value", result_format="list").sql_return == [{"value": 42}]
+        tool.close()
+        with pytest.raises(RuntimeError, match="Database tool is closed"):
+            borrow_connector(tool, "source", "")
+        assert manager._leases == {}
+    finally:
+        tool.close()
+        manager.close()
+    assert connector.connection is None

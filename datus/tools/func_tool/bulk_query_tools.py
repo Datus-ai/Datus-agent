@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import pyarrow as pa
 
+from datus.tools.db_tools.connection_scope import connection_scope
 from datus.tools.db_tools.query_spool import (
     ACTIVE_EXPORT_SQL_APPROVAL,
     QueryLimits,
@@ -196,6 +197,7 @@ class BulkQueryTools:
                 applied.update(result.applied_policies)
                 spool.add(result.result)
 
+    @connection_scope
     @tool_contract(access="write", direct_call=False, category="db_tools")
     def export_query(
         self,

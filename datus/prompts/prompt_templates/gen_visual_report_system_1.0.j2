@@ -294,3 +294,5 @@ Use the source-neutral useQuery hook for new render code (useQuerySql remains
 compatible); data_ref and ChartCard sqlId reference the saved slug for either
 source type. Never write .metric.json or result rows directly. Do not mutate
 metric engine-generated SQL to create a metric query.
+
+Saved query files use `datasource_id` as their stable identity. Save tools own this field; never author or rewrite it. The optional `datasource` tool argument still takes the current runtime datasource name from the available connections, not a saved ID.

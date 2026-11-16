@@ -1,8 +1,10 @@
 """Tests for datus.api.services.chat_task_manager — background task management."""
 
 import asyncio
+import gc
 import re
 import threading
+import weakref
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -85,7 +87,9 @@ async def test_turn_emits_one_final_semantic_diff_without_persisting_it(tmp_path
             return None
 
     manager = ChatTaskManager()
-    manager._create_node = lambda *args, **kwargs: FakeNode()
+    node = FakeNode()
+    nodes = [node]
+    manager._create_node = lambda *args, **kwargs: nodes.pop()
     manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)
     task = ChatTask(session_id="semantic-turn", asyncio_task=MagicMock())
     await manager._run_loop(
@@ -122,6 +126,12 @@ async def test_turn_emits_one_final_semantic_diff_without_persisting_it(tmp_path
     assert [item for item in replayed if item in notifications] == notifications
     assert not task.message_contents
     assert not task.tool_result_contents
+    assert task.node is None
+    assert task.llm_session_id == "llm-semantic-diff"
+    reference = weakref.ref(node)
+    del node
+    gc.collect()
+    assert reference() is None
     assert all(action.action_type != "semantic-model-diff" for action in history_actions)
 
 
@@ -156,7 +166,7 @@ async def test_repeated_cancellation_drains_semantic_diff_before_terminal_state(
     manager._create_node = lambda *args, **kwargs: node
     manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)
     task = ChatTask(session_id="repeated-stop", asyncio_task=MagicMock())
-    task.on_turn_end = MagicMock()
+    callback = task.on_turn_end = MagicMock()
     manager._tasks[task.session_id] = task
     loop = asyncio.get_running_loop()
     scan_started = asyncio.Event()
@@ -238,8 +248,8 @@ async def test_repeated_cancellation_drains_semantic_diff_before_terminal_state(
         expected_error = "model failed" if outcome == "error" else None
         assert task.status == expected_status
         assert task.error == expected_error
-        task.on_turn_end.assert_called_once()
-        usage, error, status, turn_id = task.on_turn_end.call_args.args
+        callback.assert_called_once()
+        usage, error, status, turn_id = callback.call_args.args
         assert (status, error, turn_id) == (expected_status, expected_error, task.turn_id)
         assert usage["total_tokens"] == 120
         assert task.settled
@@ -618,7 +628,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="s-final", asyncio_task=MagicMock())
 
         await manager._run_loop(task, real_agent_config, StreamChatInput(message="tables", session_id="s-final"))
@@ -688,7 +699,8 @@ class TestChatTaskManagerBehavior:
                 )
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="api-cache-write", asyncio_task=MagicMock())
 
         await manager._run_loop(
@@ -731,12 +743,13 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="s-share", asyncio_task=MagicMock())
 
         await manager._run_loop(task, real_agent_config, StreamChatInput(message="hi", session_id="s-share"))
 
-        assert task.node.pending_input_queue is task.pending_input_queue
+        assert node.pending_input_queue is task.pending_input_queue
         assert captured["queue_during_run"] is task.pending_input_queue
 
     @pytest.mark.asyncio
@@ -787,7 +800,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         # Avoid the real @-context/node-input machinery for the continuation turn.
         manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)  # type: ignore[method-assign]
         task = ChatTask(session_id="s-cont", asyncio_task=MagicMock())
@@ -799,8 +813,8 @@ class TestChatTaskManagerBehavior:
         )
 
         # Two passes: the original run + one auto-continuation for the residual.
-        assert task.node.run_count == 2
-        assert task.node.run_limits == [expected_limit, expected_limit]
+        assert node.run_count == 2
+        assert node.run_limits == [expected_limit, expected_limit]
         # The residual was echoed to the client as a user bubble.
         user_events = [
             e for e in task.events if e.event == "message" and getattr(e.data.payload, "role", None) == "user"
@@ -850,13 +864,14 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)  # type: ignore[method-assign]
         task = ChatTask(session_id="s-dup", asyncio_task=MagicMock())
 
         await manager._run_loop(task, real_agent_config, StreamChatInput(message="explore", session_id="s-dup"))
 
-        assert task.node.run_count == 2
+        assert node.run_count == 2
         assistant_events = [
             e for e in task.events if e.event == "message" and getattr(e.data.payload, "role", None) == "assistant"
         ]
@@ -919,7 +934,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)  # type: ignore[method-assign]
         task = ChatTask(session_id="s-parallel", asyncio_task=MagicMock())
 
@@ -1020,14 +1036,15 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)  # type: ignore[method-assign]
         task = ChatTask(session_id="s-cap", asyncio_task=MagicMock())
 
         await manager._run_loop(task, real_agent_config, StreamChatInput(message="go", session_id="s-cap"))
 
         # Initial run + the cap in continuations, then it stops.
-        assert task.node.run_count == ctm._MAX_INSERT_CONTINUATIONS + 1
+        assert node.run_count == ctm._MAX_INSERT_CONTINUATIONS + 1
         assert task.accepting_inserts is False
 
     @pytest.mark.asyncio
@@ -1064,7 +1081,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)  # type: ignore[method-assign]
         # pass 1: first drain empty → close window → second drain finds a tail
         # message → re-open and continue. pass 2: both drains empty → stop.
@@ -1075,7 +1093,7 @@ class TestChatTaskManagerBehavior:
         await manager._run_loop(task, real_agent_config, StreamChatInput(message="go", session_id="s-reopen"))
 
         # The re-opened window ran a second pass and echoed the tail message.
-        assert task.node.run_count == 2
+        assert node.run_count == 2
         user_events = [
             e for e in task.events if e.event == "message" and getattr(e.data.payload, "role", None) == "user"
         ]
@@ -1104,7 +1122,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="s-web-proxy", asyncio_task=MagicMock())
 
         with patch("datus.api.services.chat_task_manager.apply_proxy_tools") as mock_apply:
@@ -1165,7 +1184,7 @@ class TestChatTaskManagerBehavior:
         mock_apply.assert_not_called()
         # In-place clear, not rebinding — hooks holding the old reference
         # must observe the emptied set.
-        assert task.node.proxied_tool_names is shared_ref
+        assert node.proxied_tool_names is shared_ref
         assert shared_ref == set()
         assert task.status == "completed"
 
@@ -1196,7 +1215,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="s-web-normal", asyncio_task=MagicMock())
 
         with patch("datus.api.services.chat_task_manager.apply_proxy_tools") as mock_apply:
@@ -1262,7 +1282,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="s-nested-response", asyncio_task=MagicMock())
 
         await manager._run_loop(
@@ -1309,7 +1330,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="s-dedupe", asyncio_task=MagicMock())
 
         await manager._run_loop(task, real_agent_config, StreamChatInput(message="tables", session_id="s-dedupe"))
@@ -1361,7 +1383,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="s-post-tool-thinking", asyncio_task=MagicMock())
 
         await manager._run_loop(
@@ -1413,7 +1436,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="s-plain-dedupe", asyncio_task=MagicMock())
 
         await manager._run_loop(task, real_agent_config, StreamChatInput(message="tables", session_id="s-plain-dedupe"))
@@ -2791,6 +2815,7 @@ class TestStartChatDatasourceOverride:
                     assert result.success is True, result.error
                     assert result.sql_return == [{"value": 25}]
                 finally:
+                    tool.close()
                     tool._db_manager.close()
 
         manager = ChatTaskManager()
@@ -3715,3 +3740,177 @@ async def test_user_events_and_residual_inserts_reach_client():
     assert len(residual.events) == 1
     assert residual.events[0].data.payload.role == "user"
     assert residual.events[0].data.payload.content[0].payload["content"] == "follow up"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["completed", "error", "cancelled"])
+async def test_completed_task_expires_without_another_request(real_agent_config, outcome):
+    """Real turn completion schedules expiry without a later lookup/purge call."""
+    from datus.api.models.cli_models import StreamChatInput
+
+    manager = ChatTaskManager(completed_task_ttl=0.02)
+    error = {"completed": None, "error": RuntimeError("injected failure"), "cancelled": asyncio.CancelledError()}[
+        outcome
+    ]
+    node = TestRunLoopSettlesTurn._node(raise_after=error)
+    nodes = [node]
+    manager._create_node = lambda *args, **kwargs: nodes.pop()
+    task = ChatTask("idle-expiry", None)
+    await manager._run_loop(task, real_agent_config, StreamChatInput(message="hi", session_id=task.session_id))
+    assert task.status == outcome
+    assert task.node is None
+    assert manager._completed_tasks[task.session_id] is task
+    reference = weakref.ref(task)
+    del task
+    await asyncio.sleep(0.05)
+    assert not manager._completed_tasks
+    # Injected exceptions keep traceback frames alive through the fake node.
+    # Drop test-owned references only after automatic expiry is proven.
+    del node, error
+    gc.collect()
+    assert reference() is None
+    await manager.shutdown()
+
+
+def test_completed_task_ttl_starts_at_completion():
+    """A task that ran over five minutes still gets the whole replay window."""
+    from datetime import timedelta
+
+    now = [1000.0]
+    manager = ChatTaskManager(clock=lambda: now[0])
+    task = ChatTask("long-task", None)
+    task.created_at = datetime.now() - timedelta(hours=1)
+    task.completed_at = now[0]
+    task.status = "completed"
+    manager._completed_tasks[task.session_id] = task
+    assert manager.get_task(task.session_id) is task
+    now[0] += 299
+    assert manager.get_task(task.session_id) is task
+    now[0] += 1
+    assert manager.get_task(task.session_id) is None
+
+
+def test_completed_replay_limits_remove_oldest_entries():
+    """Configured count/serialized-byte caps bound the completed replay index."""
+    manager = ChatTaskManager(max_completed_tasks=2, max_completed_bytes=10, clock=lambda: 100)
+    for index in range(3):
+        task = ChatTask(str(index), None)
+        task.status = "completed"
+        task.completed_at = 100
+        task.replay_bytes = 6
+        manager._completed_tasks[task.session_id] = task
+    manager._purge_expired_completed()
+    assert list(manager._completed_tasks) == ["2"]
+
+
+@pytest.mark.asyncio
+async def test_repeated_stop_drains_persistence_before_releasing_node(real_agent_config):
+    """A second stop during final persistence cannot strand the task/node registry."""
+    from datus.api.models.cli_models import StreamChatInput
+
+    node = TestRunLoopSettlesTurn._node(raise_after=asyncio.CancelledError())
+    manager = ChatTaskManager()
+    manager._create_node = lambda *args, **kwargs: node
+    task = ChatTask("cancel-during-persist", None)
+    manager._tasks[task.session_id] = task
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def persist(*args):
+        entered.set()
+        await release.wait()
+
+    manager._persist_message_contents = persist
+    runner = asyncio.create_task(
+        manager._run_loop(task, real_agent_config, StreamChatInput(message="hi", session_id=task.session_id))
+    )
+    task.asyncio_task = runner
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        for _ in range(2):
+            runner.cancel()
+            await asyncio.sleep(0)
+        assert not runner.done()
+        assert task.node is node
+        assert not task.settled
+    finally:
+        release.set()
+    await asyncio.wait_for(runner, timeout=2)
+    assert task.settled
+    assert task.node is None
+    assert task.session_id not in manager._tasks
+    assert manager.get_task(task.session_id) is task
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", ["count", "bytes"])
+async def test_reused_session_replay_caps_keep_latest_completed_turns(real_agent_config, limit):
+    from datus.api.models.cli_models import StreamChatInput
+
+    now = [0.0]
+    manager = ChatTaskManager(clock=lambda: now[0], max_completed_bytes=10**9)
+    manager._create_node = lambda *args, **kwargs: TestRunLoopSettlesTurn._node()
+    completed = []
+    try:
+        for sid in ("a", "b", "a", "c"):
+            now[0] += 1
+            task = ChatTask(sid, None)
+            manager._tasks[sid] = task
+            await manager._run_loop(task, real_agent_config, StreamChatInput(message="hi", session_id=sid))
+            assert task.status == "completed", task.error
+            completed.append(task)
+        newest_a, newest_c = completed[2:]
+        caps = {"count": (2, None), "bytes": (None, newest_a.replay_bytes + newest_c.replay_bytes)}
+        manager._max_completed_tasks, manager._max_completed_bytes = caps[limit]
+        manager._purge_expired_completed()
+        assert list(manager._completed_tasks) == ["a", "c"]
+        assert manager.get_task("a") is newest_a
+        assert manager.get_task("c") is newest_c
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_rejects_new_turn_registration(real_agent_config):
+    from datus.api.models.cli_models import StreamChatInput
+
+    manager = ChatTaskManager()
+    await manager.shutdown()
+    try:
+        with pytest.raises(RuntimeError, match="ChatTaskManager is shut down"):
+            await manager.start_chat(real_agent_config, StreamChatInput(message="late"))
+        assert manager._tasks == {}
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_during_metadata_loading_prevents_late_registration(real_agent_config):
+    import threading
+    from types import SimpleNamespace
+
+    from datus.api.models.cli_models import StreamChatInput
+
+    entered, release = threading.Event(), threading.Event()
+
+    def load_metadata(*args):
+        entered.set()
+        assert release.wait(timeout=5)
+        return None
+
+    manager = ChatTaskManager()
+    manager._session_manager = lambda *args: SimpleNamespace(load_session_meta=load_metadata)
+    registering = asyncio.create_task(
+        manager.start_chat(real_agent_config, StreamChatInput(message="late", session_id="late-metadata"))
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        await manager.shutdown()
+        release.set()
+        with pytest.raises(RuntimeError, match="ChatTaskManager is shut down"):
+            await registering
+        assert manager._tasks == {}
+    finally:
+        release.set()
+        await asyncio.gather(registering, return_exceptions=True)
+        await manager.shutdown()

@@ -4,10 +4,14 @@
 
 """Tests for LanceDB vector backend covering table, database, and backend operations."""
 
+import os
+import threading
 import unittest.mock
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import lancedb
+import pandas as pd
 import pyarrow as pa
 import pytest
 from datus_storage_base.conditions import and_, eq, in_
@@ -15,6 +19,54 @@ from datus_storage_base.conditions import and_, eq, in_
 from datus.storage.fts import FtsField, FtsIndexStatus, FtsSpec
 from datus.storage.vector.lance_backend import LanceVectorBackend, LanceVectorDatabase, LanceVectorTable
 from datus.utils.exceptions import DatusException
+
+
+@pytest.mark.parametrize("name,policy", [("custom-resizable", True), ("text-embedding-3-small", False)])
+def test_embedding_request_policy_survives_table_reopen(tmp_path, monkeypatch, name, policy):
+    """Persisted embeddings must keep their API policy when searching a reopened table."""
+    import json
+
+    import httpx
+    from openai import OpenAI
+
+    from datus.storage.embedding_openai import OpenAIEmbeddings
+    from datus.storage.vector.lance_backend import _wrap_embedding
+
+    requests = []
+
+    def respond(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "model": name,
+                "data": [{"object": "embedding", "index": 0, "embedding": [1.0, 0.0, 0.0, 0.0]}],
+                "usage": {"prompt_tokens": 1, "total_tokens": 1},
+            },
+        )
+
+    with OpenAI(api_key="test", http_client=httpx.Client(transport=httpx.MockTransport(respond))) as client:
+        monkeypatch.setattr(OpenAIEmbeddings, "_openai_client", property(lambda self: client))
+        function = _wrap_embedding(OpenAIEmbeddings(name=name, dim=4, send_dimensions=policy))
+        from lancedb.embeddings import EmbeddingFunctionConfig
+
+        db = lancedb.connect(tmp_path)
+        schema = pa.schema([pa.field("text", pa.string()), pa.field("vector", pa.list_(pa.float32(), 4))])
+        table = db.create_table(
+            "policy",
+            schema=schema,
+            embedding_functions=[
+                EmbeddingFunctionConfig(source_column="text", vector_column="vector", function=function)
+            ],
+        )
+        table.add([{"text": "hello", "vector": [1.0, 0.0, 0.0, 0.0]}])
+        reopened = lancedb.connect(tmp_path).open_table("policy")
+        assert reopened.search("hello", query_type="vector").limit(1).to_list()[0]["text"] == "hello"
+    assert len(requests) == 1
+    assert ("dimensions" in requests[0]) is policy
+
 
 # ---------------------------------------------------------------------------
 # LanceVectorTable tests
@@ -499,3 +551,160 @@ class TestWrapEmbedding:
         mock_lance = MagicMock(spec=TextEmbeddingFunction)
         result = _wrap_embedding(mock_lance)
         assert result is mock_lance
+
+
+# ---------------------------------------------------------------------------
+# Cross-process write serialization
+# ---------------------------------------------------------------------------
+
+
+def _hold_directory_lock(directory):
+    """Take the same advisory lock a second Datus process would hold on ``directory``."""
+    import fcntl
+
+    fd = os.open(directory, os.O_RDONLY)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    return fd
+
+
+def _release_directory_lock(fd):
+    import fcntl
+
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    os.close(fd)
+
+
+def _run_in_thread(fn):
+    done = threading.Event()
+    errors = []
+
+    def runner():
+        try:
+            fn()
+        except BaseException as exc:  # noqa: BLE001 — surfaced to the test thread
+            errors.append(exc)
+        finally:
+            done.set()
+
+    threading.Thread(target=runner, daemon=True).start()
+    return done, errors
+
+
+@pytest.mark.skipif(os.name != "posix", reason="directory flock is the POSIX coordination primitive")
+class TestLanceWriteSerialization:
+    """Writes to one LanceDB directory wait for a lock another process may hold.
+
+    Two Datus processes (``datus web`` and ``datus-mcp``) commonly share one
+    ``datus_db``. LanceDB coordinates concurrent local commits only
+    optimistically, so every mutating call must block on the database
+    directory's advisory lock instead of racing a foreign writer.
+    """
+
+    @pytest.fixture
+    def db_dir(self, tmp_path):
+        return tmp_path / "datus_db"
+
+    @pytest.fixture
+    def raw_table(self, db_dir):
+        db = lancedb.connect(str(db_dir))
+        return db.create_table("items", data=[{"id": 1, "text": "a"}])
+
+    @pytest.mark.parametrize(
+        "write",
+        [
+            pytest.param(lambda t: t.add(pd.DataFrame([{"id": 2, "text": "b"}])), id="add"),
+            pytest.param(lambda t: t.merge_insert(pd.DataFrame([{"id": 1, "text": "z"}]), "id"), id="merge_insert"),
+            pytest.param(lambda t: t.update(eq("id", 1), {"text": "y"}), id="update"),
+            pytest.param(lambda t: t.delete(eq("id", 1)), id="delete"),
+        ],
+    )
+    def test_table_write_waits_for_foreign_directory_lock(self, db_dir, raw_table, write):
+        table = LanceVectorTable(raw_table)
+        fd = _hold_directory_lock(db_dir)
+        try:
+            done, errors = _run_in_thread(lambda: write(table))
+            assert not done.wait(0.5), "write committed while another holder owned the directory lock"
+        finally:
+            _release_directory_lock(fd)
+        assert done.wait(10), "write never resumed after the directory lock was released"
+        assert not errors
+
+    def test_database_create_waits_for_foreign_directory_lock(self, db_dir):
+        db = LanceVectorDatabase(lancedb.connect(str(db_dir)))
+        schema = pa.schema([pa.field("id", pa.int64())])
+        fd = _hold_directory_lock(db_dir)
+        try:
+            done, errors = _run_in_thread(lambda: db.create_table("second", schema=schema))
+            assert not done.wait(0.5), "DDL ran while another holder owned the directory lock"
+        finally:
+            _release_directory_lock(fd)
+        assert done.wait(10)
+        assert not errors
+        assert "second" in db.table_names()
+
+    def test_database_drop_waits_for_foreign_directory_lock(self, db_dir):
+        db = LanceVectorDatabase(lancedb.connect(str(db_dir)))
+        db.create_table("second", schema=pa.schema([pa.field("id", pa.int64())]))
+        fd = _hold_directory_lock(db_dir)
+        try:
+            done, errors = _run_in_thread(lambda: db.drop_table("second"))
+            assert not done.wait(0.5), "drop ran while another holder owned the directory lock"
+        finally:
+            _release_directory_lock(fd)
+        assert done.wait(10)
+        assert not errors
+        assert "second" not in db.table_names()
+
+    def test_write_lock_is_reentrant_within_one_thread(self, db_dir, raw_table):
+        from datus.storage.vector.lance_backend import lance_write_lock
+
+        with lance_write_lock(db_dir):
+            with lance_write_lock(db_dir):
+                LanceVectorTable(raw_table).add(pd.DataFrame([{"id": 2, "text": "b"}]))
+        assert raw_table.count_rows() == 2
+
+    def test_write_lock_released_after_failed_write(self, db_dir, raw_table):
+        table = LanceVectorTable(raw_table)
+        with pytest.raises(ValueError):
+            table.add(pd.DataFrame([{"not_a_column": 1}]))
+        done, errors = _run_in_thread(lambda: table.add(pd.DataFrame([{"id": 2, "text": "b"}])))
+        assert done.wait(10), "lock leaked after a failed write"
+        assert not errors
+
+    def test_remote_or_unknown_uri_does_not_touch_filesystem(self, tmp_path):
+        raw = MagicMock()
+        raw.uri = "s3://bucket/datus_db/items.lance"
+        LanceVectorTable(raw).add(pd.DataFrame([{"id": 1}]))
+        raw.add.assert_called_once()
+        assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "uri,expected",
+    [
+        pytest.param("/data/proj/datus_db", Path("/data/proj/datus_db"), id="posix-absolute"),
+        pytest.param("file:///data/proj/datus_db", Path("/data/proj/datus_db"), id="file-uri"),
+        pytest.param("s3://bucket/proj/datus_db", None, id="remote"),
+        pytest.param("gs://bucket/proj/datus_db", None, id="remote-gcs"),
+        pytest.param("", None, id="empty"),
+        pytest.param(None, None, id="missing"),
+    ],
+)
+def test_local_path_resolves_supported_uris(uri, expected):
+    from datus.storage.vector.lance_backend import _local_path
+
+    assert _local_path(uri) == expected
+
+
+@pytest.mark.parametrize("uri", ["C:\\data\\datus_db", "c:\\data\\datus_db", "D:/data/datus_db"])
+def test_local_path_treats_windows_drive_letters_as_local(uri):
+    """A drive letter reads as a URI scheme to urlparse; it must still resolve.
+
+    A ``None`` result disables the cross-process write lock entirely, so this
+    pins the class of path rather than the platform-specific normalisation.
+    """
+    from datus.storage.vector.lance_backend import _local_path
+
+    # A ``None`` would stringify as ``"None"`` and fail the suffix check too;
+    # the suffix pins the drive letter was kept, not stripped as a scheme.
+    assert str(_local_path(uri)).replace("\\", "/").endswith("/data/datus_db")

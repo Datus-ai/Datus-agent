@@ -11,6 +11,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from datus.schemas.analysis_artifacts import SubjectAssetRef
+from datus.schemas.artifact_datasource import ArtifactDatasource
 
 
 class ParamRef(BaseModel):
@@ -42,12 +43,11 @@ class MetricQueryRequest(BaseModel):
         return {value.param for value in values if isinstance(value, ParamRef)}
 
 
-class MetricQueryFile(MetricQueryRequest):
+class MetricQueryFile(MetricQueryRequest, ArtifactDatasource):
     schema_version: Literal["1.0", "1.1"] = "1.0"
     kind: Literal["metric"] = "metric"
     name: str = Field(pattern=r"^[a-z0-9_]{1,64}$")
     goal: str = Field(min_length=1)
-    datasource: str = Field(min_length=1)
     execution_context: dict[str, str] | None = None
     model_path: str = Field(min_length=1)
     model_revision: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -61,8 +61,6 @@ class MetricQueryFile(MetricQueryRequest):
 
     @model_validator(mode="after")
     def identity_matches(self) -> MetricQueryFile:
-        if self.execution_context and self.execution_context.get("datasource") != self.datasource:
-            raise ValueError("query execution context must match its datasource")
         path = PurePosixPath(self.model_path)
         if path.is_absolute() or ".." in path.parts or "\\" in self.model_path:
             raise ValueError("model_path must be a relative project path without traversal")

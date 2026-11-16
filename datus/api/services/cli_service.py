@@ -32,6 +32,7 @@ from datus.schemas.action_history import (
     ActionStatus,
 )
 from datus.tools.db_tools.db_manager import DBManager
+from datus.utils.async_utils import drain_to_thread
 from datus.utils.config_utils import coerce_positive_seconds
 from datus.utils.exceptions import DatusException
 from datus.utils.exceptions import ErrorCode as DbErrorCode
@@ -72,6 +73,17 @@ _WRITE_SQL_TYPES = frozenset(
 
 class CLIService:
     """Service for handling CLI command operations."""
+
+    def close(self) -> None:
+        """Close this service's exclusively owned database resources."""
+        tool = self._db_tool_cache
+        if tool is not None:
+            tool.close()
+            self._db_tool_cache = None
+        if self.db_manager is not None:
+            self.db_manager.close()
+        self._datasource_connectors.clear()
+        self.current_db_connector = None
 
     def __init__(self, agent_config: Optional[AgentConfig] = None, chat_service: Optional[ChatService] = None):
         """
@@ -592,7 +604,7 @@ class CLIService:
 
         async def _run() -> Result[ExecuteSQLData]:
             try:
-                return await asyncio.to_thread(self._execute_sql_sync, request, task_id, policy_context, cancelled)
+                return await drain_to_thread(self._execute_sql_sync, request, task_id, policy_context, cancelled)
             except asyncio.CancelledError:
                 logger.info(f"SQL execution task cancelled: {task_id}")
                 return Result(

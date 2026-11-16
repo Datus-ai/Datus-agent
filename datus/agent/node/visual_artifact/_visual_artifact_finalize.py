@@ -713,7 +713,11 @@ def aggregate_referenced_tables(queries_dir: Path) -> List[str]:
 
 
 def update_manifest_query_metadata(
-    manifest_path: Path, key_tables: List[str], *, datasources: Optional[List[str]] = None
+    manifest_path: Path,
+    key_tables: List[str],
+    *,
+    datasources: Optional[List[str]] = None,
+    datasource_ids: Optional[List[str]] = None,
 ) -> Optional[str]:
     """Replace derived query indexes while preserving authored manifest fields.
 
@@ -731,9 +735,15 @@ def update_manifest_query_metadata(
         manifest = ArtifactManifest.model_validate(raw)
     except Exception as exc:
         return f"manifest schema validation failed during key_tables update: {exc}"
-    if manifest.key_tables == key_tables and (datasources is None or manifest.datasources == datasources):
+    if (
+        manifest.key_tables == key_tables
+        and (datasources is None or manifest.datasources == datasources)
+        and (datasource_ids is None or manifest.datasource_ids == datasource_ids)
+    ):
         # No-op: skip the disk write so we don't bump mtime needlessly.
         return None
+    if datasource_ids is not None:
+        manifest.datasource_ids = datasource_ids
     manifest.key_tables = key_tables
     if datasources is not None:
         manifest.datasources = datasources
@@ -1329,13 +1339,23 @@ def run_finalize_analysis(
             path.relative_to(artifact_dir).as_posix(): path
             for path in iter_artifact_files(artifact_dir, artifact_kind, queries_only=True)
         }
-        datasources = collect_query_datasources(query_paths, lambda name: query_paths[name].read_text(encoding="utf-8"))
+        query_contents: Dict[str, str] = {}
+
+        def read_query_content(name: str) -> str:
+            if name not in query_contents:
+                query_contents[name] = query_paths[name].read_text(encoding="utf-8")
+            return query_contents[name]
+
+        datasources = collect_query_datasources(query_paths, read_query_content)
         metadata_error = update_manifest_query_metadata(
-            artifact_dir / "manifest.json", key_tables, datasources=datasources
+            artifact_dir / "manifest.json",
+            key_tables,
+            datasources=datasources,
+            datasource_ids=collect_query_datasources(query_paths, read_query_content, field="datasource_id"),
         )
         if metadata_error:
             warnings.append(metadata_error)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         warnings.append(f"Cannot aggregate artifact query metadata: {exc}")
 
     if skip_narrative and not narrative_outputs_present(analysis_dir, artifact_kind=artifact_kind):
