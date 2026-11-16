@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import duckdb
 import pytest
-from datus_db_core import BaseSqlConnector, DatusDbException
+from datus_db_core import BaseSqlConnector, DatusDbException, connector_registry
 from datus_db_core import ErrorCode as DbErrorCode
 
 from datus.configuration.agent_config import DbConfig
@@ -1027,6 +1027,68 @@ def test_changed_catalog_does_not_reintroduce_the_old_catalog_database_default()
     context = DatabaseExecutionContext(datasource="warehouse", catalog="cat_b")
     with pytest.raises(ValueError, match="Select a database explicitly"):
         manager.get_conn("warehouse", context=context)
+
+
+@pytest.mark.parametrize("engine", ["mysql", "starrocks", "postgresql"])
+def test_resolved_context_without_a_default_database_keeps_an_unselected_connection(engine):
+    configured = DbConfig(type=engine, catalog="catalog_a")
+    manager = DBManager({"warehouse": configured})
+    manager._build_conn = Mock(
+        side_effect=lambda cfg: SimpleNamespace(database=cfg.database, catalog=cfg.catalog, schema=cfg.schema)
+    )
+    legacy = manager.get_conn("warehouse")
+    selected = manager.get_conn(
+        "warehouse", context=DatabaseExecutionContext(datasource="warehouse", catalog="catalog_a", database="selected")
+    )
+    context = DatabaseExecutionContext(datasource="warehouse", catalog="catalog_b")
+
+    unselected = manager.get_conn("warehouse", context=context)
+
+    assert (unselected.database, unselected.catalog) == ("", "catalog_b")
+    assert unselected is not selected
+    assert unselected is not legacy
+    assert manager.get_conn("warehouse", context=context) is unselected
+    assert (configured.database, configured.catalog) == ("", "catalog_a")
+    assert manager._build_conn.call_count == 3
+
+
+@pytest.mark.parametrize("engine", ["mysql", "starrocks", "postgresql"])
+def test_resolved_empty_database_cannot_restore_a_database_from_a_connection_uri(engine):
+    manager = DBManager({"warehouse": DbConfig(type=engine, uri=f"{engine}://localhost/configured")})
+    manager._build_conn = Mock()
+
+    with pytest.raises(ValueError, match="Select a database explicitly"):
+        manager.get_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse"))
+
+    manager._build_conn.assert_not_called()
+
+
+@pytest.mark.parametrize("target", [{"database": "old_database"}, {"uri": "postgresql://localhost/old_database"}])
+def test_resolved_empty_database_cannot_restore_an_extra_target(monkeypatch, target):
+    manager = DBManager({"warehouse": DbConfig(type="postgresql", username="review_user", extra=target)})
+    factory = Mock(return_value=SimpleNamespace(database_name="old_database"))
+    monkeypatch.setattr(connector_registry, "is_registered", lambda db_type: True)
+    monkeypatch.setattr(connector_registry, "create_connector", factory)
+
+    with pytest.raises(ValueError, match="Select a database explicitly"):
+        manager.get_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse"))
+
+    factory.assert_not_called()
+    assert not manager._conn_dict
+
+
+@pytest.mark.parametrize("database", [None, ""])
+def test_resolved_empty_database_allows_empty_extra_database(monkeypatch, database):
+    manager = DBManager(
+        {"warehouse": DbConfig(type="postgresql", username="review_user", extra={"database": database})}
+    )
+    connector = SimpleNamespace(database_name="")
+    factory = Mock(return_value=connector)
+    monkeypatch.setattr(connector_registry, "is_registered", lambda db_type: True)
+    monkeypatch.setattr(connector_registry, "create_connector", factory)
+
+    assert manager.get_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse")) is connector
+    assert factory.call_args.args[1]["database"] == database
 
 
 @pytest.mark.parametrize("engine", ["postgresql", "mysql", "starrocks", "sqlite", "duckdb"])
