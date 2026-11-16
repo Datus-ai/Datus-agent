@@ -8,7 +8,7 @@
 - If the metric is built from other metrics, call `attribute_metrics` first{% if explain_by_groups %}, then `attribute_dimensions` on the nodes with the largest effect that have a metric name, with the same periods, filters and params{% endif %}.
 {% endif %}
 {% if explain_by_groups %}
-- Choose the dimensions to split by from the question, the business knowledge supplied and the metric's and datasets' descriptions. To find which dimension explains a change, call `attribute_dimensions` once per candidate dimension, in parallel. Split a group further only when the question asks for it or one group dominates.
+- Choose the dimensions to split by from the question, the business knowledge supplied and the metric's and datasets' descriptions. Compare candidate dimensions in parallel calls. Before answering, look inside the groups with the largest effects, of either sign, that have finer categories under them.
 {% endif %}
 {% if "read_file" in tools or "glob" in tools or "grep" in tools %}
 - Look up project files only for a specific missing business fact; an attribution does not need one.

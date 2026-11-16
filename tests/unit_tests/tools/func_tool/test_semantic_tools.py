@@ -2415,6 +2415,8 @@ class TestAttributionTools:
         assert "call it on that metric with group_by, and fix the row with where" in metrics
         assert "can be passed as `metric` to attribute_dimensions" in metrics
         assert "one drill-down in the order given" in dimensions
+        assert "The first level's effects are those of a call by its dimension alone" in dimensions
+        assert "Drill down when a group with a large effect, of either sign" in dimensions
         assert "call once per dimension" in dimensions
         assert "Shares from different calls do not add up" in dimensions
 

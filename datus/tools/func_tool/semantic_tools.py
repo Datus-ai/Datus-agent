@@ -2769,8 +2769,14 @@ class SemanticTools:
           under a parent, with its `others` line, add up to the parent's effect.
         - The tree lists the top_groups largest effects across all levels, with
           the groups above them; the rest are summed in `others` lines.
-        Several dimensions are one drill-down in the order given (region, then
-        city within each region), not separate views. To compare dimensions,
+        Several dimensions are one drill-down in the order given: the first
+        dimension, then the second within each of its groups. They are not
+        separate views. The first level's effects are those of a call by its
+        dimension alone; each group's effect is then split among its groups by
+        the next dimension, and the largest effects at any level are listed.
+        Drill down when a group with a large effect, of either sign, has finer
+        categories under it. A filter on that group instead explains the group's
+        own change, not its part of the total. To compare unrelated dimensions,
         call once per dimension; the calls can run in parallel. Shares from
         different calls do not add up.
 

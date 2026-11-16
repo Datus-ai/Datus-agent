@@ -293,7 +293,8 @@ class TestAskMetricsAgenticNode:
         assert "dedicated catalog metric" in prompt
         assert "## Explaining a Change" in prompt
         assert "call `attribute_metrics` first, then `attribute_dimensions` on the nodes" in prompt
-        assert "call `attribute_dimensions` once per candidate dimension, in parallel" in prompt
+        assert "Compare candidate dimensions in parallel calls" in prompt
+        assert "look inside the groups with the largest effects, of either sign" in prompt
         assert "When the status is not complete, say so and give the reason" in prompt
         assert "`query_metrics.time_end` is inclusive" not in prompt
         # How to read a result is the tools' own description, not the prompt's.
