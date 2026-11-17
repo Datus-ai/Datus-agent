@@ -23,6 +23,7 @@ from datus.mcp_server import DatusMCPServer, LightweightDynamicMCPServer, ToolCo
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.mcp_decorators import MCPToolConfig, ToolClassConfig, create_dynamic_tool_wrapper
 from datus.utils.mcp_execution import MCPToolExecutor
@@ -1132,6 +1133,7 @@ async def test_static_close_retains_cancelled_workers_connector():
             return cls()
 
         @mcp_tool()
+        @tool_contract(access="restricted", direct_call=False, category="tools")
         def query(self) -> dict:
             loop.call_soon_threadsafe(started.set)
             release.wait(3)
@@ -1191,6 +1193,7 @@ async def test_static_connector_cleanup_does_not_block_request_loop():
 
 @pytest.mark.asyncio
 async def test_publication_eviction_and_shutdown_retain_cancelled_worker():
+    """Retain a cancelled publication worker until its actual MCP call completes."""
     from datus.utils.mcp_decorators import ToolClassConfig, mcp_tool
 
     loop = asyncio.get_running_loop()
@@ -1203,6 +1206,7 @@ async def test_publication_eviction_and_shutdown_retain_cancelled_worker():
         connector = SimpleNamespace(close=closed.set)
 
         @mcp_tool()
+        @tool_contract(access="restricted", direct_call=False, category="tools")
         def query(self) -> dict:
             loop.call_soon_threadsafe(started.set)
             release.wait(3)

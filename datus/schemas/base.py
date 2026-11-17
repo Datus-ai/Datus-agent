@@ -64,7 +64,7 @@ class BaseResult(BaseModel):
 
     # Action history and execution stats for agentic nodes
     action_history: Optional[List[dict]] = Field(
-        default=None, description="Complete history of tool calls and actions during execution"
+        default=None, description="Tool calls and actions from this execution, including internal retries"
     )
     execution_stats: Optional[dict] = Field(
         default=None, description="Execution statistics (tokens, tools called, duration, etc.)"

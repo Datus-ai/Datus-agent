@@ -51,11 +51,11 @@ class FeedbackAgenticNode(AgenticNode):
         self.configured_node_name = "feedback"
 
         # Get max_turns from agentic_nodes configuration
-        self.max_turns = 50
+        self.max_turns = 100
         if agent_config and hasattr(agent_config, "agentic_nodes") and "feedback" in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes["feedback"]
             if isinstance(agentic_node_config, dict):
-                self.max_turns = agentic_node_config.get("max_turns", 50)
+                self.max_turns = agentic_node_config.get("max_turns", 100)
 
         # Tool holders BEFORE super().__init__()
         self.sub_agent_task_tool = None
@@ -228,9 +228,9 @@ class FeedbackAgenticNode(AgenticNode):
 
         tokens_used = 0
         if self.execution_mode == "interactive":
-            tokens_used = self._extract_total_tokens(ctx.action_history_manager.get_actions())
+            tokens_used = self._extract_total_tokens(ctx.get_run_actions())
 
-        current_actions = ctx.action_history_manager.get_actions()
+        current_actions = ctx.get_run_actions()
         items_saved, storage_summary = self._extract_storage_info(current_actions)
 
         return FeedbackNodeResult(

@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 from pathlib import Path
@@ -16,7 +15,10 @@ from datus.schemas.analysis_artifacts import QueryBrief, SubjectRefs
 from datus.schemas.gen_visual_dashboard_models import QueryTemplateMetaFile, TemplateParamDecl
 from datus.schemas.gen_visual_report_models import ColumnSemanticType, QueryColumnMeta, QueryResultFile
 from datus.schemas.metric_artifact_query import MetricQueryFile, MetricQueryRequest, ParamRef
+from datus.tools.db_tools.connection_scope import connection_scope
 from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.registry.contracts import tool_contract
+from datus.utils.artifact_datasource import artifact_reference_key
 from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
@@ -112,8 +114,13 @@ def execute_metric_artifact_query(
 ) -> tuple[QueryResultFile, dict[str, Any]]:
     """The engine owns calculation; DBFuncTool owns warehouse read enforcement."""
     from datus.tools.func_tool.report_artifact_tools import _infer_column_type, _normalize_value
+    from datus.utils.artifact_datasource import artifact_identity, saved_artifact_context
     from datus.utils.artifact_insight import query_lineage
 
+    if saved is not None:
+        from datus.utils.artifact_datasource import runtime_artifact_query
+
+        saved = runtime_artifact_query(db_tool.agent_config, saved)
     runtime = semantic_tools.runtime
     if runtime is None:
         raise ValueError("metric runtime unavailable")
@@ -121,17 +128,10 @@ def execute_metric_artifact_query(
     model_path = Path(binding["model_path"]).resolve()
     # Absolute Studio paths are never persisted or accepted from a viewer.
     relative_path = model_path.relative_to(project_root.resolve()).as_posix()
-    if saved and (
-        saved.model_path != relative_path
-        or saved.model_revision != binding["model_revision"]
-        or saved.datasource != binding["datasource"]
-    ):
-        raise ValueError(
-            "METRIC_MODEL_CHANGED: saved semantic model or datasource differs; regenerate or republish the query"
-        )
     if saved:
-        # Published execution uses the pinned model and captured identity, not
-        # mutable subject-index availability. Compilation validates dimensions.
+        # The caller selects the project runtime for previews or a frozen
+        # runtime for published queries. Reuse the captured subject identity;
+        # the selected compiler validates the query's dimensions and metric.
         detail = saved.metric_detail
     else:
         detail_result = semantic_tools.metric_record(name=query.metric.name, path=query.metric.path)
@@ -153,23 +153,30 @@ def execute_metric_artifact_query(
             detail = {**detail, "definition": match[1].get("detail", {})}
     values = {name: None for name in query.parameter_names()}
     values.update(params or {})
-    from datus.tools.policy_runtime import PolicyRuntime
+    from datus.tools.policy_runtime import MetricReadDecision, PolicyRuntime
     from datus.tools.read_observer import ReadObservation, notify_read
 
     # Match the SQL read path: an explicit empty context must not inherit tool privileges.
     effective_policy_context = db_tool.policy_context if policy_context is None else policy_context
     config = getattr(db_tool, "agent_config", None)
     policies = PolicyRuntime(config)
+    native_required = policies.has_bound_read_provider and policies.requires_bound_read(effective_policy_context)
     datasets = binding.get("datasets")
-    if policies.has_metric_policies and (
-        not isinstance(datasets, list) or not datasets or any(not isinstance(name, str) for name in datasets)
+    if (
+        not native_required
+        and policies.has_metric_policies
+        and (not isinstance(datasets, list) or not datasets or any(not isinstance(name, str) for name in datasets))
     ):
         raise DatusException(ErrorCode.POLICY_DENIED, message="Metric policy datasets could not be resolved")
     arguments = metric_query_arguments(query, values)
-    decision = policies.before_metric_read(
-        datasets=set(datasets or []),
-        where=arguments.get("where"),
-        policy_context=effective_policy_context,
+    decision = (
+        MetricReadDecision(allowed=True, where=arguments.get("where"))
+        if native_required
+        else policies.before_metric_read(
+            datasets=set(datasets or []),
+            where=arguments.get("where"),
+            policy_context=effective_policy_context,
+        )
     )
     if not decision.allowed:
         raise DatusException(ErrorCode.POLICY_DENIED, message=decision.reason or "Metric policy denied the query")
@@ -184,14 +191,22 @@ def execute_metric_artifact_query(
             runtime_names=policies.runtime_names,
         )
     )
-    compiled = run_async(runtime.query_metrics(**arguments))
+    compile_query = runtime.compile_for_sql_execution if native_required else runtime.query_metrics
+    compiled = run_async(compile_query(**arguments))
     sql = (compiled.metadata or {}).get("sql")
     if not isinstance(sql, str) or not sql.strip():
         raise ValueError("metric engine returned no compiled SQL")
-    if hashlib.sha256(model_path.read_bytes()).hexdigest() != binding["model_revision"]:
-        raise ValueError("semantic model changed while compiling; retry the metric query")
     datasource = binding["datasource"]
-    connector = db_tool._get_connector(datasource)
+    config = getattr(runtime, "config", None)
+    db_config = getattr(config, "db_config", None)
+    coordinates = saved.execution_context if saved else None
+    if not coordinates and isinstance(db_config, dict):
+        from datus.schemas.database_context import DatabaseExecutionContext
+
+        coordinates = DatabaseExecutionContext.from_mapping({**db_config, "datasource": datasource}).to_dict()
+    connector = (
+        db_tool.connector_for_execution_context(coordinates) if coordinates else db_tool._get_connector(datasource)
+    )
     oversize = db_tool.guard_estimated_rows(sql, connector)
     if oversize is not None:
         raise ValueError(oversize.error)
@@ -235,7 +250,10 @@ def execute_metric_artifact_query(
     public_sql = None if policies.has_metric_policies else sql
     payload = QueryResultFile(
         executed_at=utc_now_iso(),
-        datasource=datasource,
+        **artifact_identity(db_tool.agent_config, datasource),
+        execution_context=saved_artifact_context(
+            db_tool.agent_config, datasource, db_tool.execution_context(connector, datasource)
+        ),
         row_count=len(rows),
         columns=columns,
         rows=rows,
@@ -244,7 +262,8 @@ def execute_metric_artifact_query(
     )
     tables = query_lineage(sql, None, datasource).tables
     return payload, {
-        "datasource": datasource,
+        **artifact_identity(db_tool.agent_config, datasource),
+        "execution_context": payload.execution_context,
         "model_path": relative_path,
         "model_revision": binding["model_revision"],
         "model_snapshot": model_path.read_bytes().decode("utf-8"),
@@ -261,7 +280,9 @@ def execute_published_metric_query(query: MetricQueryFile, *, runtime_config, db
     from types import SimpleNamespace
 
     from datus.tools.semantic_tools.dosi import DosiRuntime
+    from datus.utils.artifact_datasource import runtime_artifact_query
 
+    query = runtime_artifact_query(db_tool.agent_config, query)
     if query.model_snapshot is None:
         raise ValueError("METRIC_MODEL_SNAPSHOT_MISSING: republish a metric query with its semantic model snapshot")
     with TemporaryDirectory(prefix="datus-metric-query-") as directory:
@@ -294,19 +315,23 @@ class MetricArtifactToolsMixin:
     def _validate_metric_queries(self, kind: str) -> str | None:
         """Check complete tool-produced bundles before declaring render success."""
         try:
-            metric_revisions: dict[tuple[tuple[str, ...], str], str] = {}
+            metric_revisions: dict[tuple[str, tuple[str, ...], str], str] = {}
             model_revisions: dict[tuple[str, str], str] = {}
             for path in self.queries_dir.glob("*.metric.json"):
                 saved = MetricQueryFile.model_validate_json(path.read_text(encoding="utf-8"))
                 if saved.model_snapshot_path is not None:
                     resolve_metric_query_snapshot(saved, artifact_dir=self.queries_dir.parent)
-                identity = (tuple(saved.metric.path), saved.metric.name)
+                identity = (
+                    artifact_reference_key(saved, self._db_func_tool.agent_config),
+                    tuple(saved.metric.path),
+                    saved.metric.name,
+                )
                 previous_revision = metric_revisions.setdefault(identity, saved.model_revision)
                 if previous_revision != saved.model_revision:
                     raise ValueError(
                         "one artifact cannot mix model revisions of the same metric; resave all its queries"
                     )
-                model_identity = (saved.datasource, saved.model_path)
+                model_identity = (artifact_reference_key(saved, self._db_func_tool.agent_config), saved.model_path)
                 previous_model_revision = model_revisions.setdefault(model_identity, saved.model_revision)
                 if previous_model_revision != saved.model_revision:
                     raise ValueError("one artifact cannot mix revisions of the same model; resave its metric queries")
@@ -326,7 +351,8 @@ class MetricArtifactToolsMixin:
                     )
                     if (
                         saved.parameter_names()
-                        or result.datasource != saved.datasource
+                        or artifact_reference_key(result, self._db_func_tool.agent_config)
+                        != artifact_reference_key(saved, self._db_func_tool.agent_config)
                         or result.sql != saved.generated_sql
                         or (result.source or {}).get("kind") != "metric"
                         or (result.source or {}).get("metric") != saved.metric.model_dump()
@@ -338,7 +364,8 @@ class MetricArtifactToolsMixin:
                     )
                     if (
                         meta.slug != name
-                        or meta.datasource != saved.datasource
+                        or artifact_reference_key(meta, self._db_func_tool.agent_config)
+                        != artifact_reference_key(saved, self._db_func_tool.agent_config)
                         or saved.parameter_names() != {p.name for p in meta.params}
                     ):
                         raise ValueError(f"{name}: metric parameters do not match its recipe")
@@ -346,6 +373,7 @@ class MetricArtifactToolsMixin:
             return f"Invalid saved metric query: {exc}"
         return None
 
+    @tool_contract(access="restricted", direct_call=False)
     def save_metric_query(
         self, name: str, query: dict[str, Any], goal: str, hypothesis: str, caveats: str = ""
     ) -> FuncToolResult:
@@ -358,6 +386,7 @@ class MetricArtifactToolsMixin:
         """
         return self._save_metric_artifact(name, query, goal, hypothesis, caveats, None, None)
 
+    @tool_contract(access="restricted", direct_call=False)
     def save_metric_query_template(
         self,
         name: str,
@@ -376,9 +405,11 @@ class MetricArtifactToolsMixin:
         """
         return self._save_metric_artifact(name, query, goal, hypothesis, caveats, params, sample_params)
 
+    @connection_scope(owner_attr="_db_func_tool")
     def _save_metric_artifact(self, name, query, goal, hypothesis, caveats, params, sample_params) -> FuncToolResult:
+        """Persist a metric recipe and query result, then refresh the manifest timestamp."""
         from datus.api.services.dashboard_service import _validate_params
-        from datus.tools.func_tool._visual_artifact_helpers import upsert_manifest_after_save
+        from datus.tools.func_tool._visual_artifact_helpers import touch_manifest_after_save
         from datus.tools.func_tool.report_artifact_tools import _MAX_QUERY_BYTES, _atomic_write_text
 
         kind = "dashboard" if params is not None else "report"
@@ -436,7 +467,8 @@ class MetricArtifactToolsMixin:
                 meta = QueryTemplateMetaFile(
                     slug=name,
                     description=goal.strip(),
-                    datasource=payload.datasource,
+                    datasource_id=payload.datasource_id,
+                    execution_context=payload.execution_context,
                     params=declarations,
                     columns=payload.columns,
                     sample_params=values,
@@ -460,9 +492,7 @@ class MetricArtifactToolsMixin:
             for suffix in (".sql", ".sql.j2"):
                 (self.queries_dir / f"{name}{suffix}").unlink(missing_ok=True)
             artifact_dir = self.dashboard_dir if kind == "dashboard" else self.report_dir
-            warning = upsert_manifest_after_save(
-                artifact_dir / "manifest.json", datasource=payload.datasource, timestamp=payload.executed_at
-            )
+            warning = touch_manifest_after_save(artifact_dir / "manifest.json", timestamp=payload.executed_at)
             return FuncToolResult(
                 result={
                     "name": name,

@@ -1,151 +1,31 @@
 ---
 name: create-skill
-description: Create new Datus skills from scratch. Use when users want to build a new skill, scaffold a skill directory, or capture a workflow as a reusable skill. Trigger phrases include "create a skill", "make a skill for", "turn this into a skill", "new skill".
-tags: [skill, development, authoring]
-version: "1.0.0"
+description: Datus skill file format and packaging reference. Consult when creating or revising a skill requires optional frontmatter fields, directory layout, or agent.yml integration details.
+tags: [skill, format, authoring]
+version: "1.2.0"
 user_invocable: false
 allowed_agents:
   - gen_skill
 ---
 
-# Create Skill
+# Datus Skill Format Reference
 
-Guide for creating new Datus skills from scratch.
+Use this reference to resolve Datus format or packaging questions during authoring. The gen_skill system prompt provides the creation, revision, and review workflow.
 
-## Step 1: Research First
-
-Before asking the user anything, gather context silently:
-
-- If creating a data-related skill, **explore the database first**: use `list_tables`, `describe_table`, and read-only `execute_sql(sql="SELECT ... LIMIT ...")` queries to understand available tables, columns, data types, sample data, and time ranges.
-- If the conversation already contains a workflow the user wants to capture (e.g., "turn this into a skill"), extract the key steps, tools used, and patterns from the conversation history.
-- Check existing skills via `glob(pattern, path)` to avoid duplicates. The `~` expansion only applies to `path`, not `pattern`, so split the prefix out of the pattern: project-level `glob("*/SKILL.md", ".datus/skills")`; user-level `glob("*/SKILL.md", "~/.datus/skills")`.
-
-This research informs your questions and your SKILL.md — it is NOT skill output.
-
-## Step 2: Confirm with User
-
-After you have context, call `ask_user` **exactly once** with all questions in a single call. You MUST include these questions (the first two are required, others are optional):
-
-1. **[Required]** Skill name — suggest a default based on your research (e.g., "bitcoin-analysis"), let user confirm or change
-2. **[Required]** Storage location — offer choices: project-level (`./.datus/skills/`) or user-level (`~/.datus/skills/`)
-3. What should this skill enable the agent to do? (propose based on your findings)
-4. What's the expected output format?
-
-The "when should this skill trigger" (description field) should be auto-generated based on the user's answers — do NOT ask the user to write trigger phrases.
-
-**Do NOT call ask_user a second time to "confirm".** The user's answers are final — proceed directly to writing the SKILL.md. No confirmation round.
-
-## Write the SKILL.md
-
-### Frontmatter Schema
+A skill directory contains `SKILL.md` with YAML frontmatter:
 
 ```yaml
 ---
-name: skill-name                    # Required: lowercase-with-hyphens, unique
-description: What + when to trigger # Required: assertive, include trigger contexts
-tags: [tag1, tag2]                  # Optional: categorization
-version: "1.0.0"                    # Optional: semantic version
-disable_model_invocation: false     # Optional: true = user-only trigger
-user_invocable: true                # Optional: false = LLM-only
-allowed_agents:                     # Optional: whitelist of agent node names
-  - gen_dashboard                   #   that may see/load this skill
-                                    #   (empty/missing = unrestricted)
-context: fork                       # Optional: "fork" for isolated subagent
-agent: Explore                      # Optional: subagent type when context=fork
-compatibility:                      # Optional: version requirements
-  datus: ">=0.2.0"
+name: skill-name
+description: What the skill does and when to use it.
 ---
 ```
 
-### Description Writing
+Write instructions for a reusable task, including inputs, decisions, expected output, and necessary examples. Keep definitions consistent and record unresolved dependencies rather than inventing them.
 
-The description is the primary triggering mechanism. Be assertive:
-- Instead of "Helps with SQL optimization"
-- Write "Analyze and optimize SQL queries. Use whenever the user mentions slow queries, query optimization, EXPLAIN plans, or database performance tuning, even if they don't explicitly ask for optimization."
+Keep the core workflow and navigation in SKILL.md. Move long examples or domain details into supporting files when useful, maintain each rule in one place, and link every bundled resource with instructions for when to read it.
 
-### Markdown Body
+- Read [format.md](references/format.md) for optional frontmatter fields, descriptions, and file organization.
+- Read [integration.md](references/integration.md) for skill discovery, agent configuration, and publication commands.
 
-The body is what the agent receives when the skill is loaded. Write as:
-- **Imperative form**: "Analyze the query" not "You should analyze the query"
-- **Explain the why**: Context helps handle edge cases. Theory of mind beats brute force.
-- **Include 1-2 examples**: Concrete input/output pairs
-- **Define output format**: What the agent should return
-- **Keep under 500 lines**: Use `references/` for detailed content
-
-### Progressive Disclosure
-
-Skills use three-level loading:
-1. **Metadata** (name + description) — always in context (~100 words)
-2. **SKILL.md body** — loaded on trigger (<500 lines ideal)
-3. **Bundled resources** — loaded as needed (unlimited)
-
-### Domain Organization
-
-When a skill supports multiple variants:
-```
-skill-name/
-├── SKILL.md (workflow + selection logic)
-└── references/
-    ├── variant-a.md
-    └── variant-b.md
-```
-
-## Scaffold the Directory
-
-Use `write_file` from the filesystem tools. Paths must start with `.datus/skills/` (project-level) or `~/.datus/skills/` (user-level) — see Critical Rule #2:
-
-```text
-write_file(path=".datus/skills/<skill-name>/SKILL.md", content=...)
-```
-
-**Default behavior**: Only create the SKILL.md file. Do NOT generate references unless the user specifically asks for them.
-
-```
-skill-name/
-├── SKILL.md          (always created)
-└── references/       (only if user requested)
-```
-
-## Validate and Finish
-
-Immediately after `write_file`, do these two steps and STOP:
-
-1. Call `validate_skill` with the absolute path from the write_file result
-2. Report to the user: skill name, path, files created, how to use (`load_skill("<name>")` or `.skill list`)
-
-Do NOT continue exploring, writing more files, or asking more questions. The skill is done.
-
-## Storage Location
-
-Ask user where to save:
-- **Project-level** (`./.datus/skills/`): version-controlled, project-specific
-- **User-level** (`~/.datus/skills/`): shared across projects
-
-## Principle of Lack of Surprise
-
-Skills must not contain malware, exploit code, or security-compromising content. Don't create misleading skills.
-
-## Datus-Specific Notes
-
-### agent.yml Integration
-
-Skills discovered from configured directories:
-```yaml
-agent:
-  skills:
-    directories:
-      - ~/.datus/skills
-      - .datus/skills
-```
-
-Per-node filtering:
-```yaml
-agentic_nodes:
-  my_agent:
-    skills: "sql-*"
-```
-
-### Marketplace
-
-Publish after creation: `.skill publish <skill-name>`
-
+Resolve these paths relative to the `skill_location` returned by `load_skill`.

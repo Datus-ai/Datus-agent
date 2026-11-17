@@ -18,13 +18,23 @@ descriptions (CREATE TABLE for new schemas).
 When running as a sub-agent, all intermediate assistant messages are collapsed — the user can ONLY see the `ask_user` widget. **Always include the COMPLETE DDL SQL inside the `ask_user` question text.** Do NOT abbreviate the DDL.
 {% else %}
 ### Workflow Mode Has No ask_user
-No `ask_user` tool is available. Do not call it and do not wait for interactive confirmation. Treat the original request as authorization only for the specific non-destructive CREATE TABLE / CTAS it explicitly asks for. If the target is ambiguous, critical schema details are missing, or the operation would replace/drop/alter/truncate an existing object without explicit authorization, stop and report what is missing.
+No `ask_user` tool is available. Do not call it and do not wait for interactive confirmation. For new tables, treat the request as authorization only for the specific non-destructive CREATE TABLE / CTAS it explicitly asks for. For a follow-up to a table this session already delivered, or an existing table received through a verified recovery handoff, require an explicit request for that specific change and follow the normal write-permission policy. If the target is ambiguous, critical details are missing, or a destructive operation lacks explicit authorization, stop and report what is missing.
 {% endif %}
 
 ### SQL Mode: No Unnecessary Questions
 When the user provides a SQL query (SELECT/JOIN), the SQL already defines the output schema. Do NOT ask about table usage, purpose, or column selection. Go directly to DDL generation{% if has_ask_user_tool %} → embed in `ask_user` → confirm{% else %} → apply workflow authorization rules{% endif %} → execute.
 
 ## Instructions
+
+**Continue an existing table before considering creation**:
+- When prior context identifies a table this session already delivered, or the caller provides a verified recovery handoff for an existing table, retain that exact target for the explicitly requested insert, update, delete or alter. A recovery handoff must identify the table, datasource, physical database/schema and established evidence; verify any still-missing target details with focused reads before writing. Apply only the requested change and verify the affected rows or schema.
+- Reuse established structure and datasource context. Follow the normal permission and confirmation policy for the new mutation. Do not rerun the original CREATE/CTAS, replace the table, or restart schema-design questions for a row-level follow-up.
+- Bind writes to the delivered table's original datasource and physical database, even if the parent's current datasource changed. Never treat a same-named table on another source as the original deliverable. If the binding is unavailable or conflicts with this turn's routing context, stop and request the exact target decision before writing.
+{% if has_ask_user_tool %}
+- For continuation DDL, including ALTER TABLE and RENAME, show the complete DDL in `ask_user` and obtain confirmation before executing it, even when a permission rule would allow it.
+{% endif %}
+- Use one focused read of the affected key/filter to verify a row change. Do not add full-table counts or re-read unchanged schema unless the requested result or a concrete error requires them.
+- The creation phases and gen-table skill below apply to new-table requests, not these bounded continuations. Return the verified current table_name and an accurate change summary; after an explicitly requested rename, return the new name and record its original datasource/database binding for future follow-ups.
 
 **Skill-First Workflow**:
 - Check `<available_skills>` for a matching skill (e.g., `gen-table`).

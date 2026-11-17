@@ -903,6 +903,61 @@ class TestSmartDisplayTable:
 
 
 class TestRunManualSql:
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO orders VALUES (1)",
+            "CREATE TABLE blocked (id INTEGER)",
+            "SELECT 1; DELETE FROM orders",
+            "EXPLAIN ANALYZE INSERT INTO orders VALUES (1)",
+            "WITH deleted AS (DELETE FROM orders RETURNING *) SELECT * FROM deleted",
+        ],
+    )
+    def test_deployment_read_only_refuses_effective_sql_before_execution(self, cli, sql):
+        cli.agent_config.harden_sql_read_only()
+        cli.db_connector.dialect = "postgres"
+
+        payload = cli._run_manual_sql(sql)
+
+        assert payload["success"] is False
+        assert "agent.sql_read_only" in payload["error"]
+        cli.db_connector.execute.assert_not_called()
+        assert cli.last_result is None
+
+    def test_deployment_read_only_allows_a_read_on_a_writable_connector(self, cli):
+        import pyarrow as pa
+
+        cli.agent_config.harden_sql_read_only()
+        cli.db_connector.dialect = "sqlite"
+        cli.db_connector.execute.return_value = SimpleNamespace(
+            success=True, sql_return=pa.table({"n": [1]}), row_count=1
+        )
+
+        payload = cli._run_manual_sql("SELECT 1 AS n")
+
+        assert payload["success"] is True
+        cli.db_connector.execute.assert_called_once()
+
+    def test_deployment_read_only_prevents_mutation_of_a_writable_database(self, cli, tmp_path):
+        from datus.tools.db_tools.config import SQLiteConfig
+        from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+
+        connector = SQLiteConnector(SQLiteConfig(db_path=str(tmp_path / "manual-sql.sqlite")))
+        connector.connect()
+        try:
+            connector.connection.execute("CREATE TABLE orders (id INTEGER)")
+            cli.db_connector = connector
+            cli.agent_config.harden_sql_read_only()
+
+            payload = cli._run_manual_sql("INSERT INTO orders VALUES (1)")
+
+            assert payload["success"] is False
+            assert "agent.sql_read_only" in payload["error"]
+            assert connector.connection.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 0
+            assert cli._run_manual_sql("SELECT COUNT(*) AS n FROM orders")["rows"] == [["0"]]
+        finally:
+            connector.close()
+
     @pytest.mark.parametrize("status", ["unsupported", "incomplete", "error"])
     def test_native_analysis_failure_returns_error_before_connector_execution(self, cli, monkeypatch, status):
         from datus.tools.db_tools import connector_registry

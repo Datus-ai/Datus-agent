@@ -79,6 +79,26 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
     Connector for DuckDB databases with schema support using native DuckDB SDK.
     """
 
+    supports_streaming_read = True
+
+    def iter_query_batches(self, sql: str, batch_size: int = 5000):
+        """Yield Arrow tables while holding this connector's cursor lock."""
+        import pyarrow as pa
+
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
+            raise ValueError("batch_size must be a positive integer")
+        with self.exclusive_connection() as connection:
+            reader = connection.execute(sql).fetch_record_batch(rows_per_batch=batch_size)
+            try:
+                emitted = False
+                for batch in reader:
+                    emitted = True
+                    yield pa.Table.from_batches([batch])
+                if not emitted:
+                    yield pa.Table.from_batches([], schema=reader.schema)
+            finally:
+                reader.close()
+
     def __init__(self, config: DuckDBConfig):
         super().__init__(config, dialect=DBType.DUCKDB)
         self.db_path = config.db_path.replace("duckdb:///", "")
@@ -90,6 +110,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         self.memory_limit = config.memory_limit
         self.read_only = config.read_only
         self.iceberg_config = config.iceberg or {}
+        self._default_schema = config.schema_name or ("" if self.iceberg_config else "main")
 
         # Set the context-independent default (``_default_database``), NOT the
         # ContextVar-backed ``database_name`` property. The connector is cached
@@ -97,8 +118,8 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         # ``database_name`` setter would only populate that context's ContextVar
         # and later cross-context reads would fall back to an empty default. See
         # ``SQLiteConnector.__init__`` for the full rationale.
-        if config.database_name:
-            self._default_database = config.database_name
+        if config.initial_database or config.database_name:
+            self._default_database = config.initial_database or config.database_name
         elif self.db_path == ":memory:":
             # In-memory DuckDB has no file stem, and DuckDB names the database
             # ``memory`` (not ``:memory:``). Leave the default empty so metadata
@@ -159,7 +180,20 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             if self.iceberg_config:
                 self._setup_iceberg()
 
+            if self.config.initial_database:
+                database_identifier = '"' + self.config.initial_database.replace('"', '""') + '"'
+                self.connection.execute(f"USE {database_identifier}")
+
+            # Bind the native session before the registry publishes this
+            # connector. ContextVars alone cannot change unqualified SQL reads.
+            if self.config.schema_name:
+                schema_identifier = '"' + self.config.schema_name.replace('"', '""') + '"'
+                self.connection.execute(f"SET schema={self._sql_literal(schema_identifier)}")
+
         except Exception as e:
+            if self.connection is not None:
+                self.connection.close()
+                self.connection = None
             raise DatusException(
                 ErrorCode.DB_CONNECTION_FAILED,
                 message_args={"error_message": str(e)},
@@ -612,9 +646,15 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         so a future regression that drops the lock can't silently return
         rows that belong to a sibling query whose state was just reset.
         """
+        cursor = None
         try:
             self.connect()
-            result = self.connection.cursor().execute(sql)
+            # DuckDB cursors are independent sessions and do not inherit SET
+            # schema/USE. Copy the native session's effective search path.
+            search_path = self.connection.execute("SELECT current_setting('search_path')").fetchone()[0]
+            cursor = self.connection.cursor()
+            cursor.execute(f"SET search_path={self._sql_literal(search_path)}")
+            result = cursor.execute(sql)
 
             if result_format == "csv":
                 df = result.df()
@@ -661,6 +701,10 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
                 error=str(ex),
                 sql_query=sql,
             )
+
+        finally:
+            if cursor is not None:
+                cursor.close()
 
     @override
     def execute_pandas(self, sql: str) -> ExecuteSQLResult:

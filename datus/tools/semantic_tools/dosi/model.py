@@ -50,39 +50,22 @@ def load_document(path: str | Path) -> dict[str, Any]:
 
 
 def iter_semantic_models(document: dict[str, Any]) -> Iterator[dict[str, Any]]:
-    """Read model objects from flat documents and legacy wrappers without rewriting them."""
-    if "semantic_model" not in document:
-        if "datasets" in document:
-            yield document
-        return
-    models = document["semantic_model"]
-    if isinstance(models, dict):
-        yield models
-    elif isinstance(models, list):
-        for model in models:
-            if isinstance(model, dict):
-                yield model
+    """Read the one model declared at an Ossie document's root."""
+    if isinstance(document, dict) and "datasets" in document:
+        yield document
 
 
 def document_model_names(document: dict[str, Any]) -> list[str]:
-    """The semantic model names a document carries, whatever its shape.
-
-    The ``semantic_model:`` wrapper, the flat document apache/ossie#383 made
-    standard (``name`` + ``datasets`` at the root), or a mapping document
-    whose ``semantic_model_ref`` carries its model inline.
-    """
+    """Names carried by a flat model or a mapping's inline model."""
     if not isinstance(document, dict):
         return []
     ref = document.get("semantic_model_ref")
     if isinstance(ref, dict) and isinstance(ref.get("document"), dict):
         return document_model_names(ref["document"])
-    if "semantic_model" in document:
-        models = [model.get("name") for model in iter_semantic_models(document)]
-    elif "datasets" in document:
-        models = [document.get("name")]
-    else:
-        models = []
-    return [str(name).strip() for name in models if str(name or "").strip()]
+    name = str(document.get("name") or "").strip()
+    if name and not any(key in document for key in ("ontology", "ontology_ref", "concept_mappings")):
+        return [name]
+    return []
 
 
 def iter_named_nodes(

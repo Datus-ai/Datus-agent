@@ -51,7 +51,14 @@ async def start_review(node, summary="first", call_id="call-1"):
             json.dumps({"model_name": "sales", "plan_json": {"summary": summary}}),
         )
     )
-    await asyncio.wait_for(node.tool_channel.waiting.wait(), 1)
+    try:
+        # Preparing the preview uses a real worker thread and filesystem; allow
+        # scheduling headroom on loaded CI workers without delaying fast runs.
+        await asyncio.wait_for(node.tool_channel.waiting.wait(), 5)
+    except BaseException:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        raise
     return task, node.tool_review_previews[call_id]
 
 

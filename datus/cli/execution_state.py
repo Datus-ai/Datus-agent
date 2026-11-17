@@ -358,9 +358,20 @@ class InteractionBroker:
             result = await future
             logger.debug(f"InteractionBroker: received response for action_id={action_id}: {result}")
             return result
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as exc:
             with self._lock:
                 self._pending.pop(action_id, None)
+            if exc.args == ("permission_mode_changed",) and not self._closed:
+                self._output_queue.put_nowait(
+                    ActionHistory(
+                        action_id=action_id,
+                        role=ActionRole.INTERACTION,
+                        status=ActionStatus.SUCCESS,
+                        action_type=action_type,
+                        input=input_data,
+                        output={"resolution": "permission_mode_changed"},
+                    )
+                )
             # Re-raise, never downgrade to InteractionCancelled. Cancellation
             # here means the *run* is being torn down (``/chat/stop`` cancels the
             # task; a dropped SSE client cancels the generator), and swallowing

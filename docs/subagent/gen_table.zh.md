@@ -83,7 +83,7 @@ gen_table 开箱即用。可在 `agent.yml` 中自定义：
 agent:
   agentic_nodes:
     gen_table:
-      max_turns: 20       # 默认：20
+      max_turns: 100       # 默认：100
 ```
 
 ## 使用的 Skill
@@ -106,6 +106,6 @@ agent:
 | 数据写入 (INSERT/UPDATE/DELETE) | 不支持 | 支持 |
 | 跨库迁移 | 不支持 | 支持 |
 | 用户确认 (ask_user) | 必须 | 可选 |
-| 默认 max_turns | 20 | 40 |
+| 默认 max_turns | 100 | 100 |
 
 需要交互式建表时用 **gen_table**，单库 ETL 或跨库迁移都用 **gen_job**（gen_job 已覆盖两者）。

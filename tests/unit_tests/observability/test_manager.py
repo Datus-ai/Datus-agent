@@ -7,6 +7,9 @@ from contextlib import contextmanager
 
 import pytest
 from opentelemetry import baggage
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.sampling import ALWAYS_ON, Decision, StaticSampler
+from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
 
 from datus.observability.config import ObservabilityConfig
 from datus.observability.manager import (
@@ -228,6 +231,7 @@ def test_span_records_context_local_trace_reference(monkeypatch):
 
     class FakeSpanContext:
         is_valid = True
+        trace_flags = TraceFlags(TraceFlags.SAMPLED)
         trace_id = 0x123
         span_id = 0x456
 
@@ -376,6 +380,7 @@ def test_trace_reference_helpers_handle_invalid_spans_and_context():
 
     assert manager._trace_reference_from_span(InvalidSpan()) is None
     assert manager._trace_reference_from_span(BrokenSpan()) is None
+
     assert _format_trace_id(0xA) == "0000000000000000000000000000000a"
     assert _format_span_id(0xB) == "000000000000000b"
 
@@ -388,6 +393,77 @@ def test_trace_reference_helpers_handle_invalid_spans_and_context():
         assert _current_trace_run_id() == "bench-1"
     with trace_context(TraceContext(name="chat", session_id="session-1"), replace=True):
         assert _current_trace_run_id() == "session-1"
+
+
+def test_unsampled_spans_do_not_advertise_an_external_trace_reference():
+    span = NonRecordingSpan(SpanContext(trace_id=1234, span_id=5678, is_remote=False, trace_flags=TraceFlags(0)))
+    assert ObservabilityManager()._trace_reference_from_span(span) is None
+
+
+@pytest.mark.parametrize("decision", [Decision.DROP, Decision.RECORD_ONLY])
+def test_active_unsampled_host_span_does_not_reuse_previous_sampled_reference(monkeypatch, decision):
+    from datus.observability import manager as manager_module
+
+    manager = ObservabilityManager()
+    monkeypatch.setattr(manager_module, "_manager", manager)
+    sampled = TracerProvider(sampler=ALWAYS_ON, shutdown_on_exit=False)
+    disabled = TracerProvider(sampler=StaticSampler(decision), shutdown_on_exit=False)
+    try:
+        with sampled.get_tracer("host").start_as_current_span("previous-run") as sampled_span:
+            previous = manager_module.get_trace_reference()
+            sampled_context = sampled_span.get_span_context()
+            assert previous == TraceReference(
+                trace_id=f"{sampled_context.trace_id:032x}", span_id=f"{sampled_context.span_id:016x}"
+            )
+        assert manager_module.get_trace_reference() == previous
+
+        with disabled.get_tracer("host").start_as_current_span("disabled-run") as span:
+            assert span.get_span_context().is_valid
+            assert not span.get_span_context().trace_flags.sampled
+            assert manager_module.get_trace_reference() is None
+
+        # The completed trace remains available when there is no active span.
+        assert manager_module.get_trace_reference() == previous
+    finally:
+        disabled.shutdown()
+        sampled.shutdown()
+
+
+@pytest.mark.parametrize("decision", [Decision.DROP, Decision.RECORD_ONLY])
+def test_unsampled_child_suppresses_current_manager_reference_and_restores_parent(monkeypatch, decision):
+    from opentelemetry import trace as otel_trace
+
+    from datus.observability import manager as manager_module
+
+    manager = ObservabilityManager()
+    manager._adapters = [FakeAdapter()]
+    monkeypatch.setattr(manager_module, "_manager", manager)
+    sampled = TracerProvider(sampler=ALWAYS_ON, shutdown_on_exit=False)
+    disabled = TracerProvider(sampler=StaticSampler(decision), shutdown_on_exit=False)
+    monkeypatch.setattr(otel_trace, "get_tracer", lambda name: sampled.get_tracer(name))
+    try:
+        with manager.span("sampled-parent") as sampled_span:
+            parent = manager_module.get_trace_reference()
+            sampled_context = sampled_span.get_span_context()
+            assert parent == TraceReference(
+                trace_id=f"{sampled_context.trace_id:032x}", span_id=f"{sampled_context.span_id:016x}", provider="fake"
+            )
+            with disabled.get_tracer("host").start_as_current_span("disabled-child"):
+                assert manager_module.get_trace_reference() is None
+            assert manager_module.get_trace_reference() == parent
+        assert manager_module.get_trace_reference() == parent
+    finally:
+        disabled.shutdown()
+        sampled.shutdown()
+
+
+def test_sampled_spans_preserve_the_external_trace_reference():
+    span = NonRecordingSpan(
+        SpanContext(trace_id=1234, span_id=5678, is_remote=False, trace_flags=TraceFlags(TraceFlags.SAMPLED))
+    )
+    reference = ObservabilityManager()._trace_reference_from_span(span)
+    assert reference is not None
+    assert reference.trace_id == f"{1234:032x}"
 
 
 def test_set_span_attributes_stringifies_and_ignores_failures():

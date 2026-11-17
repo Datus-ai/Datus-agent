@@ -141,7 +141,7 @@ click==8.3.0 \
     --hash=sha256:9b9f285302c6e3064f4330c05f05b81945b2a39544279343e6e7c5f27a9baddc \
     --hash=sha256:e7b8232224eba16f4ebe410c25ced9f7875cb5f3263ffc93cc3e8da705e229c4
     # via langsmith-fetch
-colorama==0.4.6 ; (os_name == 'nt' and platform_machine != 'arm64') or (os_name != 'nt' and sys_platform == 'win32') or (os_name == 'nt' and sys_platform != 'darwin') \
+colorama==0.4.6 ; (os_name == 'nt' and platform_machine != 'arm64') or (os_name == 'nt' and sys_platform != 'darwin' and sys_platform != 'win32') or sys_platform == 'win32' \
     --hash=sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44 \
     --hash=sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6
     # via
@@ -273,9 +273,9 @@ cryptography==46.0.7 ; platform_machine != 'ppc64le' and platform_machine != 's3
     --hash=sha256:fdd1736fed309b4300346f88f74cd120c27c56852c3838cab416e7a166f67298 \
     --hash=sha256:ffca7aa1d00cf7d6469b988c581598f2259e46215e0140af408966a24cf086ce
     # via secretstorage
-datus-storage-base==0.1.5 \
-    --hash=sha256:3865635243dde9b46761bce8ecca21ed25efe4cf7bdd9ab64f52eb4576984a3c \
-    --hash=sha256:ab70b8db8823590b2272b5c86178b833532e0b915014a9645ae8bc8aac7814a3
+datus-storage-base==0.1.8 \
+    --hash=sha256:7782fe37a7cb596503ab1d4fe6c9a1bea75faf0bc3b926fc042386983e566818 \
+    --hash=sha256:9c4bf484a60d6726e4f70e02fb06f6728bc2ba94deb9d48ebbca26c716460508
     # via datus-storage-postgresql
 datus-storage-postgresql==0.1.5 \
     --hash=sha256:285a78f6070b5c4e5fff790ac9aeec282d0b20586149a3fb008d87977101e699 \
@@ -291,10 +291,12 @@ docutils==0.22.2 \
     --hash=sha256:9fdb771707c8784c8f2728b67cb2c691305933d68137ef95a75db5f4dfbc213d \
     --hash=sha256:b0e98d679283fc3bb0ead8a5da7f501baa632654e7056e9c5846842213d674d8
     # via readme-renderer
-dosi-engine==0.2.0 \
-    --hash=sha256:018d449ad1ad7252e31b30ead5eb6e45357131a46b569f55b0a5f792ad1c72d7 \
-    --hash=sha256:183420fad671541e00842ff59c9604922b684a5d6ac8d0e7917858c937dba208 \
-    --hash=sha256:e69d8465e0493230e20d4f6b8bb3167f21f2168f7ede2b86e45d8521339bafc9
+dosi-engine==0.2.1 \
+    --hash=sha256:1937bcff629e3015c24bd834d6d91361c4a96ac96e2ccc0e9e2d54aefd26b1bf \
+    --hash=sha256:7e5014868af7a47693b78e2fb62914ce8203d0187c6fccabd7fcd43254b7297d \
+    --hash=sha256:8e14691fd1840c52b5935b1f941b761ecc5ca3cc852b31b7d6e185cfdff44bda \
+    --hash=sha256:9cd2dd768889a0929ac61d438ffa9d17d416b3662433cc49d233a1e927e91a9f \
+    --hash=sha256:d5be43246db2c13875db416edbd90c193e9e7c1c6eb90649819a98549494bc90
 execnet==2.1.1 \
     --hash=sha256:26dee51f1b80cebd6d0ca8e74dd8745419761d3bef34163928cbebbdc4749fdc \
     --hash=sha256:5189b52c6121c24feae288166ab41b32549c7e2348652736540b9e6e7d4e72e3

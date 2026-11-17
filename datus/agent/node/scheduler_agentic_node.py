@@ -32,7 +32,7 @@ class SchedulerAgenticNode(DeliverableAgenticNode):
     ACTION_TYPE: ClassVar[str] = "scheduler_response"
     result_class = SchedulerNodeResult
     PROMPT_TEMPLATE: ClassVar[str] = "scheduler_system"
-    DEFAULT_MAX_TURNS: ClassVar[int] = 50
+    DEFAULT_MAX_TURNS: ClassVar[int] = 100
     # Scheduler workflow + validation skills are injected dynamically based
     # on the configured platform. Leave ``DEFAULT_SKILLS`` empty so the
     # base-class fallback does not over-expose unrelated platforms.
@@ -182,8 +182,9 @@ class SchedulerAgenticNode(DeliverableAgenticNode):
         *,
         error: str,
         action_history_manager: ActionHistoryManager,
+        action_start: int = 0,
     ) -> SchedulerNodeResult:
-        partial = self._collect_submitted_jobs(action_history_manager)
+        partial = self._collect_submitted_jobs(action_history_manager, start=action_start)
         return SchedulerNodeResult(
             success=False,
             error=error,
@@ -195,12 +196,12 @@ class SchedulerAgenticNode(DeliverableAgenticNode):
     # ── partial-job collection (used on error) ────────────────────────
 
     @staticmethod
-    def _collect_submitted_jobs(action_history_manager: ActionHistoryManager) -> dict:
+    def _collect_submitted_jobs(action_history_manager: ActionHistoryManager, start: int = 0) -> dict:
         """Scan action history for jobs submitted before a failure."""
         jobs: list = []
         job_tools = {"submit_sql_job", "submit_sparksql_job"}
 
-        for action in action_history_manager.get_actions():
+        for action in action_history_manager.get_actions_since(start):
             if action.status != ActionStatus.SUCCESS:
                 continue
             if action.action_type not in job_tools:

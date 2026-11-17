@@ -135,7 +135,7 @@ def _seed_dashboard(superset_url: str) -> tuple[int, str]:
 @pytest.mark.nightly
 @pytest.mark.timeout(300)
 def test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries(
-    p0_external_sources,
+    superset_plugin_source,
     managed_plugin_runtime,
     tmp_path,
 ):
@@ -146,7 +146,7 @@ def test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queri
     superset_url = os.environ.get("SUPERSET_URL", "http://127.0.0.1:8088").rstrip("/")
     dashboard_id, dashboard_name = _seed_dashboard(superset_url)
 
-    installed = managed_plugin_runtime.install(p0_external_sources.superset_plugin)
+    installed = managed_plugin_runtime.install(superset_plugin_source)
     assert "superset" in installed.stdout
 
     datus_home = managed_plugin_runtime.home / ".datus"
@@ -229,7 +229,7 @@ def test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queri
 @pytest.mark.product_e2e
 @pytest.mark.timeout(300)
 def test_dashboard_bootstrap_real_llm_loads_skill_and_stops_at_manifest(
-    p0_external_sources,
+    superset_plugin_source,
     managed_plugin_runtime,
     tmp_path,
 ):
@@ -240,7 +240,7 @@ def test_dashboard_bootstrap_real_llm_loads_skill_and_stops_at_manifest(
     )
     superset_url = os.environ.get("SUPERSET_URL", "http://127.0.0.1:8088").rstrip("/")
     dashboard_id, dashboard_name = _seed_dashboard(superset_url)
-    managed_plugin_runtime.install(p0_external_sources.superset_plugin)
+    managed_plugin_runtime.install(superset_plugin_source)
 
     datus_home = managed_plugin_runtime.home / ".datus"
     workspace = tmp_path / "workspace"

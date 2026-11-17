@@ -368,3 +368,43 @@ class TestSubAgentScopedServices:
 
         assert svc.has_sub_agent("analyst") is True
         assert svc.has_sub_agent("no_such_sub_agent") is False
+
+
+def test_host_manager_factory_owns_chat_from_construction(real_agent_config):
+    """Lazy chat and config refreshes retain the manager created by the host."""
+    from unittest.mock import Mock
+
+    manager = ChatTaskManager()
+    factory = Mock(return_value=manager)
+    service = DatusService(
+        real_agent_config,
+        "host",
+        default_source="web",
+        default_interactive=False,
+        stream_thinking=True,
+        task_manager_factory=factory,
+    )
+    factory.assert_called_once_with(default_source="web", default_interactive=False, stream_thinking=True)
+    assert service.task_manager is manager
+    assert service.chat._task_manager is manager
+
+
+@pytest.mark.asyncio
+async def test_service_shutdown_waits_for_non_chat_request(real_agent_config):
+    """An SQL/metadata request pins its service even when no chat task exists."""
+    import asyncio
+    from unittest.mock import MagicMock
+
+    service = DatusService(real_agent_config, "active-sql")
+    service._cli = MagicMock()
+    cli = service._cli
+    assert service.acquire_request()
+    assert service.has_active_tasks()
+    stopping = asyncio.create_task(service.shutdown())
+    await asyncio.sleep(0)
+    assert not stopping.done()
+    assert not service.acquire_request()
+    cli.close.assert_not_called()
+    service.release_request()
+    await asyncio.wait_for(stopping, timeout=2)
+    cli.close.assert_called_once()

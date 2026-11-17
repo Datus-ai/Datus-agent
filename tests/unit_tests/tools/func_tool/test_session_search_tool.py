@@ -135,3 +135,25 @@ class TestSessionSearchTool:
         result = tool.search_skill_usage("test-skill")
         assert result.success == 1
         assert result.result["total_matches"] == 1
+
+
+def test_hosted_history_follows_scope_and_subagent_relocation(tmp_path):
+    """Only the node's current session directory is searchable, including nested children."""
+    from types import SimpleNamespace
+
+    from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
+
+    tenant = tmp_path / "tenant"
+    nested = tenant / "parent"
+    nested.mkdir(parents=True)
+    _create_session_db(tmp_path / "legacy.db", "legacy", [{"role": "assistant", "content": "private-skill"}])
+    _create_session_db(tenant / "owned.db", "owned", [{"role": "assistant", "content": "private-skill"}])
+    _create_session_db(nested / "child.db", "child", [{"role": "assistant", "content": "private-skill"}])
+    host = SimpleNamespace(session_manager=SimpleNamespace(session_dir=str(tenant)), tools=[])
+    SkillCreatorAgenticNode._setup_session_search_tool(host)
+    tool = host._session_search_tool
+    assert tool.search_skill_usage("private-skill").result["total_sessions_scanned"] == 1
+    assert tool._resolve_sessions_dir() == str(tenant)
+    host.session_manager = SimpleNamespace(session_dir=str(nested))
+    assert tool._resolve_sessions_dir() == str(nested)
+    assert tool.search_skill_usage("private-skill").result["total_sessions_scanned"] == 1

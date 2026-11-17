@@ -267,6 +267,9 @@ class ModelInfo(BaseModel):
     name: Optional[str] = Field(None, description="Human-readable model name")
     context_length: Optional[int] = Field(None, description="Maximum context window in tokens")
     max_tokens: Optional[int] = Field(None, description="Maximum completion tokens")
+    supports_image_input: Optional[bool] = Field(
+        None, description="Explicit image input capability for this connection"
+    )
     pricing: Optional[ModelPricing] = Field(None, description="Per-token pricing, when available")
 
 

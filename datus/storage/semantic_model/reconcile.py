@@ -206,6 +206,10 @@ def _reconcile_datasource(
 
     stores = _DatasourceStores(agent_config, datasource)
     on_disk = [path.resolve(strict=False) for path in semantic_yaml_files(root / datasource)]
+    from datus.tools.semantic_tools.dosi.files import file_engine
+
+    for path in on_disk:
+        file_engine(path, agent_config, allow_invalid=True)
     digests = load_digests(agent_config, datasource)
     # Files edited behind the save path (agent tools, shell, git) show up as a
     # digest that no longer matches what was last projected.
@@ -306,10 +310,13 @@ def _declared_objects(yaml_path: str) -> Optional[tuple[Set[str], bool]]:
     import yaml
 
     try:
+        from datus.tools.semantic_tools.dosi.files import file_engine
+
+        file_engine(yaml_path, allow_invalid=True)
         doc = yaml.safe_load(Path(yaml_path).read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError):
         return None
-    models = doc.get("semantic_model") if isinstance(doc, dict) else None
+    models = [doc] if isinstance(doc, dict) and "datasets" in doc else None
     if not isinstance(models, list):
         return None
     metrics: Set[str] = set()

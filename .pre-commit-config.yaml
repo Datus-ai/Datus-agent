@@ -7,3 +7,11 @@ repos:
       - id: ruff
         args: ["--fix", "--exit-non-zero-on-fix"]
         exclude: ^mcp/
+  - repo: local
+    hooks:
+      - id: tool-capability-catalog
+        name: Generate tool capability catalog
+        entry: python datus/tools/registry/catalog_builder.py
+        language: system
+        files: ^datus/.*\.(py|json)$
+        pass_filenames: false

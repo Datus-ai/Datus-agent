@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.registry.contracts import tool_contract
 from datus.utils import mcp_decorators
 from datus.utils.mcp_decorators import (
     MCPToolConfig,
@@ -32,6 +33,7 @@ from datus.utils.mcp_decorators import (
 class TestMCPToolDecorator:
     def test_decorator_attaches_config(self):
         @mcp_tool()
+        @tool_contract(access="restricted", direct_call=False, category="tools")
         def my_tool(self, query: str) -> FuncToolResult:
             """Search something."""
 
@@ -41,6 +43,7 @@ class TestMCPToolDecorator:
 
     def test_decorator_with_availability_check(self):
         @mcp_tool(availability_check="has_feature")
+        @tool_contract(access="restricted", direct_call=False, category="tools")
         def my_tool(self, query: str) -> FuncToolResult:
             """Feature-gated tool."""
 
@@ -48,6 +51,7 @@ class TestMCPToolDecorator:
 
     def test_decorator_preserves_function(self):
         @mcp_tool()
+        @tool_contract(access="restricted", direct_call=False, category="tools")
         def list_tables(self, include_views: bool = True) -> FuncToolResult:
             """List all tables."""
 
@@ -62,12 +66,16 @@ class TestMCPToolDecorator:
 
 class TestGetMCPTools:
     def test_discovers_decorated_methods(self):
+        """Discover only declared MCP methods while preserving their registration metadata."""
+
         class MyTools:
             @mcp_tool()
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def tool_a(self, x: str):
                 """Tool A."""
 
             @mcp_tool(availability_check="has_x")
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def tool_b(self, y: int):
                 """Tool B."""
 
@@ -98,6 +106,7 @@ class TestMCPToolClassDecorator:
     def test_registers_class_in_global_registry(self):
         # Snapshot the real registry; ``get_tool_registry()`` returns a copy
         # so we must mutate the underlying module-level list to restore it.
+        """Register the declared MCP class and its availability configuration."""
         initial_registry = list(mcp_decorators._GLOBAL_TOOL_REGISTRY)
 
         try:
@@ -113,6 +122,7 @@ class TestMCPToolClassDecorator:
                     return cls()
 
                 @mcp_tool()
+                @tool_contract(access="restricted", direct_call=False, category="tools")
                 def do_something(self, q: str):
                     """Do something."""
 
@@ -277,6 +287,7 @@ class TestDynamicToolWrapper:
 
         class FakeTool:
             @mcp_tool()
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def my_method(self, query: str, top_n: int = 5) -> FuncToolResult:
                 """Search for items."""
                 return FuncToolResult(success=1, result=f"found:{query}:{top_n}")
@@ -304,6 +315,7 @@ class TestDynamicToolWrapper:
     async def test_wrapper_returns_error_when_unavailable(self):
         class FakeTool:
             @mcp_tool()
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def my_method(self, query: str) -> FuncToolResult:
                 """Tool."""
 
@@ -330,6 +342,7 @@ class TestDynamicToolWrapper:
 
         class FakeTool:
             @mcp_tool()
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def search(self, query_text: str, top_n: int = 5, include_views: bool = True) -> FuncToolResult:
                 """Search."""
 
@@ -357,6 +370,7 @@ class TestDynamicToolWrapper:
             has_schema = False
 
             @mcp_tool(availability_check="has_schema")
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def search_table(self, query: str) -> FuncToolResult:
                 """Search."""
 
@@ -388,8 +402,11 @@ class TestDynamicToolWrapper:
 class TestStaticToolWrapper:
     @pytest.mark.asyncio
     async def test_wrapper_calls_bound_method(self):
+        """Invoke the declared method on the bound MCP instance."""
+
         class FakeTool:
             @mcp_tool()
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def get_info(self) -> FuncToolResult:
                 """Get info."""
                 return FuncToolResult(success=1, result="info_data")
@@ -512,6 +529,7 @@ class _FakeSemanticTools:
         return {"revenue": ["orders"]}
 
     @mcp_tool()
+    @tool_contract(access="restricted", direct_call=False, category="tools")
     def query_metrics(self, metrics: list, where: str = "") -> FuncToolResult:
         """Query metrics."""
         self.calls.append({"metrics": metrics, "where": where})

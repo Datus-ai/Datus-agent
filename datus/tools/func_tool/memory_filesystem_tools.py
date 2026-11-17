@@ -24,6 +24,7 @@ from wcmatch import glob as wc_glob
 
 from datus.tools import BaseTool
 from datus.tools.func_tool import FuncToolResult
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -93,6 +94,7 @@ class MemoryFilesystemFuncTool(BaseTool):
 
     # ------------------------------------------------------------- read/walk
 
+    @tool_contract(access="read", direct_call=True)
     def read_file(self, path: str, offset: int = 0, limit: int = 0) -> FuncToolResult:
         """
         Read the contents of a file from the in-memory bundle.
@@ -149,6 +151,7 @@ class MemoryFilesystemFuncTool(BaseTool):
             logger.error(f"MemoryFilesystemFuncTool.read_file failed for {path}: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
+    @tool_contract(access="read", direct_call=True)
     def glob(self, pattern: str, path: str = ".") -> FuncToolResult:
         """
         Find files matching a glob pattern within the bundle.
@@ -199,6 +202,7 @@ class MemoryFilesystemFuncTool(BaseTool):
             logger.exception(f"MemoryFilesystemFuncTool.glob failed for {pattern} in {path}")
             return FuncToolResult(success=0, error=str(exc))
 
+    @tool_contract(access="read", direct_call=True)
     def grep(
         self,
         pattern: str,

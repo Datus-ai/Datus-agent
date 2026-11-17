@@ -32,3 +32,9 @@ Apache Ossie ontologies live in the flat, project-wide `subject/ontology/` direc
 Agent uses Dosi to discover semantic models, metrics, and metric-specific dimensions; compile and execute metric queries; validate exact model artifacts; and run native attribution. The `semantic_modeling` workflow uses the native authoring contract and validation. Explorer reads, writes, and deletes metric nodes in OSI YAML files, then synchronizes the affected Knowledge Base entries. The external Dosi CLI, REST server, and MCP server are outside Agent's integration.
 
 Each model file has its own engine instance. The runtime refreshes it after the model file changes. Dosi handles SQL dialects and query planning; Agent supplies the active datasource connection and keeps subject paths in its Knowledge Base.
+
+## Dashboard Metric Queries
+
+IDE previews compile saved metric queries against the project's current Semantic Model. Editing a metric or upgrading its file format does not require regenerating the dashboard query.
+
+Published dashboards compile against the model snapshot saved with the artifact. Project model edits do not change their calculation definitions. Dosi can upgrade a frozen model's file format in the temporary execution directory without invalidating the query.

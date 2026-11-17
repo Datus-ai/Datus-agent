@@ -201,6 +201,7 @@ class DatasourceCommands:
         payload["default"] = old_config.default
         new_config = DbConfig.filter_kwargs(DbConfig, payload)
         new_config.default = old_config.default
+        new_config.datasource_id = old_config.datasource_id
         self.cli.agent_config.services.datasources[name] = new_config
         if self._save():
             print_success(self.console, f"Datasource '{name}' updated successfully.", symbol=True)

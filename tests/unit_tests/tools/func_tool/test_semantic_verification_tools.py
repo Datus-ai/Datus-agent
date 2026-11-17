@@ -67,7 +67,7 @@ def setup_verifier(tmp_path):
         return FuncToolResult(result=f"result_id: {metric}\nrows: {len(rows)}\n\n" + "\n".join(preview))
 
     artifact = tmp_path / "model.yml"
-    artifact.write_text("semantic_model: []")
+    artifact.write_text("name: model\ndatasets: []\n")
 
     def binding(metric):
         snapshot = GenerationEvidence._semantic_artifact_state(artifact)
@@ -202,7 +202,7 @@ def test_latest_check_is_reported_and_model_changes_invalidate_its_result(setup_
     state.verifier.verify_semantic_outputs([check()])
     summary = state.evidence.business_verification_summary(state.artifact)
     assert len(summary) == 1 and summary[0]["status"] == "passed"
-    state.artifact.write_text("semantic_model: [{name: changed}]")
+    state.artifact.write_text("name: changed\n")
     assert state.evidence.business_verification_summary(state.artifact)[0]["status"] == "unverified"
 
 
@@ -214,7 +214,7 @@ def test_changes_during_execution_cannot_publish_current_success(setup_verifier,
     def changed(**kwargs):
         response = original(**kwargs)
         if change == "model":
-            state.artifact.write_text("semantic_model: [{name: changed}]")
+            state.artifact.write_text("name: changed\n")
         else:
             state.evidence.reset()
         return response

@@ -311,6 +311,13 @@ class TestDatabaseFormatters:
         )
         assert out == "5 tables"
 
+    @pytest.mark.parametrize(
+        "name,noun", [("list_tables", "tables"), ("list_databases", "dbs"), ("list_schemas", "schemas")]
+    )
+    def test_native_catalog_page_summary(self, name, noun):
+        page = {"items": [{"name": "a"}, {"name": "b"}], "total": 2000, "has_more": True}
+        assert _summarize(name, {"success": 1, "result": page}) == f"2/2000 {noun}+"
+
     def test_list_databases(self):
         assert _summarize("list_databases", {"success": 1, "result": ["a", "b"]}) == "2 dbs"
 

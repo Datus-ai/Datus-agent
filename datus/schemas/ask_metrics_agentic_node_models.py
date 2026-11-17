@@ -19,7 +19,7 @@ class AskMetricsNodeInput(AtContextInput):
     catalog: Optional[str] = Field(None, description="Database catalog")
     database: Optional[str] = Field(None, description="Database name")
     db_schema: Optional[str] = Field(None, description="Database schema")
-    max_turns: int = Field(default=12, description="Maximum turns for quick metric answering")
+    max_turns: int = Field(default=100, description="Maximum turns for quick metric answering")
     prompt_version: Optional[str] = Field(None, description="Prompt template version override")
     reference_date: Optional[str] = Field(None, description="Reference date for relative time expressions (YYYY-MM-DD)")
 

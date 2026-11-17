@@ -275,6 +275,9 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
             )
             continue
         try:
+            from datus.tools.semantic_tools.dosi.files import file_engine
+
+            file_engine(absolute_path, agent_config, allow_invalid=True)
             content = absolute_path.read_bytes()
             document = yaml.safe_load(content.decode("utf-8"))
         except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
@@ -287,39 +290,17 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
                 }
             )
             continue
-        models = document.get("semantic_model") if isinstance(document, dict) else None
-        if not isinstance(models, list) or not models:
+        if not isinstance(document, dict) or "datasets" not in document:
             issues.append(
                 {
                     "code": "invalid_semantic_model_document",
                     "semantic_model_file": semantic_model_file,
                     "absolute_path": str(path),
-                    "error": "YAML must contain a non-empty semantic_model list",
+                    "error": "YAML must contain one root model with name and datasets",
                 }
             )
             continue
-        if len(models) != 1:
-            issues.append(
-                {
-                    "code": "multiple_models_in_file",
-                    "semantic_model_file": semantic_model_file,
-                    "absolute_path": str(path),
-                    "error": "Metric authoring requires exactly one semantic model per YAML file",
-                }
-            )
-            continue
-        model = models[0]
-        if not isinstance(model, dict):
-            issues.append(
-                {
-                    "code": "invalid_semantic_model_entry",
-                    "semantic_model_file": semantic_model_file,
-                    "absolute_path": str(path),
-                    "model_index": 0,
-                    "error": "semantic_model entries must be YAML objects",
-                }
-            )
-            continue
+        model = document
         model_name = str(model.get("name") or "").strip()
         if not model_name:
             issues.append(

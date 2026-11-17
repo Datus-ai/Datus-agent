@@ -61,54 +61,53 @@ The following dataset is from the model generated against Datus's `duckdb-demo.d
 
 ```yaml
 version: 0.2.0.dev0
-semantic_model:
+name: bank_failures
+datasets:
   - name: bank_failures
-    datasets:
-      - name: bank_failures
-        source: main.bank_failures
-        description: Bank failure event fact table; each row records one failed bank.
-        ai_context: Use this dataset to analyze bank failures by date and state.
-        fields:
-          - name: bank
-            expression:
-              dialects:
-                - dialect: DUCKDB
-                  expression: Bank
-            description: Name of the failed bank
-          - name: state
-            expression:
-              dialects:
-                - dialect: DUCKDB
-                  expression: State
-            description: US state code for the failed bank
-          - name: date
-            expression:
-              dialects:
-                - dialect: DUCKDB
-                  expression: Date
-            dimension:
-              is_time: true
-            description: Bank failure date
-            custom_extensions:
-              - vendor_name: DATUS
-                data: '{"v":"1.4","time_granularity":"day"}'
-          - name: assets_million
-            expression:
-              dialects:
-                - dialect: DUCKDB
-                  expression: '"Assets ($mil.)"'
-            label: Assets ($mil.)
-            description: Assets at failure, in millions of US dollars
+    source: main.bank_failures
+    description: Bank failure event fact table; each row records one failed bank.
+    ai_context: Use this dataset to analyze bank failures by date and state.
+    fields:
+      - name: bank
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: Bank
+        description: Name of the failed bank
+      - name: state
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: State
+        description: US state code for the failed bank
+      - name: date
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: Date
+        dimension:
+          is_time: true
+        description: Bank failure date
         custom_extensions:
           - vendor_name: DATUS
-            data: '{"v":"1.4","time_dimension":"date"}'
-    relationships: []
-    metrics: []
+            data: '{"v":"1.4","time_granularity":"day"}'
+      - name: assets_million
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: '"Assets ($mil.)"'
+        label: Assets ($mil.)
+        description: Assets at failure, in millions of US dollars
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"v":"1.4","time_dimension":"date"}'
+relationships: []
+metrics: []
 ```
 
 Important rules:
 
-- The root keys are `version` and `semantic_model`; `semantic_model` is a list.
+- The model is defined at the root, with `version`, `name`, and `datasets`.
 - A physical dataset uses a qualified table name in `source`. A reusable query may be used only when the query result itself is a stable business dataset.
 - Expressions use `expression.dialects[]`. Use the dialect selected for the active datasource, such as `DUCKDB`, `POSTGRESQL`, `SNOWFLAKE`, or `STARROCKS`.
 - `primary_key` and `unique_keys` describe verified keys. Datus does not infer a key from a column name or a single query.

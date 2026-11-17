@@ -85,3 +85,11 @@ class InsertMessageData(BaseModel):
 
     session_id: str = Field(..., description="Session id the message was queued for")
     queued_count: int = Field(..., description="Number of pending items in the queue after this push")
+
+
+class UpdatePermissionModeInput(BaseModel):
+    """Change the permission profile of one specific running turn."""
+
+    session_id: str = Field(..., min_length=1)
+    run_id: str = Field(..., min_length=1)
+    permission_mode: Literal["normal", "auto", "dangerous"]

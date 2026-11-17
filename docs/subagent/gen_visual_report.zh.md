@@ -101,13 +101,13 @@ agent:
   agentic_nodes:
     gen_visual_report:
       model: claude              # 可选，默认使用当前配置的模型
-      max_turns: 30              # 可选，默认 30
+      max_turns: 100              # 可选，默认 100
 ```
 
 | 参数 | 必填 | 说明 | 默认值 |
 |------|------|------|--------|
 | `model` | 否 | 使用的 LLM 模型 | 当前配置的默认模型 |
-| `max_turns` | 否 | agent 最多迭代多少轮后强制结束 | 30 |
+| `max_turns` | 否 | agent 最多迭代多少轮后强制结束 | 100 |
 
 ## 怎么让 prompt 更有效
 

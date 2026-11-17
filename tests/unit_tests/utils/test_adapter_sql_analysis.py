@@ -209,7 +209,7 @@ def test_unresolved_namespaces_consider_only_matching_scope_patterns(
 
 @pytest.mark.parametrize(
     "require_unmodified,error",
-    [(False, "rewriting is unsupported"), (True, "rewrote the reference SQL")],
+    [(False, "SQL analysis unsupported"), (True, "rewrote the reference SQL")],
 )
 def test_limited_analyzer_cannot_execute_policy_generated_sql(native_connector, require_unmodified, error):
     decision = SimpleNamespace(allowed=True, sql="SELECT 1 LIMIT 1", applied_policies=[])

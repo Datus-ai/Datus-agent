@@ -3,11 +3,37 @@ import pytest
 from datus.utils.message_utils import (
     SYSTEM_REMINDER_CLOSE,
     SYSTEM_REMINDER_OPEN,
+    assistant_text_blocks,
     build_structured_content,
     extract_enhanced_context,
     extract_user_input,
     is_structured_content,
+    merge_assistant_response,
 )
+
+
+@pytest.mark.parametrize("block_type", ["text", "output_text"])
+def test_assistant_blocks_keep_provider_text_and_skip_empty_or_nontext_parts(block_type):
+    content = [
+        {"type": block_type, "text": "first"},
+        {"type": "thinking", "thinking": "private reasoning"},
+        {"type": block_type, "text": ""},
+        {"type": block_type, "text": " second\n"},
+    ]
+    assert assistant_text_blocks(content) == ["first", " second\n"]
+
+
+def test_result_replacement_retains_sibling_text_and_old_whole_row_sources():
+    blocks = ["Before.", "\n result envelope \n", "After."]
+    rendered = [{"type": "markdown", "payload": {"content": "Rendered result"}}]
+    assert merge_assistant_response(blocks, "result envelope", rendered) == [
+        {"type": "markdown", "payload": {"content": "Before."}},
+        *rendered,
+        {"type": "markdown", "payload": {"content": "After."}},
+    ]
+    assert merge_assistant_response(blocks, "\n".join(blocks), rendered) == rendered
+    assert merge_assistant_response(["An example: result envelope"], "result envelope", rendered) is None
+
 
 # ---------------------------------------------------------------------------
 # build_structured_content

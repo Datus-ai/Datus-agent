@@ -28,6 +28,7 @@ class TestSkillCreatorRegistration:
         desc = BUILTIN_SUBAGENT_DESCRIPTIONS["gen_skill"]
         assert "skill" in desc.lower()
         assert "create" in desc.lower()
+        assert "review" in desc.lower()
 
     def test_gen_skill_in_sys_sub_agents(self):
         """gen_skill should be in SYS_SUB_AGENTS constant."""

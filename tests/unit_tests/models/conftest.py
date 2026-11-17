@@ -30,6 +30,18 @@ from openai.types.responses import (
 from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails
 
 
+@pytest.fixture(autouse=True)
+def _isolate_model_catalog(monkeypatch, tmp_path):
+    """Model unit tests must neither fetch public metadata nor read a user's cache."""
+    from datus.cli import provider_model_catalog as catalog
+    from datus.models import openai_compatible
+
+    monkeypatch.setattr(catalog, "_cache_file_path", lambda: tmp_path / "cache" / catalog.CACHE_FILE_NAME)
+    monkeypatch.setattr(catalog, "fetch_openrouter_models", lambda **kwargs: None)
+    monkeypatch.setattr(catalog, "_MODEL_DETAILS_CACHE", None)
+    monkeypatch.setattr(openai_compatible, "_MODEL_SPECS_CACHE", None)
+
+
 def _response(output: List[Any], response_id: str, usage: Optional[ResponseUsage] = None) -> Response:
     return Response(
         id=response_id,

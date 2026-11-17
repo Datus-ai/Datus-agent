@@ -30,6 +30,7 @@ from datus.tools.middleware.tool_middleware import (
     wrap_tool_with_transformers,
 )
 from datus.tools.registry.tool_registry import ToolRegistry
+from tests.helpers.tool_definitions import registered_test_tool
 
 
 def _make_tool(name="execute_sql", record=None):
@@ -40,7 +41,7 @@ def _make_tool(name="execute_sql", record=None):
             record.append(args_str)
         return {"success": 1, "result": f"ran:{args_str}", "error": None}
 
-    return FunctionTool(
+    return registered_test_tool(
         name=name,
         description="test tool",
         params_json_schema={"type": "object", "properties": {"sql": {"type": "string"}}},
@@ -303,7 +304,7 @@ def _make_write_back_tool(record=None, raises=False, name="execute_sql"):
             raise RuntimeError("boom")
         return {"success": 1, "result": None, "error": None}
 
-    return FunctionTool(
+    return registered_test_tool(
         name=name,
         description="test tool",
         params_json_schema={"type": "object", "properties": {"sql": {"type": "string"}}},

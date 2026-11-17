@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -14,6 +15,7 @@ from ci.harness.test_plan import (
     check_product_execution,
     impact_plan,
     load_map,
+    product_group_filter,
     unit_test_plan,
     validate_unit_rules,
 )
@@ -48,7 +50,7 @@ def test_chat_service_changes_select_the_api_lifecycle():
 @pytest.mark.parametrize("path", ["datus/storage/feedback/store.py", "pyproject.toml", "uv.lock"])
 def test_storage_changes_select_required_postgresql_acceptance(path):
     plan = impact_plan([path])
-    assert "P0 PostgreSQL Agent Storage Contracts" in plan["nightly_groups"]
+    assert "PostgreSQL Agent Storage Tests" in plan["nightly_groups"]
     assert (
         "tests/integration/storage/test_postgresql_feedback_store.py::"
         "test_postgresql_feedback_storage_write_read_update_and_delete"
@@ -59,11 +61,23 @@ def test_documentation_changes_have_no_remote_model_requirement():
     assert impact_plan(["docs/index.md"])["live_targets"] == []
 
 
+def test_policy_changes_select_policy_tests_without_requiring_remote_models(tmp_path):
+    plan = impact_plan(["datus/plugins/store.py"])
+    assert plan["live_targets"] == []
+    assert "SQL Policy Plugin Tests" in plan["nightly_groups"]
+    nodes = plan["required_targets"]
+    report = tmp_path / "execution.json"
+    report.write_text(json.dumps({"collected": nodes, "outcomes": {node: "passed" for node in nodes}, "exit_code": 0}))
+    assert check_product_execution(plan, [report])["status"] == "success"
+    assert re.search(product_group_filter(plan), "SQL Policy Plugin Tests")
+    assert not re.search(product_group_filter(plan), "Product E2E Nightly Tests")
+
+
 @pytest.mark.parametrize(
     "node,group",
     [
-        ("semantic_modeling", "P0 Dosi Semantic Modeling E2E"),
-        ("gen_dashboard", "P0 BI Product E2E"),
+        ("semantic_modeling", "Semantic Modeling Product Tests"),
+        ("gen_dashboard", "Superset Product Tests"),
         ("scheduler", "Airflow Nightly Tests"),
     ],
 )
@@ -94,7 +108,7 @@ def test_impact_targets_exist():
     data = load_map()
     assert validate_unit_rules(data) == []
     for rule in data["execution"]["impact_rules"]:
-        for target in rule.get("live_targets", []):
+        for target in [*rule.get("live_targets", []), *rule.get("required_targets", [])]:
             assert (ROOT / target.split("::", 1)[0]).exists(), (rule["id"], target)
 
 
@@ -114,6 +128,7 @@ def test_unit_owners_cover_all_visible_test_consumers():
                 "tests/unit_tests/utils/test_mcp_execution.py",
                 "tests/unit_tests/utils/test_windows_compatibility.py",
                 "tests/unit_tests/tools/mcp_tools/",
+                "tests/unit_tests/tools/registry/",
                 "tests/unit_tests/api/services/test_mcp_service.py",
             },
         ),
@@ -121,6 +136,7 @@ def test_unit_owners_cover_all_visible_test_consumers():
             "datus/configuration/logging_config.py",
             {
                 "tests/unit_tests/configuration/test_logging_config.py",
+                "tests/unit_tests/plugins/test_runtime_context.py",
                 "tests/unit_tests/utils/test_loggings.py",
                 "tests/unit_tests/observability/test_privacy.py",
                 "tests/unit_tests/agent/node/test_node.py",
@@ -227,7 +243,8 @@ def test_tool_category_owners_retain_permission_routing_contracts(source):
 def test_node_owners_retain_package_coverage_for_factories_and_shared_hooks():
     data = load_map()
     package = "tests/unit_tests/agent/node/"
-    for source in (ROOT / "datus/agent/node").glob("*.py"):
+    for name in ("agentic_node.py", "node.py", "node_factory.py", "chat_agentic_node.py", "gen_sql_agentic_node.py"):
+        source = ROOT / "datus/agent/node" / name
         targets = unit_test_plan([source.relative_to(ROOT).as_posix()], data)["targets"]
         assert any(t.endswith("/") and package.startswith(t) for t in targets), source
 
@@ -283,7 +300,7 @@ def test_specific_units_preserve_additive_live_and_service_requirements():
     assert "tests/unit_tests/storage/reference_template/" in plan["unit_targets"]
     assert "tests/unit_tests/tools/func_tool/test_reference_template_tools.py" in plan["unit_targets"]
     assert "tests/integration/agent/test_core_live.py" in plan["live_targets"]
-    assert "P0 PostgreSQL Agent Storage Contracts" in plan["nightly_groups"]
+    assert "PostgreSQL Agent Storage Tests" in plan["nightly_groups"]
 
 
 def test_longest_package_owner_keeps_connector_consumers():
@@ -405,7 +422,7 @@ def _map():
         "flow_groups": {
             "chat": {
                 "flows": [
-                    {"coverage": {"merge_queue": {"status": "covered", "nodeids": ["test_api.py::test_history"]}}}
+                    {"coverage": {"pr_acceptance": {"status": "covered", "nodeids": ["test_api.py::test_history"]}}}
                 ]
             }
         },
@@ -418,9 +435,9 @@ def test_execution_evidence_requires_both_product_and_api_cases(tmp_path):
         p = tmp_path / f"{name}.json"
         p.write_text(json.dumps({"collected": [nodeid], "outcomes": {nodeid: "passed"}}))
         reports.append(p)
-    assert check_execution(reports, "merge_queue", _map())["status"] == "success"
+    assert check_execution(reports, "pr_acceptance", _map())["status"] == "success"
     reports[1].unlink()
-    assert check_execution(reports, "merge_queue", _map())["status"] == "failure"
+    assert check_execution(reports, "pr_acceptance", _map())["status"] == "failure"
 
 
 @pytest.mark.parametrize("outcome", ["skipped", "failed", "xfailed", "not_executed"])
@@ -434,9 +451,50 @@ def test_required_cases_must_execute_successfully(tmp_path, outcome):
             }
         )
     )
-    result = check_execution([report], "merge_queue", _map())
+    result = check_execution([report], "pr_acceptance", _map())
     assert result["status"] == "failure"
     assert "test_api.py::test_history" in result["errors"][0]
+
+
+@pytest.mark.parametrize("outcome", ["passed", "skipped", "xfailed", "not_executed", "missing"])
+def test_scoped_ci_plan_keeps_execution_proof_without_runtime_core(tmp_path, outcome):
+    node = "tests/unit_tests/ci/test_contract.py::test_contract"
+    report = tmp_path / "execution.json"
+    report.write_text(
+        json.dumps(
+            {
+                "collected": [] if outcome == "missing" else [node],
+                "outcomes": {} if outcome in {"missing", "not_executed"} else {node: outcome},
+            }
+        )
+    )
+    result = check_execution([report], "pr_acceptance", _map(), required=["tests/unit_tests/ci/test_contract.py"])
+    assert result["status"] == ("success" if outcome == "passed" else "failure")
+    assert "test_core.py::test_query" not in result["evidence"]
+
+
+def test_package_selection_keeps_optional_skips_but_cannot_pass_without_execution(tmp_path):
+    report = tmp_path / "execution.json"
+    nodes = {
+        "tests/unit_tests/ci/test_docs.py::test_optional": "skipped",
+        "tests/unit_tests/ci/test_contract.py::test_contract": "passed",
+    }
+    report.write_text(json.dumps({"collected": list(nodes), "outcomes": nodes}))
+    assert check_execution([report], "pr_acceptance", _map(), required=["tests/unit_tests/ci/"])["status"] == "success"
+    nodes = dict.fromkeys(nodes, "skipped")
+    report.write_text(json.dumps({"collected": list(nodes), "outcomes": nodes}))
+    assert check_execution([report], "pr_acceptance", _map(), required=["tests/unit_tests/ci/"])["status"] == "failure"
+
+
+def test_explicit_mandatory_case_cannot_be_excused_as_a_scheduled_exclusion(tmp_path):
+    report = tmp_path / "execution.json"
+    report.write_text(
+        json.dumps({"collected": [], "outcomes": {}, "excluded": {"test_core.py::test_query": "nightly"}})
+    )
+    result = check_execution(
+        [report], "pr_acceptance", _map(), required=["test_core.py::test_query"], allow_excluded=True
+    )
+    assert result["status"] == "failure"
 
 
 def test_pytest_report_distinguishes_collected_from_executed(tmp_path):

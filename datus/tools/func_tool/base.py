@@ -11,11 +11,31 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, TypeVar
 import json_repair
 from agents import FunctionTool, function_tool
 from agents.function_schema import function_schema
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_serializer
 
+from datus.tools.registry.contracts import definition_from_callable, registered_function_tool
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+DATA_TOOL_TIMEOUT_SECONDS = 300.0
+
+
+class _DuplicateJSONKeyError(ValueError):
+    pass
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateJSONKeyError(f"Duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
+def load_tool_json(value: str) -> Any:
+    """Decode JSON tool input without silently replacing duplicate object keys."""
+    return json.loads(value, object_pairs_hook=_unique_json_object)
 
 
 def normalize_null(value):
@@ -51,7 +71,9 @@ def normalize_tool_args(arguments: dict, params_schema: dict) -> dict:
             normalized[name] = value.casefold() == "true"
         elif kinds == {"array"}:
             try:
-                decoded = json.loads(value)
+                decoded = load_tool_json(value)
+            except _DuplicateJSONKeyError:
+                raise
             except (ValueError, RecursionError):
                 continue
             if isinstance(decoded, list):
@@ -71,7 +93,8 @@ def parse_tool_args(
     a valid JSON object so it can safely replace the raw tool-call arguments
     before the Agents SDK replays or persists the call. A repaired call returns
     an error so the model retries with valid arguments instead of executing
-    parameters that permission hooks did not inspect.
+    parameters that permission hooks did not inspect. Duplicate keys are rejected
+    without choosing a value; their replay arguments are replaced with ``{}``.
     """
     if not args_str:
         return {}, "{}", None
@@ -83,7 +106,14 @@ def parse_tool_args(
         if not stripped:
             return {}, "{}", None
         try:
-            parsed = json.loads(stripped)
+            parsed = load_tool_json(stripped)
+        except _DuplicateJSONKeyError as exc:
+            return (
+                {},
+                "{}",
+                f"{exc} in arguments for tool '{tool_name}'. "
+                "The tool was not executed. Retry with one complete JSON object using unique keys.",
+            )
         except (json.JSONDecodeError, TypeError) as exc:
             original_error = exc
             parsed = None
@@ -133,7 +163,15 @@ def parse_tool_args(
         args_str if isinstance(args_str, str) else json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
     )
     if params_schema is not None:
-        normalized = normalize_tool_args(parsed, params_schema)
+        try:
+            normalized = normalize_tool_args(parsed, params_schema)
+        except _DuplicateJSONKeyError as exc:
+            return (
+                {},
+                "{}",
+                f"{exc} in arguments for tool '{tool_name}'. "
+                "The tool was not executed. Retry with one complete JSON object using unique keys.",
+            )
         if normalized != parsed:
             parsed = normalized
             canonical_json = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
@@ -163,6 +201,16 @@ class FuncToolResult(BaseModel):
         default=None, description="Error message: field is not empty when success=0", init=True
     )
     result: Optional[Any] = Field(default=None, description="Result of the execution", init=True)
+    execution_context: Optional[Dict[str, str]] = Field(
+        default=None, description="Effective non-secret database coordinates"
+    )
+
+    @model_serializer(mode="wrap")
+    def _serialize_context(self, handler):
+        result = handler(self)
+        if self.execution_context is None:
+            result.pop("execution_context", None)
+        return result
 
 
 class FuncToolListResult(BaseModel):
@@ -254,6 +302,7 @@ def trans_to_function_tool(
         excluded_params: Optional parameter names to remove from the exposed JSON schema.
             Use this for dialect-specific parameters that the current tool instance does not support.
     """
+    definition = definition_from_callable(bound_method)
     if strict_mode is None:
         strict_mode = getattr(bound_method, "__datus_tool_strict_mode__", True)
     tool_template = function_tool(bound_method, strict_mode=strict_mode)
@@ -358,6 +407,9 @@ def trans_to_function_tool(
                     "error": f"Invalid arguments for '{method_to_call.__name__}': {detail}. The tool was not executed.",
                     "result": {"argument_errors": errors},
                 }
+            default_page_size = getattr(method_to_call, "__datus_default_page_size__", None)
+            if default_page_size is not None and getattr(validated, "page_size", None) is None:
+                validated.page_size = default_page_size
             positional, kwargs = argument_schema.to_call_args(validated)
             kwargs = {k: v for k, v in kwargs.items() if k not in excluded_param_set}
             if inspect.iscoroutinefunction(method_to_call):
@@ -375,19 +427,96 @@ def trans_to_function_tool(
                 result = await asyncio.to_thread(method_to_call, *positional, **kwargs)
             if isinstance(result, FuncToolResult):
                 result = result.model_dump(mode="json")
-            from datus.utils.tool_result_store import ACTIVE_RESULT_STORE
+            from datus.utils.bounded_tool_output import DATA_TOOLS, bound_data_tool_result
 
-            store = ACTIVE_RESULT_STORE.get()
-            call_id = getattr(tool_ctx, "tool_call_id", None)
-            if store is not None and isinstance(call_id, str):
-                store.register(call_id, result)
+            if method_to_call.__name__ in DATA_TOOLS:
+                result = bound_data_tool_result(result)
             return result
 
         return final_invoker
 
     async_invoker = create_async_invoker(bound_method)
+    from datus.utils.bounded_tool_output import DATA_TOOLS, bound_data_tool_result
 
-    final_tool = FunctionTool(
+    if bound_method.__name__ in DATA_TOOLS:
+        result_invoker = async_invoker
+
+        async def bounded_result_invoker(context, arguments):
+            # Include argument-validation returns and unexpected exceptions,
+            # which never reach the successful-execution result boundary above.
+            try:
+                result = await result_invoker(context, arguments)
+            except Exception as exc:
+                result = {"success": 0, "error": str(exc), "result": None}
+            return bound_data_tool_result(result)
+
+        async_invoker = bounded_result_invoker
+
+    if bound_method.__name__ == "export_query":
+        import threading
+
+        from datus.tools.db_tools.query_spool import ACTIVE_BULK_CANCEL, ACTIVE_EXPORT_SQL_APPROVAL, data_tool_slot
+
+        raw_invoker = async_invoker
+        pending = set()
+
+        def completed(task):
+            pending.discard(task)
+            if not task.cancelled():
+                task.exception()
+
+        async def bounded_invoker(context, arguments):
+            cancelled = threading.Event()
+            token = ACTIVE_BULK_CANCEL.set(cancelled)
+            approval = getattr(context, "_datus_export_sql_approval", None)
+            approval_token = ACTIVE_EXPORT_SQL_APPROVAL.set(approval if isinstance(approval, tuple) else None)
+            started = False
+
+            async def run_in_slot():
+                nonlocal started
+                async with data_tool_slot():
+                    started = True
+                    return await raw_invoker(context, arguments)
+
+            task = asyncio.create_task(run_in_slot())
+            pending.add(task)
+            task.add_done_callback(completed)
+            try:
+                async with asyncio.timeout(DATA_TOOL_TIMEOUT_SECONDS):
+                    # Keep the slot until the actual worker exits. Cancelling
+                    # to_thread only stops waiting; releasing here would let
+                    # repeated timeouts accumulate blocked worker threads.
+                    return bound_data_tool_result(await asyncio.shield(task))
+            except TimeoutError:
+                cancelled.set()
+                if context is not None:
+                    context._datus_tool_status = "timeout"
+                return {
+                    "success": 0,
+                    "error": (
+                        "Operation timed out. Database execution may still be running; reconcile before retrying."
+                        if started
+                        else "Timed out waiting for a bulk operation slot; the operation was not executed."
+                    ),
+                    "result": {
+                        "complete": False,
+                        "write_outcome": "unknown" if started else "not_started",
+                        "retryable": not started,
+                    },
+                }
+            except Exception as exc:
+                return bound_data_tool_result({"success": 0, "error": str(exc), "result": None})
+            finally:
+                cancelled.set()
+                if not started:
+                    task.cancel()
+                ACTIVE_BULK_CANCEL.reset(token)
+                ACTIVE_EXPORT_SQL_APPROVAL.reset(approval_token)
+
+        async_invoker = bounded_invoker
+
+    final_tool = registered_function_tool(
+        definition=definition,
         name=tool_template.name,
         description=tool_template.description,
         params_json_schema=corrected_schema,

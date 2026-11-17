@@ -38,7 +38,7 @@ class GenDashboardAgenticNode(DeliverableAgenticNode):
     ACTION_TYPE: ClassVar[str] = "gen_dashboard_response"
     result_class = GenDashboardNodeResult
     PROMPT_TEMPLATE: ClassVar[str] = "gen_dashboard_system"
-    DEFAULT_MAX_TURNS: ClassVar[int] = 50
+    DEFAULT_MAX_TURNS: ClassVar[int] = 100
     # Dashboard skills are injected dynamically by ``_setup_dashboard_skills``
     # based on the configured BI platform — leave ``DEFAULT_SKILLS`` empty so
     # the base-class fallback does not over-expose unrelated platforms.
@@ -274,8 +274,9 @@ class GenDashboardAgenticNode(DeliverableAgenticNode):
         *,
         error: str,
         action_history_manager: ActionHistoryManager,
+        action_start: int = 0,
     ) -> GenDashboardNodeResult:
-        partial = self._collect_created_resources(action_history_manager)
+        partial = self._collect_created_resources(action_history_manager, start=action_start)
         return GenDashboardNodeResult(
             success=False,
             error=error,
@@ -287,7 +288,7 @@ class GenDashboardAgenticNode(DeliverableAgenticNode):
     # ── partial-resource collection (used on error) ───────────────────
 
     @staticmethod
-    def _collect_created_resources(action_history_manager: ActionHistoryManager) -> dict:
+    def _collect_created_resources(action_history_manager: ActionHistoryManager, start: int = 0) -> dict:
         """Scan action history for resources created before a failure.
 
         Returns a dict summarising dashboards, charts, and datasets that were
@@ -300,7 +301,7 @@ class GenDashboardAgenticNode(DeliverableAgenticNode):
             "create_dataset": "datasets",
         }
 
-        for action in action_history_manager.get_actions():
+        for action in action_history_manager.get_actions_since(start):
             if action.status != ActionStatus.SUCCESS:
                 continue
             if action.action_type not in resource_tools:

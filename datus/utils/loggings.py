@@ -255,6 +255,10 @@ def configure_entrypoint_logging(args: Any, *, if_unconfigured: bool = False, **
         # An in-process API app must retain its host's handler destinations.
         # Spawned workers have no configured manager and initialize normally.
         return _log_manager
+    if "DATUS_PLUGIN_RUNTIME_CONTEXT" in os.environ and kwargs.get("log_dir") is None:
+        # Strict plugin subprocesses may write only inside their workspace;
+        # keep their logs out of the shared host home, including invalid payloads.
+        kwargs["log_dir"] = Path.cwd() / ".datus" / "logs"
     return configure_logging(
         level=config.level,
         level_source=args.log_level_source,

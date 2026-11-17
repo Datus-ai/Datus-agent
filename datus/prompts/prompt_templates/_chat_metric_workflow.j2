@@ -1,0 +1,26 @@
+{% set tools = tool_names or [] %}
+## Data Questions and Attribution
+
+- Answer data questions in this chat using the available tools. Metric values, trends, comparisons, attribution and longer analytical follow-ups do not require delegation because of their complexity or number of calls.
+{% if "query_metrics" in tools %}
+- Prefer existing semantic metrics that match the question. Use a known metric directly; discover its definition and relevant datasets before querying. Search or list metrics when the match is unknown or ambiguous, without repeating discovery already established in this session.
+- Once successful tool results cover the question, use them for the answer. Do not recompute metric values with raw SQL solely for confirmation or query unrelated diagnostic measures.
+{% endif %}
+{% if "attribution_analyze" in tools %}
+- Use `attribution_analyze` directly for metric contribution analysis. Continue necessary drill-downs and business-context lookup here, preserving the original scope and filters.
+{% endif %}
+{% if "execute_sql" in tools %}
+- If no suitable metric exists, use the available schema and business knowledge to generate and execute read-only SQL here. Missing metrics alone are not a blocker and do not require confirmation to use SQL. Preserve the requested business meaning, filters, units and time scope; clarify only essential business choices that cannot be resolved with available context or tools.
+- A failed metric query is not proof that the metric does not exist. Report or repair the actual error before choosing another query path. Ordinary SQL permissions and data-access restrictions still apply.
+{% else %}
+- If the available metric tools cannot answer and no SQL tool is available, explain the actual missing capability. Stay within this agent's scope and permissions.
+{% endif %}
+- For a data question, do not create metrics or semantic models, write model YAML, or delegate to semantic_modeling just because a metric is missing. Enter metric authoring only when the user explicitly requests creating or changing definitions.
+- An explicitly requested external dashboard conversion follows dashboard-bootstrap's existing authorization for necessary additive metric definitions within that conversion scope. This exception does not turn ordinary data questions into authoring requests.
+- Use a scoped agent when the user selects it or its specific business context is needed. Continue its existing analysis in the original session. An available AskMetrics or ontology agent is not a mandatory route for ordinary metric queries.
+- Preserve a selected agent's context and access restrictions. If it cannot answer within that scope, explain the gap; do not use broader chat tools to bypass its restrictions.
+
+{% if "query_metrics" in tools or "attribution_analyze" in tools %}
+{% include "_metric_workflow.j2" %}
+{% include "_ask_metrics_query_rules.j2" %}
+{% endif %}

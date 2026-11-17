@@ -13,6 +13,42 @@ from datus.tools.permission.profiles import (
 )
 
 
+@pytest.mark.parametrize("profile", ["normal", "auto"])
+def test_every_declared_reader_is_allowed_by_default(profile):
+    """Registered readers need no second hand-maintained profile allowlist."""
+    from datus.tools.registry.capabilities import TOOL_CAPABILITIES
+
+    manager = PermissionManager(get_profile(profile), active_profile=profile)
+    readers = [identity for identity, capability in TOOL_CAPABILITIES.items() if capability.access == "read"]
+    assert readers
+    for identity in readers:
+        family, method = identity.split(".")
+        assert manager.check_permission(family, method, "child") == PermissionLevel.ALLOW, identity
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        "db_tools.plan_datasource",
+        "db_tools.get_table_ddl",
+        "db_tools.get_migration_capabilities",
+        "db_tools.suggest_table_layout",
+        "bi_tools.get_chart_data",
+        "scheduler_tools.get_run_log",
+        "semantic_tools.list_existing_osi_semantic_models",
+        "semantic_tools.verify_semantic_outputs",
+        "web_tool.web_fetch",
+        "tools.validate_skill",
+        "tools.search_skill_usage",
+    ],
+)
+def test_audited_queries_declare_their_read_effect(identity):
+    """Queries and pure planners must not masquerade as restricted mutations."""
+    from datus.tools.registry.capabilities import TOOL_CAPABILITIES
+
+    assert TOOL_CAPABILITIES[identity].access == "read"
+
+
 class TestProfileRegistry:
     def test_three_profiles_exist(self):
         assert PROFILE_NAMES == ("normal", "auto", "dangerous")
@@ -63,8 +99,8 @@ class TestNormalProfile:
         config = NORMAL
         assert _resolve(config, "db_tools", "execute_sql") == PermissionLevel.ASK
         assert _resolve(config, "filesystem_tools", "write_file") == PermissionLevel.ASK
-        assert _resolve(config, "filesystem_tools", "delete_osi_metrics") == PermissionLevel.ASK
-        assert _resolve(config, "filesystem_tools", "delete_osi_datasets") == PermissionLevel.ASK
+        assert _resolve(config, "semantic_tools", "delete_osi_metrics") == PermissionLevel.ASK
+        assert _resolve(config, "semantic_tools", "delete_osi_datasets") == PermissionLevel.ASK
         assert _resolve(config, "tools", "todo_write") == PermissionLevel.ASK
 
     def test_lineage_reads_allowed_and_writes_ask(self):
@@ -171,9 +207,9 @@ class TestAutoProfile:
         assert _resolve(config, "filesystem_tools", "write_file") == PermissionLevel.ALLOW
         assert _resolve(config, "filesystem_tools", "edit_file") == PermissionLevel.ALLOW
         assert _resolve(config, "filesystem_tools", "delete_file") == PermissionLevel.ALLOW
-        assert _resolve(config, "filesystem_tools", "upsert_osi_metrics") == PermissionLevel.ALLOW
-        assert _resolve(config, "filesystem_tools", "delete_osi_metrics") == PermissionLevel.ASK
-        assert _resolve(config, "filesystem_tools", "delete_osi_datasets") == PermissionLevel.ASK
+        assert _resolve(config, "semantic_tools", "upsert_osi_metrics") == PermissionLevel.ALLOW
+        assert _resolve(config, "semantic_tools", "delete_osi_metrics") == PermissionLevel.ASK
+        assert _resolve(config, "semantic_tools", "delete_osi_datasets") == PermissionLevel.ASK
 
     def test_lineage_analysis_allowed_delete_asks(self):
         assert _resolve(AUTO, "lineage_tools", "query_lineage") == PermissionLevel.ALLOW
@@ -239,10 +275,6 @@ class TestFilesystemRuleSurface:
         "write_file",
         "edit_file",
         "delete_file",
-        "upsert_osi_metrics",
-        "delete_osi_metrics",
-        "upsert_osi_datasets",
-        "delete_osi_datasets",
     )
 
     def test_dead_filesystem_rules_absent(self):
@@ -256,15 +288,16 @@ class TestFilesystemRuleSurface:
                 )
 
     def test_live_filesystem_rules_cover_actual_tool_surface(self):
+        import fnmatch
+
         from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 
         fs_tool = FilesystemFuncTool(root_path="/tmp")
         tool_names = {t.name for t in fs_tool.available_tools()}
         # AUTO contains every NORMAL rule by construction; check there.
         fs_patterns = {r.pattern for r in AUTO.rules if r.tool == "filesystem_tools"}
-        assert fs_patterns == set(self._LIVE_PATTERNS), (
-            f"Expected live patterns {sorted(self._LIVE_PATTERNS)}; got {sorted(fs_patterns)}"
-        )
+        assert all(any(fnmatch.fnmatch(name, pattern) for name in tool_names) for pattern in fs_patterns)
+        assert all(any(fnmatch.fnmatch(name, pattern) for pattern in fs_patterns) for name in tool_names)
         # Every live tool name must be resolvable through the AUTO rules
         # (either matched by an exact name or by a wildcard like ``read_*``).
         for name in tool_names:
@@ -573,3 +606,13 @@ def test_writer_obeys_profiles_without_the_web_adapter(profile, permission):
     assert (
         manager.check_permission("semantic_tools", "write_semantic_model_plan_file", "semantic_modeling") == permission
     )
+
+
+@pytest.mark.parametrize("profile,expected", [("normal", PermissionLevel.ASK), ("auto", PermissionLevel.ASK)])
+def test_quality_assertion_sql_requires_stronger_authorization(profile, expected):
+    """A SQL-bearing quality operation must not acquire the ordinary reader grant."""
+    from datus.tools.registry.capabilities import TOOL_CAPABILITIES
+
+    assert TOOL_CAPABILITIES["db_tools.check_datasource_quality"].access == "restricted"
+    manager = PermissionManager(get_profile(profile), active_profile=profile)
+    assert manager.check_permission("db_tools", "check_datasource_quality", "child") == expected

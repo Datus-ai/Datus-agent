@@ -393,10 +393,19 @@ class DashboardService:
                 db_tool = func_tool_mod.DBFuncTool(
                     agent_config=self.agent_config, sub_agent_name="gen_visual_dashboard"
                 )
+                model_path = (Path(self.agent_config.project_root) / query.model_path).resolve()
+                if not model_path.is_relative_to(Path(self.agent_config.project_root).resolve()):
+                    raise ValueError("metric model path escapes project")
                 semantic_tools = SemanticTools(
                     agent_config=self.agent_config,
                     sub_agent_name="gen_visual_dashboard",
-                    runtime_db_context_provider=lambda: {"datasource": query.datasource},
+                    semantic_model_path_provider=(lambda: str(model_path)) if not published else None,
+                    runtime_db_context_provider=lambda: query.execution_context or {"datasource": query.datasource},
+                    policy_context_provider=lambda: (
+                        policy_context
+                        if policy_context is not None
+                        else getattr(self.agent_config, "policy_context", None) or {}
+                    ),
                 )
                 if published:
                     return execute_published_metric_query(
@@ -423,8 +432,6 @@ class DashboardService:
                 code = "POLICY_DENIED"
             elif "METRIC_MODEL_SNAPSHOT_MISSING" in str(exc):
                 code = "METRIC_MODEL_SNAPSHOT_MISSING"
-            elif "METRIC_MODEL_CHANGED" in str(exc):
-                code = "METRIC_MODEL_CHANGED"
             else:
                 code = "METRIC_QUERY_FAILED"
                 logger.exception("Unexpected metric query execution failure", query_name=query.name)
@@ -514,6 +521,15 @@ class DashboardService:
                 errorMessage=str(exc),
             )
 
+        from datus.utils.artifact_datasource import runtime_artifact_query
+
+        try:
+            meta = runtime_artifact_query(self.agent_config, meta)
+            if isinstance(sql_template, MetricQueryFile):
+                sql_template = runtime_artifact_query(self.agent_config, sql_template)
+        except ValueError as exc:
+            return Result(success=False, errorCode="DATASOURCE_UNAVAILABLE", errorMessage=str(exc))
+
         if isinstance(sql_template, MetricQueryFile):
             return await self._run_metric_query(
                 sql_template,
@@ -544,7 +560,11 @@ class DashboardService:
 
         try:
             db_tool = func_tool_mod.DBFuncTool(agent_config=self.agent_config, sub_agent_name="gen_visual_dashboard")
-            connector = db_tool._get_connector(meta.datasource or None)
+            connector = (
+                db_tool.connector_for_execution_context(meta.execution_context)
+                if meta.execution_context
+                else db_tool.connector_for_datasource_default(meta.datasource or None)
+            )
         except Exception as exc:
             logger.exception("Failed to resolve datasource for %s/%s: %s", dashboard_slug, query_slug, exc)
             return Result(
@@ -631,6 +651,7 @@ class DashboardService:
                 executed_at=_dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 datasource=meta.datasource,
                 row_count=len(rows),
+                execution_context=db_tool.execution_context(connector, meta.datasource),
                 columns=columns_meta,
                 rows=rows,
                 sql=rendered_sql,

@@ -119,10 +119,10 @@ def observe_metadata_checks(monkeypatch):
 def observe_catalog_io(monkeypatch):
     """Time real catalog reads and result archival without replacing their behavior."""
     from datus.tools.db_tools.sqlite_connector import SQLiteConnector
-    from datus.utils.tool_result_store import ToolResultStore
+    from datus.utils.result_pagination import SnapshotStore
 
     measurements = {"catalog_queries": [], "archive_writes": []}
-    get_tables, save = SQLiteConnector.get_tables, ToolResultStore._save
+    get_tables, save = SQLiteConnector.get_tables, SnapshotStore.save
 
     def read_catalog(connector, *args, **kwargs):
         started = time.monotonic()
@@ -132,15 +132,15 @@ def observe_catalog_io(monkeypatch):
         )
         return result
 
-    def save_result(store, result_id, wire, payload):
+    def save_result(store, tool, payload, scope, query):
         started = time.monotonic()
-        result = save(store, result_id, wire, payload)
+        result = save(store, tool, payload, scope, query)
         elapsed = time.monotonic() - started
-        body = payload.get("result") if isinstance(payload, dict) else payload
+        body = payload
         measurements["archive_writes"].append(
             {
-                "result_id": result_id,
-                "bytes": len(wire.encode("utf-8")),
+                "result_id": result,
+                "bytes": len(json.dumps(payload).encode("utf-8")),
                 "items": len(body) if isinstance(body, list) else None,
                 "seconds": round(elapsed, 6),
             }
@@ -148,7 +148,7 @@ def observe_catalog_io(monkeypatch):
         return result
 
     monkeypatch.setattr(SQLiteConnector, "get_tables", read_catalog)
-    monkeypatch.setattr(ToolResultStore, "_save", save_result)
+    monkeypatch.setattr(SnapshotStore, "save", save_result)
     return measurements
 
 
@@ -388,15 +388,15 @@ def _run_qwen_init(tmp_path, monkeypatch, request, *, scale=False):
     for node in nodes:
         store = getattr(node, "_tool_result_store", None)
         if store is not None:
-            for path in store.root.glob("*.json"):
+            for path in (store.root.parent / "result_snapshots").glob("*.json"):
                 metadata = json.loads(path.read_text())
-                raw = path.with_suffix(".raw")
+                payload = metadata["payload"]
                 archives.append(
                     {
                         "session": node.session_id,
-                        "sections": metadata["sections"],
-                        "bytes": raw.stat().st_size,
-                        "tokens": node.model.request_capacity().count({"input": raw.read_text()}),
+                        "sections": {"items": len(payload)} if isinstance(payload, list) else {},
+                        "bytes": path.stat().st_size,
+                        "tokens": node.model.request_capacity().count({"input": json.dumps(payload)}),
                     }
                 )
     report = {

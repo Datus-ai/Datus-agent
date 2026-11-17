@@ -184,6 +184,15 @@ def extract_code_block_content(text: str) -> str:
     return text[start:end].strip()
 
 
+def normalize_sql_escapes(sql: str) -> str:
+    """Remove bogus model escapes outside single-quoted SQL literals."""
+    return re.sub(
+        r"'(?:''|[^'])*'|\\([()[\];])",
+        lambda m: m.group(0) if m.group(1) is None else m.group(1),
+        sql,
+    )
+
+
 def llm_result2json(llm_str: str, expected_type: type[Dict | List] = dict) -> Union[Dict[str, Any], List[Any], None]:
     """
     Convert LLM output string to a JSON object or array.
@@ -219,11 +228,7 @@ def llm_result2json(llm_str: str, expected_type: type[Dict | List] = dict) -> Un
         # character itself — but preserve content inside single-quoted
         # string literals to avoid corrupting legitimate SQL values.
         if isinstance(result, dict) and isinstance(result.get("sql"), str):
-            result["sql"] = re.sub(
-                r"'(?:''|[^'])*'|\\([()[\];])",
-                lambda m: m.group(0) if m.group(1) is None else m.group(1),
-                result["sql"],
-            )
+            result["sql"] = normalize_sql_escapes(result["sql"])
 
         # If it's a dict, check if it has meaningful content
         if isinstance(result, dict):

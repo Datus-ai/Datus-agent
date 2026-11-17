@@ -135,11 +135,11 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         self.execution_mode = execution_mode
         self.configured_node_name = node_name
 
-        self.max_turns = 80
+        self.max_turns = 100
         if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
             cfg = agent_config.agentic_nodes[node_name]
             if isinstance(cfg, dict):
-                self.max_turns = cfg.get("max_turns", 80)
+                self.max_turns = cfg.get("max_turns", 100)
 
         # Tool attributes must exist before the parent constructor calls
         # ``_get_system_prompt`` indirectly via skill setup.
@@ -714,12 +714,12 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         # One manager can span several runs (the backend's mid-run-insert
         # continuation loop reuses it), so record where this run starts:
         # classification below must not see a previous pass's actions.
-        ctx.extras["artifact_run_action_start"] = ctx.action_history_manager.checkpoint()
+        ctx.extras["artifact_run_action_start"] = len(ctx.get_run_actions())
         # Bind artifact tools for this run (regenerates artifact id every call).
         self._prepare_artifacts(ctx.user_input)
 
     def _build_success_result(self, ctx: "StreamRunContext") -> ResultT:
-        all_actions = ctx.action_history_manager.get_actions()
+        all_actions = ctx.get_run_actions()
         tool_calls = [a for a in all_actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
         tokens_used = self._extract_total_tokens(all_actions)
 

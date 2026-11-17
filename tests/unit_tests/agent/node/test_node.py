@@ -555,3 +555,21 @@ class TestNodeFactory:
         except Exception as e:
             logger.error(f"Compare MCP node test failed: {str(e)}")
             raise
+
+
+@pytest.mark.parametrize(
+    "kind", [NodeType.TYPE_CHAT, NodeType.TYPE_ANALYTICS_EXPLORER, NodeType.TYPE_ANALYTICS_BUILDER]
+)
+def test_chat_and_analytics_from_dict_restore_typed_input(real_agent_config, mock_llm_create, kind):
+    from datus.schemas.chat_agentic_node_models import ChatNodeInput
+
+    real_agent_config.agentic_nodes = {kind: {"tools": "filesystem_tools.read_file"}}
+    original = Node.new_instance(
+        "restored", "Analytics", kind, ChatNodeInput(user_message="Explore sales"), real_agent_config
+    )
+    serialized = original.to_dict()
+    restored = Node.from_dict(serialized, real_agent_config)
+    assert isinstance(restored.input, ChatNodeInput)
+    assert restored.input.model_dump()["user_message"] == "Explore sales"
+    restored.input.user_message = "Explore revenue"
+    assert restored.input.model_dump()["user_message"] == "Explore revenue"

@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from agents import FunctionTool
 
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 
 
 class OrchestratorIssueTools:
@@ -34,6 +35,7 @@ class OrchestratorIssueTools:
             trans_to_function_tool(self.finish_mission, strict_mode=False),
         ]
 
+    @tool_contract(access="restricted", direct_call=False)
     def create_issue_comment(self, body: str, issue_id: Optional[str] = None) -> FuncToolResult:
         """Create an issue comment through the orchestrator.
 
@@ -43,6 +45,7 @@ class OrchestratorIssueTools:
         """
         return self._requires_proxy("create_issue_comment", {"issue_id": issue_id, "body": body})
 
+    @tool_contract(access="restricted", direct_call=False)
     def update_issue_status(self, status: str, issue_id: Optional[str] = None) -> FuncToolResult:
         """Move an issue to a tracker status through the orchestrator.
 
@@ -52,6 +55,7 @@ class OrchestratorIssueTools:
         """
         return self._requires_proxy("update_issue_status", {"issue_id": issue_id, "status": status})
 
+    @tool_contract(access="restricted", direct_call=False)
     def finish_mission(
         self,
         outcome: str,
@@ -83,6 +87,7 @@ class OrchestratorIssueTools:
             },
         )
 
+    @tool_contract(access="restricted", direct_call=False)
     def request_human_input(
         self,
         question: str,
@@ -105,6 +110,7 @@ class OrchestratorIssueTools:
             },
         )
 
+    @tool_contract(access="restricted", direct_call=False)
     def mark_blocked(
         self,
         reason: str,

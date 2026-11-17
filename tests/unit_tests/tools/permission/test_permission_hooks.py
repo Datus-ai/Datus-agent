@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from datus.cli.execution_state import InteractionBroker
+from datus.tools.func_tool.semantic_model_editing_tools import SemanticModelEditingTools
 from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
 from datus.tools.permission import permission_hooks as permission_hooks_module
 from datus.tools.permission.permission_config import (
@@ -954,7 +955,9 @@ class TestFilesystemZoneProfileMatrix:
             mock_tool = MagicMock()
             mock_tool.name = name
             fs_tools.append(mock_tool)
-        registry.register_tools("filesystem_tools", fs_tools)
+        for tool in fs_tools:
+            category = "semantic_tools" if "_osi_" in tool.name else "filesystem_tools"
+            registry.register_tools(category, [tool])
 
         config = PermissionConfig(
             default_permission=PermissionLevel.ASK,
@@ -1115,65 +1118,23 @@ class TestFilesystemZoneProfileMatrix:
         mock_broker.request.assert_not_called()
 
     # --------------------------------------------------------------- write-set
-    @pytest.mark.asyncio
-    async def test_is_write_set_matches_filesystem_tool_surface(self):
-        """Guard against drift: the hook's write-set must cover every write
-        method the general or OSI metric filesystem surface actually exposes.
-
-        If a new write tool (e.g. ``append_file``) is added without updating
-        ``_FILESYSTEM_WRITE_TOOLS``, the normal-profile INTERNAL gate would
-        silently regress to bypass for that tool.
-        """
+    def test_resource_access_uses_registered_capabilities(self):
+        """File mutations and semantic edits declare writes through their own providers."""
         from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
-        from datus.tools.func_tool.metric_filesystem_tools import (
-            MetricFilesystemFuncTool,
-            OsiSemanticModelFilesystemFuncTool,
-        )
+        from datus.tools.func_tool.semantic_model_filesystem_tools import SemanticModelFilesystemTools
+        from datus.tools.registry.contracts import tool_definition
 
-        fs_tool = FilesystemFuncTool(root_path="/tmp")
-        tool_names = {t.name for t in fs_tool.available_tools()}
-        osi_metric_tool = MetricFilesystemFuncTool(
-            root_path="/tmp",
-            current_node="semantic_modeling",
-        )
-        osi_metric_tool_names = {t.name for t in osi_metric_tool.available_tools()}
-        osi_semantic_tool = OsiSemanticModelFilesystemFuncTool(
-            root_path="/tmp",
-            current_node="semantic_modeling",
-        )
-        osi_semantic_tool_names = {t.name for t in osi_semantic_tool.available_tools()}
-        # Every tool the filesystem surface advertises as a mutation must be
-        # declared as a write, so the normal-profile INTERNAL gate doesn't
-        # silently bypass it. Read-only tools (``read_file`` / ``glob`` /
-        # ``grep``) stay out — they have their own gate path.
-        write_names = {
-            "write_file",
-            "edit_file",
-            "delete_file",
-            "upsert_osi_metrics",
-            "delete_osi_metrics",
-            "upsert_osi_datasets",
-            "delete_osi_datasets",
-        }
-        # The hook's declared write-set must equal the writes these tools expose,
-        # not a strict subset. Both directions matter:
-        #   - subset breaks the matrix (writes get silently bypassed)
-        #   - superset means we ASK on a tool name that doesn't exist
-        assert write_names == PermissionHooks._FILESYSTEM_WRITE_TOOLS
-        assert (
-            write_names
-            - {
-                "upsert_osi_metrics",
-                "delete_osi_metrics",
-                "upsert_osi_datasets",
-                "delete_osi_datasets",
-            }
-            <= tool_names
-        )
-        assert "upsert_osi_metrics" in osi_metric_tool_names
-        assert "delete_osi_metrics" in osi_metric_tool_names
-        assert "upsert_osi_datasets" in osi_semantic_tool_names
-        assert "delete_osi_datasets" in osi_semantic_tool_names
+        filesystem = FilesystemFuncTool(root_path="/tmp")
+        editor = SemanticModelEditingTools(SemanticModelFilesystemTools(root_path="/tmp").workspace)
+        for tool in filesystem.available_tools():
+            definition = tool_definition(tool)
+            assert definition.category == "filesystem_tools"
+            assert definition.access == ("write" if tool.name in {"write_file", "edit_file", "delete_file"} else "read")
+        for tool in editor.available_tools():
+            definition = tool_definition(tool)
+            assert definition.category == "semantic_tools"
+            assert definition.access == "write"
+            assert definition.direct_call is False
 
 
 class TestNonInteractiveMode:
@@ -1547,7 +1508,9 @@ class TestVisualArtifactAutoAllow:
             mock_tool = MagicMock()
             mock_tool.name = name
             fs_tools.append(mock_tool)
-        registry.register_tools("filesystem_tools", fs_tools)
+        for tool in fs_tools:
+            category = "semantic_tools" if "_osi_" in tool.name else "filesystem_tools"
+            registry.register_tools(category, [tool])
 
         manager = PermissionManager(
             global_config=PermissionConfig(default_permission=PermissionLevel.ASK, rules=[]),
@@ -1695,6 +1658,173 @@ class TestVisualArtifactAutoAllow:
             self._tool("write_file"),
         )
 
+        mock_broker.request.assert_not_called()
+
+
+class TestExportQueryPermission:
+    def _hooks(self, broker, config, *, non_interactive=False, project_root=None, client_only_workspace=False):
+        return PermissionHooks(
+            broker=broker,
+            permission_manager=PermissionManager(global_config=config),
+            node_name="chat",
+            tool_registry=ToolRegistry({"execute_sql": "db_tools", "export_query": "db_tools"}),
+            non_interactive=non_interactive,
+            project_root=project_root,
+            client_only_workspace=client_only_workspace,
+        )
+
+    @pytest.mark.asyncio
+    async def test_client_only_export_refuses_before_reading_server_files(self, mock_broker, monkeypatch):
+        project_files = MagicMock(side_effect=AssertionError("Server files must not be inspected"))
+        monkeypatch.setattr("datus.utils.project_files.ProjectFiles", project_files)
+        config = get_profile("normal").model_copy(deep=True)
+        config.sql_statements.read = PermissionLevel.ASK
+        hooks = self._hooks(mock_broker, config, project_root=".", client_only_workspace=True)
+        with pytest.raises(PermissionDeniedException, match="workspace lives on the client"):
+            await hooks.on_tool_start(self._context("query.sql"), None, SimpleNamespace(name="export_query"))
+        project_files.assert_not_called()
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_server_workspace_dot_can_still_read_sql_files(self, mock_broker, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "query.sql").write_text("SELECT 'local workspace'")
+        config = get_profile("normal").model_copy(deep=True)
+        config.sql_statements.read = PermissionLevel.ASK
+        mock_broker.request.return_value = [["y"]]
+        hooks = self._hooks(mock_broker, config, project_root=".")
+        await hooks.on_tool_start(self._context("query.sql"), None, SimpleNamespace(name="export_query"))
+        assert mock_broker.request.await_count == 1
+        assert "local workspace" in mock_broker.request.call_args.args[0][0].content
+
+    @staticmethod
+    def _context(sql="SELECT 1"):
+        return SimpleNamespace(tool_arguments=json.dumps({"sql": sql, "output_file": "exports/result.csv"}))
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["oversized", "fifo"])
+    async def test_export_permission_sql_file_reads_are_bounded_and_regular(
+        self, mock_broker, tmp_path, monkeypatch, kind
+    ):
+        import os
+
+        from datus.utils.project_files import MAX_SQL_FILE_BYTES, ProjectFiles
+
+        path = tmp_path / "query.sql"
+        if kind == "oversized":
+            path.write_bytes(b" " * (MAX_SQL_FILE_BYTES + 1))
+        else:
+            os.mkfifo(path)
+        limits = []
+        failures = []
+        original = ProjectFiles.read_sql
+
+        def read_sql(files, value, limit):
+            limits.append(limit)
+            try:
+                return original(files, value, limit)
+            except ValueError as exc:
+                failures.append(str(exc))
+                raise
+
+        unbounded = MagicMock(side_effect=AssertionError("Export permissions must not use unbounded reads"))
+        monkeypatch.setattr(ProjectFiles, "read_sql", read_sql)
+        monkeypatch.setattr("datus.utils.sql_utils.read_workspace_sql_file", unbounded)
+        config = get_profile("normal").model_copy(deep=True)
+        config.sql_statements.read = PermissionLevel.DENY
+        hooks = self._hooks(mock_broker, config, project_root=str(tmp_path))
+        with pytest.raises(PermissionDeniedException):
+            await asyncio.wait_for(
+                hooks.on_tool_start(self._context("query.sql"), MagicMock(), SimpleNamespace(name="export_query")),
+                timeout=3,
+            )
+        assert limits == [MAX_SQL_FILE_BYTES]
+        expected = (
+            "SQL file exceeds the 16 MiB input limit" if kind == "oversized" else "Query files must be regular files"
+        )
+        assert failures == [expected]
+        unbounded.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_export_sql_file_preserves_statement_kind_for_session_grants(self, mock_broker, tmp_path):
+        (tmp_path / "query.SQL").write_text("EXPLAIN SELECT 1")
+        config = get_profile("normal").model_copy(deep=True)
+        config.sql_statements.read = PermissionLevel.ASK
+        hooks = self._hooks(mock_broker, config, non_interactive=True, project_root=str(tmp_path))
+        hooks.permission_manager.approve_for_session("db_tools", "execute_sql.explain")
+        await hooks.on_tool_start(self._context("query.SQL"), MagicMock(), SimpleNamespace(name="export_query"))
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("profile", ["normal", "auto"])
+    async def test_export_read_uses_existing_profile_defaults(self, mock_broker, profile):
+        hooks = self._hooks(mock_broker, get_profile(profile))
+        await hooks.on_tool_start(self._context(), MagicMock(), SimpleNamespace(name="export_query"))
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("sql_file", [False, True])
+    @pytest.mark.parametrize("export_allow", [False, True])
+    async def test_sql_read_deny_applies_to_exports(self, mock_broker, tmp_path, sql_file, export_allow):
+        config = get_profile("normal").model_copy(deep=True)
+        config.sql_statements.read = PermissionLevel.DENY
+        if export_allow:
+            config.rules.append(
+                PermissionRule(tool="db_tools", pattern="export_query", permission=PermissionLevel.ALLOW)
+            )
+        sql = "SELECT 1"
+        if sql_file:
+            (tmp_path / "query.sql").write_text(sql)
+            sql = "query.sql"
+        hooks = self._hooks(mock_broker, config, project_root=str(tmp_path))
+        with pytest.raises(PermissionDeniedException) as denied:
+            await hooks.on_tool_start(self._context(sql), MagicMock(), SimpleNamespace(name="export_query"))
+        assert denied.value.tool_name == "export_query"
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("non_interactive", [False, True])
+    async def test_sql_read_ask_applies_to_exports(self, mock_broker, non_interactive):
+        config = get_profile("normal").model_copy(deep=True)
+        config.sql_statements.read = PermissionLevel.ASK
+        hooks = self._hooks(mock_broker, config, non_interactive=non_interactive)
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+        if non_interactive:
+            with pytest.raises(PermissionDeniedException):
+                await hooks.on_tool_start(self._context(), MagicMock(), SimpleNamespace(name="export_query"))
+            mock_broker.request.assert_not_called()
+        else:
+            await hooks.on_tool_start(self._context(), MagicMock(), SimpleNamespace(name="export_query"))
+            assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("denied_tool", ["execute_sql", "export_query"])
+    async def test_explicit_tool_denials_cover_export_entry_point(self, mock_broker, denied_tool):
+        config = get_profile("normal").model_copy(deep=True)
+        config.rules.append(PermissionRule(tool="db_tools", pattern=denied_tool, permission=PermissionLevel.DENY))
+        hooks = self._hooks(mock_broker, config)
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._context(), MagicMock(), SimpleNamespace(name="export_query"))
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_export_cannot_select_write_permissions_by_sql_file_contents(self, mock_broker, tmp_path):
+        config = get_profile("normal").model_copy(deep=True)
+        config.sql_statements.read = PermissionLevel.DENY
+        config.sql_statements.destructive = PermissionLevel.ALLOW
+        (tmp_path / "changing.sql").write_text("DELETE FROM orders")
+        hooks = self._hooks(mock_broker, config, project_root=str(tmp_path))
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._context("changing.sql"), MagicMock(), SimpleNamespace(name="export_query"))
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_export_reuses_an_existing_sql_read_session_grant(self, mock_broker):
+        config = get_profile("normal").model_copy(deep=True)
+        config.sql_statements.read = PermissionLevel.ASK
+        hooks = self._hooks(mock_broker, config)
+        hooks.permission_manager.approve_for_session("db_tools", "execute_sql.select")
+        await hooks.on_tool_start(self._context(), MagicMock(), SimpleNamespace(name="export_query"))
         mock_broker.request.assert_not_called()
 
 
@@ -3294,3 +3424,210 @@ async def test_proxied_plan_writer_cannot_bypass_custom_rules(
         hooks._request_user_confirmation.assert_awaited_once()
     else:
         hooks._request_user_confirmation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["global", "node"])
+@pytest.mark.parametrize(
+    "category,name,arguments",
+    [
+        ("filesystem_tools", name, {"path": "orders.yml"})
+        for name in ("write_file", "edit_file", "delete_file", "upsert_osi_datasets", "upsert_osi_metrics")
+    ]
+    + [
+        ("semantic_tools", "publish_semantic_model", {}),
+        ("semantic_tools", "write_semantic_model_plan_file", {}),
+        ("db_tools", "execute_sql", {"sql": "SELECT 1"}),
+        ("bash_tools", "bash", {"command": "echo denied"}),
+    ],
+)
+async def test_restricted_method_denials_precede_zone_sql_and_proxy_shortcuts(
+    tmp_path, mock_broker, scope, category, name, arguments
+):
+    """Auto INTERNAL writes, SQL reads and client proxies cannot widen host grants."""
+    custom = PermissionConfig(rules=[PermissionRule(tool=category, pattern=name, permission=PermissionLevel.DENY)])
+    base = get_profile("auto")
+    manager = PermissionManager(
+        base.merge_with(custom) if scope == "global" else base,
+        node_overrides={"published": custom} if scope == "node" else None,
+        active_profile="auto",
+    )
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=manager,
+        node_name="published",
+        tool_registry=ToolRegistry({name: category}),
+        fs_policy=FilesystemPolicy(root_path=tmp_path, current_node="published", strict=True),
+        enforce_method_denials=True,
+        proxied_tool_names={name} if category == "semantic_tools" else None,
+    )
+    with pytest.raises(PermissionDeniedException) as exc:
+        await hooks.on_tool_start(
+            SimpleNamespace(tool_arguments=json.dumps(arguments)), None, SimpleNamespace(name=name)
+        )
+    assert exc.value.tool_category == category
+    mock_broker.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enforce_method_denials", [False, True])
+@pytest.mark.parametrize("scope", ["global", "node"])
+async def test_plan_helpers_bypass_denials_on_all_hosts(mock_broker, enforce_method_denials, scope):
+    """The real planning tools retain their exemption under global and node DENY."""
+    from datus.agent.node.agentic_node import AgenticNode
+
+    custom = PermissionConfig(rules=[PermissionRule(tool="*", pattern="*", permission=PermissionLevel.DENY)])
+    manager = PermissionManager(
+        custom if scope == "global" else get_profile("auto"),
+        node_overrides={"published": custom} if scope == "node" else None,
+    )
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=manager,
+        node_name="published",
+        tool_registry=ToolRegistry(),
+        enforce_method_denials=enforce_method_denials,
+    )
+    tools = AgenticNode._get_plan_mode_tools(SimpleNamespace(_session=None, session_id=None))
+    assert tools
+    for tool in tools:
+        assert manager.check_permission("tools", tool.name, "published") == PermissionLevel.DENY
+        await hooks.on_tool_start(SimpleNamespace(tool_arguments="{}"), None, tool)
+    mock_broker.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("restricted", [False, True])
+@pytest.mark.parametrize("name", ["ask_user", "submit_task_result", "select_final_metric_result"])
+async def test_session_channels_survive_node_denials(mock_broker, restricted, name):
+    """A child must be able to ask questions and return its already-computed result."""
+    manager = PermissionManager(
+        get_profile("auto"),
+        node_overrides={"child": {"rules": [{"tool": "*", "pattern": "*", "permission": "deny"}]}},
+        active_profile="auto",
+    )
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=manager,
+        node_name="child",
+        tool_registry=ToolRegistry({name: "tools"}),
+        enforce_method_denials=restricted,
+    )
+    from tests.helpers.tool_definitions import registered_test_tool
+
+    tool = registered_test_tool(
+        name=name,
+        description="session channel",
+        params_json_schema={"type": "object"},
+        on_invoke_tool=AsyncMock(),
+        strict_json_schema=False,
+    )
+    await hooks.on_tool_start(SimpleNamespace(tool_arguments="{}"), None, tool)
+    mock_broker.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_an_external_tool_cannot_claim_a_session_channels_name(mock_broker):
+    """Session exemptions belong to canonical identities, not coincidentally matching names."""
+    manager = PermissionManager(PermissionConfig(default_permission=PermissionLevel.DENY))
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=manager,
+        node_name="child",
+        tool_registry=ToolRegistry({"ask_user": "external_tools"}),
+        enforce_method_denials=True,
+    )
+    with pytest.raises(PermissionDeniedException):
+        await hooks.on_tool_start(SimpleNamespace(tool_arguments="{}"), None, SimpleNamespace(name="ask_user"))
+
+
+@pytest.mark.asyncio
+async def test_restricted_skill_dispatch_still_authorizes_the_selected_name(mock_broker):
+    manager = PermissionManager(
+        PermissionConfig(
+            default_permission=PermissionLevel.DENY,
+            rules=[
+                PermissionRule(tool="skills", pattern="business", permission=PermissionLevel.ALLOW),
+            ],
+        ),
+        active_profile="auto",
+    )
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=manager,
+        node_name="published",
+        tool_registry=ToolRegistry({"load_skill": "skills"}),
+        enforce_method_denials=True,
+    )
+    tool = SimpleNamespace(name="load_skill")
+    await hooks.on_tool_start(SimpleNamespace(tool_arguments='{"skill_name":"business"}'), None, tool)
+    with pytest.raises(PermissionDeniedException):
+        await hooks.on_tool_start(SimpleNamespace(tool_arguments='{"skill_name":"unlinked"}'), None, tool)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["submit_task_result", "select_final_metric_result"])
+@pytest.mark.parametrize("category_hint", [False, True])
+async def test_unregistered_manual_callback_cannot_claim_session_exemption(mock_broker, name, category_hint):
+    """An arbitrary callback with a session name must still obey explicit DENY."""
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=PermissionManager(PermissionConfig(default_permission=PermissionLevel.DENY)),
+        node_name="child",
+        tool_registry=ToolRegistry({name: "tools"} if category_hint else {}),
+    )
+    with pytest.raises(PermissionDeniedException):
+        await hooks.on_tool_start(SimpleNamespace(tool_arguments="{}"), None, SimpleNamespace(name=name))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method_denied", [False, True])
+async def test_skill_validation_requires_external_path_and_method_authorization(mock_broker, tmp_path, method_denied):
+    """The delegated reader cannot bypass either the path gate or its own method rule."""
+    project = tmp_path / "project"
+    project.mkdir()
+    outside = tmp_path / "SKILL.md"
+    outside.write_text("---\nname: private-skill\n---\nprivate")
+    manager = PermissionManager(
+        PermissionConfig(
+            default_permission=PermissionLevel.ALLOW,
+            rules=[PermissionRule(tool="tools", pattern="validate_skill", permission=PermissionLevel.DENY)]
+            if method_denied
+            else [],
+        ),
+        active_profile="auto",
+    )
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=manager,
+        node_name="child",
+        tool_registry=ToolRegistry({"validate_skill": "tools"}),
+        fs_policy=FilesystemPolicy(root_path=project, current_node="child"),
+        non_interactive=True,
+    )
+    with pytest.raises(PermissionDeniedException):
+        await hooks.on_tool_start(
+            SimpleNamespace(tool_arguments=json.dumps({"skill_path": str(outside)})),
+            None,
+            SimpleNamespace(name="validate_skill"),
+        )
+    mock_broker.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_skill_validation_inside_workspace_remains_a_reader(mock_broker, tmp_path):
+    """Workspace validation stays directly usable under the auto reader profile."""
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=PermissionManager(get_profile("auto"), active_profile="auto"),
+        node_name="child",
+        tool_registry=ToolRegistry({"validate_skill": "tools"}),
+        fs_policy=FilesystemPolicy(root_path=tmp_path, current_node="child"),
+        non_interactive=True,
+    )
+    await hooks.on_tool_start(
+        SimpleNamespace(tool_arguments=json.dumps({"skill_path": str(tmp_path / "SKILL.md")})),
+        None,
+        SimpleNamespace(name="validate_skill"),
+    )
+    mock_broker.request.assert_not_called()

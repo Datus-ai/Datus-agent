@@ -3,6 +3,8 @@
 import json
 from datetime import datetime, timedelta
 
+import pytest
+
 from datus.api.models.cli_models import IMessageContent, SSEDataType, SSEEvent
 from datus.api.services.action_sse_converter import (
     _build_error_content,
@@ -1675,3 +1677,18 @@ class TestCompactActions:
     def test_compact_progress_returns_none(self):
         action = _make_action(action_type="compact_progress", status=ActionStatus.PROCESSING, output={})
         assert action_to_sse_event(action, event_id=9, message_id="msg-9") is None
+
+
+@pytest.mark.parametrize("encoding", ["dict", "json"])
+def test_live_and_history_tool_results_preserve_only_database_coordinates(encoding):
+    result = {
+        "success": 1,
+        "result": {"rows": [{"active_database": "selected"}]},
+        "execution_context": {"datasource": "warehouse", "database": "selected", "password": "must-not-escape"},
+    }
+    raw = json.dumps(result) if encoding == "json" else result
+    action = _make_action(action_id="complete_sql", input={"function_name": "execute_sql"}, output={"raw_output": raw})
+    content = _build_tool_result_content(action)[0]
+    assert content.payload["result"]["execution_context"] == {"datasource": "warehouse", "database": "selected"}
+    assert content.payload["result"]["result"] == {"rows": [{"active_database": "selected"}]}
+    assert "must-not-escape" not in content.model_dump_json()

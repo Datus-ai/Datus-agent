@@ -66,12 +66,12 @@ class CompareAgenticNode(AgenticNode):
             session_id=session_id,
         )
 
-        # Get max_turns from agentic_nodes configuration, default to 50
-        self.max_turns = 50
+        # Get max_turns from agentic_nodes configuration, default to 100
+        self.max_turns = 100
         if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes[node_name]
             if isinstance(agentic_node_config, dict):
-                self.max_turns = agentic_node_config.get("max_turns", 50)
+                self.max_turns = agentic_node_config.get("max_turns", 100)
 
         self.setup_tools()
 
@@ -219,7 +219,7 @@ class CompareAgenticNode(AgenticNode):
             response_content = ctx.last_successful_output.get("raw_output", "")
 
         result_dict = self._parse_comparison_output(response_content)
-        tokens_used = self._extract_total_tokens(ctx.action_history_manager.get_actions())
+        tokens_used = self._extract_total_tokens(ctx.get_run_actions())
         return CompareResult(
             success=True,
             explanation=result_dict.get("explanation", "No explanation provided"),

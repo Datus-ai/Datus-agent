@@ -32,8 +32,10 @@ def reject_non_dosi_semantic_yaml(yaml_file_path: str, agent_config: Optional[Ag
     Legacy-format documents are rejected explicitly before any sync is
     attempted. Returns ``None`` when the import may proceed.
     """
-    del agent_config
     try:
+        from datus.tools.semantic_tools.dosi.files import file_engine
+
+        file_engine(yaml_file_path, agent_config, allow_invalid=True)
         with open(yaml_file_path, "r", encoding="utf-8") as f:
             docs = list(yaml.safe_load_all(f))
     except Exception as exc:
@@ -153,6 +155,9 @@ def refresh_success_story_semantic_model_profile(
         return False, error, 0
 
     try:
+        from datus.tools.semantic_tools.dosi.files import file_engine
+
+        file_engine(resolved_yaml_path, agent_config, allow_invalid=True)
         with open(resolved_yaml_path, "r", encoding="utf-8") as f:
             docs = [doc for doc in yaml.safe_load_all(f) if doc is not None]
     except Exception as exc:
@@ -288,13 +293,6 @@ def _iter_osi_yaml_datasets(doc: Any) -> list[dict]:
     if not isinstance(doc, dict):
         return []
     datasets = [dataset for dataset in doc.get("datasets") or [] if isinstance(dataset, dict)]
-    semantic_models = doc.get("semantic_model")
-    if isinstance(semantic_models, list):
-        for semantic_model in semantic_models:
-            if isinstance(semantic_model, dict):
-                datasets.extend(
-                    dataset for dataset in semantic_model.get("datasets") or [] if isinstance(dataset, dict)
-                )
     return datasets
 
 
@@ -484,6 +482,9 @@ def refresh_semantic_yaml_profile_descriptions(
             return False, rejection, 0
 
     try:
+        from datus.tools.semantic_tools.dosi.files import file_engine
+
+        file_engine(resolved_yaml_path, agent_config, allow_invalid=True)
         with open(resolved_yaml_path, "r", encoding="utf-8") as f:
             docs = [doc for doc in yaml.safe_load_all(f) if doc is not None]
     except Exception as exc:

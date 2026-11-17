@@ -35,6 +35,13 @@ from datus.api.services.dashboard_service import (
 from datus.schemas.gen_visual_dashboard_models import TemplateParamDecl
 from datus.utils.exceptions import ErrorCode
 
+
+def _artifact_config():
+    config = MagicMock()
+    config.services.datasources = {"warehouse": SimpleNamespace(datasource_id="")}
+    return config
+
+
 _SAMPLE_SQL_J2 = "SELECT * FROM sales WHERE region = :region;\n"
 _SAMPLE_META = {
     "slug": "by_region",
@@ -63,7 +70,6 @@ _SAMPLE_APP_JSX = "import React from 'react';\nexport default function App() { r
         ("connector failed", None, "METRIC_QUERY_FAILED"),
         ("compiler failed", None, "METRIC_QUERY_FAILED"),
         ("METRIC_MODEL_SNAPSHOT_MISSING", None, "METRIC_MODEL_SNAPSHOT_MISSING"),
-        ("METRIC_MODEL_CHANGED", None, "METRIC_MODEL_CHANGED"),
         ("read denied", ErrorCode.POLICY_DENIED, "POLICY_DENIED"),
     ],
 )
@@ -77,9 +83,11 @@ async def test_metric_failure_logs_traceback_only_for_unexpected_errors(
     monkeypatch.setattr(dashboard_service.asyncio, "to_thread", AsyncMock(side_effect=error))
     logger = MagicMock()
     monkeypatch.setattr(dashboard_service, "logger", logger)
-    query = SimpleNamespace(name="sales", datasource="warehouse", parameter_names=lambda: set())
+    query = SimpleNamespace(
+        name="sales", datasource="warehouse", model_path="models/shop.yml", parameter_names=lambda: set()
+    )
     meta = SimpleNamespace(slug="sales", datasource="warehouse", params=[])
-    result = await DashboardService(agent_config=MagicMock())._run_metric_query(query, meta, {}, None, None)
+    result = await DashboardService(agent_config=_artifact_config())._run_metric_query(query, meta, {}, None, None)
     assert result.success is False
     assert result.errorCode == expected_code
     assert result.errorMessage == message
@@ -87,6 +95,35 @@ async def test_metric_failure_logs_traceback_only_for_unexpected_errors(
         logger.exception.assert_called_once()
     else:
         logger.exception.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dashboard_metric_tools_keep_explicit_request_policy_context(monkeypatch, tmp_path):
+    from datus.tools import func_tool
+    from datus.tools.func_tool import metric_artifact_tools, semantic_tools
+    from datus.utils.exceptions import DatusException
+
+    request_context = {"sql_policy": {"version": "request"}}
+    config_context = {"sql_policy": {"version": "config"}}
+    config = SimpleNamespace(project_root=str(tmp_path), policy_context=config_context)
+    captured = []
+    monkeypatch.setattr(func_tool, "DBFuncTool", lambda **_: object())
+    monkeypatch.setattr(semantic_tools, "SemanticTools", lambda **kwargs: SimpleNamespace(**kwargs))
+
+    def execute(query, *, semantic_tools, policy_context, **_):
+        captured.append(semantic_tools.policy_context_provider())
+        assert policy_context is request_context
+        raise DatusException(ErrorCode.POLICY_DENIED, message="stop after checking the request boundary")
+
+    monkeypatch.setattr(metric_artifact_tools, "execute_metric_artifact_query", execute)
+    query = SimpleNamespace(
+        name="sales", datasource="warehouse", model_path="models/shop.yml", parameter_names=lambda: set()
+    )
+    meta = SimpleNamespace(slug="sales", datasource="warehouse", params=[])
+    result = await DashboardService(agent_config=config)._run_metric_query(query, meta, {}, None, request_context)
+    assert result.errorCode == "POLICY_DENIED"
+    assert captured == [request_context]
+    assert config.policy_context is config_context
 
 
 def _write_dashboard(
@@ -135,7 +172,10 @@ def _patch_executor(monkeypatch, *, captured: dict) -> None:
         def __init__(self, *, agent_config, sub_agent_name):
             captured["sub_agent_name"] = sub_agent_name
 
-        def _get_connector(self, datasource):
+        def execution_context(self, connector, datasource):
+            return {"datasource": datasource, "database": "live_database", "schema": "live_schema"}
+
+        def connector_for_datasource_default(self, datasource):
             captured["datasource"] = datasource
             return _FakeConnector()
 
@@ -296,7 +336,7 @@ async def test_run_query_without_published_version_uses_local_template(monkeypat
     captured: dict = {}
     _patch_executor(monkeypatch, captured=captured)
 
-    result = await DashboardService(agent_config=MagicMock()).run_query(
+    result = await DashboardService(agent_config=_artifact_config()).run_query(
         project_files_root=tmp_path,
         dashboard_slug="demo",
         query_slug="by_region",
@@ -307,6 +347,11 @@ async def test_run_query_without_published_version_uses_local_template(monkeypat
     assert result.success is True
     assert result.data.row_count == 1
     assert result.data.datasource == "warehouse"
+    assert result.data.execution_context == {
+        "datasource": "warehouse",
+        "database": "live_database",
+        "schema": "live_schema",
+    }
     # The rendered SQL substitutes the param — confirms we read the
     # on-disk ``.sql.j2`` and ran it through ``render_dashboard_template``.
     assert "APAC" in captured["sql"]
@@ -323,7 +368,7 @@ async def test_run_query_forwards_request_policy_context_to_enforced_read(monkey
     _patch_executor(monkeypatch, captured=captured)
     policy_context = {"row_filter": {"access_mode": "scoped", "store_ids": [1, 2]}}
 
-    result = await DashboardService(agent_config=MagicMock()).run_query(
+    result = await DashboardService(agent_config=_artifact_config()).run_query(
         project_files_root=tmp_path,
         dashboard_slug="demo",
         query_slug="by_region",
@@ -339,7 +384,7 @@ async def test_run_query_forwards_request_policy_context_to_enforced_read(monkey
 async def test_run_query_rejects_invalid_query_slug(tmp_path: Path):
     """Defence-in-depth: the slug regex guard fires before any I/O so a
     crafted slug can't reach the filesystem walker."""
-    result = await DashboardService(agent_config=MagicMock()).run_query(
+    result = await DashboardService(agent_config=_artifact_config()).run_query(
         project_files_root=tmp_path,
         dashboard_slug="demo",
         query_slug="../etc/passwd",
@@ -354,7 +399,7 @@ async def test_run_query_rejects_invalid_query_slug(tmp_path: Path):
 async def test_run_query_rejects_non_dict_params(tmp_path: Path):
     """``params`` must be a JSON object so the param coercion step has
     something to walk."""
-    result = await DashboardService(agent_config=MagicMock()).run_query(
+    result = await DashboardService(agent_config=_artifact_config()).run_query(
         project_files_root=tmp_path,
         dashboard_slug="demo",
         query_slug="by_region",
@@ -376,7 +421,7 @@ async def test_run_query_published_version_without_loader_is_rejected(tmp_path: 
     injected ``published_template_loader`` the published-version branch must
     refuse cleanly so callers don't silently fall through to the on-disk
     path with wrong semantics."""
-    result = await DashboardService(agent_config=MagicMock()).run_query(
+    result = await DashboardService(agent_config=_artifact_config()).run_query(
         project_files_root=tmp_path,
         dashboard_slug="demo",
         query_slug="by_region",
@@ -397,7 +442,7 @@ async def test_run_query_published_version_below_one_is_rejected(tmp_path: Path)
     async def _never_called(_version):  # pragma: no cover - guards a defence
         raise AssertionError("loader should not be called when version is invalid")
 
-    result = await DashboardService(agent_config=MagicMock()).run_query(
+    result = await DashboardService(agent_config=_artifact_config()).run_query(
         project_files_root=tmp_path,
         dashboard_slug="demo",
         query_slug="by_region",
@@ -435,7 +480,7 @@ async def test_run_query_published_version_uses_injected_loader(monkeypatch, tmp
     captured: dict = {}
     _patch_executor(monkeypatch, captured=captured)
 
-    result = await DashboardService(agent_config=MagicMock()).run_query(
+    result = await DashboardService(agent_config=_artifact_config()).run_query(
         project_files_root=tmp_path,
         dashboard_slug="demo",
         query_slug="by_region",
@@ -574,7 +619,10 @@ def _patch_failing_executor(monkeypatch, *, exc: Exception | None = None, exec_r
         def __init__(self, *, agent_config, sub_agent_name):
             self.agent_config = agent_config
 
-        def _get_connector(self, datasource):
+        def execution_context(self, connector, datasource):
+            return {"datasource": datasource, "database": "live_database", "schema": "live_schema"}
+
+        def connector_for_datasource_default(self, datasource):
             return _Connector()
 
         def execute_read_enforced(self, sql, connector, *, datasource="", result_format="list", policy_context=None):
@@ -595,7 +643,7 @@ async def test_run_query_template_corrupt_returns_template_corrupt(tmp_path: Pat
     (queries / "q.sql.j2").write_text("SELECT 1\n", encoding="utf-8")
     (queries / "q.params.json").write_text("{not-json", encoding="utf-8")
 
-    result = await DashboardService(agent_config=MagicMock()).run_query(
+    result = await DashboardService(agent_config=_artifact_config()).run_query(
         project_files_root=tmp_path,
         dashboard_slug="demo",
         query_slug="q",
@@ -612,7 +660,7 @@ async def test_run_query_invalid_param_value_returns_invalid_params(tmp_path: Pa
     a downstream render or execution error."""
     _write_dashboard(tmp_path)
 
-    result = await DashboardService(agent_config=MagicMock()).run_query(
+    result = await DashboardService(agent_config=_artifact_config()).run_query(
         project_files_root=tmp_path,
         dashboard_slug="demo",
         query_slug="by_region",
@@ -637,7 +685,7 @@ async def test_run_query_render_error_returns_template_render_error(tmp_path: Pa
 
     monkeypatch.setattr(service_mod, "render_dashboard_template", _boom)
 
-    result = await DashboardService(agent_config=MagicMock()).run_query(
+    result = await DashboardService(agent_config=_artifact_config()).run_query(
         project_files_root=tmp_path,
         dashboard_slug="demo",
         query_slug="by_region",
@@ -659,14 +707,17 @@ async def test_run_query_datasource_resolution_failure_returns_datasource_unavai
         def __init__(self, *, agent_config, sub_agent_name):
             pass
 
-        def _get_connector(self, datasource):
+        def execution_context(self, connector, datasource):
+            return {"datasource": datasource, "database": "live_database", "schema": "live_schema"}
+
+        def connector_for_datasource_default(self, datasource):
             raise RuntimeError(f"no datasource named {datasource!r}")
 
     import datus.tools.func_tool as func_tool_mod
 
     monkeypatch.setattr(func_tool_mod, "DBFuncTool", _Broken)
 
-    result = await DashboardService(agent_config=MagicMock()).run_query(
+    result = await DashboardService(agent_config=_artifact_config()).run_query(
         project_files_root=tmp_path,
         dashboard_slug="demo",
         query_slug="by_region",
@@ -682,7 +733,7 @@ async def test_run_query_connector_raises_returns_query_execution_failed(tmp_pat
     _write_dashboard(tmp_path)
     _patch_failing_executor(monkeypatch, exc=RuntimeError("connection lost"))
 
-    result = await DashboardService(agent_config=MagicMock()).run_query(
+    result = await DashboardService(agent_config=_artifact_config()).run_query(
         project_files_root=tmp_path,
         dashboard_slug="demo",
         query_slug="by_region",
@@ -705,7 +756,7 @@ async def test_run_query_connector_returns_unsuccessful_envelope(tmp_path: Path,
 
     _patch_failing_executor(monkeypatch, exec_result=_Bad())
 
-    result = await DashboardService(agent_config=MagicMock()).run_query(
+    result = await DashboardService(agent_config=_artifact_config()).run_query(
         project_files_root=tmp_path,
         dashboard_slug="demo",
         query_slug="by_region",
@@ -735,7 +786,7 @@ async def test_run_query_reports_a_policy_refusal_as_its_own_code(tmp_path: Path
 
     _patch_failing_executor(monkeypatch, exec_result=_Denied())
 
-    result = await DashboardService(agent_config=MagicMock()).run_query(
+    result = await DashboardService(agent_config=_artifact_config()).run_query(
         project_files_root=tmp_path,
         dashboard_slug="demo",
         query_slug="by_region",
@@ -761,7 +812,7 @@ async def test_run_query_rejects_non_list_sql_return(tmp_path: Path, monkeypatch
 
     _patch_failing_executor(monkeypatch, exec_result=_Bad())
 
-    result = await DashboardService(agent_config=MagicMock()).run_query(
+    result = await DashboardService(agent_config=_artifact_config()).run_query(
         project_files_root=tmp_path,
         dashboard_slug="demo",
         query_slug="by_region",
@@ -784,7 +835,7 @@ async def test_run_query_rejects_non_dict_row(tmp_path: Path, monkeypatch):
 
     _patch_failing_executor(monkeypatch, exec_result=_Bad())
 
-    result = await DashboardService(agent_config=MagicMock()).run_query(
+    result = await DashboardService(agent_config=_artifact_config()).run_query(
         project_files_root=tmp_path,
         dashboard_slug="demo",
         query_slug="by_region",
@@ -842,3 +893,47 @@ async def test_get_detail_skips_malformed_template_meta(tmp_path: Path):
     template_slugs = [t.slug for t in result.data.templates]
     assert "broken" not in template_slugs
     assert "by_region" in template_slugs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("saved_context", [None, {"datasource": "warehouse", "database": "selected"}])
+async def test_sql_dashboard_legacy_default_and_saved_context_use_the_actual_database(
+    tmp_path, monkeypatch, saved_context
+):
+    import sqlite3
+    from collections import OrderedDict
+
+    from datus.configuration.agent_config import DbConfig
+    from datus.tools import func_tool
+    from datus.tools.db_tools.db_manager import DBManager
+    from datus.tools.func_tool.database import DBFuncTool
+
+    for name, amount in [("configured", 25), ("selected", 999)]:
+        with sqlite3.connect(tmp_path / f"{name}.sqlite") as connection:
+            connection.execute("CREATE TABLE sales(region TEXT, amount INTEGER)")
+            connection.execute("INSERT INTO sales VALUES ('APAC', ?)", (amount,))
+    manager = DBManager(
+        {"warehouse": DbConfig(type="sqlite", path_pattern=str(tmp_path / "*.sqlite"), database="configured")}
+    )
+    tool = object.__new__(DBFuncTool)
+    tool._db_manager = manager
+    tool._default_datasource = "warehouse"
+    tool._default_database = "selected"
+    tool._runtime_db_context = {"datasource": "warehouse", "database": "selected"}
+    tool._execution_context_connectors = OrderedDict()
+    # Route through the real connectors; SQL policy enforcement has separate coverage.
+    tool.execute_read_enforced = lambda sql, connector, **kwargs: connector.execute_query(sql, result_format="list")
+    monkeypatch.setattr(func_tool, "DBFuncTool", lambda **kwargs: tool)
+    dashboard = _write_dashboard(tmp_path)
+    meta = {**_SAMPLE_META, "execution_context": saved_context}
+    (dashboard / "queries/by_region.params.json").write_text(json.dumps(meta))
+    try:
+        result = await DashboardService(agent_config=_artifact_config()).run_query(
+            project_files_root=tmp_path, dashboard_slug="demo", query_slug="by_region", params={"region": "APAC"}
+        )
+        assert result.success is True, result.errorMessage
+        assert result.data.rows == [{"region": "APAC", "amount": 25 if saved_context is None else 999}]
+        assert result.data.execution_context["database"] == ("configured" if saved_context is None else "selected")
+    finally:
+        tool.close()
+        manager.close()

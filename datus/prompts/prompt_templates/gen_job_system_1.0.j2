@@ -62,10 +62,12 @@ Check `<available_skills>` at the end of this prompt for skill metadata; call `l
 ### Phase 4: Load data
 
 - **Intra-DB ETL** (`source_database == target_database`): use `execute_sql` with either `CREATE TABLE AS SELECT` or `INSERT ... SELECT`.
-- **Cross-DB migration** (`source_database != target_database`): use `transfer_query_result(source_sql, source_database, target_table, target_database, mode)`.
+- **Cross-DB migration**: use `transfer_query_result(source_sql=..., source_datasource=..., target_table=..., target_datasource=..., mode=...)` when the user requests a destination database table.
   - Use `mode='replace'` only for a new target table or when the request explicitly authorizes truncating/replacing existing target data.
   - Use `mode='append'` for incremental loads.
   - Verify `rows_transferred` matches the source row count.
+- **Complete file export**: use `export_query(sql=..., output_file=..., datasource=..., database=...)`. Connection selectors are optional and behave like `execute_sql`; omitted selectors use the current connection. SQL text or a project `.sql` file is accepted; output is a project CSV/Parquet file. Keep large datasets in files, returning only counts, status and project-relative paths.
+- Preserve source data types and query semantics. Reconcile completion metadata before downstream processing. On partial/unknown transfer writes, check the destination before retrying.
 
 ### Phase 5: Validate
 

@@ -116,7 +116,7 @@ class TestGenJobAgenticNodeInit:
     def test_default_max_turns(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        check_max_turns(GenJobAgenticNode, real_agent_config, 50)
+        check_max_turns(GenJobAgenticNode, real_agent_config, 100)
 
     def test_uses_dynamic_db_func_tool(self, real_agent_config, mock_llm_create):  # audit-noqa
         """gen_job should use create_dynamic for multi-connector support."""

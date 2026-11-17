@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import os
 import uuid
@@ -411,6 +412,29 @@ class AgenticNode(Node):
                 self._session_manager = SessionManager(session_dir=base_dir, scope=user_scope)
         return self._session_manager
 
+    async def aclose(self) -> None:
+        """Release resources owned by this finished node, leaving shared models alone."""
+        db_tool = getattr(self, "db_func_tool", None)
+        if db_tool is not None:
+            try:
+                await asyncio.to_thread(db_tool.close)
+            except Exception:
+                logger.exception("Failed to release node database tool")
+        session = getattr(self, "_session", None)
+        close = getattr(session, "close", None)
+        if callable(close):
+            try:
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                logger.exception("Failed to close node session")
+        self._session = None
+        manager = getattr(self, "_session_manager", None)
+        if manager is not None:
+            manager.close_all_sessions()
+        self._session_manager = None
+
     def relocate_session(self, *, scope: Optional[str], session_subdir: Optional[str]) -> None:
         """Point this node's session at another directory after construction.
 
@@ -423,6 +447,22 @@ class AgenticNode(Node):
         self._session_manager = None
         self._session = None
         self._archive = None
+        # Constructors may mount tools before task() nests the subagent session.
+        # Move their read-only anchor too, revoking access to the old directory.
+        from dataclasses import replace
+
+        from datus.tools.func_tool import FilesystemFuncTool
+        from datus.tools.permission.permission_hooks import FilesystemPolicy
+
+        data_dir = self._resolve_session_data_dir()
+        data_path = Path(data_dir).expanduser().resolve(strict=False) if data_dir else None
+        for group in self._iter_tool_groups():
+            if isinstance(group, FilesystemFuncTool):
+                group._session_data_dir = data_path
+        hooks = getattr(self, "permission_hooks", None)
+        policy = getattr(hooks, "fs_policy", None)
+        if isinstance(policy, FilesystemPolicy):
+            hooks.fs_policy = replace(policy, session_data_dir=data_path)
         try:
             self.restore_plan_mode_state()
         except Exception as exc:  # noqa: BLE001 — same contract as ``__init__``
@@ -868,6 +908,13 @@ class AgenticNode(Node):
                 f"datasource '{LOCAL_FILES_DATASOURCE}' (dialect: duckdb) after "
                 f"load_file_as_table registers them."
             )
+        previous = getattr(self, "_previous_execution_context", None)
+        if previous:
+            line += (
+                f" Execution target changed from {previous}. Historical tool results, metric catalogs and "
+                "semantic-model paths describe their original targets. Re-discover and bind targets for this turn. "
+                "Preserve existing report/dashboard queries and their datasource bindings when adding new sections."
+            )
         return line
 
     def _semantic_runtime_db_context(self) -> Dict[str, str]:
@@ -887,6 +934,13 @@ class AgenticNode(Node):
             except Exception as e:
                 logger.debug("Unable to read runtime DB context for Dosi: %s", e)
                 runtime_context = {}
+        if isinstance(runtime_context, dict) and runtime_context.get("datasource"):
+            from datus.schemas.database_context import DatabaseExecutionContext
+
+            context = DatabaseExecutionContext.from_mapping(runtime_context).to_dict(include_empty=True)
+            if "schema" in context:
+                context["db_schema"] = context["schema"]
+            return context
         datasource = runtime_context.get("datasource") or datasource
         context: Dict[str, str] = {}
         if datasource:
@@ -1186,6 +1240,29 @@ class AgenticNode(Node):
             return node_class
         return AgenticNode.get_node_name(self)
 
+    def _response_provenance(self, user_input: Any) -> Dict[str, str]:
+        """Identify this producer and any versioned chat result protocol."""
+        source = {"_node_class": self.get_node_class_name()}
+        if source["_node_class"] == "chat":
+            config = getattr(self, "node_config", None) or {}
+            version = (
+                getattr(user_input, "prompt_version", None)
+                or config.get("prompt_version")
+                or getattr(getattr(self, "agent_config", None), "prompt_version", None)
+            )
+            source.update(
+                _system_prompt_template=self._system_prompt_template_name(),
+                _prompt_version=str(version or ""),
+            )
+        return source
+
+    def _resolve_system_prompt_version(self, prompt_version: Optional[str]) -> Optional[str]:
+        """Use the same explicit, node, then agent version for rendering and its cache identity."""
+        version = prompt_version or (getattr(self, "node_config", None) or {}).get("prompt_version")
+        if version is None:
+            version = getattr(getattr(self, "agent_config", None), "prompt_version", None)
+        return version
+
     def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
         """Identity keys that invalidate the cached system-prompt snapshot.
 
@@ -1193,18 +1270,19 @@ class AgenticNode(Node):
         the inputs that change the prompt's identity within a session: the
         node template, its version, and the active model (a model switch also
         resets the provider-side prefix cache, so rebuilding is free). The
-        live per-turn datasource is injected in the user message instead. The
-        bound database skill is part of the system prompt, so its identity
-        appears here and a dialect switch rebuilds the snapshot. ``language`` DOES
+        live per-turn target is also injected in the user message, but some
+        node templates embed an active datasource or semantic-model directory.
+        The complete database coordinates therefore invalidate the snapshot,
+        even for two sources with the same dialect and database skill. ``language`` DOES
         appear: it is a per-request field on the Chat API, so a user switching
         the UI language mid-session must not keep replaying a snapshot that
         pins the old one. Date and memory stay frozen until the snapshot is rebuilt. Injected
         skill contents are fingerprinted so same-named updates rebuild it.
+        The advertised datasource catalog also changes when a project binds,
+        unbinds or renames a source, even if the current target stays the same.
         """
         agent_config = getattr(self, "agent_config", None)
-        version = prompt_version
-        if version is None and agent_config is not None and hasattr(agent_config, "prompt_version"):
-            version = agent_config.prompt_version
+        version = self._resolve_system_prompt_version(prompt_version)
         # A node-level model override (``node_config.model``) pins the
         # effective model regardless of the agent-level target, so it must be
         # the identity when set — otherwise a /model switch that doesn't
@@ -1221,7 +1299,29 @@ class AgenticNode(Node):
             except Exception:
                 model_id = ""
         language = getattr(agent_config, "language", None) if agent_config is not None else None
+        from datus.prompts.collaboration_contract import COLLABORATION_CONTRACT
+        from datus.schemas.database_context import execution_context_for_node
+        from datus.utils.node_utils import build_datasource_prompt_context
+
+        datasource_catalog = build_datasource_prompt_context(agent_config).get("available_datasources", {})
+
+        try:
+            from datus.prompts.prompt_manager import get_prompt_manager
+
+            template_digest = get_prompt_manager(agent_config=agent_config).template_fingerprint(
+                self._system_prompt_template_name(),
+                version=version,
+            )
+        except (AttributeError, FileNotFoundError, ValueError, TypeError):
+            template_digest = ""
+
         return {
+            "collaboration_contract_sha256": hashlib.sha256(COLLABORATION_CONTRACT.encode()).hexdigest(),
+            "datasource_catalog_sha256": hashlib.sha256(
+                json.dumps(datasource_catalog, sort_keys=True, default=str).encode()
+            ).hexdigest(),
+            "prompt_template_sha256": template_digest,
+            "execution_context": execution_context_for_node(agent_config, getattr(self, "input", None)).identity,
             "node_name": self.get_node_name(),
             # NOT implied by ``node_name``. The node name used to decide the
             # template outright, so listing it here covered both; now
@@ -1336,10 +1436,7 @@ class AgenticNode(Node):
         Returns:
             System prompt string loaded from the template
         """
-        # Get prompt version from parameter, fallback to agent config, then use default
-        version = prompt_version
-        if version is None and self.agent_config and hasattr(self.agent_config, "prompt_version"):
-            version = self.agent_config.prompt_version
+        version = self._resolve_system_prompt_version(prompt_version)
 
         root_path = self._resolve_workspace_root()
 
@@ -1450,6 +1547,9 @@ class AgenticNode(Node):
         # host-mandated (e.g. authoring format specs) and must not depend on
         # the LLM choosing to call ``load_skill``.
         base_prompt = self._inject_required_skills(base_prompt)
+        from datus.prompts.collaboration_contract import COLLABORATION_CONTRACT
+
+        base_prompt += "\n\n" + COLLABORATION_CONTRACT
 
         # Inject available skills XML into system prompt when skill_func_tool is active.
         if self.skill_func_tool:
@@ -2551,7 +2651,7 @@ class AgenticNode(Node):
         )
 
     def _get_tool_result_store(self):
-        """Reuse the resolved, writable session archive for indexed result pages."""
+        """Reuse the session directory for native snapshots and legacy recovery."""
         from datus.utils.tool_result_store import ToolResultStore
 
         archive = self._get_archive()
@@ -2576,14 +2676,6 @@ class AgenticNode(Node):
 
         store = self._get_tool_result_store()
         return store.recovery_references(items) if isinstance(store, ToolResultStore) else []
-
-    def _ensure_tool_result_reader(self) -> None:
-        from datus.tools.func_tool.tool_result_tools import ToolResultFuncTool
-
-        if not any(getattr(tool, "name", None) == "read_tool_result" for tool in self.tools or []):
-            self.tool_result_func_tool = ToolResultFuncTool(self._get_tool_result_store)
-            self.tools = [*(self.tools or []), *self.tool_result_func_tool.available_tools()]
-            self.tool_registry.register_tools("tool_result_tools", ["read_tool_result"])
 
     def _apply_init_tool_scope(self) -> None:
         """Reapply invocation-local restrictions after prompt/tool refreshes."""
@@ -3083,7 +3175,9 @@ class AgenticNode(Node):
         try:
             from datus.tools.func_tool.ask_user_tools import AskUserTool
 
-            broker = self._get_or_create_broker()
+            # The owning run already binds the queue. A delegated child must
+            # retain it while the parent collector is listening.
+            broker = self.interaction_broker
             self.ask_user_tool = AskUserTool(broker=broker)
             if self.tools is not None:
                 self.tools.extend(self.ask_user_tool.available_tools())
@@ -3110,36 +3204,10 @@ class AgenticNode(Node):
             self.task_result_tool = TaskResultTool()
             if self.tools is not None:
                 self.tools.extend(self.task_result_tool.available_tools())
-            self._allow_task_result_tool()
             logger.debug("Setup submit_task_result tool")
         except Exception as e:
             logger.error(f"Failed to setup task result tool: {e}")
             self.task_result_tool = None
-
-    def _allow_task_result_tool(self) -> None:
-        """Exempt ``submit_task_result`` from the permission prompt.
-
-        Same reasoning as ``ask_user``: this is the channel the run reports
-        through, not a resource it touches. Under ``normal`` / ``auto`` it
-        matches no ALLOW rule and lands on ``default=ASK``, so a finished
-        dispatch stopped to ask permission to say it had finished — and the
-        card sat in the thread waiting for a human.
-
-        Declared here rather than in ``profiles.py`` because the tool itself is
-        injected here, only for orchestrator origins. A rule in the shared
-        profiles would outlive the tool and name it for every other caller.
-        ``add_persistent_rule`` so a later ``/profile`` switch, which rebuilds
-        ``global_config``, does not drop it.
-        """
-        if self.permission_manager is None:
-            return
-
-        from datus.tools.permission.permission_config import PermissionLevel, PermissionRule
-
-        category = getattr(self.task_result_tool, "permission_category", "tools")
-        self.permission_manager.add_persistent_rule(
-            PermissionRule(tool=category, pattern="submit_task_result", permission=PermissionLevel.ALLOW)
-        )
 
     def _setup_sub_agent_task_tool(self):
         """Setup SubAgentTaskTool based on subagents config or node default.
@@ -3290,22 +3358,14 @@ class AgenticNode(Node):
     def _bash_output_dir(self) -> Optional[Path]:
         """Session data dir for bash output offload, or None if unavailable.
 
-        Reused directory convention as the compact archive
-        (``path_manager.session_data_dir(session_id)``). Returns None before a
-        session id is allocated, when there is no ``agent_config`` (mirrors
-        ``_resolve_session_data_dir`` — otherwise ``get_path_manager`` would fall
-        back to a process-wide default rooted at ``~/.datus``), or when the path
-        manager can't be built, so the bash tool degrades to in-memory truncation.
+        Share the filesystem policy's resolved session archive directory,
+        including custom roots, tenant scope and subagent nesting. Without a
+        configured session directory, bash keeps its in-memory fallback.
         """
         if not self.agent_config or not self.session_id:
             return None
-        try:
-            from datus.utils.path_manager import get_path_manager
-
-            return get_path_manager(agent_config=self.agent_config).session_data_dir(self.session_id)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("Failed to resolve bash output dir: %s", exc)
-            return None
+        data_dir = self._resolve_session_data_dir()
+        return Path(data_dir) if data_dir else None
 
     def _ensure_bash_tool_in_tools(self) -> None:
         """Ensure the BashTool's ``bash`` is in ``self.tools``.
@@ -3601,6 +3661,24 @@ class AgenticNode(Node):
     # ``_build_error_result``.
     result_class: Any = None
 
+    def _record_execution_context(self) -> None:
+        """Persist effective coordinates and mark a target boundary in this turn."""
+        from datus.schemas.database_context import EXECUTION_CONTEXT_META_KEY, execution_context_for_node
+
+        context = execution_context_for_node(getattr(self, "agent_config", None), self.input)
+        self._previous_execution_context = None
+        if not context.datasource:
+            return
+        try:
+            previous = self.session_manager.load_session_meta(self.session_id, EXECUTION_CONTEXT_META_KEY)
+            if previous and previous != context.identity:
+                self._previous_execution_context = previous
+            self.session_manager.save_session_meta(self.session_id, EXECUTION_CONTEXT_META_KEY, context.identity)
+            turn = self.session_manager.get_max_user_turn_number(self.session_id) + 1
+            self.session_manager.save_session_meta(self.session_id, f"execution_context.turn.{turn}", context.identity)
+        except Exception:  # noqa: BLE001 — metadata bookkeeping must not abort a turn
+            logger.debug("Failed to record execution context for session %s", self.session_id, exc_info=True)
+
     def _apply_turn_db_context(self) -> None:
         """Point the connector at this turn's catalog and schema.
 
@@ -3645,7 +3723,9 @@ class AgenticNode(Node):
 
         Args:
             action_history_manager: Optional action history manager. A fresh
-                one is created when omitted.
+                one is created when omitted. A shared manager retains the
+                session history; result snapshots include only this invocation,
+                including all internal retry attempts.
 
         Yields:
             ActionHistory: Progress updates during execution.
@@ -3663,6 +3743,7 @@ class AgenticNode(Node):
         ctx = StreamRunContext(
             user_input=self.input,
             action_history_manager=ahm,
+            action_start=ahm.checkpoint(),
             # Tolerate test doubles that bypass ``AgenticNode.__init__``
             # and therefore don't have ``pending_input_queue`` set.
             pending_input_queue=getattr(self, "pending_input_queue", None),
@@ -3699,6 +3780,7 @@ class AgenticNode(Node):
             # sub-agents continuing a parent session) all want SDK to see prior
             # items. ``execution_mode`` controls human-in-the-loop, not history.
             ctx.session = self._get_or_create_session()
+            self._record_execution_context()
 
             template_context = self._build_template_context(ctx)
             prompt_version = getattr(self.input, "prompt_version", None)
@@ -3751,7 +3833,7 @@ class AgenticNode(Node):
 
             result = self._build_success_result(ctx)
             self.result = result
-            self.actions.extend(ahm.get_actions())
+            self._remember_run_actions(ctx)
 
             # Optional post-build streaming hook. Visual-artifact subagents
             # override this to interleave finalize-progress messages around
@@ -3776,6 +3858,7 @@ class AgenticNode(Node):
                 output_data=result.model_dump(),
                 status=ActionStatus.SUCCESS if getattr(result, "success", True) else ActionStatus.FAILED,
             )
+            final_action.input.update(self._response_provenance(ctx.user_input))
             ahm.add_action(final_action)
             yield final_action
 
@@ -3811,7 +3894,7 @@ class AgenticNode(Node):
             # node so cross-turn helpers (``_count_session_tokens``,
             # ``get_last_turn_usage``) don't keep reading stale state after
             # a failed attempt.
-            self.actions.extend(ahm.get_actions())
+            self._remember_run_actions(ctx)
             yield error_action
         finally:
             # Drop the in-flight running snapshot once the turn ends so the
@@ -3833,6 +3916,14 @@ class AgenticNode(Node):
                             sm.clear_running_turn_usage(session_id)
                 except Exception:  # noqa: BLE001
                     logger.debug("Failed to drop running_turn_usage on turn end", exc_info=True)
+
+    def _remember_run_actions(self, ctx: "StreamRunContext") -> None:
+        """Append new run actions once, preserving cross-turn helper history."""
+        seen = {action.action_id for action in self.actions}
+        for action in ctx.get_run_actions():
+            if action.action_id not in seen:
+                self.actions.append(action)
+                seen.add(action.action_id)
 
     async def _stream_once(self, ctx: "StreamRunContext") -> AsyncGenerator[ActionHistory, None]:
         """Run the model once and yield every action while collecting state.
@@ -3872,8 +3963,8 @@ class AgenticNode(Node):
         # captures ``self.tools``: call arguments evaluate left to right, so
         # deferring to ``hooks=self._compose_run_hooks(ctx)`` would be one
         # argument too late and the first run would execute unwrapped tools.
-        self._ensure_tool_result_reader()
         self._apply_init_tool_scope()
+        self._ensure_interaction_channel()
         self._ensure_tool_transformers()
         self._current_action_history = ctx.action_history_manager
         # Per-run mid-turn compactor. Created before ``_compose_run_hooks`` so
@@ -3884,6 +3975,7 @@ class AgenticNode(Node):
         self._active_context_rewriter = ctx.context_rewriter
         from datus.utils.tool_result_store import ACTIVE_RESULT_STORE
 
+        response_provenance = self._response_provenance(ctx.user_input)
         result_store_token = ACTIVE_RESULT_STORE.set(None)
         try:
             async for stream_action in self.model.generate_with_tools_stream(
@@ -3906,6 +3998,11 @@ class AgenticNode(Node):
             ):
                 rewritten = self._maybe_rewrite_stream_action(stream_action, ctx)
                 action_to_yield = rewritten or stream_action
+                if action_to_yield.role == ActionRole.ASSISTANT and action_to_yield.depth == 0:
+                    action_to_yield.input = {
+                        **(action_to_yield.input if isinstance(action_to_yield.input, dict) else {}),
+                        **response_provenance,
+                    }
 
                 if (
                     action_to_yield.role == ActionRole.ASSISTANT
@@ -4041,7 +4138,8 @@ class AgenticNode(Node):
 
         Builds an instance of ``self.result_class`` populated with
         ``success=False``, ``error=<formatted>``, ``response=""``,
-        ``tokens_used=0``. Automatically fills ``action_history`` for
+        ``tokens_used=0``. Explicit output truncation preserves partial text
+        and received usage instead. Automatically fills ``action_history`` for
         NodeResult subtypes that declare that field.
 
         Subclasses MUST declare ``result_class`` for this to work; the
@@ -4059,8 +4157,15 @@ class AgenticNode(Node):
             "response": "",
             "tokens_used": 0,
         }
+        from datus.models.output_truncation import ModelOutputTruncatedError
+
+        if isinstance(exc, ModelOutputTruncatedError):
+            from datus.utils.text_utils import strip_litellm_placeholder
+
+            kwargs["response"] = strip_litellm_placeholder(exc.partial_response)
+            kwargs["tokens_used"] = exc.usage.total_tokens
         if "action_history" in getattr(self.result_class, "model_fields", {}):
-            kwargs["action_history"] = [a.model_dump() for a in ctx.action_history_manager.get_actions()]
+            kwargs["action_history"] = [a.model_dump() for a in ctx.get_run_actions()]
         return self.result_class(**kwargs)
 
     def _get_or_create_broker(self) -> "InteractionBroker":
@@ -4389,20 +4494,18 @@ class AgenticNode(Node):
     def _resolve_session_data_dir(self) -> Optional[str]:
         """Resolve the compact-archive data dir for this node's current session.
 
-        Returns ``None`` when the node has no agent_config / path_manager (used
-        by lightweight bootstrap tests), no session_id yet, or when the
-        path manager rejects the segment (e.g. missing project_name). The
-        caller falls back to leaving the FS policy without a session anchor,
-        which keeps archived paths EXTERNAL — safe but the LLM will be
-        prompted before it can ``read_file`` them.
+        Use the same resolved SessionManager directory as ``_get_archive`` so
+        custom session roots, tenant scope and subagent nesting remain aligned.
+        Without a session or a resolvable manager, leave the FS policy without
+        an archive anchor; unrelated session directories remain EXTERNAL.
         """
-        if not self.agent_config:
-            return None
-        path_manager = getattr(self.agent_config, "path_manager", None)
-        if path_manager is None or not getattr(self, "session_id", ""):
+        if not getattr(self, "session_id", ""):
             return None
         try:
-            return str(path_manager.session_data_dir(self.session_id))
+            from datus.utils.path_manager import DatusPathManager
+
+            DatusPathManager._validate_session_id(self.session_id)
+            return str(Path(self.session_manager.session_dir) / self.session_id / "data")
         except Exception as exc:
             logger.debug("Failed to resolve session_data_dir for fs policy: %s", exc)
             return None
@@ -4514,11 +4617,21 @@ class AgenticNode(Node):
         :meth:`_ensure_permission_hooks`; this helper does **not** require
         a ``permission_manager`` and never builds ``PermissionHooks``.
         """
+        from agents import FunctionTool
+
+        from datus.tools.registry.contracts import ToolDefinitionError, tool_definition
+
         try:
             for group in self._iter_tool_groups():
                 names = self._tool_group_names(group)
                 if names:
                     self.tool_registry.register_tools(group.permission_category, names)
+            for tool in getattr(self, "tools", None) or []:
+                if isinstance(tool, FunctionTool):
+                    definition = tool_definition(tool)
+                    self.tool_registry.register_tools(definition.category, [tool])
+        except ToolDefinitionError:
+            raise
         except Exception:
             logger.debug(
                 "Failed to populate tool_registry for %s; falling back to lazy registration.",
@@ -4558,9 +4671,12 @@ class AgenticNode(Node):
                 node_name=self.get_node_name(),
                 tool_registry=self.tool_registry,
                 fs_policy=self._make_filesystem_policy(),
+                enforce_method_denials=getattr(self.agent_config, "restrict_tool_visibility", False) is True,
                 non_interactive=non_interactive,
                 proxied_tool_names=self.proxied_tool_names,
                 project_root=getattr(self.agent_config, "project_root", None),
+                export_workspace_root=self._resolve_workspace_root(),
+                client_only_workspace=getattr(self.agent_config, "_client_source", None) == "vscode",
                 config_mutable=self._resolve_config_mutable(),
                 auto_reviewer=create_auto_reviewer(self.agent_config),
                 review_context_provider=self._build_permission_review_context,
@@ -4634,13 +4750,52 @@ class AgenticNode(Node):
             },
         }
 
-    def _ensure_tool_transformers(self) -> None:
+    def _filter_permission_denied_tools(self) -> None:
+        """Opt-in visibility enforcement for restricted hosts, including rebuilds.
+
+        Invocation hooks remain authoritative. Mutate the list in place because
+        a caller may already have captured it before composing its hooks.
+        """
+        if getattr(getattr(self, "agent_config", None), "restrict_tool_visibility", False) is not True:
+            return
+        manager = getattr(self, "permission_manager", None)
+        if manager is None:
+            raise RuntimeError("Restricted tool visibility requires a permission manager")
+        from datus.tools.permission.permission_hooks import PermissionHooks
+
+        self._populate_tool_registry()
+        visible = []
+        for tool in self.tools:
+            category = self.tool_registry.get(tool.name, "tools")
+            if PermissionHooks.is_permission_exempt_tool(tool.name, category):
+                visible.append(tool)
+                continue
+            # Like PermissionHooks, resolve load_skill by its target Skill, not
+            # by the dispatcher method name. Visibility follows the same
+            # pattern, scope and model-invocation filters as <available_skills>.
+            # The hook and SkillFuncTool still authorize each requested name.
+            if tool.name == "load_skill":
+                skill_manager = getattr(self, "skill_manager", None)
+                if skill_manager is not None:
+                    raw_patterns = self.node_config.get("skills", "")
+                    patterns = skill_manager.parse_skill_patterns(raw_patterns) if raw_patterns else None
+                    skills = skill_manager.get_available_skills(
+                        self.get_node_name(), patterns=patterns, node_class=self.get_node_class_name()
+                    )
+                    if manager.filter_available_skills(skills, self.get_node_name()):
+                        visible.append(tool)
+                continue
+            visible.extend(manager.filter_available_tools([tool], self.get_node_name(), category))
+        self.tools[:] = visible
+
+    def _ensure_tool_transformers(self, *, added_tools: Optional[list] = None) -> None:
         """Wrap ``self.tools`` with plugin-declared argument transformers, once.
 
         Invoked lazily from :meth:`_compose_hooks` so wrapping happens after
         ``setup_tools`` and any ``apply_proxy_tools`` rewrite (proxied tools
         are skipped — they execute client-side). Idempotent via a flag so a
-        node reused across turns never double-wraps.
+        node reused across turns never double-wraps. ``added_tools`` limits a
+        late-mount pass to tools not yet wrapped by init scoping.
 
         Gated by ``agent.plugins_enabled`` like every other plugin surface.
         Collection failures are swallowed inside the registry (a broken plugin
@@ -4648,13 +4803,18 @@ class AgenticNode(Node):
         transformers, a failure to apply them raises: transformers are policy
         code, and running without them would silently drop enforcement.
         """
+        from datus.tools.registry.contracts import validate_registered_tools
+
+        validate_registered_tools(self.tools if added_tools is None else added_tools)
+        if getattr(getattr(self, "agent_config", None), "restrict_tool_visibility", False) is True:
+            self._filter_permission_denied_tools()
         # Defensive getattr: test doubles that bypass ``AgenticNode.__init__``
         # may carry neither the flag nor an agent_config (same rationale as the
         # ``interaction_broker`` getattr in ``_stream_once``).
-        if getattr(self, "_tool_transformers_applied", False):
+        if added_tools is None and getattr(self, "_tool_transformers_applied", False):
             return
         if not getattr(getattr(self, "agent_config", None), "plugins_enabled", True):
-            self._tool_transformers_applied = True
+            self._tool_transformers_applied = added_tools is None or getattr(self, "_tool_transformers_applied", False)
             return
         from datus.plugins.registry import collect_plugin_tool_transformers
 
@@ -4662,12 +4822,12 @@ class AgenticNode(Node):
         active_names = agent_config.active_plugin_names() if hasattr(agent_config, "active_plugin_names") else None
         transformers_by_pattern = collect_plugin_tool_transformers(active_names)
         if not transformers_by_pattern:
-            self._tool_transformers_applied = True
+            self._tool_transformers_applied = added_tools is None or getattr(self, "_tool_transformers_applied", False)
             return
         try:
             from datus.tools.middleware import apply_tool_transformers
 
-            wrapped = apply_tool_transformers(self, transformers_by_pattern)
+            wrapped = apply_tool_transformers(self, transformers_by_pattern, tools=added_tools)
             logger.debug(
                 "Applied plugin tool transformers on node '%s': %d tool(s) wrapped",
                 self.get_node_name(),
@@ -4677,7 +4837,7 @@ class AgenticNode(Node):
             # attempt would turn the fail-closed raise below into fail-open
             # on the next turn (the early return above would skip wrapping
             # entirely and matched tools would run unenforced).
-            self._tool_transformers_applied = True
+            self._tool_transformers_applied = added_tools is None or getattr(self, "_tool_transformers_applied", False)
         except Exception as e:
             # Fail closed: a declared transformer that cannot be applied means
             # policy enforcement would silently vanish for matched tools.
@@ -4758,6 +4918,33 @@ class AgenticNode(Node):
             return f"[{exc.code}] {exc}"
         return model_error_message(exc) or str(exc)
 
+    def _ensure_interaction_channel(self) -> None:
+        """Mount the interactive session channel after resource-tool selection and rebuilds.
+
+        Query nodes and artifact consultants may replace the entire tool list.
+        A resource whitelist must not remove their channel for asking the user.
+        Keep the list identity because callers may already have captured it.
+        Workflow nodes deliberately have no human interaction channel.
+        """
+        if getattr(self, "execution_mode", None) != "interactive":
+            return
+        if any(getattr(tool, "name", None) == "ask_user" for tool in self.tools or []):
+            return
+        previous_count = len(self.tools or [])
+        if getattr(self, "ask_user_tool", None) is None:
+            self._setup_ask_user_tool()
+        elif self.tools is not None:
+            self.tools.extend(self.ask_user_tool.available_tools())
+        if getattr(self, "_tool_transformers_applied", False) and len(self.tools or []) > previous_count:
+            added = self.tools[previous_count:]
+            try:
+                self._ensure_tool_transformers(added_tools=added)
+            except BaseException:
+                # Retry the mount next turn; an unwrapped channel must not survive a failed policy pass.
+                del self.tools[previous_count:]
+                raise
+            self.tools[previous_count:] = added
+
     def _compose_hooks(self, extra: Any = None) -> Any:
         """Combine permission hooks with an optional per-node hook.
 
@@ -4779,6 +4966,7 @@ class AgenticNode(Node):
         publishes a ``token_usage`` action mid-turn (see
         ``datus/agent/node/token_usage_hook.py``).
         """
+        self._ensure_interaction_channel()
         self._ensure_permission_hooks()
         self._ensure_tool_transformers()
         context_rewriter = getattr(self, "_active_context_rewriter", None)

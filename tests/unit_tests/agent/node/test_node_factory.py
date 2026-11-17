@@ -613,3 +613,42 @@ class TestCreateNodeInput:
         node = MagicMock(spec=node_class)
         result = create_node_input("/feedback", node)
         assert result.source_session_id is None
+
+
+@pytest.mark.parametrize("name", ["analytics_explorer", "analytics_builder"])
+@pytest.mark.parametrize("field", ["node_class", "type"])
+@pytest.mark.parametrize("kind", ["ask_metrics", "gen_sql"])
+def test_analytics_named_instance_keeps_explicit_type(real_agent_config, mock_llm_create, name, field, kind):
+    from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+    from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+    real_agent_config.agentic_nodes = {name: {field: kind, "tools": "filesystem_tools.read_file"}}
+    node = create_interactive_node(name, real_agent_config, execution_mode="workflow")
+    expected = AskMetricsAgenticNode if kind == "ask_metrics" else GenSQLAgenticNode
+    assert isinstance(node, expected)
+    assert node.get_node_name() == name
+
+
+@pytest.mark.parametrize("kind", ["analytics_explorer", "analytics_builder"])
+def test_analytics_builtin_name_without_type_still_resolves(real_agent_config, mock_llm_create, kind):
+    from datus.agent.node.analytics_agentic_node import AnalyticsBuilderAgenticNode, AnalyticsExplorerAgenticNode
+
+    real_agent_config.agentic_nodes = {kind: {"tools": "filesystem_tools.read_file"}}
+    node = create_interactive_node(kind, real_agent_config, execution_mode="workflow")
+    expected = AnalyticsBuilderAgenticNode if kind == "analytics_builder" else AnalyticsExplorerAgenticNode
+    assert type(node) is expected
+    assert node.get_node_name() == kind
+
+
+@pytest.mark.parametrize(
+    "name,kind",
+    [
+        ("analytics_builder", "analytics_explorer"),
+        ("analytics_explorer", "analytics_builder"),
+    ],
+)
+def test_explicit_analytics_kind_wins_over_the_other_analytics_name(real_agent_config, mock_llm_create, name, kind):
+    real_agent_config.agentic_nodes = {name: {"node_class": kind, "tools": "filesystem_tools.read_file"}}
+    node = create_interactive_node(name, real_agent_config, execution_mode="workflow")
+    assert node.NODE_NAME == kind
+    assert node.type == node.NODE_NAME

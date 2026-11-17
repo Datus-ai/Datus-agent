@@ -181,6 +181,92 @@ class TestQualityToolGate:
         path.write_text(json.dumps({"assertions": assertions}), encoding="utf-8")
         return name
 
+    @pytest.mark.parametrize("datasource", ["local_files", ""])
+    def test_uploads_quality_assertions_cannot_read_external_files(self, tool, tmp_path, tmp_path_factory, datasource):
+        """Read-only assertion SQL must not bypass the uploads catalog's filesystem boundary."""
+        private = tmp_path_factory.mktemp("outside_uploads") / "private.csv"
+        private.write_text("secret\nOUTSIDE_UPLOADS_SECRET\n")
+        tool._default_datasource = "local_files"
+        cfg = self._write(
+            tmp_path,
+            "external.json",
+            [
+                {
+                    "name": "outside",
+                    "expect": "nonzero",
+                    "sql": f"SELECT count(*) FROM read_csv_auto('{private.as_posix()}')",
+                }
+            ],
+        )
+        result = tool.check_datasource_quality(config_path=cfg, datasource=datasource)
+        assert result.success == 0
+        assert "read_csv_auto cannot be called directly" in result.error
+        assert "OUTSIDE_UPLOADS_SECRET" not in str(result)
+
+    def test_uploads_quality_keeps_registered_table_reads(self, tool, tmp_path):
+        """A read grant still permits quality assertions over existing catalog objects."""
+        tool._default_datasource = "local_files"
+        cfg = self._write(
+            tmp_path,
+            "registered.json",
+            [{"name": "registered", "expect": "nonzero", "sql": "SELECT count(*) FROM keepme"}],
+        )
+        result = tool.check_datasource_quality(config_path=cfg)
+        assert result.success == 1
+        assert next(x for x in result.result["checks"] if x["check"] == "registered")["status"] == "PASS"
+
+    def test_quality_retains_external_reads_on_user_configured_datasources(self, tool, tmp_path, tmp_path_factory):
+        """The uploads-only guard does not narrow existing independent DuckDB datasources."""
+        private = tmp_path_factory.mktemp("configured_source") / "input.csv"
+        private.write_text("id\n1\n")
+        tool._default_datasource = "demo"
+        cfg = self._write(
+            tmp_path,
+            "configured.json",
+            [
+                {
+                    "name": "configured",
+                    "expect": "nonzero",
+                    "sql": f"SELECT count(*) FROM read_csv_auto('{private.as_posix()}')",
+                }
+            ],
+        )
+        result = tool.check_datasource_quality(config_path=cfg, datasource="demo")
+        assert result.success == 1
+        assert next(x for x in result.result["checks"] if x["check"] == "configured")["status"] == "PASS"
+
+    @pytest.mark.parametrize("entrypoint", ["execute_sql", "check_datasource_quality"])
+    def test_quoted_reader_with_matching_cte_cannot_escape_uploads(self, tool, tmp_path, tmp_path_factory, entrypoint):
+        """Both SQL entrypoints reject a real external read disguised by a CTE name."""
+        private = tmp_path_factory.mktemp("quoted_outside") / "private.csv"
+        private.write_text("secret\nOUTSIDE_UPLOADS_SECRET\n")
+        tool._default_datasource = "local_files"
+        sql = f"WITH read_csv_auto AS (SELECT 1) SELECT secret FROM \"read_csv_auto\"('{private.as_posix()}')"
+        if entrypoint == "execute_sql":
+            result = tool.execute_sql(sql=sql, datasource="local_files")
+        else:
+            cfg = self._write(tmp_path, "quoted.json", [{"name": "outside", "expect": "nonzero", "sql": sql}])
+            result = tool.check_datasource_quality(config_path=cfg)
+        assert result.success == 0
+        assert "cannot be called directly" in result.error
+        assert "OUTSIDE_UPLOADS_SECRET" not in str(result)
+
+    @pytest.mark.parametrize("context", [{"user_id": "restricted"}, {}])
+    def test_bound_read_policy_blocks_raw_quality_queries(self, tool, monkeypatch, context):
+        """Both request scope and configured read policies must prevent raw DuckDB reads."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        tool.agent_config = SimpleNamespace(policy_context=context)
+        with (
+            patch("datus.tools.policy_runtime.PolicyRuntime.requires_bound_read", return_value=True),
+            patch("datus.tools.db_tools.datasource_quality.QualityChecker.run") as run,
+        ):
+            result = tool.check_datasource_quality()
+        assert result.success == 0
+        assert "bound SQL read policy" in result.error
+        run.assert_not_called()
+
     @pytest.mark.acceptance
     def test_write_assertion_is_refused(self, tool, tmp_path):
         cfg = self._write(tmp_path, "bad.json", [{"name": "sneaky", "sql": "DROP TABLE IF EXISTS keepme"}])
@@ -838,16 +924,14 @@ class TestAssertionsThatDisappear:
         assert "profile" in result.result["next"], "the failing branch keeps its own instruction"
 
     @pytest.mark.acceptance
-    def test_the_sidecar_does_not_ship_with_the_project(self, tool, tmp_path):
-        """It lands in the workspace the project publishes, so it is dot-prefixed like the
-        generator's own `.{stem}.meta.json`. A visible `checks.seen.json` would be delivered to
-        the user as if it were part of the dataset."""
+    def test_reader_never_creates_or_overwrites_a_sidecar(self, tool, tmp_path):
+        """Read grants leave even pre-existing drift baselines unchanged."""
         self._run(tool, tmp_path, ["only"])
-
-        visible = sorted(f.name for f in tmp_path.iterdir() if not f.name.startswith("."))
-
-        assert "checks.seen.json" not in visible, visible
-        assert (tmp_path / ".checks.seen.json").exists()
+        sidecar = tmp_path / ".checks.seen.json"
+        assert not sidecar.exists()
+        sidecar.write_text('["original"]')
+        self._run(tool, tmp_path, ["next"])
+        assert sidecar.read_text() == '["original"]'
 
     @pytest.mark.acceptance
     def test_adding_assertions_is_not_drift(self, tool, tmp_path):

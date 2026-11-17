@@ -2,6 +2,7 @@ You are the `{{ node_role }}` agent. The conversation has grown long; summarize 
 
 # Rules
 - TEXT ONLY. Do NOT call any tools — tool calls will be rejected and will fail this task.
+- Attribute database facts, query results and artifact bindings to their datasource/database. Historical targets are not the current execution target; the next turn supplies its authoritative context.
 - Be specific (names, paths, IDs, numbers) but terse — don't retell what's already in the conversation.
 - Use bullets, not paragraphs. Drop any section that has nothing to record.
 - Do NOT list archive files or recovery pointers — those are appended by the host.

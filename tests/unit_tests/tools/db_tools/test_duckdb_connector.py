@@ -595,6 +595,9 @@ def test_iceberg_rejects_invalid_catalog_alias(monkeypatch):
         def execute(self, _sql):
             return self
 
+        def close(self):
+            pass
+
     monkeypatch.setattr(duckdb, "connect", lambda *args, **kwargs: FakeConnection())
 
     connector = DuckdbConnector(

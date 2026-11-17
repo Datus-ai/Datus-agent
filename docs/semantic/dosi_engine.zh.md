@@ -32,3 +32,9 @@ Apache Ossie ontology 放在项目级、只有一层的 `subject/ontology/` 目�
 Agent 使用 Dosi 发现语义模型、指标及指标可用维度，编译和执行指标查询，校验指定模型，以及运行原生归因。`semantic_modeling` 使用引擎的创作规范和校验。Explorer 在 OSI YAML 中读取、修改和删除指标节点，并同步受影响的 Knowledge Base 条目。独立的 Dosi CLI、REST 和 MCP 服务不属于 Agent 集成范围。
 
 每个模型文件对应一个引擎实例，文件变化后运行时会刷新。Dosi 负责 SQL 方言和查询规划；Agent 提供当前数据源连接，并在 Knowledge Base 中维护主题路径。
+
+## 大盘指标查询
+
+IDE 预览使用项目当前的 Semantic Model 编译已保存的指标查询。修改指标或升级模型文件格式后，无需重新生成大盘查询。
+
+已发布大盘使用随制品保存的模型快照编译查询，项目模型的后续编辑不会改变其计算口径。Dosi 可以在临时执行目录中升级冻结模型的文件格式，查询仍可正常执行。

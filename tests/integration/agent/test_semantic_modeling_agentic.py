@@ -207,8 +207,8 @@ def test_dosi_authoring_validates_reconciles_and_queries_without_llm(
     target = node.osi_target_state.selected_path
     assert target
 
-    dataset_result = node.filesystem_func_tool.upsert_osi_datasets(target, json.dumps([_orders_dataset()]))
-    metric_result = node.filesystem_func_tool.upsert_osi_metrics(target, json.dumps([_revenue_metric()]))
+    dataset_result = node.semantic_model_editing_tools.upsert_osi_datasets(target, json.dumps([_orders_dataset()]))
+    metric_result = node.semantic_model_editing_tools.upsert_osi_metrics(target, json.dumps([_revenue_metric()]))
     assert dataset_result.success == 1, dataset_result.error
     assert metric_result.success == 1, metric_result.error
 
@@ -298,7 +298,7 @@ async def test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm(
     restore_storage_defaults,
 ):
     """Smoke the complete LLM authoring loop after the deterministic contract."""
-    assert os.environ.get("DEEPSEEK_API_KEY"), "P0 Dosi smoke requires DEEPSEEK_API_KEY"
+    assert os.environ.get("DEEPSEEK_API_KEY"), "Semantic modeling requires DEEPSEEK_API_KEY"
     _use_deterministic_embeddings(monkeypatch)
     nightly_agent_config.home = str(tmp_path / "home")
     config = _use_dosi(nightly_agent_config, tmp_path / "workspace")

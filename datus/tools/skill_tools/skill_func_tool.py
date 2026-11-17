@@ -16,6 +16,7 @@ from agents import Tool
 
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.permission.permission_config import PermissionLevel
+from datus.tools.registry.contracts import tool_contract
 from datus.tools.skill_tools.skill_manager import SkillManager
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,7 @@ class SkillFuncTool:
         """
         self._permission_callback = callback
 
+    @tool_contract(access="restricted", direct_call=False)
     def load_skill(self, skill_name: str) -> FuncToolResult:
         """Load a skill by name from the available skills list.
 

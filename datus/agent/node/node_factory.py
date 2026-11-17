@@ -49,6 +49,25 @@ def create_interactive_node(
         node_class_type = _resolve_node_class_type(subagent_name, agent_config)
         validate_node_class(node_class_type, subagent_name)
 
+        kind = node_class_type or subagent_name
+        if kind in {"analytics_explorer", "analytics_builder"}:
+            from datus.agent.node.analytics_agentic_node import (
+                AnalyticsBuilderAgenticNode,
+                AnalyticsExplorerAgenticNode,
+            )
+
+            cls = AnalyticsBuilderAgenticNode if kind == "analytics_builder" else AnalyticsExplorerAgenticNode
+            return cls(
+                node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
+                description=f"Analytics node for {subagent_name}",
+                node_type=kind,
+                agent_config=agent_config,
+                node_name=subagent_name,
+                scope=scope,
+                execution_mode=execution_mode,
+                session_id=session_id,
+            )
+
         if subagent_name == "semantic_modeling":
             from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 

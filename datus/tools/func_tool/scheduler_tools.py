@@ -15,6 +15,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.tools import BaseTool
 from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.fs_path_policy import PathZone, classify_path, strict_mode_rejection_message
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -201,6 +202,7 @@ class SchedulerTools(BaseTool):
 
     # ── Tool methods ───────────────────────────────────────────────────────
 
+    @tool_contract(access="restricted", direct_call=False)
     def submit_sql_job(
         self,
         job_name: str,
@@ -267,6 +269,7 @@ class SchedulerTools(BaseTool):
             except Exception as close_exc:
                 logger.debug("adapter.close() failed: %s", close_exc)
 
+    @tool_contract(access="restricted", direct_call=False)
     def submit_sparksql_job(
         self,
         job_name: str,
@@ -331,6 +334,7 @@ class SchedulerTools(BaseTool):
             except Exception as close_exc:
                 logger.debug("adapter.close() failed: %s", close_exc)
 
+    @tool_contract(access="restricted", direct_call=False)
     def trigger_scheduler_job(
         self,
         job_id: str,
@@ -367,6 +371,7 @@ class SchedulerTools(BaseTool):
             except Exception as close_exc:
                 logger.debug("adapter.close() failed: %s", close_exc)
 
+    @tool_contract(access="read", direct_call=False)
     def get_scheduler_job(
         self,
         job_id: str,
@@ -409,6 +414,7 @@ class SchedulerTools(BaseTool):
             except Exception as close_exc:
                 logger.debug("adapter.close() failed: %s", close_exc)
 
+    @tool_contract(access="read", direct_call=False)
     def list_scheduler_jobs(
         self,
         limit: int = 20,
@@ -484,6 +490,7 @@ class SchedulerTools(BaseTool):
             result=FuncToolListResult(items=rows, total=total, has_more=has_more, extra=extra).model_dump(),
         )
 
+    @tool_contract(access="restricted", direct_call=False)
     def pause_job(
         self,
         job_id: str,
@@ -513,6 +520,7 @@ class SchedulerTools(BaseTool):
             except Exception as close_exc:
                 logger.debug("adapter.close() failed: %s", close_exc)
 
+    @tool_contract(access="restricted", direct_call=False)
     def resume_job(
         self,
         job_id: str,
@@ -542,6 +550,7 @@ class SchedulerTools(BaseTool):
             except Exception as close_exc:
                 logger.debug("adapter.close() failed: %s", close_exc)
 
+    @tool_contract(access="restricted", direct_call=False)
     def delete_job(
         self,
         job_id: str,
@@ -595,6 +604,7 @@ class SchedulerTools(BaseTool):
             except Exception as close_exc:
                 logger.debug("adapter.close() failed: %s", close_exc)
 
+    @tool_contract(access="restricted", direct_call=False)
     def update_job(
         self,
         job_id: str,
@@ -689,6 +699,7 @@ class SchedulerTools(BaseTool):
             except Exception as close_exc:
                 logger.debug("adapter.close() failed: %s", close_exc)
 
+    @tool_contract(access="read", direct_call=False)
     def list_job_runs(
         self,
         job_id: str,
@@ -732,6 +743,7 @@ class SchedulerTools(BaseTool):
             except Exception as close_exc:
                 logger.debug("adapter.close() failed: %s", close_exc)
 
+    @tool_contract(access="read", direct_call=False)
     def get_run_log(
         self,
         job_id: str,
@@ -770,6 +782,7 @@ class SchedulerTools(BaseTool):
             except Exception as close_exc:
                 logger.debug("adapter.close() failed: %s", close_exc)
 
+    @tool_contract(access="read", direct_call=False)
     def list_scheduler_connections(self) -> FuncToolResult:
         """List available scheduler connection IDs (conn_id) and their descriptions.
 

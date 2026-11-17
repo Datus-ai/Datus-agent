@@ -265,3 +265,33 @@ def get_table_stats(self, table_name: str) -> Dict[str, Any]:
 - **Streaming**: Use `execute_arrow_iterator()` for large result sets
 - **Batch Processing**: Configure `batch_size` parameter for optimal memory usage
 - **Read-Only Mode**: DuckDB adapter uses read-only mode to prevent lock conflicts
+### Connection ownership and cleanup
+
+`DBManager.acquire_conn(datasource, database, context=...)` returns a connection
+lease. Use it as a context manager and keep the lease until query-result
+iteration has finished. Concurrent first use of the same resolved binding shares
+one construction; failed initialization can be retried.
+
+`DBManager(configs, max_connections=8, idle_ttl=None)` limits retained managed
+connections. Active leases may temporarily exceed capacity; returning leases
+re-enforces the limit. `purge_idle_connections()` also applies the optional idle
+TTL. A capacity of zero disables capacity eviction. These are connection-cache
+limits, not a process-memory limit.
+
+The historical `get_conn()` and `first_conn*()` APIs return bare connectors.
+Their callers may retain them, so these connections are pinned until an explicit
+`close()`. `close()` waits for outstanding managed leases, closes cached
+connections once, and permits subsequent calls to reconnect.
+
+`DBFuncTool` borrows its manager, runs database operations inside connection
+scopes, and returns its remaining borrows in `close()`. Its `connector_cache_size`
+limits lookup entries; the manager owns native connection eviction. Close tools
+before explicitly closing their manager. Externally injected manager factories
+continue to own their managers; tool cleanup does not close a shared manager.
+Closed tools reject later operation-scoped and unscoped connection borrows;
+they cannot silently reacquire leases after returning their original borrows.
+
+SQL and metric saves for reports and dashboards use the same connection scope
+as their node's `DBFuncTool`. The scope covers the complete synchronous save,
+including preflight SQL and result materialization. Cancelling the model's
+awaiter cannot release the database tool's leases while that save still runs.

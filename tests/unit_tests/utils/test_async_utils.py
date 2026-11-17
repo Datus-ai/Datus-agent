@@ -302,3 +302,33 @@ def test_run_async_multithreaded():
     assert errors == []
     assert len(results) == 5
     assert sorted(results) == [0, 10, 20, 30, 40]
+
+
+@pytest.mark.asyncio
+async def test_drain_to_thread_waits_for_actual_worker_after_cancellation():
+    """Cancelling an awaiter cannot release service resources under a live worker."""
+    from datus.utils.async_utils import drain_to_thread
+
+    started = threading.Event()
+    release = threading.Event()
+    exited = threading.Event()
+
+    def work():
+        started.set()
+        assert release.wait(timeout=5)
+        exited.set()
+
+    task = asyncio.create_task(drain_to_thread(work))
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        task.cancel()
+        await asyncio.sleep(0)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        assert not exited.is_set()
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert exited.is_set()

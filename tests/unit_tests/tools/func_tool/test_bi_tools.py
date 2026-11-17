@@ -1013,3 +1013,121 @@ class TestBIFuncToolResolvePlatform:
         tool = BIFuncTool(cfg)
         with pytest.raises(DatusException, match="Multiple BI platforms"):
             tool._resolved_platform()
+
+
+@pytest.mark.acceptance
+class TestTableGroupingRegression:
+    @pytest.mark.parametrize("axis", ["", "region"])
+    def test_table_keeps_grouping_when_axis_duplicates_dimension(self, axis):
+        tool = _build_tool(adapter=FullMockAdapter(), bi_service="superset")
+        tool.adapter.create_chart = MagicMock(return_value=_ChartInfo(id=5, name="Revenue", chart_type="table"))
+        with patch.dict(sys.modules, {"datus_bi_core.models": _bi_core_mock.models}):
+            assert (
+                tool.create_chart(
+                    "table", "Revenue", dataset_id="1", metrics="SUM(revenue)", dimensions="region", x_axis=axis
+                ).success
+                == 1
+            )
+        spec = tool.adapter.create_chart.call_args.args[0]
+        assert spec.dimensions == ["region"]
+        assert spec.x_axis == ""
+
+    @pytest.mark.parametrize("dimensions,expected", [(None, None), ("region", ["region"]), ("", [])])
+    def test_update_distinguishes_preserve_replace_and_clear(self, dimensions, expected):
+        tool = _build_tool(adapter=FullMockAdapter(), bi_service="superset")
+        tool.adapter.get_chart = MagicMock(return_value=_ChartInfo(id=5, name="Revenue", chart_type="table"))
+        tool.adapter.update_chart = MagicMock(return_value=_ChartInfo(id=5, name="Revenue", chart_type="table"))
+        with patch.dict(sys.modules, {"datus_bi_core.models": _bi_core_mock.models}):
+            assert tool.update_chart("5", dimensions=dimensions).success == 1
+        spec = tool.adapter.update_chart.call_args.args[1]
+        assert spec.dimensions == expected
+        assert spec.x_axis == ""
+        assert spec.metrics is None
+
+    def test_other_platform_keeps_axis(self):
+        tool = _build_tool(adapter=FullMockAdapter(), bi_service="grafana")
+        assert tool._chart_grouping("table", ["region"], "region") == (["region"], "region")
+
+    @pytest.mark.parametrize(
+        "deleted,event",
+        [(True, {"type": "chart", "platform": "superset", "chart_id": "5"}), (False, None)],
+    )
+    def test_delete_event_only_after_success(self, deleted, event):
+        tool = _build_tool(adapter=FullMockAdapter(), bi_service="superset")
+        tool.adapter.delete_chart = MagicMock(return_value=deleted)
+        result = tool.delete_chart("5")
+        assert ("deleted_deliverable" in result.result) is deleted
+        assert result.result.get("deleted_deliverable") == event
+        assert result.result["deleted"] is deleted
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    "service,kind,create_axis,update_axis",
+    [
+        ("superset_prod", "superset", "", ""),
+        ("superset", "", "", ""),
+        ("grafana_prod", "grafana", "region", None),
+        ("superset", "grafana", "region", None),
+    ],
+)
+def test_table_grouping_uses_adapter_kind_and_preserves_service_identity(service, kind, create_axis, update_axis):
+    from datus.configuration.agent_config import DashboardConfig
+
+    tool = _build_tool(adapter=FullMockAdapter(), bi_service=service)
+    tool.agent_config.dashboard_config[service] = DashboardConfig(platform=service, adapter_type=kind)
+    chart = _ChartInfo(id=5, name="Revenue", chart_type="table")
+    tool.adapter.create_chart = MagicMock(return_value=chart)
+    tool.adapter.update_chart = MagicMock(return_value=chart)
+    tool.adapter.get_chart = MagicMock(return_value=chart)
+    with patch.dict(sys.modules, {"datus_bi_core.models": _bi_core_mock.models}):
+        created = tool.create_chart(
+            "table", "Revenue", dataset_id="1", metrics="SUM(revenue)", dimensions="region", x_axis="region"
+        )
+        updated = tool.update_chart("5", dimensions="region")
+    assert created.success == 1
+    assert updated.success == 1
+    create_spec = tool.adapter.create_chart.call_args.args[0]
+    update_spec = tool.adapter.update_chart.call_args.args[1]
+    assert create_spec.dimensions == ["region"]
+    assert create_spec.x_axis == create_axis
+    assert update_spec.dimensions == ["region"]
+    assert update_spec.x_axis == update_axis
+    assert created.result["deliverable_target"]["platform"] == service
+    assert updated.result["deliverable_target"]["platform"] == service
+
+
+@pytest.mark.acceptance
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dimensions,expected", [(None, None), ("", [])])
+async def test_strict_update_chart_tool_documents_and_preserves_null_grouping(dimensions, expected):
+    import json
+
+    from agents import RunContextWrapper
+
+    from datus.tools.func_tool.base import trans_to_function_tool
+
+    tool = _build_tool(adapter=FullMockAdapter(), bi_service="superset")
+    chart = _ChartInfo(id=5, name="Revenue", chart_type="table")
+    tool.adapter.get_chart = MagicMock(return_value=chart)
+    tool.adapter.update_chart = MagicMock(return_value=chart)
+    wrapped = trans_to_function_tool(tool.update_chart)
+    assert "dimensions" in wrapped.params_json_schema["required"]
+    assert {"type": "null"} in wrapped.params_json_schema["properties"]["dimensions"]["anyOf"]
+    assert "null to preserve grouping" in wrapped.description
+    arguments = {
+        "chart_id": "5",
+        "title": "Renamed",
+        "chart_type": "",
+        "sql": "",
+        "metrics": "",
+        "x_axis": "",
+        "description": "",
+        "dimensions": dimensions,
+    }
+    with patch.dict(sys.modules, {"datus_bi_core.models": _bi_core_mock.models}):
+        result = await wrapped.on_invoke_tool(RunContextWrapper(context=None), json.dumps(arguments))
+    assert result["success"] == 1
+    spec = tool.adapter.update_chart.call_args.args[1]
+    assert spec.dimensions == expected
+    assert spec.x_axis == ""

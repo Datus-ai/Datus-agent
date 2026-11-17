@@ -11,7 +11,7 @@ Provides:
 3. Integration with openai-agents SDK's LitellmModel
 """
 
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 from urllib.parse import urlparse
 
 from datus.utils.loggings import get_logger
@@ -179,6 +179,7 @@ class LiteLLMAdapter:
         "kimi": ["api.moonshot.ai", "api.moonshot.cn", "api.kimi.com"],
         "minimax": ["api.minimaxi.com"],
         "glm": ["open.bigmodel.cn"],
+        "openrouter": ["openrouter.ai"],
     }
 
     # Protocol keywords that appear in proxy URL paths (e.g. /apps/anthropic, /coding/)
@@ -199,6 +200,8 @@ class LiteLLMAdapter:
         enable_thinking: bool = False,
         reasoning_effort: Optional[str] = None,
         default_headers: Optional[Dict[str, str]] = None,
+        ssl_verify: Any = None,
+        max_retries: Optional[int] = None,
     ):
         """
         Initialize the LiteLLM adapter.
@@ -222,7 +225,18 @@ class LiteLLMAdapter:
         self._enable_thinking = enable_thinking
         self._reasoning_effort = reasoning_effort.strip().lower() if isinstance(reasoning_effort, str) else None
         self.default_headers = default_headers
+        self.ssl_verify = ssl_verify
+        self.max_retries = max_retries
         self._litellm_model_name = None
+
+    @property
+    def is_custom_endpoint(self) -> bool:
+        """Catalog specifications are hints when a provider uses a private endpoint."""
+        if not self.base_url:
+            return False
+        hostname = (urlparse(self.base_url).hostname or "").lower()
+        domains = self.PROVIDER_DOMAINS.get(self.provider, [])
+        return not any(hostname == domain or hostname.endswith(f".{domain}") for domain in domains)
 
     def _detect_provider_from_model(self, provider: str, model: str, base_url: Optional[str] = None) -> str:
         """
@@ -319,18 +333,22 @@ class LiteLLMAdapter:
         if self.provider == "openrouter":
             return self.model if self.model.startswith("openrouter/") else f"openrouter/{self.model}"
 
-        # If model already has a prefix, don't add another
-        if "/" in self.model:
-            return self.model
-
         # For OpenAI provider with custom base_url (e.g. self-hosted vLLM),
         # add "openai/" prefix so LiteLLM uses OpenAI-compatible API format
-        # for model names not in its built-in list (e.g. Qwen3.5-397B).
+        # for deployment aliases. A slash may be part of the alias rather than
+        # a LiteLLM provider prefix (e.g. z-ai/yumcode-pro).
         if self.provider == "openai" and not prefix and self.base_url:
             parsed = urlparse(self.base_url)
             domain = parsed.hostname or ""
             if domain not in ("api.openai.com",):
-                return f"openai/{self.model}"
+                import litellm
+
+                if "/" not in self.model or self.model.split("/", 1)[0] not in litellm.provider_list:
+                    return f"openai/{self.model}"
+
+        # Preserve explicit LiteLLM provider prefixes.
+        if "/" in self.model:
+            return self.model
 
         # For OpenAI native models (gpt-4o, o3, etc.), no prefix needed
         if not prefix:
@@ -454,13 +472,19 @@ class LiteLLMAdapter:
         """
         from openai import AsyncOpenAI
 
-        from datus.models.observed_model import ObservedResponsesModel as OpenAIResponsesModel
+        from datus.models.responses_model import DatusResponsesModel as OpenAIResponsesModel
 
         client_kwargs: Dict[str, object] = {"api_key": self.api_key or ""}
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
         if self.default_headers:
             client_kwargs["default_headers"] = self.default_headers
+        if self.ssl_verify is not None:
+            import httpx
+
+            client_kwargs["http_client"] = httpx.AsyncClient(verify=self.ssl_verify)
+        if self.max_retries is not None:
+            client_kwargs["max_retries"] = self.max_retries
         async_client = AsyncOpenAI(**client_kwargs)
         logger.debug(f"Creating OpenAIResponsesModel for official OpenAI model={self.model}")
         return OpenAIResponsesModel(model=self.model, openai_client=async_client)

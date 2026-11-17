@@ -204,6 +204,39 @@ class TestStreamMidStreamFallbackError:
         assert runner.call_count == 3
         assert sleep.await_args_list == [call(2.0), call(4.0)]
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("sensitive", [False, True])
+    @pytest.mark.parametrize("config_source", ["caller", "default"])
+    @pytest.mark.parametrize("error_type", [httpx.RemoteProtocolError, ModelBehaviorError])
+    async def test_retry_warnings_follow_effective_privacy_settings(
+        self, mock_model, stream_mocks, monkeypatch, sensitive, config_source, error_type
+    ):
+        from agents import RunConfig
+
+        runner, sleep = stream_mocks
+        error = error_type("PRIVATE_PROVIDER_DETAIL")
+        runner.side_effect = [self._result(error), self._result(error), self._result()]
+        config = RunConfig(tracing_disabled=True, trace_include_sensitive_data=sensitive)
+        default_config = {"caller": RunConfig(), "default": config}[config_source]
+        monkeypatch.setattr(mock_model, "_build_run_config", lambda **kwargs: default_config)
+        log = MagicMock()
+        monkeypatch.setattr("datus.models.openai_compatible.logger", log)
+        actions = [
+            action
+            async for action in mock_model.generate_with_tools_stream(
+                prompt="test", run_config={"caller": config, "default": None}[config_source]
+            )
+        ]
+
+        assert runner.call_count == 3
+        assert sleep.await_args_list == [call(2.0), call(4.0)]
+        assert log.warning.call_count == 2
+        assert ("PRIVATE_PROVIDER_DETAIL" in str(log.warning.call_args_list)) is sensitive
+        notifications = [action.input for action in actions if action.action_type == "retry_notification"]
+        assert len(notifications) == 2
+        assert ("PRIVATE_PROVIDER_DETAIL" in str(notifications)) is sensitive
+        assert actions[-1].output["raw_output"] == "complete"
+
 
 class _FakeAPIError(APIError):
     """A raisable :class:`APIError` whose ``str()`` is the upstream text.

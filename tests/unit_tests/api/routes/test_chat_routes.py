@@ -47,6 +47,7 @@ def _mock_svc(task=None):
     """Build a mock DatusService with task_manager."""
     svc = MagicMock()
     svc.task_manager.get_task.return_value = task
+    svc.task_manager._max_completed_bytes = None
     return svc
 
 
@@ -392,6 +393,37 @@ class TestStreamChatPolicyContextPreCheck:
 @pytest.mark.acceptance
 class TestChatRouteAcceptance:
     """Deterministic Chat API entrance coverage for built-in subagent routing."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("request_limits", [{}, {"max_turns": 2}, {"max_turns": 100}])
+    async def test_feedback_preserves_explicit_turn_limit(self, request_limits):
+        """Feedback conversion preserves whether the caller supplied a limit."""
+        from datus.api.models.cli_models import FeedbackChatInput
+        from datus.api.routes.chat_routes import stream_chat_feedback
+
+        async def fake_chat_stream(*args, **kwargs):
+            yield SSEEvent(
+                id=1,
+                event="end",
+                data=SSEEndData(session_id="feedback-limit", total_events=1, action_count=0, duration=0.01),
+            )
+
+        svc = _mock_svc_with_nodes()
+        svc.chat.stream_chat = MagicMock(side_effect=fake_chat_stream)
+        request = FeedbackChatInput(
+            source_session_id="chat_session_source",
+            reaction_emoji="thumbsup",
+            reference_msg="A useful answer",
+            **request_limits,
+        )
+
+        response = await stream_chat_feedback(request, svc, MagicMock(user_id="user-1"), MagicMock())
+        chunks = [chunk async for chunk in response.body_iterator]
+
+        forwarded = svc.chat.stream_chat.call_args.args[0]
+        assert ("max_turns" in forwarded.model_fields_set) == ("max_turns" in request_limits)
+        assert forwarded.max_turns == request.max_turns
+        assert chunks
 
     @pytest.mark.asyncio
     async def test_stream_chat_routes_gen_sql_to_service_sse(self):
@@ -901,7 +933,9 @@ async def test_resume_stream_is_scoped_to_the_task_owner(user, status):
     manager._completed_tasks[task.session_id] = task
     app = FastAPI()
     app.include_router(router)
-    app.dependency_overrides[get_datus_service] = lambda: SimpleNamespace(task_manager=manager)
+    app.dependency_overrides[get_datus_service] = lambda: SimpleNamespace(
+        task_manager=manager, acquire_request=lambda **kwargs: True, release_request=lambda: None
+    )
 
     def context(request: Request):
         return SimpleNamespace(user_id=request.headers["x-user"])
@@ -991,3 +1025,49 @@ class TestSemanticPlanReviewDecisions:
         response = await submit_tool_result(request, _mock_svc(task), SimpleNamespace(user_id="owner"))
         assert response.errorCode == "INVALID_REVIEW"
         assert not context.decisions
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "owner,run_id,status,code",
+    [
+        ("other", "run-1", "running", "SESSION_NOT_FOUND"),
+        ("u1", "previous-run", "running", "SESSION_NOT_RUNNING"),
+        ("u1", "run-1", "completed", "SESSION_NOT_RUNNING"),
+    ],
+)
+async def test_live_permission_rejects_wrong_owner_or_turn(owner, run_id, status, code):
+    from types import SimpleNamespace
+
+    from datus.api.models.chat_models import UpdatePermissionModeInput
+    from datus.api.routes.chat_routes import update_permission_mode
+
+    task = SimpleNamespace(user_id=owner, run_id="run-1", status=status)
+    result = await update_permission_mode(
+        UpdatePermissionModeInput(session_id="s1", run_id=run_id, permission_mode="dangerous"),
+        _mock_svc(task),
+        SimpleNamespace(user_id="u1"),
+    )
+    assert result.success is False
+    assert result.errorCode == code
+
+
+@pytest.mark.asyncio
+async def test_live_permission_updates_only_requested_task():
+    from types import SimpleNamespace
+
+    from datus.api.models.chat_models import UpdatePermissionModeInput
+    from datus.api.routes.chat_routes import update_permission_mode
+    from datus.tools.permission.live_profile import LivePermissionProfile
+
+    state = LivePermissionProfile(SimpleNamespace(_raw_permissions={}), "normal")
+    task = SimpleNamespace(
+        user_id="u1", session_id="s1", run_id="run-1", status="running", live_permission_profile=state
+    )
+    result = await update_permission_mode(
+        UpdatePermissionModeInput(session_id="s1", run_id="run-1", permission_mode="dangerous"),
+        _mock_svc(task),
+        SimpleNamespace(user_id="u1"),
+    )
+    assert result.success is True
+    assert result.data["permission_mode"] == state.profile == "dangerous"

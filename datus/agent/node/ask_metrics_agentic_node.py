@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
+from datus.tools.registry.contracts import tool_contract
+
 if TYPE_CHECKING:
     from datus.agent.workflow import Workflow
 
@@ -30,6 +32,7 @@ from datus.tools.func_tool import (
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.tools.func_tool.semantic_tools import SemanticTools
+from datus.tools.registry.subagent_policy import ASK_METRICS_DEFAULT_TOOLS
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.query_result_text import parse_query_result_text
@@ -47,15 +50,7 @@ class AskMetricsAgenticNode(AgenticNode):
     RESULT_ACTION_TYPES = ("query_metrics",)
     #: Prompt template used when the configured one is missing; None disables the fallback.
     FALLBACK_PROMPT_TEMPLATE: Optional[str] = "ask_metrics_system"
-    DEFAULT_TOOLS = (
-        "context_search_tools.search_metrics",
-        "semantic_tools.list_metrics",
-        "semantic_tools.get_metric",
-        "semantic_tools.get_dataset",
-        "semantic_tools.query_metrics",
-        "semantic_tools.attribution_analyze",
-        "context_search_tools.list_subject_tree",
-    )
+    DEFAULT_TOOLS = ASK_METRICS_DEFAULT_TOOLS
 
     def __init__(
         self,
@@ -73,7 +68,7 @@ class AskMetricsAgenticNode(AgenticNode):
     ):
         self.execution_mode = execution_mode
         self.configured_node_name = node_name
-        self.max_turns = 50
+        self.max_turns = 100
         if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes[node_name]
             if isinstance(agentic_node_config, dict):
@@ -405,6 +400,7 @@ class AskMetricsAgenticNode(AgenticNode):
         _walk(tree, [])
         return entries
 
+    @tool_contract(access="read", direct_call=True, category="context_search_tools")
     def list_subject_tree(self) -> FuncToolResult:
         """
         List metric subject entries available to ask_metrics.
@@ -420,6 +416,7 @@ class AskMetricsAgenticNode(AgenticNode):
             }
         )
 
+    @tool_contract(access="session", direct_call=False, category="tools")
     def select_final_metric_result(self, result_id: str) -> FuncToolResult:
         """
         Select the query_metrics result that should be stored as the final structured result.
@@ -465,6 +462,13 @@ class AskMetricsAgenticNode(AgenticNode):
 
         input_ref_date = getattr(self.input, "reference_date", None) if self.input else None
         return get_default_current_date(input_ref_date)
+
+    def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
+        import hashlib
+
+        meta = super()._system_prompt_snapshot_meta(prompt_version)
+        meta["metric_catalog_sha256"] = hashlib.sha256(self.subject_tree_prompt.encode()).hexdigest()
+        return meta
 
     def _get_system_prompt(self, prompt_version: Optional[str] = None) -> str:
         context: Dict[str, Any] = {
@@ -522,7 +526,7 @@ class AskMetricsAgenticNode(AgenticNode):
                 or str(ctx.last_successful_output)
             )
 
-        all_actions = ctx.action_history_manager.get_actions()
+        all_actions = ctx.get_run_actions()
         tokens_used = self._extract_total_tokens(all_actions)
         tool_calls = [a for a in all_actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
         if not isinstance(response_content, str):
@@ -631,6 +635,7 @@ class AskMetricsAgenticNode(AgenticNode):
         actions = getattr(self.result, "action_history", None) or []
         require_selection = getattr(self, "require_final_result_selection", False)
         require_selection = require_selection if isinstance(require_selection, bool) else False
+        cached_result = None
 
         if require_selection:
             selected_result_id = self._selected_final_result_id_from_actions(actions)
@@ -641,38 +646,52 @@ class AskMetricsAgenticNode(AgenticNode):
                 return {"success": False, "message": "final query_metrics result was not selected"}
             action = self._select_query_metrics_action_by_result_id(actions, selected_result_id)
             if not action:
-                logger.warning("Selected query_metrics result_id was not found: %s", selected_result_id)
-                return {"success": False, "message": f"selected query_metrics result not found: {selected_result_id}"}
+                # A selected result can belong to an earlier invocation. Keep
+                # its trace out of this result and recheck cache authorization.
+                if self.semantic_tools and hasattr(self.semantic_tools, "get_cached_query_metrics_result"):
+                    cached_result = self.semantic_tools.get_cached_query_metrics_result(selected_result_id)
+                if not isinstance(cached_result, dict) or not cached_result.get("csv"):
+                    logger.warning("Selected query_metrics result_id was not found: %s", selected_result_id)
+                    return {
+                        "success": False,
+                        "message": f"selected query_metrics result not found: {selected_result_id}",
+                    }
         else:
             action = self._select_last_query_metrics_action(actions)
 
         parsed = parse_query_result_text(self._query_result_payload(action)) if action else None
-        if parsed is not None and parsed.columns:
+        if (parsed is not None and parsed.columns) or cached_result is not None:
             # The full result the text previews; the preview itself only when
             # the cache no longer holds it.
-            cached_result = None
             if (
-                parsed.result_id
+                cached_result is None
+                and parsed is not None
+                and parsed.result_id
                 and self.semantic_tools
                 and hasattr(self.semantic_tools, "get_cached_query_metrics_result")
             ):
                 cached_result = self.semantic_tools.get_cached_query_metrics_result(parsed.result_id)
+                if cached_result is None and hasattr(self.semantic_tools, "can_use_query_metrics_preview"):
+                    if not self.semantic_tools.can_use_query_metrics_preview(parsed.result_id):
+                        return {"success": False, "message": "query_metrics result policy scope cannot be verified"}
             sql_query = ""
             if isinstance(cached_result, dict) and cached_result.get("csv"):
                 sql_return = cached_result["csv"]
-                row_count = cached_result.get("row_count", parsed.row_count)
+                row_count = cached_result.get("row_count", parsed.row_count if parsed is not None else 0)
+                column_count = len(cached_result.get("columns") or []) if parsed is None else len(parsed.columns)
                 # The result text leaves the compiled SQL out; the cache keeps it.
                 sql_query = str((cached_result.get("metadata") or {}).get("sql") or "")
             else:
                 sql_return = parsed.csv
                 row_count = parsed.row_count
+                column_count = len(parsed.columns)
 
             from datus.schemas.node_models import SQLContext
 
             workflow.context.sql_contexts.append(
                 SQLContext(sql_query=sql_query, sql_return=sql_return, row_count=row_count)
             )
-            logger.info("Captured query_metrics result: %d columns, %d rows", len(parsed.columns), row_count)
+            logger.info("Captured query_metrics result: %d columns, %d rows", column_count, row_count)
             return {"success": True, "message": "query_metrics result captured"}
 
         return super().update_context(workflow)

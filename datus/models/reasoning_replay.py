@@ -4,14 +4,11 @@
 
 """Reasoning-content replay policy for thinking-mode Chat Completions providers.
 
-DeepSeek and Kimi/Moonshot thinking modes return ``reasoning_content`` on
-assistant messages and expect it to be echoed back on later requests of the
-same conversation. The openai-agents SDK persists each turn's reasoning as a
-``reasoning`` item and replays it onto the assistant message it belongs to,
-but by default only when the target model is DeepSeek.
-:func:`should_replay_reasoning_content` is passed to ``LitellmModel`` as the
-SDK's ``should_replay_reasoning_content`` hook so Kimi/Moonshot get the same
-per-turn replay.
+Thinking-mode providers, including DeepSeek, Kimi, and GLM, return
+``reasoning_content`` on assistant messages. The openai-agents SDK stores this
+field verbatim in a ``reasoning`` item's summary. Datus records the source
+endpoint on these items and replays them only to the same model and endpoint.
+This also supports private deployment aliases absent from LiteLLM's catalogue.
 """
 
 from __future__ import annotations
@@ -87,26 +84,42 @@ def should_replay_reasoning_content(context: Any) -> bool:
     duck-typed here so this module does not import the agents SDK at import
     time.
 
-    Apply a strict same-route provenance check to LiteLLM-known DeepSeek and
-    Kimi/Moonshot reasoning models. Both the provider-qualified model and a
-    non-secret endpoint identity must match. Missing endpoint provenance is
-    rejected because the previous request may have used another compatible
-    endpoint with the same model name.
+    Both the provider-qualified model and a non-secret endpoint identity must
+    match. For unknown models, the LiteLLM transport's summary-only reasoning
+    items identify a returned Chat Completions ``reasoning_content`` field.
+    Signed thinking blocks and encrypted reasoning keep their provider-specific
+    handling instead. Missing endpoint provenance is rejected because another
+    compatible endpoint may use the same model name.
     """
     model = getattr(context, "model", None)
-    if not is_reasoning_echo_provider(model):
+    if not isinstance(model, str) or not model:
         return False
 
     reasoning = getattr(context, "reasoning", None)
     origin_model = getattr(reasoning, "origin_model", None)
-    if not is_reasoning_echo_provider(origin_model):
+    if origin_model != model:
         return False
     provider_data = getattr(reasoning, "provider_data", None)
     if not isinstance(provider_data, dict):
         return False
     origin_endpoint = provider_data.get(REASONING_ENDPOINT_KEY)
     current_endpoint = reasoning_endpoint_identity(getattr(context, "base_url", None))
-    return origin_model == model and origin_endpoint is not None and origin_endpoint == current_endpoint
+    if origin_endpoint is None or origin_endpoint != current_endpoint:
+        return False
+    if is_reasoning_echo_provider(model):
+        return True
+
+    # Only Datus' LiteLLM transport stamps this endpoint provenance. In that
+    # path the SDK puts raw reasoning_content in summary, while signed thinking
+    # and other reasoning fields use content/encrypted_content. Do not require
+    # a catalogue entry or an explicit reasoning_effort for an observed field.
+    item = getattr(reasoning, "item", None)
+    if not isinstance(item, dict) or item.get("content") or item.get("encrypted_content"):
+        return False
+    return any(
+        isinstance(part, dict) and isinstance(part.get("text"), str) and bool(part["text"])
+        for part in item.get("summary") or []
+    )
 
 
 __all__ = [

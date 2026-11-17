@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Iterable
@@ -63,11 +64,15 @@ def normalize_path(path: str) -> str:
 
 
 def collapse_targets(targets: Iterable[str]) -> list[str]:
-    """Keep parent directories without narrowing pytest collection to explicit children."""
+    """Collect each file once when a directory or whole-file target subsumes it."""
     unique = list(dict.fromkeys(targets))
     directories = [target for target in unique if target.endswith("/")]
+    files = {target for target in unique if "::" not in target and not target.endswith("/")}
     return [
-        target for target in unique if not any(target != parent and target.startswith(parent) for parent in directories)
+        target
+        for target in unique
+        if not any(target != parent and target.startswith(parent) for parent in directories)
+        and not ("::" in target and target.split("::", 1)[0] in files)
     ]
 
 
@@ -193,6 +198,7 @@ def impact_plan(changed: Iterable[str], data: dict | None = None) -> dict:
         "reasons": [r["id"] for r in matched],
         "unit_targets": unit_test_plan(files, data)["targets"],
         "live_targets": sorted({p for r in matched for p in r.get("live_targets", [])}),
+        "required_targets": sorted({p for r in matched for p in r.get("required_targets", [])}),
         "nightly_groups": sorted({p for r in matched for p in r.get("nightly_groups", [])}),
     }
 
@@ -222,9 +228,17 @@ def covers(reference: str, nodeid: str) -> bool:
     return nodeid == reference or nodeid.startswith(reference + "::") or nodeid.startswith(reference + "[")
 
 
-def check_execution(reports: list[Path], layer: str, data: dict | None = None) -> dict:
+def check_execution(
+    reports: list[Path],
+    layer: str,
+    data: dict | None = None,
+    *,
+    required: list[str] | None = None,
+    allow_excluded: bool = False,
+) -> dict:
     data = data or load_map()
     selected, outcomes = set(), {}
+    excluded = {}
     errors = []
     for path in reports:
         if not path.is_file():
@@ -240,41 +254,70 @@ def check_execution(reports: list[Path], layer: str, data: dict | None = None) -
             errors.append(f"Invalid execution report: {path}: {exc}")
             continue
         selected.update(report["collected"])
+        excluded.update(report.get("excluded", {}))
         for nodeid, outcome in report["outcomes"].items():
             if outcomes.get(nodeid, "passed") == "passed":
                 outcomes[nodeid] = outcome
-    required = list(data["execution"]["core_nodeids"])
-    for group in data["flow_groups"].values():
-        for flow in group.get("flows", []):
-            claim = flow.get("coverage", {}).get(layer, {})
-            if claim.get("status") == "covered":
-                required.extend(claim.get("nodeids", []))
+    if required is None:
+        required = list(data["execution"]["core_nodeids"])
+        for group in data["flow_groups"].values():
+            for flow in group.get("flows", []):
+                claim = flow.get("coverage", {}).get(layer, {})
+                if claim.get("status") == "covered":
+                    required.extend(claim.get("nodeids", []))
     evidence = {}
     for reference in dict.fromkeys(required):
-        matches = sorted(n for n in selected if covers(reference, n))
+        matches = sorted(
+            n for n in selected if covers(reference, n) or (reference.endswith("/") and n.startswith(reference))
+        )
         unhealthy = {n: outcomes.get(n, "not_executed") for n in matches if outcomes.get(n) != "passed"}
+        # A package selection contains optional platform/docs tests as well as
+        # its contracts. Keep their existing skips, but require actual passing
+        # execution and reject crashes or missing outcomes. Explicit files and
+        # nodeids remain strict: every selected case must pass.
+        if reference.endswith("/") and any(outcomes.get(n) == "passed" for n in matches):
+            unhealthy = {n: outcome for n, outcome in unhealthy.items() if outcome not in {"skipped", "xfailed"}}
         evidence[reference] = {"collected": matches, "unhealthy": unhealthy}
         if not matches:
-            errors.append(f"Required test was not collected: {reference}")
+            intentional = {
+                n: reason
+                for n, reason in excluded.items()
+                if (covers(reference, n) or (reference.endswith("/") and n.startswith(reference)))
+                and reason in {"nightly", "quarantine", "integration-not-deterministic"}
+            }
+            if allow_excluded and "::" not in reference and intentional:
+                evidence[reference]["excluded"] = intentional
+            else:
+                errors.append(f"Required test was not collected: {reference}")
         elif unhealthy:
             errors.append(f"Required test did not pass: {reference}: {unhealthy}")
     return {"layer": layer, "status": "failure" if errors else "success", "errors": errors, "evidence": evidence}
 
 
-def verify_gate(reports: list[Path], layer: str, output: Path) -> int:
-    result = check_execution(reports, layer)
+def verify_gate(
+    reports: list[Path], layer: str, output: Path, *, required: list[str] | None = None, allow_excluded: bool = False
+) -> int:
+    result = check_execution(reports, layer, required=required, allow_excluded=allow_excluded)
     output.write_text(json.dumps(result, indent=2) + "\n")
     for error in result["errors"]:
         print(f"[gate-coverage] {error}", flush=True)
     return int(bool(result["errors"]))
 
 
+def product_group_filter(plan: dict) -> str:
+    groups = (["Product E2E Nightly Tests"] if plan.get("live_targets") else []) + plan.get("nightly_groups", [])
+    if not groups:
+        raise ValueError("No product targets or provisioned groups selected for the requested comparison")
+    return "^(" + "|".join(re.escape(group) for group in dict.fromkeys(groups)) + ")$"
+
+
 def check_product_execution(plan: dict, reports: list[Path]) -> dict:
     """Every planned file/nodeid must contribute successfully executed tests."""
-    if not plan.get("live_targets"):
+    required = [*plan.get("live_targets", []), *plan.get("required_targets", [])]
+    if not required:
         return {"status": "failure", "errors": ["The product plan has no live targets"], "evidence": {}}
     return check_execution(
         reports,
         "product_e2e",
-        {"execution": {"core_nodeids": plan["live_targets"]}, "flow_groups": {}},
+        {"execution": {"core_nodeids": list(dict.fromkeys(required))}, "flow_groups": {}},
     )

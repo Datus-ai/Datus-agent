@@ -10,11 +10,55 @@ the meaning of ``policy_context`` and the concrete read transformations.
 
 from __future__ import annotations
 
+import hashlib
+import math
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, Optional
 
 from datus.plugins.registry import collect_plugin_policy_runtime_factories
+from datus.utils.bounded_tool_output import bounded_text
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
+
+
+def _same_row_value(left: Any, right: Any) -> bool:
+    """An Arrow bridge must not silently coerce unrelated ordinary-read values."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, float) and math.isnan(left) and math.isnan(right):
+        return True
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(_same_row_value(value, right[key]) for key, value in left.items())
+    if isinstance(left, (list, tuple)):
+        return len(left) == len(right) and all(_same_row_value(a, b) for a, b in zip(left, right))
+    return left == right
+
+
+def _plain_metadata_read(sql: str, dialect: str) -> bool:
+    """Only schema inspection may bypass the source rewrite, never query bodies."""
+    if sql.strip().rstrip(";").strip().upper() in {"SHOW TABLES", "SHOW DATABASES", "SHOW SCHEMAS", "SHOW CATALOGS"}:
+        return True
+    import sqlglot
+    from sqlglot import expressions as exp
+
+    from datus.utils.sql_utils import parse_dialect
+
+    try:
+        statements = sqlglot.parse(sql, read=parse_dialect(dialect))
+        if len(statements) != 1 or not isinstance(statements[0], exp.Describe):
+            return False
+        statement = statements[0]
+        table = statement.this
+        return (
+            isinstance(table, exp.Table)
+            and not any(statement.find_all(exp.Query, exp.Func))
+            and all(isinstance(part, exp.Identifier) for part in table.parts)
+        )
+    except Exception:
+        return False
+
 
 #: Sibling key on ``policy_context`` carrying *why* SaaS denied this caller.
 #:
@@ -51,6 +95,7 @@ class SqlReadDecision:
     sql: Optional[str] = None
     reason: Optional[str] = None
     applied_policies: list[str] = field(default_factory=list)
+    verify_context: Optional[Callable[[], None]] = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -93,10 +138,23 @@ class PolicyRuntime:
                         "before_sql_read",
                         "before_metric_read",
                         "after_read_result",
+                        "after_read_batch",
                     )
                 ):
                     raise TypeError("factory returned an object without policy lifecycle hooks")
                 self._runtimes.append((plugin_name, runtime))
+            configured = getattr(agent_config, "get_plugin_profile", None)
+            expected = (
+                configured("sql-policy")
+                if callable(configured) and (active_names is None or "sql-policy" in active_names)
+                else {}
+            )
+            if (
+                getattr(agent_config, "sql_policy_required", False) is True
+                or isinstance(expected, dict)
+                and (expected.get("policies") or expected.get("column_masking") or expected.get("masking_profiles"))
+            ) and "sql-policy" not in {name for name, _ in self._runtimes}:
+                raise DatusException(ErrorCode.COMMON_CONFIG_ERROR, message="Required SQL policy plugin is unavailable")
         except DatusException:
             raise
         except Exception as exc:
@@ -113,6 +171,30 @@ class PolicyRuntime:
     @property
     def has_metric_policies(self) -> bool:
         return any(callable(getattr(runtime, "before_metric_read", None)) for _, runtime in self._runtimes)
+
+    @property
+    def has_bound_read_provider(self) -> bool:
+        return any(callable(getattr(runtime, "bind_read", None)) for _, runtime in self._runtimes)
+
+    def requires_request_context(self) -> bool:
+        """Ask plugins whether reads need trusted request-local authorization."""
+        for plugin_name, runtime in self._runtimes:
+            requirement = getattr(runtime, "requires_request_context", None)
+            if callable(requirement):
+                required = self._invoke(plugin_name, "requires_request_context", requirement)
+                if not isinstance(required, bool):
+                    raise DatusException(ErrorCode.COMMON_CONFIG_ERROR, message="Invalid policy context requirement")
+                if required:
+                    return True
+            else:
+                # Preserve existing providers which express required inputs
+                # through their context validation hook.
+                hook = getattr(runtime, "validate_context", None)
+                if callable(hook):
+                    result = self._invoke(plugin_name, "validate_context", hook, {})
+                    if not self._validation_decision(plugin_name, result).allowed:
+                        return True
+        return False
 
     def before_metric_read(
         self, *, datasets: set[str], where: Optional[str], policy_context: Optional[Dict[str, Any]]
@@ -142,6 +224,19 @@ class PolicyRuntime:
 
     def validate_context(self, policy_context: Optional[Dict[str, Any]]) -> PolicyValidationResult:
         context = self._normalize_context(policy_context)
+        if not self._runtimes and any(
+            key in context for key in ("row_filter", "column_masking", "column_mask", "sql_policy", "masking_profile")
+        ):
+            raise DatusException(
+                ErrorCode.POLICY_DENIED, message="Request requires SQL policies but no implementation is loaded"
+            )
+        if any(key in context for key in ("sql_policy", "masking_profile")) and not any(
+            callable(getattr(runtime, "bind_read", None)) for _, runtime in self._runtimes
+        ):
+            raise DatusException(
+                ErrorCode.POLICY_DENIED,
+                message="Effective SQL policies require a native source-policy provider",
+            )
         for plugin_name, runtime in self._runtimes:
             hook = getattr(runtime, "validate_context", None)
             if not callable(hook):
@@ -152,6 +247,60 @@ class PolicyRuntime:
                 return replace(decision, reason=_explain(context, decision.reason))
         return PolicyValidationResult(allowed=True)
 
+    def requires_bound_read(self, policy_context: Optional[Dict[str, Any]]) -> bool:
+        context = self._normalize_context(policy_context)
+        validation = self.validate_context(context)
+        if not validation.allowed:
+            raise DatusException(ErrorCode.POLICY_DENIED, message=validation.reason or "Policy denied")
+        for _, runtime in self._runtimes:
+            requirement = getattr(runtime, "requires_bound_read", None)
+            if callable(requirement):
+                if requirement(context):
+                    return True
+            elif hasattr(runtime, "policies"):
+                if runtime.policies:
+                    return True
+            elif callable(getattr(runtime, "before_metric_read", None)):
+                return True
+        return False
+
+    def bind_read(self, *, connector: Any, datasource: str, policy_context: Optional[Dict[str, Any]]):
+        context = self._normalize_context(policy_context)
+        validation = self.validate_context(context)
+        if not validation.allowed:
+            raise DatusException(ErrorCode.POLICY_DENIED, message=validation.reason or "Policy denied")
+        providers = [
+            (name, runtime) for name, runtime in self._runtimes if callable(getattr(runtime, "bind_read", None))
+        ]
+        if len(providers) > 1:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR, message="Only one source-level SQL policy provider can be bound"
+            )
+        if not providers:
+            if self.requires_bound_read(context):
+                raise DatusException(
+                    ErrorCode.POLICY_DENIED,
+                    message="Installed metric policy provider does not support native Dosi protection",
+                )
+            return None
+        from datus.tools.sql_read_context import SqlReadContext
+
+        name, runtime = providers[0]
+        # Empty policies need no connection or metadata. The provider owns this
+        # decision, including a trusted effective snapshot supplied per request.
+        required = getattr(runtime, "requires_bound_read", lambda context: True)(context)
+        if not required:
+            return None
+        if connector is None:
+            raise DatusException(ErrorCode.POLICY_DENIED, message="A live connector is required to bind SQL policies")
+        read_context = SqlReadContext(connector, datasource, capture_metadata=False)
+        bound = self._invoke(name, "bind_read", runtime.bind_read, read_context=read_context, policy_context=context)
+        if bound is None:
+            raise DatusException(
+                ErrorCode.POLICY_DENIED, message="Required SQL policy provider returned no bound policy"
+            )
+        return bound
+
     def before_sql_read(
         self,
         sql: str,
@@ -159,11 +308,25 @@ class PolicyRuntime:
         datasource: str,
         dialect: str,
         policy_context: Optional[Dict[str, Any]],
+        connector: Any = None,
     ) -> SqlReadDecision:
         context = self._normalize_context(policy_context)
+        validation = self.validate_context(context)
+        if not validation.allowed:
+            return SqlReadDecision(allowed=False, reason=validation.reason)
         current_sql = sql
+        verifier = None
         applied: list[str] = []
         for plugin_name, runtime in self._runtimes:
+            if callable(getattr(runtime, "bind_read", None)):
+                bound = self.bind_read(connector=connector, datasource=datasource, policy_context=context)
+                if bound is not None:
+                    if not _plain_metadata_read(current_sql, dialect):
+                        current_sql = self._invoke(
+                            plugin_name, "rewrite_sql", bound.rewrite_sql, current_sql, bound.target
+                        )
+                    verifier = bound.verify_context
+                continue
             hook = getattr(runtime, "before_sql_read", None)
             if not callable(hook):
                 continue
@@ -181,7 +344,66 @@ class PolicyRuntime:
                 return replace(decision, reason=_explain(context, decision.reason))
             current_sql = decision.sql if decision.sql is not None else current_sql
             applied.extend(decision.applied_policies)
-        return SqlReadDecision(allowed=True, sql=current_sql, applied_policies=applied)
+        logger.debug(
+            "sql.policy.rewrite",
+            datasource=datasource,
+            dialect=dialect,
+            original_sql_sha256=hashlib.sha256(sql.encode("utf-8")).hexdigest(),
+            rewritten_sql_sha256=hashlib.sha256(current_sql.encode("utf-8")).hexdigest(),
+            original_sql=bounded_text(sql, 1024),
+            rewritten_sql=bounded_text(current_sql, 1024),
+            rewritten=current_sql != sql,
+            policy_runtimes=self.runtime_names,
+            masking_profile=context.get("masking_profile"),
+            policy_revision=context.get("policy_revision"),
+        )
+        return SqlReadDecision(allowed=True, sql=current_sql, applied_policies=applied, verify_context=verifier)
+
+    @property
+    def has_batch_only_result_hooks(self) -> bool:
+        return any(
+            callable(getattr(runtime, "after_read_batch", None))
+            and not callable(getattr(runtime, "after_read_result", None))
+            for _, runtime in self._runtimes
+        )
+
+    @property
+    def supports_streaming_results(self) -> bool:
+        """Whether every result hook explicitly supports batch semantics."""
+        return all(
+            not (
+                callable(getattr(runtime, "after_read_result", None))
+                and not callable(getattr(runtime, "after_read_batch", None))
+                and getattr(runtime, "supports_batch_results", False) is not True
+            )
+            for _, runtime in self._runtimes
+        )
+
+    def validate_streaming_results(self) -> None:
+        """Require explicit batch semantics for plugins with result hooks."""
+        if not self.supports_streaming_results:
+            raise ValueError("Policy runtime does not support streaming result enforcement")
+
+    def after_read_batch(self, result: Any, **context) -> ReadResultDecision:
+        """Apply only result hooks whose batch behavior was explicitly declared."""
+        self.validate_streaming_results()
+        context["policy_context"] = self._normalize_context(context.get("policy_context"))
+        current = result
+        applied = []
+        for name, runtime in self._runtimes:
+            hook = getattr(runtime, "after_read_batch", None)
+            hook_name = "after_read_batch"
+            if not callable(hook):
+                hook = getattr(runtime, "after_read_result", None)
+                hook_name = "after_read_result"
+            if not callable(hook):
+                continue
+            decision = self._result_decision(name, self._invoke(name, hook_name, hook, current, **context), current)
+            if not decision.allowed:
+                return decision
+            current = decision.result
+            applied.extend(decision.applied_policies)
+        return ReadResultDecision(allowed=True, result=current, applied_policies=applied)
 
     def after_read_result(
         self,
@@ -191,27 +413,75 @@ class PolicyRuntime:
         datasource: str,
         dialect: str,
         policy_context: Optional[Dict[str, Any]],
+        batch_schema: Any = None,
     ) -> ReadResultDecision:
+        """Apply complete-result policies, including plugins with only a batch hook.
+
+        ``batch_schema`` retains database types when ordinary list results are
+        empty or all-null. It is an internal hint and is not passed to plugins.
+        """
         context = self._normalize_context(policy_context)
         current_result = result
         applied: list[str] = []
         for plugin_name, runtime in self._runtimes:
             hook = getattr(runtime, "after_read_result", None)
+            hook_name = "after_read_result"
+            if not callable(hook):
+                hook = getattr(runtime, "after_read_batch", None)
+                hook_name = "after_read_batch"
             if not callable(hook):
                 continue
+            # Batch-only hooks receive Arrow in exports and ordinary reads.
+            # Restore list rows before the next whole-result policy runs.
+            list_result = hook_name == "after_read_batch" and isinstance(current_result, list)
+            hook_result = current_result
+            if list_result:
+                import pyarrow as pa
+
+                try:
+                    columns = set(current_result[0]) if current_result else set()
+                    if any(not isinstance(row, dict) or set(row) != columns for row in current_result):
+                        raise ValueError("Batch policies require rows with consistent column names")
+                    candidate = None
+                    if batch_schema is not None:
+                        try:
+                            candidate = pa.Table.from_pylist(current_result, schema=batch_schema)
+                        except (pa.ArrowException, TypeError, ValueError, OverflowError):
+                            pass  # A whole-result hook may have changed columns or value types.
+                    hook_result = (
+                        candidate
+                        if candidate is not None and _same_row_value(current_result, candidate.to_pylist())
+                        else pa.Table.from_pylist(current_result)
+                    )
+                    if not _same_row_value(current_result, hook_result.to_pylist()):
+                        raise ValueError("Arrow conversion would change query values")
+                except (pa.ArrowException, TypeError, ValueError, OverflowError) as exc:
+                    raise DatusException(
+                        ErrorCode.TOOL_INVALID_INPUT,
+                        message=f"Policy runtime {plugin_name!r} cannot convert query rows to an Arrow batch",
+                    ) from exc
             raw = self._invoke(
                 plugin_name,
-                "after_read_result",
+                hook_name,
                 hook,
-                current_result,
+                hook_result,
                 sql=sql,
                 datasource=datasource,
                 dialect=dialect,
                 policy_context=context,
             )
-            decision = self._result_decision(plugin_name, raw, current_result)
+            decision = self._result_decision(plugin_name, raw, hook_result)
             if not decision.allowed:
                 return replace(decision, reason=_explain(context, decision.reason))
+            if list_result:
+                if not isinstance(decision.result, pa.Table):
+                    raise DatusException(
+                        ErrorCode.TOOL_INVALID_INPUT,
+                        message=f"Policy runtime {plugin_name!r} after_read_batch must return an Arrow table",
+                    )
+                batch_schema = decision.result.schema
+                restored = current_result if decision.result is hook_result else decision.result.to_pylist()
+                decision = replace(decision, result=restored)
             current_result = decision.result
             applied.extend(decision.applied_policies)
         return ReadResultDecision(allowed=True, result=current_result, applied_policies=applied)

@@ -25,6 +25,40 @@ SYSTEM_REMINDER_CLOSE = "</system_reminder>\n"
 COMPACT_RESUME_MARKER = "[DATUS_COMPACT_RESUME]"
 
 
+def assistant_text_blocks(content: Any) -> List[str]:
+    """Extract nonempty provider assistant text blocks without changing their text."""
+    if isinstance(content, str):
+        return [content] if content else []
+    if not isinstance(content, list):
+        return []
+    return [
+        block["text"]
+        for block in content
+        if isinstance(block, dict)
+        and block.get("type") in ("text", "output_text")
+        and isinstance(block.get("text"), str)
+        and block["text"]
+    ]
+
+
+def merge_assistant_response(blocks: List[str], source: str, rendered: List[dict]) -> Optional[List[dict]]:
+    """Replace the matching result block while preserving its sibling text.
+
+    Whole-row sources from older display records remain supported. Matching
+    ignores only outer whitespace and never accepts a substring of a block.
+    """
+    source = source.strip()
+    if "\n".join(blocks).strip() == source:
+        return list(rendered)
+    match = next((index for index in reversed(range(len(blocks))) if blocks[index].strip() == source), None)
+    if match is None:
+        return None
+    contents = []
+    for index, text in enumerate(blocks):
+        contents.extend(rendered if index == match else [{"type": "markdown", "payload": {"content": text}}])
+    return contents
+
+
 def is_compact_resume_text(text: Any) -> bool:
     """Whether ``text`` is a mid-turn compaction resume instruction."""
     return isinstance(text, str) and text.lstrip().startswith(COMPACT_RESUME_MARKER)

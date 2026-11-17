@@ -19,6 +19,7 @@ from datus.schemas.action_history import ActionHistory
 from datus.schemas.semantic_agentic_node_models import SemanticModelingNodeResult, SemanticNodeInput
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.generation_tools import GenerationTools
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -105,6 +106,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             return
 
         self.tools = []
+        self._setup_semantic_tools()
         self._setup_osi_target_tools()
         self._setup_db_tools(expose_tools=False)
         if self.db_func_tool is not None:
@@ -114,7 +116,6 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         self._setup_generation_tools()
         self._setup_filesystem_tools()
         self._setup_semantic_plan_file_tool()
-        self._setup_semantic_tools()
         if self.authoring_scope == "full":
             self._setup_semantic_verification_tools()
         if self.execution_mode == "interactive":
@@ -154,6 +155,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             ]
         )
 
+    @tool_contract(access="read", direct_call=True, category="semantic_tools")
     def list_existing_osi_semantic_models(self) -> FuncToolResult:
         """Inspect existing models before selecting an authoring target."""
         result = self.osi_target_tools.list_existing_osi_semantic_models()
@@ -187,6 +189,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             },
         )
 
+    @tool_contract(access="restricted", direct_call=True, category="semantic_tools")
     def plan_osi_semantic_model_target(
         self,
         semantic_model_name: str = "",
@@ -217,6 +220,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             dimension_tables=dimension_tables,
         )
 
+    @tool_contract(access="write", direct_call=False, category="semantic_tools")
     def bind_osi_semantic_model_target(
         self,
         semantic_model_file: str = "",
@@ -239,12 +243,6 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             semantic_model_name=semantic_model_name,
         )
 
-    def _make_filesystem_tool(self, **kwargs):
-        from datus.tools.func_tool.metric_filesystem_tools import SemanticModelingFilesystemFuncTool
-
-        kwargs["filesystem_tool_cls"] = SemanticModelingFilesystemFuncTool
-        return super()._make_filesystem_tool(**kwargs)
-
     def _semantic_modeling_mutation_guard(self, path: str):
         return self.osi_target_state.require_selected_path(path)
 
@@ -253,16 +251,23 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         self.osi_target_state.record_selected_write()
 
     def _setup_filesystem_tools(self):
+        """Mount file and object tools against the same authoring workspace."""
+        from datus.tools.func_tool.semantic_model_editing_tools import SemanticModelEditingTools
+
         try:
             self.filesystem_func_tool = self._make_filesystem_tool(
                 mutation_guard=self._semantic_modeling_mutation_guard,
                 mutation_callback=self._record_semantic_modeling_mutation,
             )
+            self.semantic_model_workspace = self.filesystem_func_tool.workspace
+            self.semantic_model_editing_tools = SemanticModelEditingTools(self.semantic_model_workspace)
             filesystem_tools = [
                 tool
-                for tool in self.filesystem_func_tool.available_tools()
-                if tool.name != "delete_file"
-                and not (
+                for tool in [
+                    *self.filesystem_func_tool.available_tools(),
+                    *self.semantic_model_editing_tools.available_tools(),
+                ]
+                if not (
                     self.authoring_scope == "datasets" and tool.name in {"upsert_osi_metrics", "delete_osi_metrics"}
                 )
             ]
@@ -410,7 +415,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
 
         tokens_used = 0
         if self.execution_mode == "interactive":
-            tokens_used = self._extract_total_tokens(ctx.action_history_manager.get_actions())
+            tokens_used = self._extract_total_tokens(ctx.get_run_actions())
         return SemanticModelingNodeResult(
             success=status != "blocked",
             error=response_content if status == "blocked" else None,
@@ -443,7 +448,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             document = yaml.safe_load(content.decode("utf-8"))
         except (UnicodeDecodeError, yaml.YAMLError) as exc:
             raise RuntimeError(f"Cannot inspect semantic-model metrics for scope enforcement: {exc}") from exc
-        models = document.get("semantic_model") if isinstance(document, dict) else None
+        models = [document] if isinstance(document, dict) and "datasets" in document else None
         if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
             return []
         metrics = models[0].get("metrics") or []
@@ -463,7 +468,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             raise RuntimeError(f"Cannot inspect the selected semantic model for scope enforcement: {exc}") from exc
         if self._metric_definitions(state.artifact_snapshot_content) == self._metric_definitions(current_content):
             return
-        rolled_back = bool(self.filesystem_func_tool and self.filesystem_func_tool.rollback_failed_authoring())
+        rolled_back = bool(self.semantic_model_workspace and self.semantic_model_workspace.rollback_failed_authoring())
         rollback_suffix = " The semantic-model YAML was restored." if rolled_back else ""
         raise RuntimeError(
             "Datasets-only semantic_modeling cannot create, update, or delete metrics." + rollback_suffix
@@ -496,7 +501,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
     def _finalize_selected_osi_artifact(self) -> str:
         """Validate and fully reconcile one target YAML before returning success."""
         semantic_model_file, resolved, model_name = self._selected_osi_artifact()
-        metric_uids = self.filesystem_func_tool.ensure_metric_uids(resolved)
+        metric_uids = self.semantic_model_workspace.ensure_metric_uids(resolved)
         uid_sync_names = self.generation_tools.metric_names_needing_uid_sync(resolved, metric_uids)
         if uid_sync_names:
             self.osi_target_state.record_metric_touch(resolved, None, uid_sync_names)

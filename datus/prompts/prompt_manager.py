@@ -10,13 +10,15 @@ Template files follow the pattern: {template_name}_{version}.j2
 No configuration file needed - versions are determined by scanning files.
 """
 
+import hashlib
+import json
 import re
 import shutil
 from collections import OrderedDict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, List, Optional
 
-from jinja2 import Environment, FileSystemLoader, Template
+from jinja2 import Environment, FileSystemLoader, Template, TemplateNotFound, meta
 from jinja2.sandbox import SandboxedEnvironment
 
 from datus.utils.loggings import get_logger
@@ -204,6 +206,31 @@ class PromptManager:
 
         with open(template_path, "r", encoding="utf-8") as f:
             return f.read()
+
+    def template_fingerprint(self, template_name: str, version: Optional[str] = None) -> str:
+        """Hash the effective template and its include/import/extends graph.
+
+        Dynamic template references conservatively invalidate on any loader
+        template change. Cycles and ignored missing includes remain finite.
+        """
+        env = self._get_env()
+        pending = [self._get_template_filename(template_name, version)]
+        sources = {}
+        while pending:
+            name = pending.pop()
+            if name in sources:
+                continue
+            try:
+                source, _, _ = env.loader.get_source(env, name)
+            except TemplateNotFound:
+                sources[name] = None
+                continue
+            sources[name] = source
+            references = list(meta.find_referenced_templates(env.parse(source)))
+            pending.extend(ref for ref in references if ref is not None)
+            if None in references:
+                pending.extend(env.list_templates())
+        return hashlib.sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest()
 
     def list_templates(self) -> List[str]:
         """

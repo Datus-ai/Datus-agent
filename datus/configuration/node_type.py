@@ -46,6 +46,8 @@ class NodeType:
     TYPE_COMPARE = "compare"  # For comparing SQL with expectations
 
     # Agentic node types
+    TYPE_ANALYTICS_EXPLORER = "analytics_explorer"
+    TYPE_ANALYTICS_BUILDER = "analytics_builder"
     TYPE_CHAT = "chat"  # For conversational AI interactions
     TYPE_GEN_SQL = "gen_sql"  # For SQL generation with conversational AI
     TYPE_SEMANTIC = "semantic"  # For semantic model generation
@@ -57,7 +59,7 @@ class NodeType:
     TYPE_EXPLORE = "explore"  # For read-only data exploration and context gathering
     TYPE_GEN_TABLE = "gen_table"  # For wide table generation from JOIN SQL
     TYPE_GEN_JOB = "gen_job"  # For data pipeline jobs: single-database ETL AND cross-database migration
-    TYPE_GEN_SKILL = "gen_skill"  # For interactive skill creation and optimization
+    TYPE_GEN_SKILL = "gen_skill"  # For skill creation, editing, and review
     TYPE_GEN_DASHBOARD = "gen_dashboard"  # For BI dashboard creation and management
     TYPE_SCHEDULER = "scheduler"  # For job scheduler management and monitoring
     TYPE_FEEDBACK = "feedback"  # For conversation feedback analysis and knowledge archival
@@ -68,6 +70,8 @@ class NodeType:
         TYPE_OUTPUT,
         TYPE_FIX,
         TYPE_COMPARE,
+        TYPE_ANALYTICS_EXPLORER,
+        TYPE_ANALYTICS_BUILDER,
         TYPE_CHAT,
         TYPE_GEN_SQL,
         TYPE_SEMANTIC,
@@ -96,6 +100,8 @@ class NodeType:
         TYPE_SELECTION: "Select best result from multiple candidates",
         TYPE_SUBWORKFLOW: "Execute a nested workflow",
         TYPE_COMPARE: "Compare SQL with expectations",
+        TYPE_ANALYTICS_EXPLORER: "Read-only analytics with shared context",
+        TYPE_ANALYTICS_BUILDER: "Analytics and file-based deliverables",
         TYPE_CHAT: "Conversational AI interactions with tool calling",
         TYPE_GEN_SQL: "SQL generation with conversational AI and tool calling",
         TYPE_SEMANTIC: "Semantic model generation with conversational AI",
@@ -112,7 +118,7 @@ class NodeType:
             "Data pipeline job execution: single-database ETL and cross-database migration "
             "(with type mapping, DDL validation, and reconciliation)"
         ),
-        TYPE_GEN_SKILL: "Interactive skill creation and optimization",
+        TYPE_GEN_SKILL: "Skill creation, editing, and review",
         TYPE_GEN_DASHBOARD: "BI dashboard creation and management",
         TYPE_SCHEDULER: "Job scheduler management and monitoring",
         TYPE_FEEDBACK: "Conversation feedback analysis and knowledge archival",
@@ -142,7 +148,7 @@ class NodeType:
             input_data_cls = SubworkflowInput
         elif node_type == NodeType.TYPE_COMPARE:
             input_data_cls = CompareInput
-        elif node_type == NodeType.TYPE_CHAT:
+        elif node_type in {NodeType.TYPE_CHAT, NodeType.TYPE_ANALYTICS_EXPLORER, NodeType.TYPE_ANALYTICS_BUILDER}:
             input_data_cls = ChatNodeInput
         elif node_type == NodeType.TYPE_GEN_SQL:
             input_data_cls = GenSQLNodeInput

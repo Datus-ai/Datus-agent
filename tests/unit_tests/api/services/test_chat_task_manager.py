@@ -1,8 +1,10 @@
 """Tests for datus.api.services.chat_task_manager — background task management."""
 
 import asyncio
-import logging
+import gc
 import re
+import threading
+import weakref
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -29,7 +31,239 @@ from datus.api.services.chat_task_manager import (
     _should_include_final_response,
     _should_skip_duplicate_assistant_message,
 )
+from datus.tools.permission.permission_manager import PermissionManager
+from datus.tools.permission.profiles import get_profile
 from datus.tools.proxy.tool_result_channel import ToolResultChannel
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["added", "modified", "deleted", "rollback", "error", "cancelled"])
+async def test_turn_emits_one_final_semantic_diff_without_persisting_it(tmp_path, real_agent_config, outcome):
+    """Aggregate each terminal outcome into one replayable diff without adding history content."""
+    from datus.api.models.cli_models import StreamChatInput
+    from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+    root = tmp_path / "subject" / "semantic_models" / "ds"
+    root.mkdir(parents=True)
+    model = root / "model.yml"
+    if outcome != "added":
+        model.write_text("metrics: [old, retained]\n")
+    real_agent_config._project_root = tmp_path
+    history_actions = []
+
+    class FakeNode:
+        session_id = "llm-semantic-diff"
+        permission_manager = PermissionManager(global_config=get_profile("auto"), active_profile="auto")
+        proxied_tool_names = set()
+
+        def get_node_name(self):
+            """Identify the stub as the top-level chat node."""
+            return "chat"
+
+        async def execute_stream_with_interactions(self, action_history_manager):
+            """Perform real file writes before the requested success, failure or cancellation."""
+            model.write_text("metrics: [old, retained, new]\n")
+            model.write_text("metrics: [retained, new]\n")
+            if outcome == "deleted":
+                model.unlink()
+            if outcome == "error":
+                raise RuntimeError("terminal failure")
+            if outcome == "cancelled":
+                raise asyncio.CancelledError
+            if outcome == "rollback":
+                model.write_text("metrics: [old, retained]\n")
+            yield ActionHistory(
+                action_id="final",
+                role=ActionRole.ASSISTANT,
+                action_type="chat_response",
+                input={},
+                output={"response": "done"},
+                status=ActionStatus.SUCCESS,
+            )
+            history_actions.extend(action_history_manager.get_actions())
+
+        async def get_last_turn_usage(self):
+            """Return no usage for this filesystem-only fixture."""
+            return None
+
+    manager = ChatTaskManager()
+    node = FakeNode()
+    nodes = [node]
+    manager._create_node = lambda *args, **kwargs: nodes.pop()
+    manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)
+    task = ChatTask(session_id="semantic-turn", asyncio_task=MagicMock())
+    await manager._run_loop(
+        task,
+        real_agent_config,
+        StreamChatInput(message="update metrics", source="web", session_id="semantic-turn"),
+    )
+    notifications = [
+        event
+        for event in task.events
+        if event.event == "message" and event.data.payload.content[0].type == "semantic-model-diff"
+    ]
+    assert len(notifications) == (0 if outcome == "rollback" else 1)
+    payloads = [event.data.payload.content[0].payload for event in notifications]
+    expected_changes = (
+        []
+        if outcome == "rollback"
+        else [
+            {
+                "filePath": "subject/semantic_models/ds/model.yml",
+                "changeType": outcome if outcome in {"added", "deleted"} else "modified",
+                "oldText": None if outcome == "added" else "metrics: [old, retained]\n",
+                "newText": None if outcome == "deleted" else "metrics: [retained, new]\n",
+            }
+        ]
+    )
+    assert [change for payload in payloads for change in payload["files"]] == expected_changes
+    assert [event.data.payload.message_id for event in notifications] == [
+        f"semantic-model-diff:{task.turn_id}" for _ in expected_changes
+    ]
+    terminal_id = next((item.id for item in task.events if item.event in {"end", "error"}), len(task.events))
+    assert all(event.id < terminal_id for event in notifications)
+    replayed = [item async for item in manager.consume_events(task, start_from=0)]
+    assert [item for item in replayed if item in notifications] == notifications
+    assert not task.message_contents
+    assert not task.tool_result_contents
+    assert task.node is None
+    assert task.llm_session_id == "llm-semantic-diff"
+    reference = weakref.ref(node)
+    del node
+    gc.collect()
+    assert reference() is None
+    assert all(action.action_type != "semantic-model-diff" for action in history_actions)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["completed", "cancelled", "error"])
+async def test_repeated_cancellation_drains_semantic_diff_before_terminal_state(
+    tmp_path, real_agent_config, monkeypatch, outcome
+):
+    """Keep SSE consumers open until the final diff survives repeated stop requests."""
+    from datus.api.models.cli_models import StreamChatInput
+    from datus.api.services.semantic_model_diff import SemanticModelSnapshot
+
+    root = tmp_path / "subject" / "semantic_models" / "ds"
+    root.mkdir(parents=True)
+    model = root / "model.yml"
+    model.write_text("metrics: [original]\n")
+    real_agent_config._project_root = tmp_path
+    failure = {"completed": None, "cancelled": asyncio.CancelledError(), "error": RuntimeError("model failed")}[outcome]
+    node = TestRunLoopSettlesTurn._node(raise_after=failure)
+    node.permission_manager = PermissionManager(global_config=get_profile("auto"), active_profile="auto")
+    node.proxied_tool_names = set()
+    stream = node.execute_stream_with_interactions
+
+    async def write_then_stream(action_history_manager):
+        """Change the real YAML before the fake model reaches its terminal outcome."""
+        model.write_text("metrics: [final]\n")
+        async for action in stream(action_history_manager):
+            yield action
+
+    node.execute_stream_with_interactions = write_then_stream
+    manager = ChatTaskManager()
+    manager._create_node = lambda *args, **kwargs: node
+    manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)
+    task = ChatTask(session_id="repeated-stop", asyncio_task=MagicMock())
+    callback = task.on_turn_end = MagicMock()
+    manager._tasks[task.session_id] = task
+    loop = asyncio.get_running_loop()
+    scan_started = asyncio.Event()
+    release_scan = threading.Event()
+    publication_started = asyncio.Event()
+    release_publication = asyncio.Event()
+    changes = SemanticModelSnapshot.changes
+    push_event = manager._push_event
+
+    def blocked_changes(snapshot):
+        """Hold the worker scan while the run receives several cancellations."""
+        loop.call_soon_threadsafe(scan_started.set)
+        assert release_scan.wait(timeout=3)
+        return changes(snapshot)
+
+    async def blocked_publication(current, event):
+        """Hold the actual SSE append to verify consumers cannot finish early."""
+        if isinstance(event.data, SSEMessageData) and event.data.payload.content[0].type == "semantic-model-diff":
+            publication_started.set()
+            await release_publication.wait()
+        await push_event(current, event)
+
+    async def consume():
+        """Exercise the real live SSE consumer while publication is pending."""
+        return [event async for event in manager.consume_events(task, start_from=0)]
+
+    monkeypatch.setattr(SemanticModelSnapshot, "changes", blocked_changes)
+    monkeypatch.setattr(manager, "_push_event", blocked_publication)
+    runner = asyncio.create_task(
+        manager._run_loop(
+            task,
+            real_agent_config,
+            StreamChatInput(message="update metrics", source="web", session_id=task.session_id),
+        )
+    )
+    task.asyncio_task = runner
+    consumer = asyncio.create_task(consume())
+    try:
+        await asyncio.wait_for(scan_started.wait(), timeout=2)
+        for _ in range(2):
+            runner.cancel()
+            await asyncio.sleep(0)
+        assert not runner.done()
+        assert task.status == "running"
+        assert not task.settled
+        assert manager.get_task(task.session_id) is task
+        assert not consumer.done()
+
+        release_scan.set()
+        await asyncio.wait_for(publication_started.wait(), timeout=2)
+        for _ in range(2):
+            runner.cancel()
+            await asyncio.sleep(0)
+        assert not runner.done()
+        assert task.status == "running"
+        assert not task.settled
+        assert not consumer.done()
+
+        release_publication.set()
+        _, pending = await asyncio.wait([runner, consumer], timeout=2)
+        assert not pending
+        assert runner.result() is None
+        events = consumer.result()
+        notifications = [
+            event
+            for event in events
+            if isinstance(event.data, SSEMessageData) and event.data.payload.content[0].type == "semantic-model-diff"
+        ]
+        assert len(notifications) == 1
+        assert notifications[0].data.payload.content[0].payload["files"] == [
+            {
+                "filePath": "subject/semantic_models/ds/model.yml",
+                "changeType": "modified",
+                "oldText": "metrics: [original]\n",
+                "newText": "metrics: [final]\n",
+            }
+        ]
+        expected_status = "error" if outcome == "error" else "cancelled"
+        expected_error = "model failed" if outcome == "error" else None
+        assert task.status == expected_status
+        assert task.error == expected_error
+        callback.assert_called_once()
+        usage, error, status, turn_id = callback.call_args.args
+        assert (status, error, turn_id) == (expected_status, expected_error, task.turn_id)
+        assert usage["total_tokens"] == 120
+        assert task.settled
+        assert task.session_id not in manager._tasks
+        assert manager._completed_tasks[task.session_id] is task
+        errors = [event for event in events if event.event == "error"]
+        assert [event.data.error for event in errors] == (["model failed"] if outcome == "error" else [])
+        assert all(notifications[0].id < event.id for event in errors)
+    finally:
+        release_scan.set()
+        release_publication.set()
+        runner.cancel()
+        consumer.cancel()
+        await asyncio.gather(runner, consumer, return_exceptions=True)
 
 
 class TestFillDatabaseContext:
@@ -60,6 +294,8 @@ class TestFillDatabaseContext:
         assert schema is None
 
     def test_context_falls_back_to_config_fields(self, real_agent_config):
+        real_agent_config.current_db_config().type = "postgresql"
+        real_agent_config.current_db_config().uri = ""
         real_agent_config.current_db_config().catalog = "configured_catalog"
         real_agent_config.current_db_config().database = "configured_database"
         real_agent_config.current_db_config().schema = "configured_schema"
@@ -392,7 +628,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="s-final", asyncio_task=MagicMock())
 
         await manager._run_loop(task, real_agent_config, StreamChatInput(message="tables", session_id="s-final"))
@@ -462,7 +699,8 @@ class TestChatTaskManagerBehavior:
                 )
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="api-cache-write", asyncio_task=MagicMock())
 
         await manager._run_loop(
@@ -505,16 +743,23 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="s-share", asyncio_task=MagicMock())
 
         await manager._run_loop(task, real_agent_config, StreamChatInput(message="hi", session_id="s-share"))
 
-        assert task.node.pending_input_queue is task.pending_input_queue
+        assert node.pending_input_queue is task.pending_input_queue
         assert captured["queue_during_run"] is task.pending_input_queue
 
     @pytest.mark.asyncio
-    async def test_run_loop_auto_continues_residual_mid_run_message(self, real_agent_config):
+    @pytest.mark.parametrize(
+        ("request_limits", "expected_limit"),
+        [({}, 200), ({"max_turns": 2}, 2), ({"max_turns": 100}, 100)],
+    )
+    async def test_run_loop_auto_continues_residual_mid_run_message(
+        self, real_agent_config, request_limits, expected_limit
+    ):
         """A message queued after the final turn (never seen by the SDK filter)
         is drained after the run, echoed as a user_insert frame, and run in a
         fresh pass — instead of being silently dropped."""
@@ -523,17 +768,20 @@ class TestChatTaskManagerBehavior:
 
         class FakeNode:
             session_id = "s-cont"
+            max_turns = 200
 
             def __init__(self):
                 self.pending_input_queue = None
                 self.input = None
                 self.run_count = 0
+                self.run_limits = []
 
             def get_node_name(self):
                 return "chat"
 
             async def execute_stream_with_interactions(self, action_history_manager):
                 self.run_count += 1
+                self.run_limits.append(self.max_turns)
                 if self.run_count == 1:
                     # Simulate a mid-run insert that landed after the final
                     # turn — the SDK's call_model_input_filter never sees it.
@@ -552,15 +800,21 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         # Avoid the real @-context/node-input machinery for the continuation turn.
         manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)  # type: ignore[method-assign]
         task = ChatTask(session_id="s-cont", asyncio_task=MagicMock())
 
-        await manager._run_loop(task, real_agent_config, StreamChatInput(message="explore", session_id="s-cont"))
+        await manager._run_loop(
+            task,
+            real_agent_config,
+            StreamChatInput(message="explore", session_id="s-cont", **request_limits),
+        )
 
         # Two passes: the original run + one auto-continuation for the residual.
-        assert task.node.run_count == 2
+        assert node.run_count == 2
+        assert node.run_limits == [expected_limit, expected_limit]
         # The residual was echoed to the client as a user bubble.
         user_events = [
             e for e in task.events if e.event == "message" and getattr(e.data.payload, "role", None) == "user"
@@ -610,13 +864,14 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)  # type: ignore[method-assign]
         task = ChatTask(session_id="s-dup", asyncio_task=MagicMock())
 
         await manager._run_loop(task, real_agent_config, StreamChatInput(message="explore", session_id="s-dup"))
 
-        assert task.node.run_count == 2
+        assert node.run_count == 2
         assistant_events = [
             e for e in task.events if e.event == "message" and getattr(e.data.payload, "role", None) == "assistant"
         ]
@@ -679,7 +934,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)  # type: ignore[method-assign]
         task = ChatTask(session_id="s-parallel", asyncio_task=MagicMock())
 
@@ -780,14 +1036,15 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)  # type: ignore[method-assign]
         task = ChatTask(session_id="s-cap", asyncio_task=MagicMock())
 
         await manager._run_loop(task, real_agent_config, StreamChatInput(message="go", session_id="s-cap"))
 
         # Initial run + the cap in continuations, then it stops.
-        assert task.node.run_count == ctm._MAX_INSERT_CONTINUATIONS + 1
+        assert node.run_count == ctm._MAX_INSERT_CONTINUATIONS + 1
         assert task.accepting_inserts is False
 
     @pytest.mark.asyncio
@@ -824,7 +1081,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)  # type: ignore[method-assign]
         # pass 1: first drain empty → close window → second drain finds a tail
         # message → re-open and continue. pass 2: both drains empty → stop.
@@ -835,7 +1093,7 @@ class TestChatTaskManagerBehavior:
         await manager._run_loop(task, real_agent_config, StreamChatInput(message="go", session_id="s-reopen"))
 
         # The re-opened window ran a second pass and echoed the tail message.
-        assert task.node.run_count == 2
+        assert node.run_count == 2
         user_events = [
             e for e in task.events if e.event == "message" and getattr(e.data.payload, "role", None) == "user"
         ]
@@ -864,7 +1122,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="s-web-proxy", asyncio_task=MagicMock())
 
         with patch("datus.api.services.chat_task_manager.apply_proxy_tools") as mock_apply:
@@ -886,13 +1145,12 @@ class TestChatTaskManagerBehavior:
         """auto/dangerous web sessions run filesystem tools server-side: no
         client proxy (which would block on a browser that may be hidden or
         gone), and an empty proxied set so SSE frames carry proxied=False."""
-        from types import SimpleNamespace
 
         from datus.api.models.cli_models import StreamChatInput
 
         class FakeNode:
             session_id = f"s-web-{profile}"
-            permission_manager = SimpleNamespace(active_profile=profile)
+            permission_manager = PermissionManager(global_config=get_profile(profile), active_profile=profile)
 
             def __init__(self):
                 # Simulate a pre-populated shared set (PermissionHooks may
@@ -926,7 +1184,7 @@ class TestChatTaskManagerBehavior:
         mock_apply.assert_not_called()
         # In-place clear, not rebinding — hooks holding the old reference
         # must observe the emptied set.
-        assert task.node.proxied_tool_names is shared_ref
+        assert node.proxied_tool_names is shared_ref
         assert shared_ref == set()
         assert task.status == "completed"
 
@@ -934,7 +1192,6 @@ class TestChatTaskManagerBehavior:
     async def test_run_loop_web_source_normal_profile_still_proxies(self, real_agent_config):
         """A node whose active profile is ``normal`` keeps the client proxy —
         the confirm UI lives in the browser."""
-        from types import SimpleNamespace
 
         from datus.api.models.cli_models import StreamChatInput
 
@@ -945,7 +1202,7 @@ class TestChatTaskManagerBehavior:
                 self.tool_channel = ToolResultChannel()
                 self.proxied_tool_names = set()
 
-            permission_manager = SimpleNamespace(active_profile="normal")
+            permission_manager = PermissionManager(global_config=get_profile("normal"), active_profile="normal")
 
             def get_node_name(self):
                 return "chat"
@@ -958,7 +1215,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="s-web-normal", asyncio_task=MagicMock())
 
         with patch("datus.api.services.chat_task_manager.apply_proxy_tools") as mock_apply:
@@ -1024,7 +1282,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="s-nested-response", asyncio_task=MagicMock())
 
         await manager._run_loop(
@@ -1071,7 +1330,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="s-dedupe", asyncio_task=MagicMock())
 
         await manager._run_loop(task, real_agent_config, StreamChatInput(message="tables", session_id="s-dedupe"))
@@ -1123,7 +1383,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="s-post-tool-thinking", asyncio_task=MagicMock())
 
         await manager._run_loop(
@@ -1175,7 +1436,8 @@ class TestChatTaskManagerBehavior:
                 return None
 
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        node = FakeNode()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="s-plain-dedupe", asyncio_task=MagicMock())
 
         await manager._run_loop(task, real_agent_config, StreamChatInput(message="tables", session_id="s-plain-dedupe"))
@@ -1249,6 +1511,8 @@ class TestStartChat:
         """start_chat fills omitted request database context before the run loop."""
         from datus.api.models.cli_models import StreamChatInput
 
+        real_agent_config.current_db_config().type = "postgresql"
+        real_agent_config.current_db_config().uri = ""
         real_agent_config.current_db_config().catalog = "configured_catalog"
         real_agent_config.current_db_config().database = "configured_database"
         real_agent_config.current_db_config().schema = "configured_schema"
@@ -1270,6 +1534,36 @@ class TestStartChat:
             "database": "configured_database",
             "db_schema": "configured_schema",
         }
+
+    @pytest.mark.parametrize("override", [None, "next_database"])
+    async def test_resumed_turn_binds_last_selection_before_tools_are_created(
+        self, real_agent_config, monkeypatch, override
+    ):
+        import json
+
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.schemas.database_context import EXECUTION_CONTEXT_META_KEY
+
+        manager = ChatTaskManager()
+        source = real_agent_config.current_datasource
+        previous = {"datasource": source, "database": "selected", "schema": "last_schema"}
+        sessions = MagicMock()
+        sessions.load_session_meta.return_value = json.dumps(previous)
+        monkeypatch.setattr(manager, "_session_manager", lambda *args: sessions)
+        captured = {}
+
+        async def run_loop(task, config, request, **kwargs):
+            captured.update(config.runtime_db_context())
+
+        monkeypatch.setattr(manager, "_run_loop", run_loop)
+        request = StreamChatInput(message="query here", session_id="resumed", database=override)
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+        assert captured["datasource"] == source
+        assert captured["database"] == (override or "selected")
+        assert captured.get("schema") == ("" if override else "last_schema")
+        assert real_agent_config.current_db_config().database == "california_schools"
+        sessions.load_session_meta.assert_called_once_with("resumed", EXECUTION_CONTEXT_META_KEY)
 
     async def test_start_chat_forces_immutable_config(self, real_agent_config, monkeypatch):
         """The per-request clone is marked read-only (filesystem + config)
@@ -1692,6 +1986,8 @@ class TestCreateNodeInput:
 
     def test_node_input_falls_back_to_config_db_context(self, real_agent_config, mock_llm_create):
         """_create_node_input fills missing database context from current config."""
+        real_agent_config.current_db_config().type = "postgresql"
+        real_agent_config.current_db_config().uri = ""
         real_agent_config.current_db_config().catalog = "configured_catalog"
         real_agent_config.current_db_config().database = "configured_database"
         real_agent_config.current_db_config().schema = "configured_schema"
@@ -1703,6 +1999,19 @@ class TestCreateNodeInput:
         assert result.catalog == "configured_catalog"
         assert result.database == "configured_database"
         assert result.db_schema == "configured_schema"
+
+    def test_resolved_empty_schema_survives_node_input_and_semantic_context(self, real_agent_config, mock_llm_create):
+        cfg = real_agent_config.current_db_config()
+        cfg.schema = "configured_schema"
+        real_agent_config.set_runtime_db_context(
+            datasource=real_agent_config.current_datasource, database=cfg.database, schema="", catalog=""
+        )
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "gen_sql", "cleared-schema")
+        result = manager._create_node_input("query", node, [], [], [], catalog="", database=cfg.database, db_schema="")
+        assert result.db_schema == ""
+        node.input = result
+        assert node._semantic_runtime_db_context()["schema"] == ""
 
     def test_feedback_node_input_with_source_session(self, real_agent_config, mock_llm_create):
         """_create_node_input for FeedbackAgenticNode carries source_session_id through."""
@@ -2397,6 +2706,167 @@ class TestStartChatDatasourceOverride:
     connection profile without leaking into the physical ``database`` slot."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("engine", ["mysql", "starrocks"])
+    async def test_new_dashboard_chat_can_initialize_database_tools_without_a_default_database(
+        self, tmp_path, monkeypatch, engine
+    ):
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.configuration.agent_config import AgentConfig
+        from datus.tools.db_tools.db_manager import DBManager
+        from datus.tools.func_tool import database as database_module
+
+        catalog = "default_catalog" if engine == "starrocks" else ""
+        cfg = AgentConfig(
+            nodes={},
+            home=str(tmp_path / "home"),
+            skip_init_dirs=True,
+            services={"datasources": {"warehouse": {"type": engine, "catalog": catalog}}},
+            agentic_nodes={
+                "dashboard_reader": {
+                    "id": "dashboard-reader-id",
+                    "node_class": "ask_dashboard",
+                    "scoped_context": {"datasource": "warehouse"},
+                }
+            },
+        )
+        cfg.current_datasource = "warehouse"
+        connector = MagicMock(dialect=engine, database_name="", catalog_name=catalog, schema_name="")
+        connector.get_databases.return_value = ["analytics", "reporting"]
+        manager = DBManager(cfg.datasource_configs)
+        monkeypatch.setattr(manager, "_build_conn", lambda config: connector)
+        monkeypatch.setattr(database_module, "db_manager_instance", lambda configs: manager)
+        monkeypatch.setattr(database_module, "metadata_fts_enabled", lambda config: False)
+        monkeypatch.setattr(database_module, "SchemaWithValueRAG", lambda *args: None)
+        monkeypatch.setattr(database_module, "SemanticDatasetRAG", lambda *args: None)
+        monkeypatch.setattr(database_module, "_warn_once_if_projection_is_stale", lambda config: None)
+        observed = {}
+
+        async def run(task, config, request, **kwargs):
+            tool = database_module.DBFuncTool(agent_config=config, sub_agent_name="dashboard_reader", read_only=True)
+            observed.update(config.runtime_db_context())
+            assert tool.connector is connector
+            assert tool.connector.database_name == ""
+            assert tool.read_only is True
+            databases = tool.list_databases()
+            assert databases.success == 1, databases.error
+            assert databases.result == ["analytics", "reporting"]
+
+        tasks = ChatTaskManager()
+        monkeypatch.setattr(tasks, "_run_loop", run)
+        request = StreamChatInput(message="hello", subagent_id="dashboard-reader-id")
+        task = await tasks.start_chat(cfg, request, sub_agent_id=request.subagent_id)
+        await task.asyncio_task
+
+        assert observed["datasource"] == "warehouse"
+        assert observed["database"] == ""
+        assert request.database == ""
+        assert cfg.current_db_config().database == ""
+        assert cfg.runtime_db_context() == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("engine", ["sqlite", "duckdb"])
+    @pytest.mark.parametrize("explicit_empty", [False, True])
+    async def test_glob_database_omission_uses_effective_default_but_explicit_empty_rejects(
+        self, tmp_path, monkeypatch, engine, explicit_empty
+    ):
+        import sqlite3
+
+        import duckdb
+
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.configuration.agent_config import AgentConfig
+        from datus.tools.func_tool.database import DBFuncTool
+
+        suffix = "sqlite" if engine == "sqlite" else "duckdb"
+        path = tmp_path / f"analytics.{suffix}"
+        connect = sqlite3.connect if engine == "sqlite" else duckdb.connect
+        with connect(str(path)) as conn:
+            conn.execute("CREATE TABLE marker(value INTEGER)")
+            conn.execute("INSERT INTO marker VALUES (25)")
+        cfg = AgentConfig(
+            nodes={},
+            home=str(tmp_path / "home"),
+            target="mock",
+            skip_init_dirs=True,
+            models={"mock": {"type": "openai", "api_key": "unused", "model": "unused"}},
+            services={
+                "datasources": {
+                    "warehouse": {
+                        "type": engine,
+                        "path_pattern": str(tmp_path / f"*.{suffix}"),
+                        "default": True,
+                    }
+                }
+            },
+        )
+        cfg.override_by_args()
+        assert cfg.current_db_config().database == ""
+        observed = {}
+
+        async def run(task, config, request, **kwargs):
+            observed.update(config.runtime_db_context())
+            if explicit_empty:
+                with pytest.raises(ValueError, match="Select a database explicitly"):
+                    DBFuncTool(agent_config=config)
+            else:
+                tool = DBFuncTool(agent_config=config)
+                try:
+                    result = tool.connector.execute_query("SELECT value FROM marker", result_format="list")
+                    assert result.success is True, result.error
+                    assert result.sql_return == [{"value": 25}]
+                finally:
+                    tool.close()
+                    tool._db_manager.close()
+
+        manager = ChatTaskManager()
+        monkeypatch.setattr(manager, "_run_loop", run)
+        request = StreamChatInput(message="query", **({"database": ""} if explicit_empty else {}))
+        task = await manager.start_chat(cfg, request)
+        await task.asyncio_task
+        assert observed["database"] == ("" if explicit_empty else "analytics")
+        assert cfg.current_db_config().database == ""
+        assert cfg.runtime_db_context() == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "selection,expected",
+        [
+            ({"catalog": "cat_b"}, {"catalog": "cat_b"}),
+            ({"db_schema": ""}, {"catalog": "cat_a", "database": "analytics"}),
+            ({"database": "other"}, {"catalog": "cat_a", "database": "other"}),
+            ({}, {"catalog": "cat_a", "database": "analytics", "schema": "tenant_a"}),
+        ],
+    )
+    async def test_parent_changes_invalidate_children_and_empty_schema_is_explicit(
+        self, real_agent_config, monkeypatch, selection, expected
+    ):
+        import json
+
+        from datus.api.models.cli_models import StreamChatInput
+
+        source = real_agent_config.current_datasource
+        cfg = real_agent_config.current_db_config()
+        cfg.catalog, cfg.database, cfg.schema = "cat_a", "analytics", "tenant_a"
+        previous = {"datasource": source, "catalog": "cat_a", "database": "analytics", "schema": "tenant_a"}
+        manager = ChatTaskManager()
+        sessions = MagicMock()
+        sessions.load_session_meta.return_value = json.dumps(previous)
+        monkeypatch.setattr(manager, "_session_manager", lambda *args: sessions)
+        captured = {}
+
+        async def run(task, config, request, **kwargs):
+            captured.update(config.runtime_db_context())
+
+        monkeypatch.setattr(manager, "_run_loop", run)
+        task = await manager.start_chat(
+            real_agent_config, StreamChatInput(message="query", session_id="hierarchy", **selection)
+        )
+        await task.asyncio_task
+        from datus.schemas.database_context import DatabaseExecutionContext
+
+        assert DatabaseExecutionContext.from_mapping(captured).to_dict() == {"datasource": source, **expected}
+
+    @pytest.mark.asyncio
     async def test_request_datasource_switches_current_datasource(self, real_agent_config, monkeypatch):
         import copy as _copy
 
@@ -2427,67 +2897,22 @@ class TestStartChatDatasourceOverride:
         assert real_agent_config.current_datasource == "california_schools"
 
     @pytest.mark.asyncio
-    async def test_unbound_request_datasource_falls_back(self, real_agent_config, monkeypatch):
-        """An unbound name must not fail the turn — it is a UI hint, not a contract.
-
-        The web composer keeps its own picker selection, so a name resolved
-        against another project's roster (or one unbound since) arrives stale;
-        raising here reached the client as an ``error`` SSE event that killed
-        every turn of the session.
-        """
+    async def test_unbound_datasource_refuses_to_execute_on_a_different_target(self, real_agent_config, monkeypatch):
         from datus.api.models.cli_models import StreamChatInput
 
-        captured = {}
+        called = []
 
-        async def fake_run_loop(self, task, agent_config, request, **kwargs):
-            captured["agent_config"] = agent_config
-            captured["request_datasource"] = request.datasource
+        async def run(*args, **kwargs):
+            called.append(True)
 
-        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", run)
         manager = ChatTaskManager()
-        request = StreamChatInput(message="hi", session_id="ds-invalid", datasource="nonexistent")
-        task = await manager.start_chat(real_agent_config, request)
-        await task.asyncio_task
-
-        assert captured["agent_config"].current_datasource == "california_schools"
-        assert captured["request_datasource"] == "california_schools"
-
-    @pytest.mark.asyncio
-    async def test_unbound_request_datasource_drops_its_database_context(self, real_agent_config, monkeypatch):
-        """The catalog/database/schema that came with it go too.
-
-        They name objects inside the datasource that was dropped, and
-        ``_fill_database_context`` prefers the request's value over the
-        config's — so keeping them points the turn at another warehouse's
-        same-named database, which is worse than the error it replaces because
-        it is silent.
-        """
-        from datus.api.models.cli_models import StreamChatInput
-
-        captured = {}
-
-        async def fake_run_loop(self, task, agent_config, request, **kwargs):
-            captured["catalog"] = request.catalog
-            captured["database"] = request.database
-            captured["db_schema"] = request.db_schema
-
-        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
-        manager = ChatTaskManager()
-        request = StreamChatInput(
-            message="hi",
-            session_id="ds-invalid-ctx",
-            datasource="nonexistent",
-            catalog="other_catalog",
-            database="other_db",
-            db_schema="other_schema",
-        )
-        task = await manager.start_chat(real_agent_config, request)
-        await task.asyncio_task
-
-        # Refilled from the datasource actually in use, never from the request.
-        assert captured["catalog"] is None
-        assert captured["database"] == "california_schools"
-        assert captured["db_schema"] is None
+        with pytest.raises(ValueError, match="not bound"):
+            await manager.start_chat(
+                real_agent_config, StreamChatInput(message="hi", datasource="not_bound", database="picked_db")
+            )
+        assert called == []
+        assert real_agent_config.current_datasource == "california_schools"
 
     @pytest.mark.asyncio
     async def test_bound_request_datasource_keeps_its_database_context(self, real_agent_config, monkeypatch):
@@ -2514,27 +2939,6 @@ class TestStartChatDatasourceOverride:
 
         assert captured["database"] == "picked_db"
         assert captured["db_schema"] == "picked_schema"
-
-    @pytest.mark.asyncio
-    async def test_unbound_datasource_warns_once_per_session(self, real_agent_config, monkeypatch, caplog):
-        """A channel pinned to an unbound datasource repeats it every turn."""
-        from datus.api.models.cli_models import StreamChatInput
-
-        async def fake_run_loop(self, task, agent_config, request, **kwargs):
-            return None
-
-        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
-        manager = ChatTaskManager()
-
-        with caplog.at_level(logging.WARNING, logger="datus.api.services.chat_task_manager"):
-            for _ in range(3):
-                request = StreamChatInput(message="hi", session_id="ds-repeat", datasource="nonexistent")
-                task = await manager.start_chat(real_agent_config, request)
-                await task.asyncio_task
-                manager._tasks.pop("ds-repeat", None)
-
-        warnings = [record for record in caplog.records if "not bound to this project" in record.getMessage()]
-        assert len(warnings) == 1
 
 
 class TestMatchTableEntry:
@@ -3194,3 +3598,319 @@ class TestStartChatSettlesExactlyOnce:
 
         assert [c[2] for c in calls] == ["completed"]
         assert calls[0][3] == task.turn_id
+
+
+class TestDirectSubagentDatasource:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("address", ["reca_agent", "custom-agent-id"])
+    @pytest.mark.parametrize("stale_target", ["request", "history", "default", "matching"])
+    async def test_saved_binding_controls_the_full_execution_target(
+        self, real_agent_config, monkeypatch, address, stale_target
+    ):
+        import copy
+        import json
+
+        from datus.api.models.cli_models import StreamChatInput
+
+        original = real_agent_config.current_datasource
+        bound = copy.deepcopy(real_agent_config.current_db_config())
+        bound.type, bound.uri = "postgresql", ""
+        bound.database, bound.schema, bound.catalog = "bound_db", "bound_schema", ""
+        real_agent_config.services.datasources["reca"] = bound
+        real_agent_config.agentic_nodes["reca_agent"] = {
+            "id": "custom-agent-id",
+            "node_class": "gen_sql",
+            "scoped_context": {"datasource": "reca"},
+        }
+        sessions = MagicMock()
+        sessions.load_session_meta.return_value = (
+            json.dumps(
+                {
+                    "datasource": "reca" if stale_target == "matching" else original,
+                    "database": "selected_db" if stale_target == "matching" else "ik_db",
+                    "schema": "selected_schema" if stale_target == "matching" else "ik_schema",
+                }
+            )
+            if stale_target in {"history", "matching"}
+            else None
+        )
+        manager = ChatTaskManager()
+        monkeypatch.setattr(manager, "_session_manager", lambda *args: sessions)
+        observed = {}
+
+        async def run(task, config, request, **kwargs):
+            observed.update(config.runtime_db_context())
+            observed["request_datasource"] = request.datasource
+
+        monkeypatch.setattr(manager, "_run_loop", run)
+        selection = {"datasource": original, "catalog": "ik_cat", "database": "ik_db", "db_schema": "ik_schema"}
+        request = StreamChatInput(
+            message="query", session_id="direct", **(selection if stale_target == "request" else {})
+        )
+        task = await manager.start_chat(real_agent_config, request, sub_agent_id=address)
+        await task.asyncio_task
+
+        assert observed["datasource"] == "reca"
+        assert observed["request_datasource"] == "reca"
+        assert observed["database"] == ("selected_db" if stale_target == "matching" else "bound_db")
+        assert observed["schema"] == ("selected_schema" if stale_target == "matching" else "bound_schema")
+        assert observed["catalog"] == ""
+        assert real_agent_config.current_datasource == original
+
+    @pytest.mark.asyncio
+    async def test_missing_bound_datasource_does_not_fall_back(self, real_agent_config, monkeypatch):
+        from unittest.mock import AsyncMock
+
+        from datus.api.models.cli_models import StreamChatInput
+
+        real_agent_config.agentic_nodes["custom"] = {"scoped_context": {"datasource": "removed"}}
+        manager = ChatTaskManager()
+        run = AsyncMock()
+        monkeypatch.setattr(manager, "_run_loop", run)
+        with pytest.raises(ValueError, match="not bound"):
+            await manager.start_chat(real_agent_config, StreamChatInput(message="query"), sub_agent_id="custom")
+        run.assert_not_awaited()
+
+
+@pytest.mark.parametrize("session_id", [None, "explicit-session", ""])
+def test_host_node_factory_delegates_or_fails_closed(real_agent_config, monkeypatch, session_id):
+    """Host dispatch and fallback share the effective session and fail closed."""
+    from unittest.mock import Mock
+
+    from datus.agent.node import node_factory
+
+    builtin, hosted = object(), object()
+    fallback = Mock(return_value=builtin)
+    extension = Mock(return_value=hosted)
+    monkeypatch.setattr(node_factory, "create_interactive_node", fallback)
+    manager = ChatTaskManager(node_factory=extension)
+    assert manager._create_node(real_agent_config, "ask_metrics", "session", "owner", False, session_id) is hosted
+    extension.assert_called_once_with(
+        agent_config=real_agent_config,
+        subagent_id="ask_metrics",
+        node_id="session",
+        user_id="owner",
+        interactive=False,
+        session_id="session" if session_id is None else session_id,
+    )
+    fallback.assert_not_called()
+    extension.return_value = None
+    assert manager._create_node(real_agent_config, "chat", "normal", "owner", session_id=session_id) is builtin
+    fallback.assert_called_once()
+    assert fallback.call_args.kwargs["session_id"] == ("normal" if session_id is None else session_id)
+    extension.side_effect = ValueError("Host authorization denied")
+    with pytest.raises(ValueError, match="authorization"):
+        manager._create_node(real_agent_config, "chat", "denied", "owner")
+    assert fallback.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_user_events_and_residual_inserts_reach_client():
+    """Accepted history must not hide streamed user messages or queued inserts."""
+    from datus.api.models.cli_models import IMessageContent, SSEMessageData, SSEMessagePayload
+    from datus.api.services.chat_task_manager import ChatTask
+
+    manager = ChatTaskManager()
+    task = ChatTask("accepted", None)
+
+    def event(role):
+        """Build a rendered message for either conversation role."""
+        return SSEEvent(
+            id=1,
+            event="message",
+            timestamp="2026-11-05T00:00:00Z",
+            data=SSEMessageData(
+                type="createMessage",
+                payload=SSEMessagePayload(
+                    message_id="1", role=role, content=[IMessageContent(type="markdown", payload={"content": "hello"})]
+                ),
+            ),
+        )
+
+    opening, reply = event("user"), event("assistant")
+    await manager._push_event(task, opening)
+    assert task.events == [opening]
+    await manager._push_event(task, reply)
+    await manager._push_event(task, opening)
+    assert task.events == [opening, reply, opening]
+
+    residual = ChatTask("accepted-residual", None)
+    next_id = await manager._emit_user_insert_sse(residual, "follow up", 2)
+    assert next_id == 3
+    assert len(residual.events) == 1
+    assert residual.events[0].data.payload.role == "user"
+    assert residual.events[0].data.payload.content[0].payload["content"] == "follow up"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["completed", "error", "cancelled"])
+async def test_completed_task_expires_without_another_request(real_agent_config, outcome):
+    """Real turn completion schedules expiry without a later lookup/purge call."""
+    from datus.api.models.cli_models import StreamChatInput
+
+    manager = ChatTaskManager(completed_task_ttl=0.02)
+    error = {"completed": None, "error": RuntimeError("injected failure"), "cancelled": asyncio.CancelledError()}[
+        outcome
+    ]
+    node = TestRunLoopSettlesTurn._node(raise_after=error)
+    nodes = [node]
+    manager._create_node = lambda *args, **kwargs: nodes.pop()
+    task = ChatTask("idle-expiry", None)
+    await manager._run_loop(task, real_agent_config, StreamChatInput(message="hi", session_id=task.session_id))
+    assert task.status == outcome
+    assert task.node is None
+    assert manager._completed_tasks[task.session_id] is task
+    reference = weakref.ref(task)
+    del task
+    await asyncio.sleep(0.05)
+    assert not manager._completed_tasks
+    # Injected exceptions keep traceback frames alive through the fake node.
+    # Drop test-owned references only after automatic expiry is proven.
+    del node, error
+    gc.collect()
+    assert reference() is None
+    await manager.shutdown()
+
+
+def test_completed_task_ttl_starts_at_completion():
+    """A task that ran over five minutes still gets the whole replay window."""
+    from datetime import timedelta
+
+    now = [1000.0]
+    manager = ChatTaskManager(clock=lambda: now[0])
+    task = ChatTask("long-task", None)
+    task.created_at = datetime.now() - timedelta(hours=1)
+    task.completed_at = now[0]
+    task.status = "completed"
+    manager._completed_tasks[task.session_id] = task
+    assert manager.get_task(task.session_id) is task
+    now[0] += 299
+    assert manager.get_task(task.session_id) is task
+    now[0] += 1
+    assert manager.get_task(task.session_id) is None
+
+
+def test_completed_replay_limits_remove_oldest_entries():
+    """Configured count/serialized-byte caps bound the completed replay index."""
+    manager = ChatTaskManager(max_completed_tasks=2, max_completed_bytes=10, clock=lambda: 100)
+    for index in range(3):
+        task = ChatTask(str(index), None)
+        task.status = "completed"
+        task.completed_at = 100
+        task.replay_bytes = 6
+        manager._completed_tasks[task.session_id] = task
+    manager._purge_expired_completed()
+    assert list(manager._completed_tasks) == ["2"]
+
+
+@pytest.mark.asyncio
+async def test_repeated_stop_drains_persistence_before_releasing_node(real_agent_config):
+    """A second stop during final persistence cannot strand the task/node registry."""
+    from datus.api.models.cli_models import StreamChatInput
+
+    node = TestRunLoopSettlesTurn._node(raise_after=asyncio.CancelledError())
+    manager = ChatTaskManager()
+    manager._create_node = lambda *args, **kwargs: node
+    task = ChatTask("cancel-during-persist", None)
+    manager._tasks[task.session_id] = task
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def persist(*args):
+        entered.set()
+        await release.wait()
+
+    manager._persist_message_contents = persist
+    runner = asyncio.create_task(
+        manager._run_loop(task, real_agent_config, StreamChatInput(message="hi", session_id=task.session_id))
+    )
+    task.asyncio_task = runner
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        for _ in range(2):
+            runner.cancel()
+            await asyncio.sleep(0)
+        assert not runner.done()
+        assert task.node is node
+        assert not task.settled
+    finally:
+        release.set()
+    await asyncio.wait_for(runner, timeout=2)
+    assert task.settled
+    assert task.node is None
+    assert task.session_id not in manager._tasks
+    assert manager.get_task(task.session_id) is task
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", ["count", "bytes"])
+async def test_reused_session_replay_caps_keep_latest_completed_turns(real_agent_config, limit):
+    from datus.api.models.cli_models import StreamChatInput
+
+    now = [0.0]
+    manager = ChatTaskManager(clock=lambda: now[0], max_completed_bytes=10**9)
+    manager._create_node = lambda *args, **kwargs: TestRunLoopSettlesTurn._node()
+    completed = []
+    try:
+        for sid in ("a", "b", "a", "c"):
+            now[0] += 1
+            task = ChatTask(sid, None)
+            manager._tasks[sid] = task
+            await manager._run_loop(task, real_agent_config, StreamChatInput(message="hi", session_id=sid))
+            assert task.status == "completed", task.error
+            completed.append(task)
+        newest_a, newest_c = completed[2:]
+        caps = {"count": (2, None), "bytes": (None, newest_a.replay_bytes + newest_c.replay_bytes)}
+        manager._max_completed_tasks, manager._max_completed_bytes = caps[limit]
+        manager._purge_expired_completed()
+        assert list(manager._completed_tasks) == ["a", "c"]
+        assert manager.get_task("a") is newest_a
+        assert manager.get_task("c") is newest_c
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_rejects_new_turn_registration(real_agent_config):
+    from datus.api.models.cli_models import StreamChatInput
+
+    manager = ChatTaskManager()
+    await manager.shutdown()
+    try:
+        with pytest.raises(RuntimeError, match="ChatTaskManager is shut down"):
+            await manager.start_chat(real_agent_config, StreamChatInput(message="late"))
+        assert manager._tasks == {}
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_during_metadata_loading_prevents_late_registration(real_agent_config):
+    import threading
+    from types import SimpleNamespace
+
+    from datus.api.models.cli_models import StreamChatInput
+
+    entered, release = threading.Event(), threading.Event()
+
+    def load_metadata(*args):
+        entered.set()
+        assert release.wait(timeout=5)
+        return None
+
+    manager = ChatTaskManager()
+    manager._session_manager = lambda *args: SimpleNamespace(load_session_meta=load_metadata)
+    registering = asyncio.create_task(
+        manager.start_chat(real_agent_config, StreamChatInput(message="late", session_id="late-metadata"))
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        await manager.shutdown()
+        release.set()
+        with pytest.raises(RuntimeError, match="ChatTaskManager is shut down"):
+            await registering
+        assert manager._tasks == {}
+    finally:
+        release.set()
+        await asyncio.gather(registering, return_exceptions=True)
+        await manager.shutdown()

@@ -296,6 +296,8 @@ class KbSearchConfig:
 
 @dataclass
 class DbConfig:
+    # Stable datasource identity supplied by the host; never a runtime/KB namespace.
+    datasource_id: str = ""
     path_pattern: str = field(default="", init=True)
     type: str = field(default="", init=True)
     uri: str = field(default="", init=True)
@@ -315,7 +317,8 @@ class DbConfig:
     extra: Optional[Dict] = field(default=None, init=True)  # Adapter-specific fields stored here
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        # Artifact routing metadata is not a database adapter option.
+        return {key: value for key, value in asdict(self).items() if key != "datasource_id"}
 
     @staticmethod
     def filter_kwargs(cls, kwargs) -> "DbConfig":
@@ -433,8 +436,11 @@ class ModelConfig:
     context_length: Optional[int] = None
     max_tokens: Optional[int] = None
     tokenizer_ref: Optional[str] = None
+    supports_image_input: Optional[bool] = None
 
     def __post_init__(self) -> None:
+        if self.supports_image_input is not None and not isinstance(self.supports_image_input, bool):
+            raise ValueError("supports_image_input must be a boolean")
         for name in ("context_length", "max_tokens"):
             value = getattr(self, name)
             if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value <= 0):
@@ -694,7 +700,7 @@ logger = get_logger(__name__)
 
 def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
     uri = resolve_env(str(db_config["uri"]))
-    known_fields = {"uri", "name", "type", "schema", "default"}
+    known_fields = {"uri", "name", "type", "schema", "default", "datasource_id"}
     extra = {
         key: _resolve_nested_value(value)
         for key, value in db_config.items()
@@ -709,6 +715,7 @@ def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
     if not uri.startswith(dialect):
         uri = f"{dialect}:///{os.path.expanduser(uri)}"
     return DbConfig(
+        datasource_id=resolve_env(str(db_config.get("datasource_id") or "")),
         type=dialect,
         uri=uri,
         database=db_name,
@@ -783,6 +790,7 @@ class AgentConfig:
     logging: LoggingConfig
     observability: ObservabilityConfig
     mcp_tool_execution: Dict[str, int]
+    bulk_query: Dict[str, int]
 
     def __init__(self, nodes: Dict[str, NodeConfig], **kwargs):
         """
@@ -797,6 +805,11 @@ class AgentConfig:
             )
         # Resolve home early so dependent helpers can use a stable path manager.
         self.home = kwargs.get("home", "~/.datus")
+        from datus.tools.db_tools.query_spool import QueryLimits
+
+        bulk_query = kwargs.get("bulk_query")
+        QueryLimits.from_dict(bulk_query)
+        self.bulk_query = dict(bulk_query or {})
         mcp_execution_raw = kwargs.get("mcp_tool_execution")
         if mcp_execution_raw is not None and not isinstance(mcp_execution_raw, Mapping):
             logger.warning(
@@ -890,7 +903,7 @@ class AgentConfig:
         _active_plugins_raw = kwargs.get("active_plugins")
         self._plugins_section_present: bool = isinstance(_active_plugins_raw, dict)
         self._active_plugins: Dict[str, PluginActivation] = _normalize_plugin_activations(_active_plugins_raw)
-        self._runtime_db_context: Dict[str, str] = {}
+        self._runtime_db_context = None
         # Shared lazily-loaded ``conf/providers.yml`` catalog (metadata only:
         # default_model, base_url, api_key_env, type, model_overrides). Kept
         # as ``None`` until first access so tests that stub load paths can
@@ -1380,6 +1393,7 @@ class AgentConfig:
         """Set the current datasource name (must exist in services.datasources, or empty to clear)."""
         if not value:
             self._current_datasource = ""
+            self._runtime_db_context = None
             self.db_type = ""
             return
         if value not in self.services.datasources:
@@ -1389,6 +1403,9 @@ class AgentConfig:
             )
         if value == self._current_datasource:
             return
+        context = getattr(self, "_runtime_db_context", None)
+        if context is not None and context.datasource != value:
+            self._runtime_db_context = None
         self._current_datasource = value
         self.db_type = self.services.datasources[value].type
 
@@ -1451,6 +1468,10 @@ class AgentConfig:
                     db_config = _parse_single_file_db(db_config_dict, db_type)
                     db_config.default = is_default
                     self.services.datasources[db_name] = db_config
+                if db_name in self.services.datasources:
+                    self.services.datasources[db_name].datasource_id = resolve_env(
+                        str(db_config_dict.get("datasource_id") or "")
+                    )
             else:
                 db_config = DbConfig.filter_kwargs(DbConfig, db_config_dict)
                 db_config.default = is_default
@@ -1611,47 +1632,15 @@ class AgentConfig:
             values.update(runtime_db_context)
         values.update({key: value for key, value in kwargs.items() if value is not None})
 
-        normalized: Dict[str, str] = {}
-        for key in (
-            "datasource",
-            "catalog",
-            "catalog_name",
-            "database",
-            "database_name",
-            "schema",
-            "db_schema",
-            "schema_name",
-        ):
-            value = values.get(key)
-            if value is None:
-                continue
-            text = value.strip() if isinstance(value, str) else str(value).strip()
-            if text:
-                normalized[key] = text
+        from datus.schemas.database_context import DatabaseExecutionContext
 
-        if "catalog" not in normalized and "catalog_name" in normalized:
-            normalized["catalog"] = normalized["catalog_name"]
-        if "catalog_name" not in normalized and "catalog" in normalized:
-            normalized["catalog_name"] = normalized["catalog"]
-        if "database" not in normalized and "database_name" in normalized:
-            normalized["database"] = normalized["database_name"]
-        if "database_name" not in normalized and "database" in normalized:
-            normalized["database_name"] = normalized["database"]
-        if "schema" not in normalized:
-            if "db_schema" in normalized:
-                normalized["schema"] = normalized["db_schema"]
-            elif "schema_name" in normalized:
-                normalized["schema"] = normalized["schema_name"]
-        if "db_schema" not in normalized and "schema" in normalized:
-            normalized["db_schema"] = normalized["schema"]
-        if "schema_name" not in normalized and "schema" in normalized:
-            normalized["schema_name"] = normalized["schema"]
-
-        self._runtime_db_context = normalized
+        self._runtime_db_context = DatabaseExecutionContext.from_mapping(values)
 
     def runtime_db_context(self) -> Dict[str, str]:
-        """Return the request/CLI scoped datasource context, if one is pinned."""
-        return dict(self._runtime_db_context)
+        """Return a copy of this execution's immutable database coordinates."""
+        if self._runtime_db_context is None:
+            return {}
+        return self._runtime_db_context.to_dict(aliases=True, include_empty=True)
 
     def list_databases(self, datasource: str = "") -> List[str]:
         """Config-known physical databases of a datasource.
@@ -1667,6 +1656,23 @@ class AgentConfig:
         if cfg.path_pattern:
             return [p["name"] for p in get_files_from_glob_pattern(cfg.path_pattern, cfg.type)]
         return [cfg.database] if cfg.database else []
+
+    def default_database_name(self, datasource: str = "") -> str:
+        """Resolve configured/file-derived defaults without opening a connector."""
+        cfg = self.current_db_config(datasource)
+        if cfg.uri and cfg.type == DBType.SQLITE:
+            return file_stem_from_uri(cfg.uri)
+        if cfg.uri and cfg.type == DBType.DUCKDB:
+            physical = file_stem_from_uri(cfg.uri)
+            if physical == ":memory:" and cfg.database in ("", ":memory:"):
+                return "memory"
+            return cfg.database or physical
+        if cfg.database:
+            return cfg.database
+        if cfg.path_pattern:
+            files = get_files_from_glob_pattern(cfg.path_pattern, cfg.type)
+            return files[0]["name"] if files else ""
+        return ""
 
     def default_scheduler_service(self) -> Optional[str]:
         defaults = [name for name, cfg in self.scheduler_services.items() if cfg.get("default")]
@@ -2234,6 +2240,20 @@ class AgentConfig:
             "schema": kwargs.get("schema") or kwargs.get("db_schema") or kwargs.get("schema_name"),
         }
         if any(value for key, value in runtime_db_context.items() if key != "datasource"):
+            # CLI args are a partial override (argparse uses empty values for
+            # absent flags), whereas set_runtime_db_context pins a complete
+            # resolved snapshot. Fill omitted levels before pinning so they
+            # cannot be mistaken for explicit API clears downstream.
+            configured = self.current_db_config() if self.current_datasource else None
+            inherit_defaults = True
+            for coordinate in ("catalog", "database", "schema"):
+                default = (
+                    self.default_database_name()
+                    if coordinate == "database" and configured is not None
+                    else getattr(configured, coordinate, "") or ""
+                )
+                runtime_db_context[coordinate] = runtime_db_context[coordinate] or (default if inherit_defaults else "")
+                inherit_defaults = inherit_defaults and runtime_db_context[coordinate] == default
             self.set_runtime_db_context(runtime_db_context)
         if kwargs.get("benchmark", ""):
             benchmark_platform = kwargs["benchmark"]
@@ -2929,6 +2949,15 @@ def _db_config_to_dosi_profile(db_config: Optional[DbConfig]) -> Optional[Dict[s
             if value is None or value == "":
                 continue
             dosi_db_config.setdefault(key, value)
+    if dosi_db_config.get("type") in {"greenplum", "spark"}:
+        from datus.tools.semantic_tools.dosi.dialects import normalize_dialect
+
+        dosi_db_config["type"] = normalize_dialect(dosi_db_config["type"])
+    schema_name = dosi_db_config.pop("schema_name", None)
+    if "schema" not in dosi_db_config and schema_name:
+        dosi_db_config["schema"] = schema_name
+    if dosi_db_config.get("type") == "oracle" and dosi_db_config.get("service_name"):
+        dosi_db_config["database"] = dosi_db_config["service_name"]
     return dosi_db_config
 
 
@@ -2959,6 +2988,8 @@ def _apply_runtime_db_context_to_dosi_profile(
         value = _runtime_context_value(runtime_db_context, *aliases)
         if value:
             result[canonical_key] = value
+        elif runtime_db_context and any(runtime_db_context.get(key) is not None for key in aliases):
+            result.pop(canonical_key, None)
 
     return result or db_config
 
@@ -3101,6 +3132,7 @@ def load_model_config(data: dict) -> ModelConfig:
         context_length=data.get("context_length"),
         max_tokens=data.get("max_tokens"),
         tokenizer_ref=data.get("tokenizer_ref"),
+        supports_image_input=data.get("supports_image_input"),
     )
 
 

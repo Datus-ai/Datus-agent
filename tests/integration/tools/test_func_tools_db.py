@@ -1,7 +1,12 @@
+import json
+import sqlite3
+from pathlib import Path
+
 import pytest
 
 from datus.configuration.agent_config import AgentConfig
 from datus.tools.db_tools.db_manager import db_manager_instance
+from datus.tools.func_tool.base import trans_to_function_tool
 from datus.tools.func_tool.database import DBFuncTool
 from datus.utils.constants import DBType
 
@@ -12,6 +17,68 @@ class TestDBFuncToolIntegrationReal:
 
     These tests use real database files from tests/data directory.
     """
+
+    @pytest.mark.asyncio
+    async def test_duplicate_sql_arguments_do_not_modify_database(self, tmp_path):
+        from datus.tools.db_tools.config import SQLiteConfig
+        from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+
+        db_path = tmp_path / "duplicate-args.db"
+        with sqlite3.connect(db_path) as db:
+            db.execute("CREATE TABLE events (id INTEGER)")
+        connector = SQLiteConnector(SQLiteConfig(db_path=str(db_path)))
+        try:
+            tool = trans_to_function_tool(DBFuncTool(connector).execute_sql)
+            result = await tool.on_invoke_tool(
+                None, '{"sql":"INSERT INTO events VALUES (1)","sql":"INSERT INTO events VALUES (2)"}'
+            )
+            assert result["success"] == 0
+            assert "Duplicate JSON key 'sql'" in result["error"]
+            with sqlite3.connect(db_path) as db:
+                assert db.execute("SELECT id FROM events").fetchall() == []
+
+            retry = await tool.on_invoke_tool(None, json.dumps({"sql": "INSERT INTO events VALUES (3)"}))
+            assert retry["success"] == 1, retry
+            with sqlite3.connect(db_path) as db:
+                assert db.execute("SELECT id FROM events").fetchall() == [(3,)]
+        finally:
+            connector.close()
+
+    @pytest.mark.asyncio
+    async def test_large_catalog_pages_survive_connector_and_tool_recreation(self, tmp_path):
+        from types import SimpleNamespace
+
+        from datus.tools.db_tools.config import SQLiteConfig
+        from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+        from datus.utils.tool_result_store import ACTIVE_RESULT_STORE, ToolResultStore
+
+        path = tmp_path / "catalog.db"
+        with sqlite3.connect(path) as db:
+            db.executescript(";".join(f"CREATE TABLE table_{i:05d} (id INTEGER)" for i in range(2200)))
+        connector = SQLiteConnector(SQLiteConfig(db_path=str(path)))
+        store = ToolResultStore(SimpleNamespace(dir=tmp_path / "session"))
+        token = ACTIVE_RESULT_STORE.set(store)
+        try:
+            tool = DBFuncTool(connector)
+            first = await trans_to_function_tool(tool.list_tables).on_invoke_tool(None, "{}")
+            assert first["success"] == 1, first
+            page = first["result"]
+            assert page["total"] == 2200 and len(page["items"]) == 200
+            rid = page["extra"]["snapshot_id"]
+            # A newly constructed tool reads the same session's snapshot even
+            # after the source database has changed and its connector is closed.
+            with sqlite3.connect(path) as db:
+                db.execute("DROP TABLE table_02199")
+            restored_tool = DBFuncTool(connector)
+            connector.close()
+            tail = restored_tool.list_tables(snapshot_id=rid, offset=200, page_size=3000)
+            assert tail.success == 1, tail.error
+            assert tail.result["total"] == 2200 and not tail.result["has_more"]
+            names = [row["qualified_name"].split(".")[-1] for row in page["items"] + tail.result["items"]]
+            assert names == [f"table_{i:05d}" for i in range(2200)]
+        finally:
+            ACTIVE_RESULT_STORE.reset(token)
+            connector.close()
 
     @pytest.fixture
     def ssb_sqlite_config(self):
@@ -28,6 +95,27 @@ class TestDBFuncToolIntegrationReal:
         return db_function_tool_instance_multi(ssb_sqlite_config)
 
     # ==================== SQLite Tests ====================
+
+    @pytest.mark.asyncio
+    async def test_datasource_identity_is_invocable_without_private_connection_fields(self, ssb_db_tool):
+        """The real function-tool adapter exposes only configured public coordinates."""
+        tool = next(tool for tool in ssb_db_tool.available_tools() if tool.name == "get_datasource_identity")
+        result = await tool.on_invoke_tool(None, "{}")
+        assert result["success"] == 1, result
+        assert result["result"]["datasource"] == ssb_db_tool._default_datasource
+        assert result["result"]["identity"]["type"] == DBType.SQLITE
+        assert set(result["result"]["identity"]) <= {
+            "type",
+            "host",
+            "port",
+            "database",
+            "catalog",
+            "schema",
+            "account",
+            "path",
+        }
+        assert result["result"]["identity_status"] == "resolved"
+        assert Path(result["result"]["identity"]["path"]).is_absolute()
 
     def test_sqlite_list_tables_returns_actual_tables(self, ssb_db_tool):
         """Test that list_tables returns actual tables from SSB.db."""
@@ -473,6 +561,7 @@ class TestAllToolsNameContract:
         for method in (
             "to_function_tool",
             "available_tools",
+            "close",
             "read_query",
             "execute_write",
             "execute_ddl",
@@ -483,8 +572,7 @@ class TestAllToolsNameContract:
             assert method not in names, f"{method} is not an agent tool and must be excluded"
 
     def test_all_tools_name_is_exactly_the_real_tool_surface(self):
-        """The full db_tools surface is exactly the decorated tools plus the
-        gen_job-mounted tools — no more, no less. Pins the saas editor catalog."""
+        """Pin the SaaS catalog, including configured identity and gen_job tools."""
         assert set(DBFuncTool.all_tools_name()) == {
             # @mcp_tool()-decorated
             "search_table",
@@ -497,6 +585,10 @@ class TestAllToolsNameContract:
             "plan_datasource",
             "import_database_file",
             "check_datasource_quality",
+            # mounted when authoritative datasource configuration is available
+            "get_datasource_identity",
+            # Agent-only file export
+            "export_query",
             # mounted directly by gen_job
             "transfer_query_result",
             "get_migration_capabilities",
@@ -614,3 +706,267 @@ class TestSqlReadOnlyDeploymentAgainstRealSqlite:
 
         assert tool.execute_sql("INSERT INTO t (id, name) VALUES (2, 'added')").success == 1
         assert self._rows(db_path) == [(1, "original"), (2, "added")]
+
+
+@pytest.mark.acceptance
+def test_mixed_datasource_scopes_enforce_real_sqlite_and_duckdb_reads(tmp_path, monkeypatch):
+    """One tool routes two dialects while table scopes remain source-local."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    import duckdb
+
+    from datus.configuration.agent_config import DbConfig
+    from datus.schemas.agent_models import SubAgentConfig
+    from datus.tools.db_tools.db_manager import DBManager
+
+    sqlite_path = tmp_path / "sqlite_source.db"
+    duck_path = tmp_path / "duck_source.duckdb"
+    with sqlite3.connect(sqlite_path) as connection:
+        connection.execute("CREATE TABLE allowed(value TEXT)")
+        connection.execute("INSERT INTO allowed VALUES ('sqlite')")
+        connection.execute("CREATE TABLE secret(value TEXT)")
+    with duckdb.connect(str(duck_path)) as connection:
+        connection.execute("CREATE TABLE allowed(value VARCHAR)")
+        connection.execute("INSERT INTO allowed VALUES ('duckdb')")
+        connection.execute("CREATE TABLE secret(value VARCHAR)")
+    configs = {
+        "sqlite": DbConfig(type="sqlite", uri=str(sqlite_path)),
+        "duck": DbConfig(type="duckdb", uri=str(duck_path)),
+    }
+    node = SubAgentConfig(
+        scoped_context={
+            "datasource": "sqlite",
+            "tables": "sqlite_source.allowed",
+            "tables_by_datasource": {"sqlite": "sqlite_source.allowed", "duck": "duck_source.main.allowed"},
+        }
+    )
+    config = SimpleNamespace(
+        current_datasource="sqlite",
+        sql_read_only=True,
+        project_name="",
+        current_db_configs=lambda: configs,
+        active_plugin_names=lambda: set(),
+        sub_agent_config=lambda _: node,
+    )
+    monkeypatch.setattr("datus.tools.func_tool.database.metadata_fts_enabled", lambda _: False)
+    monkeypatch.setattr("datus.tools.func_tool.database.SchemaWithValueRAG", MagicMock())
+    monkeypatch.setattr("datus.tools.func_tool.database.SemanticDatasetRAG", MagicMock())
+    manager = DBManager(configs)
+    try:
+        tool = DBFuncTool(manager, agent_config=config, sub_agent_name="ask_dashboard", read_only=True)
+        for name, expected in [("sqlite", "sqlite"), ("duck", "duckdb")]:
+            result = tool.read_query("SELECT value FROM allowed", datasource=name, compress=False)
+            assert result.success == 1, result.error
+            assert result.result == [{"value": expected}]
+            denied = tool.read_query("SELECT value FROM secret", datasource=name, compress=False)
+            assert denied.success == 0
+            assert "outside scoped context" in denied.error
+    finally:
+        for name in configs:
+            manager.get_conn(name).close()
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("engine", ["sqlite", "duckdb"])
+def test_real_tool_concurrent_cold_connection_and_owner_eviction(tmp_path, monkeypatch, engine):
+    """Full tool construction uses one cold native connector and reopens evicted files."""
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    import duckdb
+
+    from datus.tools.db_tools.db_manager import DBManager
+    from tests.helpers.product_acceptance import isolated_connectors, product_config
+
+    connect = sqlite3.connect if engine == "sqlite" else duckdb.connect
+    markers = {"one": 11, "two": 22, "three": 33, "four": 44}
+    for name, marker in markers.items():
+        with connect(str(tmp_path / f"{name}.{engine}")) as database:
+            database.execute("CREATE TABLE marker(value INTEGER)")
+            database.execute(f"INSERT INTO marker VALUES ({marker})")
+    config = product_config(
+        tmp_path / "project",
+        "http://127.0.0.1:1/v1",
+        datasources={
+            "warehouse": {
+                "type": engine,
+                "path_pattern": str(tmp_path / f"*.{engine}"),
+                "database": "one",
+                "default": True,
+            }
+        },
+    )
+    config.current_datasource = "warehouse"
+    with isolated_connectors():
+        manager = DBManager(config.datasource_configs, max_connections=2)
+        build = manager._build_conn
+        created = []
+        lock = threading.Lock()
+
+        def observed_build(bound_config):
+            connector = build(bound_config)
+            with lock:
+                created.append((bound_config.database, connector))
+            # Keep the actual constructor's cold window open for concurrent
+            # callers; construction, connect(), queries and eviction stay real.
+            time.sleep(0.02)
+            return connector
+
+        monkeypatch.setattr(manager, "_build_conn", observed_build)
+        tool = DBFuncTool(manager, agent_config=config, default_datasource="warehouse")
+        start = threading.Barrier(4)
+
+        def query():
+            start.wait(timeout=5)
+            return tool.read_query("SELECT value FROM marker", datasource="warehouse", database="two", compress=False)
+
+        try:
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                results = [future.result(timeout=10) for future in [pool.submit(query) for _ in range(4)]]
+            assert all(result.success == 1 and result.result == [{"value": 22}] for result in results)
+            assert sum(name == "two" for name, _ in created) == 1
+            original = next(connector for name, connector in created if name == "two")
+            for name in ("three", "four"):
+                result = tool.read_query(
+                    "SELECT value FROM marker", datasource="warehouse", database=name, compress=False
+                )
+                assert result.success == 1, result.error
+                assert result.result == [{"value": markers[name]}]
+                assert len(manager._conn_dict["warehouse"]) <= 2
+            assert original.connection is None, "Owner eviction must close the real native connection"
+            result = tool.read_query("SELECT value FROM marker", datasource="warehouse", database="two", compress=False)
+            assert result.success == 1 and result.result == [{"value": 22}]
+            assert sum(name == "two" for name, _ in created) == 2
+            # Another fully initialized tool borrows the same manager. Closing
+            # its peer cannot invalidate the remaining borrower's primary DB.
+            shared = DBFuncTool(manager, agent_config=config, default_datasource="warehouse")
+            try:
+                tool.close()
+                result = shared.read_query("SELECT value FROM marker", compress=False)
+                assert result.success == 1 and result.result == [{"value": 11}]
+            finally:
+                shared.close()
+        finally:
+            tool.close()
+            manager.close()
+        assert all(connector.connection is None for _, connector in created)
+
+
+@pytest.mark.acceptance
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+async def test_cancelled_artifact_worker_retains_native_connection_until_save_finishes(tmp_path, monkeypatch, kind):
+    """The outer model tool owns its DB operation after its awaiter is cancelled."""
+    import asyncio
+    import threading
+    from contextlib import ExitStack
+    from functools import wraps
+
+    from datus.tools.db_tools.connection_scope import _lifetime
+    from datus.tools.db_tools.db_manager import DBManager
+    from datus.tools.func_tool import DashboardArtifactTools, ReportArtifactTools
+    from tests.helpers.product_acceptance import isolated_connectors, product_config
+
+    for index in range(9):
+        with sqlite3.connect(tmp_path / f"db{index}.sqlite") as database:
+            database.execute("CREATE TABLE marker(value INTEGER)")
+    config = product_config(
+        tmp_path / "project",
+        "http://127.0.0.1:1/v1",
+        datasources={
+            "warehouse": {
+                "type": "sqlite",
+                "path_pattern": str(tmp_path / "*.sqlite"),
+                "database": "db0",
+                "default": True,
+            }
+        },
+    )
+    config.current_datasource = "warehouse"
+    with isolated_connectors(), ExitStack() as cleanup:
+        manager = DBManager(config.datasource_configs)
+        cleanup.callback(manager.close)
+        tool = DBFuncTool(manager, agent_config=config, default_datasource="warehouse")
+        cleanup.callback(tool.close)
+        connector = tool.connector
+        connector.execute_query("SELECT 1")
+        entered, release, draining, finished = (threading.Event() for _ in range(4))
+        cleanup.callback(release.set)
+        results = []
+        leases = [manager.acquire_conn("warehouse", f"db{index}") for index in range(1, 9)]
+
+        for lease in leases:
+            cleanup.callback(lease.release)
+
+        def hold():
+            entered.set()
+            assert release.wait(timeout=10)
+            return 350
+
+        connector.connection.create_function("artifact_hold", 0, hold)
+        artifact_type = {"report": ReportArtifactTools, "dashboard": DashboardArtifactTools}[kind]
+        artifact = artifact_type(agent_config=config, db_func_tool=tool)
+        start = getattr(artifact, {"report": "start_new_report", "dashboard": "start_new_dashboard"}[kind])
+        assert start("resource", "Resource lifetime", "Verify a native query lifetime").success == 1
+        name = {"report": "save_query", "dashboard": "save_query_template"}[kind]
+        save = getattr(artifact_type, name)
+
+        @wraps(save)
+        def observe_save(self, *args, **kwargs):
+            try:
+                result = save(self, *args, **kwargs)
+                results.append(result)
+                return result
+            finally:
+                finished.set()
+
+        monkeypatch.setattr(artifact_type, name, observe_save)
+        condition = _lifetime(tool).condition
+        wait = condition.wait
+
+        def observe_drain(timeout=None):
+            draining.set()
+            return wait(timeout)
+
+        monkeypatch.setattr(condition, "wait", observe_drain)
+        arguments = {
+            "name": "total",
+            "goal": "Compute total",
+            "hypothesis": "The total is 350",
+            "fallback_reason": "The isolated datasource has no semantic metric.",
+            **{
+                "report": {"sql": "SELECT artifact_hold() AS total"},
+                "dashboard": {"sql_template": "-- @datus-params\nSELECT artifact_hold() AS total", "sample_params": {}},
+            }[kind],
+        }
+        function = trans_to_function_tool(getattr(artifact, name), strict_mode=False)
+        invocation = asyncio.create_task(function.on_invoke_tool(None, json.dumps(arguments)))
+        closing = None
+        try:
+            assert await asyncio.to_thread(entered.wait, 5), [result.model_dump() for result in results]
+            invocation.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await invocation
+            closing = asyncio.create_task(asyncio.to_thread(tool.close))
+            assert await asyncio.to_thread(draining.wait, 5)
+            assert closing.done() is False
+            assert connector in manager._conn_dict["warehouse"].values()
+            release.set()
+            await asyncio.wait_for(closing, timeout=5)
+            assert await asyncio.to_thread(finished.wait, 5)
+            assert len(results) == 1
+            assert results[0].success == 1, results[0].error
+            assert results[0].result["preview_rows"] == [{"total": 350}]
+            # Eight other active leases leave this as the only eviction
+            # candidate. It can close only after the native artifact save.
+            assert connector.connection is None
+        finally:
+            release.set()
+            invocation.cancel()
+            await asyncio.gather(invocation, *([closing] if closing is not None else []), return_exceptions=True)
+            await asyncio.to_thread(tool.close)
+            for lease in leases:
+                lease.release()
+            await asyncio.to_thread(manager.close)

@@ -114,7 +114,7 @@ agent:
   agentic_nodes:
     gen_visual_dashboard:
       model: claude              # 可选,默认使用当前配置的模型
-      max_turns: 30              # 可选,默认 30
+      max_turns: 100              # 可选,默认 100
       web_host: localhost        # 可选,生成的 HTML 里筛选请求指向的 host
       web_port: 8501             # 可选,生成的 HTML 里筛选请求指向的 port
 ```
@@ -122,7 +122,7 @@ agent:
 | 参数 | 必填 | 说明 | 默认值 |
 |------|------|------|--------|
 | `model` | 否 | 使用的 LLM 模型 | 当前配置的默认模型 |
-| `max_turns` | 否 | agent 最多迭代多少轮后强制结束 | 30 |
+| `max_turns` | 否 | agent 最多迭代多少轮后强制结束 | 100 |
 | `web_host` | 否 | 编译进 HTML 的查询后端 host | `localhost` |
 | `web_port` | 否 | 编译进 HTML 的查询后端 port | `8501` |
 | `query_endpoint` | 否 | 直接指定完整 URL,覆盖 `web_host` / `web_port` 的组装结果 | 由 `web_host` + `web_port` 组装 |

@@ -23,6 +23,7 @@ from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFunc
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.tools.func_tool.semantic_tools import SemanticTools
+from datus.tools.registry.subagent_policy import GEN_SQL_DEFAULT_TOOLS
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -75,11 +76,11 @@ class GenSQLAgenticNode(AgenticNode):
         # Determine node name from node_type if not provided
         self.configured_node_name = node_name
 
-        self.max_turns = 50
+        self.max_turns = 100
         if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes[node_name]
             if isinstance(agentic_node_config, dict):
-                self.max_turns = agentic_node_config.get("max_turns", 50)
+                self.max_turns = agentic_node_config.get("max_turns", 100)
 
         # Initialize tool attributes BEFORE calling parent constructor
         # This is required because parent's __init__ calls _get_system_prompt()
@@ -244,7 +245,7 @@ class GenSQLAgenticNode(AgenticNode):
         self._register_plan_mode_tools()
 
     # Default tools when not configured in agent.yml
-    DEFAULT_TOOLS = "db_tools.*, semantic_tools.*, context_search_tools.*"
+    DEFAULT_TOOLS = ", ".join(GEN_SQL_DEFAULT_TOOLS)
 
     def setup_tools(self):
         """Setup tools based on configuration, falling back to DEFAULT_TOOLS."""
@@ -683,12 +684,12 @@ class GenSQLAgenticNode(AgenticNode):
         return None
 
     def _build_success_result(self, ctx: StreamRunContext) -> GenSQLNodeResult:
-        # GenSQL's parsing scans the full action history (not just the last
+        # GenSQL's parsing scans this run's action history (not just the last
         # assistant action) so it can recover SQL stashed in summary_report
         # actions when the assistant returned a markdown overview instead.
-        response_content, sql_content = self._collect_final_response(ctx.action_history_manager)
+        response_content, sql_content = self._collect_final_response(ctx.action_history_manager, start=ctx.action_start)
 
-        all_actions = ctx.action_history_manager.get_actions()
+        all_actions = ctx.get_run_actions()
         tokens_used = self._extract_total_tokens(all_actions)
         tool_calls = [
             action for action in all_actions if action.role == ActionRole.TOOL and action.status == ActionStatus.SUCCESS
@@ -820,6 +821,7 @@ class GenSQLAgenticNode(AgenticNode):
     def _collect_final_response(
         self,
         action_history_manager: ActionHistoryManager,
+        start: int = 0,
     ) -> tuple[str, Optional[str]]:
         """Collect final response text and SQL from accumulated action history.
 
@@ -830,7 +832,8 @@ class GenSQLAgenticNode(AgenticNode):
 
         response_content = ""
         last_successful_output = None
-        for stream_action in action_history_manager.get_actions():
+        actions = action_history_manager.get_actions_since(start)
+        for stream_action in actions:
             if (
                 stream_action.role == ActionRole.ASSISTANT
                 and stream_action.status == ActionStatus.SUCCESS
@@ -863,7 +866,7 @@ class GenSQLAgenticNode(AgenticNode):
                 response_content = str(last_successful_output)
 
         sql_content = None
-        for stream_action in reversed(action_history_manager.get_actions()):
+        for stream_action in reversed(actions):
             if stream_action.action_type == "summary_report" and stream_action.output:
                 if isinstance(stream_action.output, dict):
                     sql_content = stream_action.output.get("sql")
