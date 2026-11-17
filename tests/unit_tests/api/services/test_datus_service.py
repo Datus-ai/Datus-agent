@@ -408,3 +408,15 @@ async def test_service_shutdown_waits_for_non_chat_request(real_agent_config):
     service.release_request()
     await asyncio.wait_for(stopping, timeout=2)
     cli.close.assert_called_once()
+
+
+@pytest.mark.parametrize("field,value", [("artifact_output_root", "/personal/files"), ("session_dir_scoped", True)])
+def test_fingerprint_tracks_host_execution_roots(real_agent_config, field, value):
+    import copy
+
+    before = DatusService.compute_fingerprint(real_agent_config)
+    changed = copy.deepcopy(real_agent_config)
+    setattr(changed, field, value)
+    after = DatusService.compute_fingerprint(changed)
+    assert after != before
+    assert after == DatusService.compute_fingerprint(copy.deepcopy(changed))

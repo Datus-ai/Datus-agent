@@ -339,3 +339,44 @@ def test_host_scoped_session_root_is_not_scoped_twice(real_agent_config, mock_ll
     real_agent_config.agentic_nodes = {"builder": {"node_class": "analytics_builder"}}
     node = create_interactive_node("builder", real_agent_config, execution_mode="workflow", scope="alice")
     assert node.session_manager.session_dir == str(sessions)
+
+
+@pytest.mark.parametrize(
+    "configured,expected",
+    [
+        (None, ["gen_visual_dashboard", "gen_visual_report"]),
+        ("", []),
+        ("  ", []),
+        (", ,", []),
+        (" gen_visual_report , gen_visual_report , gen_job ", ["gen_visual_report"]),
+        ("*", ["gen_visual_dashboard", "gen_visual_report"]),
+        ("gen_job, *", ["gen_visual_dashboard", "gen_visual_report"]),
+    ],
+)
+def test_builder_normalizes_subagents_without_widening_empty_selection(
+    real_agent_config, mock_llm_create, configured, expected
+):
+    real_agent_config.agentic_nodes = {"builder": {"node_class": "analytics_builder", "subagents": configured}}
+    node = create_interactive_node("builder", real_agent_config, execution_mode="workflow")
+    selected = node.sub_agent_task_tool._allowed_subagents if node.sub_agent_task_tool else []
+    assert selected == expected
+
+
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+@pytest.mark.parametrize("child_read_only", [None, False])
+@pytest.mark.parametrize("parent_class", ["analytics_builder", "chat"])
+def test_visual_child_inherits_effective_parent_read_only_policy(
+    real_agent_config, mock_llm_create, kind, child_read_only, parent_class
+):
+    real_agent_config.agentic_nodes = {
+        "parent": {"node_class": parent_class, "subagents": f"gen_visual_{kind}"},
+        f"gen_visual_{kind}": {"node_class": f"gen_visual_{kind}", "db_read_only": child_read_only},
+    }
+    parent = create_interactive_node("parent", real_agent_config, execution_mode="workflow")
+    from datus.configuration.scoped_context_overrides import effective_subagent
+
+    effective = parent.sub_agent_task_tool._resolve_effective_sub_agent_config(f"gen_visual_{kind}")
+    with effective_subagent(f"gen_visual_{kind}", effective):
+        child = parent.sub_agent_task_tool._create_node(f"gen_visual_{kind}")
+    assert parent.db_func_tool.read_only is (parent_class == "analytics_builder")
+    assert child.db_func_tool.read_only is parent.db_func_tool.read_only

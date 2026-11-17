@@ -94,7 +94,10 @@ class AnalyticsBuilderAgenticNode(AnalyticsExplorerAgenticNode):
     def _setup_sub_agent_task_tool(self):
         allowed = {"gen_visual_report", "gen_visual_dashboard"}
         configured = self.node_config.get("subagents")
-        selected = allowed if configured is None else allowed & set(configured.split(","))
+        from datus.schemas.agent_models import SubAgentConfig
+
+        normalized = SubAgentConfig(subagents=configured).subagent_list
+        selected = allowed if configured is None or normalized == ["*"] else allowed & set(normalized)
         self.node_config["subagents"] = ",".join(sorted(selected))
         super()._setup_sub_agent_task_tool()
 

@@ -2760,6 +2760,7 @@ class AgenticNode(Node):
             "rules",
             "max_turns",
             "workspace_root",
+            "db_read_only",
             "scoped_context",
             "scoped_kb_path",
             "adapter_type",
