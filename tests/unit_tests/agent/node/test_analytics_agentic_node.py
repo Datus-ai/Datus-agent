@@ -148,3 +148,101 @@ def test_explicit_empty_host_scope_does_not_restore_defaults(real_agent_config, 
         assert all(d.access == "session" or d.category == "skills" for d in definitions)
         assert "ask_user" in {tool.name for tool in node.tools}
         node._rebuild_tools()
+
+
+def _seed_reference_sql(config):
+    from datus.storage.reference_sql.store import ReferenceSqlRAG
+
+    writer = ReferenceSqlRAG(config)
+    writer.store_batch(
+        [
+            {
+                "id": name,
+                "name": name,
+                "subject_path": path,
+                "sql": sql,
+                "summary": name,
+                "search_text": name,
+            }
+            for name, path, sql in (
+                ("allowed_query", ["Finance", "Revenue", "Monthly"], "SELECT 1 AS allowed_value"),
+                ("private_query", ["Private", "Payroll", "Monthly"], "SELECT 2 AS private_value"),
+            )
+        ]
+    )
+    return writer
+
+
+@pytest.mark.parametrize("kind", ["analytics_explorer", "analytics_builder"])
+def test_analytics_reference_discovery_and_exact_read_keep_subject_scope(real_agent_config, mock_llm_create, kind):
+    import json
+
+    _seed_reference_sql(real_agent_config)
+    real_agent_config.agentic_nodes = {
+        "scoped_analyst": {"node_class": kind, "scoped_context": {"sqls": "Finance.Revenue"}}
+    }
+    node = create_interactive_node("scoped_analyst", real_agent_config, execution_mode="workflow")
+    for _ in range(2):
+        assert {"list_subject_tree", "search_reference_sql", "get_reference_sql"} <= {tool.name for tool in node.tools}
+        context = node.context_search_tools
+        tree = json.dumps(context.list_subject_tree().result)
+        assert "allowed_query" in tree
+        assert "private_query" not in tree
+        allowed = context.get_reference_sql(["Finance", "Revenue", "Monthly"], "allowed_query")
+        assert allowed.success == 1
+        assert "allowed_value" in json.dumps(allowed.result)
+        denied = context.get_reference_sql(["Private", "Payroll", "Monthly"], "private_query")
+        assert denied.success == 0
+        assert "private_value" not in json.dumps(denied.result)
+        searched = context.search_reference_sql("private_query")
+        assert "private_value" not in json.dumps(searched.result)
+        node._rebuild_tools()
+
+
+@pytest.mark.parametrize("kind", ["analytics_explorer", "analytics_builder"])
+def test_context_appearing_between_turns_keeps_exact_host_selection(real_agent_config, mock_llm_create, kind):
+    real_agent_config.agentic_nodes = {
+        "limited_analyst": {"node_class": kind, "tools": "context_search_tools.search_reference_sql"}
+    }
+    node = create_interactive_node("limited_analyst", real_agent_config, execution_mode="workflow")
+    assert "search_reference_sql" not in {tool.name for tool in node.tools}
+    writer = _seed_reference_sql(real_agent_config)
+    for _ in range(2):
+        node._system_prompt_snapshot_meta(None)
+        names = {tool.name for tool in node.tools}
+        assert "search_reference_sql" in names
+        assert not names & {"get_reference_sql", "list_subject_tree", "search_metrics", "search_semantic_objects"}
+        node._rebuild_tools()
+    writer.reference_sql_storage.subject_tree.rename(["Finance"], ["ArchivedFinance"])
+    # A restored node must preserve the same exact selection as a live one.
+    restored = create_interactive_node("limited_analyst", real_agent_config, execution_mode="workflow")
+    restored._system_prompt_snapshot_meta(None)
+    assert "search_reference_sql" in {tool.name for tool in restored.tools}
+    assert "get_reference_sql" not in {tool.name for tool in restored.tools}
+
+
+@pytest.mark.parametrize("kind", ["analytics_explorer", "analytics_builder"])
+def test_all_context_readers_mount_when_providers_have_knowledge(real_agent_config, mock_llm_create, monkeypatch, kind):
+    from datus.storage.semantic_dataset.store import SemanticDatasetRAG
+    from datus.tools.func_tool.context_search import ContextSearchTools
+
+    # Provider availability is independent of the type policy. The SQL tests
+    # above exercise real scoped reads; here every optional provider is present.
+    monkeypatch.setattr(ContextSearchTools, "has_metrics", property(lambda self: True))
+    monkeypatch.setattr(ContextSearchTools, "has_reference_sql", property(lambda self: True))
+    monkeypatch.setattr(SemanticDatasetRAG, "get_size", lambda self: 1)
+    real_agent_config.agentic_nodes = {"analyst": {"node_class": kind}}
+    node = create_interactive_node("analyst", real_agent_config, execution_mode="workflow")
+    expected = {
+        "list_subject_tree",
+        "search_metrics",
+        "search_reference_sql",
+        "get_reference_sql",
+        "search_semantic_objects",
+    }
+    for _ in range(2):
+        assert expected <= {tool.name for tool in node.tools}
+        assert node.context_search_tools.sub_agent_name == "analyst"
+        node._system_prompt_snapshot_meta(None)
+        assert expected <= {tool.name for tool in node.tools}
+        node._rebuild_tools()

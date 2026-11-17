@@ -74,3 +74,22 @@ def test_legacy_fast_types_keep_defaults_and_gain_file_tools():
         tools = set(builtin_tools(kind))
         assert set(SUBAGENT_TOOL_REFERENCE[kind]["default_tools"]) <= tools
         assert {f"filesystem_tools.{method}" for method in ("read_file", "write_file", "edit_file")} <= tools
+
+
+@pytest.mark.parametrize("kind", ["analytics_explorer", "analytics_builder"])
+def test_analytics_context_catalog_is_explicit_and_read_only(monkeypatch, kind):
+    expected = {
+        "list_subject_tree",
+        "search_metrics",
+        "search_reference_sql",
+        "get_reference_sql",
+        "search_semantic_objects",
+    }
+    reference = tool_reference(kind)
+    assert set(reference["tool_types"]["context_search_tools"]["tools"]) == expected
+    selected = {f"context_search_tools.{name}" for name in expected}
+    assert selected <= set(reference["default_tools"])
+    assert all(tool_capability(tool).access == "read" for tool in selected)
+    future = "context_search_tools.future_reader"
+    monkeypatch.setitem(TOOL_CAPABILITIES, future, ToolCapability("read"))
+    assert set(resolve_tools(kind, [*selected, future], configured="context_search_tools.*")) == selected
