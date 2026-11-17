@@ -2106,6 +2106,41 @@ class TestPlanDatasource:
             "SELECT * FROM private.payroll UNION ALL SELECT * FROM (WITH payroll AS (SELECT 1) SELECT * FROM payroll) q",
             False,
         ),
+        (
+            "postgresql",
+            {"database", "schema"},
+            "mydb.public.*",
+            "UPDATE private.payroll SET salary=(SELECT COUNT(*) FROM public.orders)",
+            False,
+        ),
+        (
+            "postgresql",
+            {"database", "schema"},
+            "mydb.public.*",
+            "INSERT INTO private.payroll SELECT * FROM public.orders",
+            False,
+        ),
+        (
+            "postgresql",
+            {"database", "schema"},
+            "mydb.public.*",
+            "DELETE FROM private.payroll WHERE salary IN (SELECT id FROM public.orders)",
+            False,
+        ),
+        (
+            "postgresql",
+            {"database", "schema"},
+            "mydb.public.*",
+            "CREATE TABLE private.payroll AS SELECT * FROM public.orders",
+            False,
+        ),
+        (
+            "postgresql",
+            {"database", "schema"},
+            "mydb.public.*",
+            "INSERT INTO public.payroll WITH source AS (SELECT * FROM public.orders) SELECT * FROM source",
+            True,
+        ),
     ],
 )
 def test_sql_scope_preserves_physical_identifier_boundaries(monkeypatch, dialect, capabilities, scope, query, allowed):

@@ -169,18 +169,22 @@ def extract_table_names_for_scope(sql: str, dialect: str) -> List[str]:
     analyzer = _registry_hook("get_sql_analyzer", dialect)
     if analyzer is not None:
         return list(analyzer(sql).require_complete().tables)
-    from sqlglot.optimizer.scope import traverse_scope
+    from sqlglot.optimizer.scope import Scope, traverse_scope
 
     read_dialect = parse_read_dialect(dialect)
     parsed = sqlglot.parse_one(sql, read=read_dialect, error_level=sqlglot.ErrorLevel.RAISE)
     if parsed is None:
         raise ValueError("SQL parser returned no expression")
-    scopes = traverse_scope(parsed)
-    tables = (
-        [source for scope in scopes for source in scope.sources.values() if isinstance(source, Table)]
-        if scopes
-        else list(parsed.find_all(Table))
-    )
+    # Exclude only references resolved to a virtual source in their own scope.
+    # Scopes enumerate query sources, not DML/DDL targets: starting with all
+    # Table nodes also keeps UPDATE/INSERT/DELETE targets with subqueries checked.
+    virtual_references = {
+        id(node)
+        for scope in traverse_scope(parsed)
+        for node, source in scope.selected_sources.values()
+        if isinstance(node, Table) and isinstance(source, Scope)
+    }
+    tables = [table for table in parsed.find_all(Table) if id(table) not in virtual_references]
     return sorted({".".join(part.sql(dialect=read_dialect) for part in table.parts) for table in tables})
 
 
