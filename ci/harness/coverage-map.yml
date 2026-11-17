@@ -2545,6 +2545,7 @@ execution:
         - tests/unit_tests/api/services/test_dashboard_service.py
         - tests/unit_tests/api/services/test_explorer_service.py
         - tests/unit_tests/api/services/test_report_service.py
+        - tests/unit_tests/api/test_deps.py
         - tests/unit_tests/cli/test_package_builder.py
         - tests/unit_tests/cli/test_package_cli.py
         - tests/unit_tests/prompts/
