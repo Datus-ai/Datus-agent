@@ -178,12 +178,16 @@ def extract_table_names_for_scope(sql: str, dialect: str) -> List[str]:
     # Exclude only references resolved to a virtual source in their own scope.
     # Scopes enumerate query sources, not DML/DDL targets: starting with all
     # Table nodes also keeps UPDATE/INSERT/DELETE targets with subqueries checked.
-    virtual_references = {
-        id(node)
-        for scope in traverse_scope(parsed)
-        for node, source in scope.selected_sources.values()
-        if isinstance(node, Table) and isinstance(source, Scope)
-    }
+    virtual_references = set()
+    for scope in traverse_scope(parsed):
+        # selected_sources omits SEMI/ANTI join relations. Relation-root scopes
+        # (e.g. UPDATE ... FROM cte) expose the reference as the expression.
+        references = list(scope.tables)
+        if isinstance(scope.expression, Table):
+            references.append(scope.expression)
+        for table in references:
+            if isinstance(scope.sources.get(table.alias_or_name), Scope):
+                virtual_references.add(id(table))
     tables = [table for table in parsed.find_all(Table) if id(table) not in virtual_references]
     return sorted({".".join(part.sql(dialect=read_dialect) for part in table.parts) for table in tables})
 

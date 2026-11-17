@@ -2141,6 +2141,48 @@ class TestPlanDatasource:
             "INSERT INTO public.payroll WITH source AS (SELECT * FROM public.orders) SELECT * FROM source",
             True,
         ),
+        (
+            "duckdb",
+            {"schema", "database"},
+            "mydb.public.orders",
+            "WITH source AS (SELECT id FROM public.orders) SELECT * FROM public.orders o SEMI JOIN source s ON o.id=s.id",
+            True,
+        ),
+        (
+            "duckdb",
+            {"schema", "database"},
+            "mydb.public.orders",
+            "WITH source AS (SELECT id FROM public.orders) SELECT * FROM public.orders o SEMI JOIN private.source s ON o.id=s.id",
+            False,
+        ),
+        (
+            "duckdb",
+            {"schema", "database"},
+            "mydb.public.orders",
+            "WITH source AS (SELECT id FROM public.orders) SELECT * FROM public.orders o ANTI JOIN source s ON o.id=s.id",
+            True,
+        ),
+        (
+            "duckdb",
+            {"schema", "database"},
+            "mydb.public.orders",
+            "WITH source AS (SELECT id FROM public.orders) SELECT * FROM public.orders o ANTI JOIN private.source s ON o.id=s.id",
+            False,
+        ),
+        (
+            "postgresql",
+            {"schema", "database"},
+            "mydb.public.payroll",
+            "WITH source AS (SELECT id FROM public.payroll) UPDATE public.payroll SET salary=s.id FROM source s WHERE payroll.id=s.id",
+            True,
+        ),
+        (
+            "postgresql",
+            {"schema", "database"},
+            "mydb.public.payroll",
+            "WITH source AS (SELECT id FROM public.payroll) UPDATE public.payroll SET salary=s.id FROM private.source s WHERE payroll.id=s.id",
+            False,
+        ),
     ],
 )
 def test_sql_scope_preserves_physical_identifier_boundaries(monkeypatch, dialect, capabilities, scope, query, allowed):
