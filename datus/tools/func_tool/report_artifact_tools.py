@@ -57,7 +57,7 @@ from datus.tools.func_tool._visual_artifact_helpers import (
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.metric_artifact_tools import MetricArtifactToolsMixin
 from datus.tools.registry.contracts import tool_contract
-from datus.utils.artifact_output import artifact_output_root
+from datus.utils.artifact_output import artifact_output_root, current_artifact_slug_factory
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -418,7 +418,7 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
                 success=0,
                 error="description must be a non-empty one-paragraph description of what the report covers.",
             )
-        factory = getattr(self.agent_config, "artifact_slug_factory", None)
+        factory = current_artifact_slug_factory(self.agent_config)
         if factory is not None:
             slug = factory("report", slug)
             if not REPORT_SLUG_RE.fullmatch(slug):

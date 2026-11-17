@@ -68,7 +68,7 @@ from datus.tools.func_tool.report_artifact_tools import (
     _resolve_relative_import,
 )
 from datus.tools.registry.contracts import tool_contract
-from datus.utils.artifact_output import artifact_output_root
+from datus.utils.artifact_output import artifact_output_root, current_artifact_slug_factory
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -470,7 +470,7 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
                 success=0,
                 error="description must be a non-empty one-paragraph description of what the dashboard covers.",
             )
-        factory = getattr(self.agent_config, "artifact_slug_factory", None)
+        factory = current_artifact_slug_factory(self.agent_config)
         if factory is not None:
             slug = factory("dashboard", slug)
             if not DASHBOARD_SLUG_RE.fullmatch(slug):
