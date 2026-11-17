@@ -84,7 +84,7 @@ connect_timeout_seconds: 10
 
 Both `aurora: true` and `auth_mode: iam` require an explicit CA path. When omitted, `sslmode` becomes `verify-full`; explicitly selecting another mode is rejected. IAM tokens are generated for new physical connections. Password authentication can instead use `secret_ref` with `auth_mode: password`: the Secret must contain a JSON `password` string, and any `username` must match the configured role. Secret refresh follows the TTL and changed versions dispose old pools before new checkouts. Enable the matching server-side IAM login and AWS permissions separately.
 
-[GaussDB](gaussdb.md) and [DWS](dws.md) use separate adapters and certificate constraints. Follow their datasource pages; the PostgreSQL `verify-full` template does not establish hostname verification for those products.
+GaussDB and DWS use separate adapters and certificate constraints; the PostgreSQL `verify-full` template does not establish hostname verification for those products.
 
 The configured `database` is the initial PostgreSQL database and `schema` defaults to `public`. Datus filters system databases/schemas during normal discovery. Access to additional databases still depends on network reachability and role permissions.
 

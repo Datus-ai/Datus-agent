@@ -319,8 +319,8 @@ flow_groups:
           - docs/configuration/datasources/clickzetta.md
           - docs/configuration/datasources/doris.md
           - docs/configuration/datasources/duckdb.md
-          - docs/configuration/datasources/dws.md
-          - docs/configuration/datasources/gaussdb.md
+          - docs/configuration/datasources/dws.zh.md
+          - docs/configuration/datasources/gaussdb.zh.md
           - docs/configuration/datasources/greenplum.md
           - docs/configuration/datasources/hana.md
           - docs/configuration/datasources/hive.md
