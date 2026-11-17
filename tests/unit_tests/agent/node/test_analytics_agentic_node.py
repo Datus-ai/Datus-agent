@@ -316,17 +316,20 @@ def test_visual_generator_uses_output_root_and_read_only_parent_scope(
     assert real_agent_config.project_root == original_context
     # The host's allocator supplies an ordinary slug to the generic tools.
     real_agent_config.artifact_slug_factory = lambda artifact_kind, semantic: f"allocated_{artifact_kind}_{semantic}"
-    from datus.tools.func_tool.dashboard_artifact_tools import DashboardArtifactTools
-    from datus.tools.func_tool.report_artifact_tools import ReportArtifactTools
+    from types import SimpleNamespace
 
-    tools_class = ReportArtifactTools if kind == "report" else DashboardArtifactTools
-    tools = tools_class(agent_config=real_agent_config, db_func_tool=child.db_func_tool)
+    child._prepare_artifacts(SimpleNamespace(user_message="Monthly sales analysis"))
+    tools = child.artifact_tools
     result = getattr(tools, f"start_new_{kind}")("sales", "Sales", "Monthly sales analysis")
     assert result.success == 1
     assert (output / f"{kind}s" / f"allocated_{kind}_sales" / "manifest.json").is_file()
     denied = child.filesystem_func_tool.write_file(f"{kind}s/allocated_{kind}_sales/queries/fake.json", "{}")
     assert denied.success == 0
     assert child.filesystem_func_tool.write_file("outside.md", "invalid").success == 0
+    assert parent.filesystem_func_tool.write_file(str(tmp_path / "outside.md"), "invalid").success == 0
+    assert parent.filesystem_func_tool.write_file(f"{kind}s/allocated_{kind}_sales/render/data.json", "{}").success == 0
+    effective = parent.sub_agent_task_tool._resolve_effective_sub_agent_config(f"gen_visual_{kind}")
+    assert effective.db_read_only is True
 
 
 def test_host_scoped_session_root_is_not_scoped_twice(real_agent_config, mock_llm_create, tmp_path):
