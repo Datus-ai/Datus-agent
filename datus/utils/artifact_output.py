@@ -33,9 +33,10 @@ _request_slug_factory: ContextVar[Any] = ContextVar("artifact_request_slug_facto
 
 
 @contextmanager
-def artifact_request_scope(config: Any) -> Iterator[None]:
+def artifact_request_scope(config: Any = None, *, factory: Any = _UNBOUND) -> Iterator[None]:
     """Capture the host's allocator for this request and its background turns."""
-    token = _request_slug_factory.set(getattr(config, "artifact_slug_factory", None))
+    allocator = getattr(config, "artifact_slug_factory", None) if factory is _UNBOUND else factory
+    token = _request_slug_factory.set(allocator)
     try:
         yield
     finally:
