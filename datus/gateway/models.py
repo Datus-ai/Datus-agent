@@ -45,6 +45,7 @@ class InboundMessage(BaseModel):
     mentions_bot: bool = Field(False, description="Whether the message mentions the bot")
     chat_type: Optional[str] = Field(None, description="Chat type: 'group' or 'p2p'")
     thread_id: Optional[str] = Field(None, description="Thread ID for threaded conversations")
+    session_scope: Optional[str] = Field(None, description="Optional conversation scope, e.g. a group sender ID")
     raw_payload: Optional[dict] = Field(None, description="Raw platform-specific payload")
 
 

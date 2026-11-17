@@ -71,6 +71,8 @@ class ChannelBridge:
         parts = [msg.channel_id, msg.conversation_id]
         if msg.thread_id:
             parts.append(msg.thread_id)
+        if msg.session_scope:
+            parts.append(msg.session_scope)
         return "--".join(parts)
 
     def build_session_id(self, msg: InboundMessage) -> str:
@@ -129,7 +131,7 @@ class ChannelBridge:
 
         # In group chats without an existing thread, use message_id as thread_id
         # so each @bot message gets its own thread (independent session)
-        if msg.chat_type == "group" and not msg.thread_id:
+        if msg.chat_type == "group" and not msg.thread_id and adapter.supports_threads:
             msg = msg.model_copy(update={"thread_id": msg.message_id})
 
         # Handle chat commands (e.g. /new, /reset, /verbose)

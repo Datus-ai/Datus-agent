@@ -72,6 +72,7 @@ class TestRegisterBuiltins:
         names = list_adapters()
         assert "feishu" in names
         assert "slack" in names
+        assert "wecom" in names
 
     def test_register_builtins_idempotent(self):
         register_builtins()
@@ -82,6 +83,6 @@ class TestRegisterBuiltins:
 
     def test_builtin_classes_are_channel_adapters(self):
         register_builtins()
-        for name in ["feishu", "slack"]:
+        for name in ["feishu", "slack", "wecom"]:
             cls = get_adapter_class(name)
             assert issubclass(cls, ChannelAdapter)

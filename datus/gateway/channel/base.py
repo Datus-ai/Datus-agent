@@ -35,6 +35,11 @@ class ChannelAdapter(ABC):
         self._channel_config = channel_config
 
     @property
+    def supports_threads(self) -> bool:
+        """Whether group replies use platform-native threads."""
+        return True
+
+    @property
     def supports_streaming(self) -> bool:
         """Whether this adapter supports streaming cards (delta accumulation).
 
