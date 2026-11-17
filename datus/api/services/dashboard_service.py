@@ -46,6 +46,7 @@ from datus.schemas.metric_artifact_query import MetricQueryFile
 from datus.tools.func_tool.dashboard_artifact_tools import render_dashboard_template
 from datus.tools.func_tool.report_artifact_tools import _normalize_value
 from datus.utils.artifact_files import iter_artifact_files
+from datus.utils.artifact_output import artifact_output_root
 from datus.utils.exceptions import ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
@@ -393,8 +394,8 @@ class DashboardService:
                 db_tool = func_tool_mod.DBFuncTool(
                     agent_config=self.agent_config, sub_agent_name="gen_visual_dashboard"
                 )
-                model_path = (Path(self.agent_config.project_root) / query.model_path).resolve()
-                if not model_path.is_relative_to(Path(self.agent_config.project_root).resolve()):
+                model_path = (artifact_output_root(self.agent_config) / query.model_path).resolve()
+                if not model_path.is_relative_to(artifact_output_root(self.agent_config).resolve()):
                     raise ValueError("metric model path escapes project")
                 semantic_tools = SemanticTools(
                     agent_config=self.agent_config,
@@ -419,7 +420,7 @@ class DashboardService:
                     query,
                     semantic_tools=semantic_tools,
                     db_tool=db_tool,
-                    project_root=Path(self.agent_config.project_root),
+                    project_root=artifact_output_root(self.agent_config),
                     params=params,
                     policy_context=policy_context,
                     saved=query,

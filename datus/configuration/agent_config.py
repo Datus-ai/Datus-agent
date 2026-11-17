@@ -833,6 +833,10 @@ class AgentConfig:
         else:
             self._project_name = _normalize_project_name(str(resolved_project_root))
         self._project_root = resolved_project_root
+        # Artifact output can be separate from the immutable context/KB root.
+        self.artifact_output_root = kwargs.get("artifact_output_root")
+        self.session_dir_scoped = kwargs.get("session_dir_scoped", False)
+        self.artifact_slug_factory = kwargs.get("artifact_slug_factory")
         self._set_path_manager(self.home)
 
         # Runtime override for prompt-template resolution, honored by

@@ -80,7 +80,7 @@ def test_analytics_prompt_default_and_custom_template(real_agent_config, mock_ll
     ],
 )
 def test_analytics_tool_sequence_keeps_exact_filter(real_agent_config, mock_llm_create, kind, tools):
-    real_agent_config.agentic_nodes = {"analyst": {"node_class": kind, "tools": tools}}
+    real_agent_config.agentic_nodes = {"analyst": {"node_class": kind, "tools": tools, "subagents": ""}}
     node = create_interactive_node("analyst", real_agent_config, execution_mode="workflow")
     for _ in range(2):
         names = {tool.name for tool in node.tools}
@@ -97,7 +97,7 @@ def test_analytics_defaults_and_wildcards_respect_type_policy(real_agent_config,
     from datus.tools.registry.contracts import tool_definition
     from datus.tools.registry.subagent_policy import tool_reference
 
-    config = {"node_class": kind}
+    config = {"node_class": kind, "subagents": ""}
     if tools is not None:
         config["tools"] = tools
     real_agent_config.agentic_nodes = {"analyst": config}
@@ -127,7 +127,9 @@ def test_analytics_defaults_and_wildcards_respect_type_policy(real_agent_config,
 def test_analytics_mounts_select_records_only_scope(real_agent_config, mock_llm_create, kind):
     from datus.tools.registry.contracts import tool_definition
 
-    real_agent_config.agentic_nodes = {"analyst": {"node_class": kind, "tools": "semantic_tools.select_records"}}
+    real_agent_config.agentic_nodes = {
+        "analyst": {"node_class": kind, "tools": "semantic_tools.select_records", "subagents": ""}
+    }
     node = create_interactive_node("analyst", real_agent_config, execution_mode="workflow")
     for _ in range(2):
         definitions = [tool_definition(tool) for tool in node.tools]
@@ -141,7 +143,7 @@ def test_analytics_mounts_select_records_only_scope(real_agent_config, mock_llm_
 def test_explicit_empty_host_scope_does_not_restore_defaults(real_agent_config, mock_llm_create, kind, tools):
     from datus.tools.registry.contracts import tool_definition
 
-    real_agent_config.agentic_nodes = {"analyst": {"node_class": kind, "tools": tools}}
+    real_agent_config.agentic_nodes = {"analyst": {"node_class": kind, "tools": tools, "subagents": ""}}
     node = create_interactive_node("analyst", real_agent_config, execution_mode="interactive")
     for _ in range(2):
         definitions = [tool_definition(tool) for tool in node.tools]
@@ -231,7 +233,7 @@ def test_all_context_readers_mount_when_providers_have_knowledge(real_agent_conf
     monkeypatch.setattr(ContextSearchTools, "has_metrics", property(lambda self: True))
     monkeypatch.setattr(ContextSearchTools, "has_reference_sql", property(lambda self: True))
     monkeypatch.setattr(SemanticDatasetRAG, "get_size", lambda self: 1)
-    real_agent_config.agentic_nodes = {"analyst": {"node_class": kind}}
+    real_agent_config.agentic_nodes = {"analyst": {"node_class": kind, "subagents": ""}}
     node = create_interactive_node("analyst", real_agent_config, execution_mode="workflow")
     expected = {
         "list_subject_tree",
@@ -271,3 +273,66 @@ def test_subject_scope_does_not_narrow_supplied_read_only_file_root(real_agent_c
         assert {"read_file", "glob", "grep"} <= names
         assert not names & {"write_file", "edit_file", "delete_file"}
         node._rebuild_tools()
+
+
+def test_builder_delegates_only_to_visual_generators_and_keeps_tools_on_rebuild(real_agent_config, mock_llm_create):
+    real_agent_config.agentic_nodes = {"builder": {"node_class": "analytics_builder"}}
+    node = create_interactive_node("builder", real_agent_config, execution_mode="workflow")
+    assert node.sub_agent_task_tool._allowed_subagents == ["gen_visual_dashboard", "gen_visual_report"]
+    for _ in range(2):
+        assert "task" in {tool.name for tool in node.tools}
+        node._rebuild_tools()
+    real_agent_config.agentic_nodes["builder"]["subagents"] = "gen_visual_report,gen_job,semantic_modeling"
+    restricted = create_interactive_node("builder", real_agent_config, execution_mode="workflow")
+    assert restricted.sub_agent_task_tool._allowed_subagents == ["gen_visual_report"]
+
+
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+def test_visual_generator_uses_output_root_and_read_only_parent_scope(
+    real_agent_config, mock_llm_create, tmp_path, kind
+):
+    output = tmp_path / "personal-files"
+    output.mkdir()
+    original_context = real_agent_config.project_root
+    real_agent_config.artifact_output_root = str(output)
+    real_agent_config.harden_sql_read_only()
+    real_agent_config.agentic_nodes = {
+        "builder": {
+            "node_class": "analytics_builder",
+            "db_read_only": True,
+            "scoped_context": {"sqls": "Finance.Revenue"},
+        },
+        f"gen_visual_{kind}": {
+            "node_class": f"gen_visual_{kind}",
+            "db_read_only": True,
+            "scoped_context": {"sqls": "Finance.Revenue"},
+            "tools": "db_tools.execute_sql,filesystem_tools.read_file",
+        },
+    }
+    parent = create_interactive_node("builder", real_agent_config, execution_mode="workflow")
+    child = parent.sub_agent_task_tool._create_node(f"gen_visual_{kind}")
+    assert child._resolve_workspace_root() == str(output)
+    assert child.db_func_tool.execute_sql("CREATE TABLE forbidden_write (id INTEGER)").success == 0
+    assert real_agent_config.project_root == original_context
+    # The host's allocator supplies an ordinary slug to the generic tools.
+    real_agent_config.artifact_slug_factory = lambda artifact_kind, semantic: f"allocated_{artifact_kind}_{semantic}"
+    from datus.tools.func_tool.dashboard_artifact_tools import DashboardArtifactTools
+    from datus.tools.func_tool.report_artifact_tools import ReportArtifactTools
+
+    tools_class = ReportArtifactTools if kind == "report" else DashboardArtifactTools
+    tools = tools_class(agent_config=real_agent_config, db_func_tool=child.db_func_tool)
+    result = getattr(tools, f"start_new_{kind}")("sales", "Sales", "Monthly sales analysis")
+    assert result.success == 1
+    assert (output / f"{kind}s" / f"allocated_{kind}_sales" / "manifest.json").is_file()
+    denied = child.filesystem_func_tool.write_file(f"{kind}s/allocated_{kind}_sales/queries/fake.json", "{}")
+    assert denied.success == 0
+    assert child.filesystem_func_tool.write_file("outside.md", "invalid").success == 0
+
+
+def test_host_scoped_session_root_is_not_scoped_twice(real_agent_config, mock_llm_create, tmp_path):
+    sessions = tmp_path / "already-isolated" / "sessions"
+    real_agent_config.session_dir = str(sessions)
+    real_agent_config.session_dir_scoped = True
+    real_agent_config.agentic_nodes = {"builder": {"node_class": "analytics_builder"}}
+    node = create_interactive_node("builder", real_agent_config, execution_mode="workflow", scope="alice")
+    assert node.session_manager.session_dir == str(sessions)
