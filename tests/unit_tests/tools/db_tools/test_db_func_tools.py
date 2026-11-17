@@ -2067,3 +2067,49 @@ class TestPlanDatasource:
         assert result.result["profile_skeleton"].startswith("PROFILE = {")
         assert "data/gen.py" in result.result["next"]
         assert "gen.py report" in result.result["next"]
+
+
+@pytest.mark.parametrize(
+    "dialect,capabilities,scope,query,allowed",
+    [
+        ("postgresql", {"database", "schema"}, "mydb.public.*", 'SELECT * FROM public."orders.daily"', True),
+        (
+            "postgresql",
+            {"database", "schema"},
+            'mydb.public."orders.daily"',
+            'SELECT * FROM public."orders.daily"',
+            True,
+        ),
+        ("postgresql", {"database", "schema"}, "mydb.public.*", 'SELECT * FROM private."public.payroll"', False),
+        ("sqlite", {"database"}, "main.*", "SELECT * FROM private.payroll", False),
+        ("sqlite", {"database"}, "main.*", 'SELECT * FROM main."private.payroll"', True),
+        ("mysql", {"database"}, "mydb.*", "SELECT * FROM mydb.`orders.daily`", True),
+        ("sqlserver", {"database", "schema"}, "mydb.public.*", "SELECT * FROM public.[orders.daily]", True),
+        (
+            "postgresql",
+            {"database", "schema"},
+            "mydb.public.*",
+            "WITH payroll AS (SELECT 1) SELECT * FROM private.payroll",
+            False,
+        ),
+        (
+            "postgresql",
+            {"database", "schema"},
+            "mydb.public.*",
+            "WITH payroll AS (SELECT * FROM public.orders) SELECT * FROM payroll",
+            True,
+        ),
+        (
+            "postgresql",
+            {"database", "schema"},
+            "mydb.public.*",
+            "SELECT * FROM private.payroll UNION ALL SELECT * FROM (WITH payroll AS (SELECT 1) SELECT * FROM payroll) q",
+            False,
+        ),
+    ],
+)
+def test_sql_scope_preserves_physical_identifier_boundaries(monkeypatch, dialect, capabilities, scope, query, allowed):
+    tool = TestCheckSqlTableScopeDialects._make_tool(
+        monkeypatch, dialect, capabilities, {scope}, database_name="mydb", schema_name="public"
+    )
+    assert (tool._check_sql_table_scope(query) == []) is allowed

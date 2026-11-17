@@ -1323,12 +1323,12 @@ class DBFuncTool(BulkQueryTools):
         patterns = self._patterns_for_connector(routed_connector)
         if not patterns:
             return []
-        from datus.utils.sql_utils import extract_table_names
+        from datus.utils.sql_utils import extract_table_names_for_scope
 
         dialect = getattr(routed_connector, "dialect", "") or ""
-        table_names = extract_table_names(sql, dialect=dialect, ignore_empty=True)
+        table_names = extract_table_names_for_scope(sql, dialect=dialect)
         if not table_names:
-            return []  # can't parse → allow (SHOW/DESCRIBE/EXPLAIN have no tables)
+            return []  # Table-free statements such as SHOW have no table scope to check.
         out_of_scope: List[str] = []
         analyzer_getter = getattr(connector_registry, "get_sql_analyzer", None)
         native_analysis = callable(analyzer_getter) and analyzer_getter(dialect) is not None

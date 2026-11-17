@@ -159,6 +159,31 @@ def extract_table_names(sql, dialect="snowflake", ignore_empty=False) -> List[st
     return _table_names_from_expression(parsed, dialect=dialect, ignore_empty=ignore_empty)
 
 
+def extract_table_names_for_scope(sql: str, dialect: str) -> List[str]:
+    """Physical SQL identifiers with their component boundaries preserved.
+
+    Display-oriented extraction drops quotes and can turn a literal dot into a
+    namespace separator. Scope checks also need lexical CTE resolution: a CTE
+    named ``orders`` must not hide a physical ``private.orders`` reference.
+    """
+    analyzer = _registry_hook("get_sql_analyzer", dialect)
+    if analyzer is not None:
+        return list(analyzer(sql).require_complete().tables)
+    from sqlglot.optimizer.scope import traverse_scope
+
+    read_dialect = parse_read_dialect(dialect)
+    parsed = sqlglot.parse_one(sql, read=read_dialect, error_level=sqlglot.ErrorLevel.RAISE)
+    if parsed is None:
+        raise ValueError("SQL parser returned no expression")
+    scopes = traverse_scope(parsed)
+    tables = (
+        [source for scope in scopes for source in scope.sources.values() if isinstance(source, Table)]
+        if scopes
+        else list(parsed.find_all(Table))
+    )
+    return sorted({".".join(part.sql(dialect=read_dialect) for part in table.parts) for table in tables})
+
+
 def extract_table_names_strict(sql, dialect="snowflake", ignore_empty=False) -> List[str]:
     """Extract table names and raise when sqlglot cannot parse the SQL."""
     analyzer = _registry_hook("get_sql_analyzer", dialect)
