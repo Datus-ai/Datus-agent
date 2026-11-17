@@ -46,6 +46,16 @@ _SEMANTIC_READ_TOOLS = tuple(
         "select_records",
     )
 )
+_CONTEXT_READ_TOOLS = tuple(
+    f"context_search_tools.{name}"
+    for name in (
+        "list_subject_tree",
+        "search_metrics",
+        "search_reference_sql",
+        "get_reference_sql",
+        "search_semantic_objects",
+    )
+)
 _FILE_READ_TOOLS = tuple(f"filesystem_tools.{name}" for name in ("read_file", "glob", "grep"))
 _FILE_WRITE_TOOLS = ("filesystem_tools.write_file", "filesystem_tools.edit_file")
 
@@ -60,12 +70,12 @@ class SubagentPolicy:
 
 SUBAGENT_POLICIES = {
     "analytics_explorer": SubagentPolicy(
-        (*_DB_READ_TOOLS, *_SEMANTIC_READ_TOOLS, *_FILE_READ_TOOLS),
+        (*_DB_READ_TOOLS, *_SEMANTIC_READ_TOOLS, *_CONTEXT_READ_TOOLS, *_FILE_READ_TOOLS),
         db_read_only=True,
         filesystem_access="read_only",
     ),
     "analytics_builder": SubagentPolicy(
-        (*_DB_READ_TOOLS, *_SEMANTIC_READ_TOOLS, *_FILE_READ_TOOLS, *_FILE_WRITE_TOOLS),
+        (*_DB_READ_TOOLS, *_SEMANTIC_READ_TOOLS, *_CONTEXT_READ_TOOLS, *_FILE_READ_TOOLS, *_FILE_WRITE_TOOLS),
         db_read_only=True,
         filesystem_access="isolated_read_write",
     ),

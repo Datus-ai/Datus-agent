@@ -43,6 +43,20 @@ class AnalyticsExplorerAgenticNode(ChatAgenticNode):
             # the first call initializes the runtime without the advertised tools.
             self.semantic_tools.ontology_enabled = True
 
+    def _available_context_search_tools(self) -> list:
+        # Availability can change between turns. Filter at discovery as well
+        # as rebuild so lazy prompt refresh cannot widen the host's selection.
+        tools = super()._available_context_search_tools()
+        definitions = [tool_definition(tool) for tool in tools]
+        allowed = set(
+            resolve_tools(
+                self.NODE_NAME,
+                (definition.tool_id for definition in definitions),
+                configured=self.node_config.get("tools") or "",
+            )
+        )
+        return [tool for tool, definition in zip(tools, definitions) if definition.tool_id in allowed]
+
     def _rebuild_tools(self):
         super()._rebuild_tools()
         definitions = [tool_definition(tool) for tool in self.tools]

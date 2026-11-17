@@ -1,5 +1,10 @@
 {
   "analytics_builder": {
+    "context_search_tools.get_reference_sql": "read",
+    "context_search_tools.list_subject_tree": "read",
+    "context_search_tools.search_metrics": "read",
+    "context_search_tools.search_reference_sql": "read",
+    "context_search_tools.search_semantic_objects": "read",
     "db_tools.describe_table": "read",
     "db_tools.execute_sql": "sql",
     "db_tools.list_databases": "read",
@@ -22,6 +27,11 @@
     "semantic_tools.select_records": "read"
   },
   "analytics_explorer": {
+    "context_search_tools.get_reference_sql": "read",
+    "context_search_tools.list_subject_tree": "read",
+    "context_search_tools.search_metrics": "read",
+    "context_search_tools.search_reference_sql": "read",
+    "context_search_tools.search_semantic_objects": "read",
     "db_tools.describe_table": "read",
     "db_tools.execute_sql": "sql",
     "db_tools.list_databases": "read",
