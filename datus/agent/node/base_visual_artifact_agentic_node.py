@@ -44,6 +44,7 @@ from datus.agent.node.visual_artifact._visual_artifact_finalize import (
 )
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.utils.artifact_output import artifact_output_root
 from datus.utils.language_utils import build_fallback_directive
 
 if TYPE_CHECKING:
@@ -205,6 +206,11 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
 
         logger.info("setup_tools done: %d tools - %s", len(self.tools), [t.name for t in self.tools])
 
+    def _resolve_workspace_root(self) -> str:
+        if getattr(self.agent_config, "artifact_output_root", None):
+            return str(artifact_output_root(self.agent_config))
+        return super()._resolve_workspace_root()
+
     def _make_filesystem_tool(self, **kwargs):  # type: ignore[override]
         """Swap in the artifact-specific filesystem tool class.
 
@@ -212,6 +218,12 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         but constructs ``self.FILESYSTEM_TOOL_CLS`` so write-protection
         for the artifact directory is in effect.
         """
+        if getattr(self.agent_config, "artifact_output_root", None):
+            from functools import partial
+
+            from datus.utils.artifact_output import artifact_mutation_guard
+
+            kwargs["mutation_guard"] = partial(artifact_mutation_guard, self.agent_config)
         root_path = kwargs.pop("root_path", None) or self._resolve_workspace_root()
         datus_home = kwargs.pop("datus_home", None)
         if datus_home is None and self.agent_config is not None:
@@ -272,6 +284,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 # from glob resolves identically in load_file_as_table.
                 filesystem_root=self._resolve_workspace_root(),
                 agent_config=self.agent_config,
+                read_only=bool(self.node_config.get("db_read_only")),
                 # The agentic_nodes KEY, never ``system_prompt`` — that names the
                 # prompt template, and the scope lookup silently returns unfiltered
                 # storage when the name misses (``rag_scope.build_scope_filter``).
@@ -320,6 +333,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             elif tool_type == "db_tools":
                 if not self.db_func_tool:
                     self.db_func_tool = DBFuncTool(
+                        read_only=bool(self.node_config.get("db_read_only")),
                         # Same anchor the filesystem tools use, so a path the model got
                         # from glob resolves identically in load_file_as_table.
                         filesystem_root=self._resolve_workspace_root(),
@@ -434,7 +448,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
 
     def _artifact_dir(self, artifact_slug: str) -> Path:
         """Absolute on-disk directory for ``artifact_slug``."""
-        return Path(self.agent_config.project_root).resolve() / self.ARTIFACT_ROOT_DIR_NAME / artifact_slug
+        return artifact_output_root(self.agent_config) / self.ARTIFACT_ROOT_DIR_NAME / artifact_slug
 
     def _finalize_language_directive(self) -> Optional[str]:
         """The configured response-language section, or ``None`` when unpinned.
@@ -552,7 +566,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         """
         if not artifact_slug:
             return {}
-        project_root = getattr(self.agent_config, "project_root", None) if self.agent_config else None
+        project_root = str(artifact_output_root(self.agent_config)) if self.agent_config else None
         if not project_root:
             return {}
         manifest_path = Path(project_root) / self.ARTIFACT_ROOT_DIR_NAME / artifact_slug / "manifest.json"

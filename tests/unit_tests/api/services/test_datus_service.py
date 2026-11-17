@@ -408,3 +408,40 @@ async def test_service_shutdown_waits_for_non_chat_request(real_agent_config):
     service.release_request()
     await asyncio.wait_for(stopping, timeout=2)
     cli.close.assert_called_once()
+
+
+@pytest.mark.parametrize("field,value", [("artifact_output_root", "/personal/files"), ("session_dir_scoped", True)])
+def test_fingerprint_tracks_host_execution_roots(real_agent_config, field, value):
+    import copy
+
+    before = DatusService.compute_fingerprint(real_agent_config)
+    changed = copy.deepcopy(real_agent_config)
+    setattr(changed, field, value)
+    after = DatusService.compute_fingerprint(changed)
+    assert after != before
+    assert after == DatusService.compute_fingerprint(copy.deepcopy(changed))
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("rules", ["Use the revised business rule"]),
+        ("scoped_context", {"tables": "sales.customers"}),
+        ("system_prompt", "revised_prompt"),
+        ("permissions", {"rules": [{"tool": "db_tools", "pattern": "*", "permission": "deny"}]}),
+    ],
+)
+def test_isolated_artifact_fingerprint_tracks_effective_nodes(real_agent_config, field, value):
+    import copy
+
+    real_agent_config.artifact_output_root = "/personal/files"
+    real_agent_config.agentic_nodes = {
+        "analyst": {"node_class": "analytics_builder", "scoped_context": {"tables": "sales.orders"}}
+    }
+    before = DatusService.compute_fingerprint(real_agent_config)
+    changed = copy.deepcopy(real_agent_config)
+    changed.agentic_nodes["analyst"][field] = value
+
+    after = DatusService.compute_fingerprint(changed)
+    assert after != before
+    assert after == DatusService.compute_fingerprint(copy.deepcopy(changed))

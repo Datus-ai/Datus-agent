@@ -126,7 +126,8 @@ class DatusService:
     def compute_fingerprint(agent_config: AgentConfig) -> str:
         """Compute a stable content-based fingerprint for an AgentConfig.
 
-        Hashes the declared dataclass fields plus
+        Hashes the declared dataclass fields, host execution roots, isolated
+        artifact node configuration and
         ``AgentConfig.plugin_state_signature()`` — the plugin master switch,
         activation whitelist, ``agent.plugins`` profiles and ``plugin_paths``.
         None of that is reachable through ``dataclasses.asdict``, so without it
@@ -139,6 +140,18 @@ class DatusService:
             payload = {
                 "config": dataclasses.asdict(agent_config),
                 "plugins": _plugin_state(agent_config),
+                "execution": {
+                    "artifact_output_root": getattr(agent_config, "artifact_output_root", None),
+                    "session_dir_scoped": getattr(agent_config, "session_dir_scoped", False),
+                    # Isolated artifact services do not receive project-wide
+                    # in-place node refreshes. New requests need their current
+                    # effective scopes/rules while active turns keep snapshots.
+                    "agentic_nodes": (
+                        getattr(agent_config, "agentic_nodes", None)
+                        if getattr(agent_config, "artifact_output_root", None) is not None
+                        else None
+                    ),
+                },
             }
             serialized = json.dumps(payload, sort_keys=True, default=str)
             return hashlib.sha256(serialized.encode("utf-8")).hexdigest()

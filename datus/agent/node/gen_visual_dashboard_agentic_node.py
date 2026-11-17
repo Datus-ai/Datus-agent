@@ -42,6 +42,7 @@ from datus.tools.func_tool.dashboard_artifact_tools import (
     DashboardArtifactTools,
     DashboardFilesystemFuncTool,
 )
+from datus.utils.artifact_output import artifact_output_root
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -186,7 +187,7 @@ class GenVisualDashboardAgenticNode(
         if not html_rel_path:
             return None
         result.html_path = html_rel_path
-        project_root = Path(self.agent_config.project_root).resolve()
+        project_root = artifact_output_root(self.agent_config)
         html_abs_path = (project_root / html_rel_path).resolve()
         return self._build_html_path_action(artifact_slug, html_abs_path)
 
@@ -250,7 +251,7 @@ class GenVisualDashboardAgenticNode(
         try:
             from datus.agent.node.visual_artifact.dashboard_html_renderer import render_dashboard_html
 
-            project_root = Path(self.agent_config.project_root).resolve()
+            project_root = artifact_output_root(self.agent_config)
             # ``dashboard_dist`` priority (highest first):
             #   1. ``agentic_nodes.gen_visual_dashboard.dashboard_dist`` in agent.yml
             #   2. ``--report-dist`` CLI flag (the bundle was unified into
