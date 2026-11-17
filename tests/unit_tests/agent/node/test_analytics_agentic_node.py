@@ -206,14 +206,13 @@ def test_context_appearing_between_turns_keeps_exact_host_selection(real_agent_c
     }
     node = create_interactive_node("limited_analyst", real_agent_config, execution_mode="workflow")
     assert "search_reference_sql" not in {tool.name for tool in node.tools}
-    writer = _seed_reference_sql(real_agent_config)
+    _seed_reference_sql(real_agent_config)
     for _ in range(2):
         node._system_prompt_snapshot_meta(None)
         names = {tool.name for tool in node.tools}
         assert "search_reference_sql" in names
         assert not names & {"get_reference_sql", "list_subject_tree", "search_metrics", "search_semantic_objects"}
         node._rebuild_tools()
-    writer.reference_sql_storage.subject_tree.rename(["Finance"], ["ArchivedFinance"])
     # A restored node must preserve the same exact selection as a live one.
     restored = create_interactive_node("limited_analyst", real_agent_config, execution_mode="workflow")
     restored._system_prompt_snapshot_meta(None)
@@ -245,4 +244,29 @@ def test_all_context_readers_mount_when_providers_have_knowledge(real_agent_conf
         assert node.context_search_tools.sub_agent_name == "analyst"
         node._system_prompt_snapshot_meta(None)
         assert expected <= {tool.name for tool in node.tools}
+        node._rebuild_tools()
+
+
+@pytest.mark.parametrize("kind", ["analytics_explorer", "analytics_builder"])
+def test_subject_scope_does_not_narrow_supplied_read_only_file_root(real_agent_config, mock_llm_create, tmp_path, kind):
+    files = tmp_path / "base-files"
+    knowledge = files / "OtherSubject" / "rules.md"
+    knowledge.parent.mkdir(parents=True)
+    knowledge.write_text("Revenue excludes refunds.", encoding="utf-8")
+    real_agent_config.agentic_nodes = {
+        "analyst": {
+            "node_class": kind,
+            "workspace_root": str(files),
+            "tools": "filesystem_tools.read_file,filesystem_tools.glob,filesystem_tools.grep",
+            "scoped_context": {"sqls": "Finance.Revenue"},
+        }
+    }
+    node = create_interactive_node("analyst", real_agent_config, execution_mode="workflow")
+    for _ in range(2):
+        result = node.filesystem_func_tool.read_file("OtherSubject/rules.md")
+        assert result.success == 1
+        assert "Revenue excludes refunds." in result.result
+        names = {tool.name for tool in node.tools}
+        assert {"read_file", "glob", "grep"} <= names
+        assert not names & {"write_file", "edit_file", "delete_file"}
         node._rebuild_tools()

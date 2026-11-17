@@ -6,9 +6,15 @@ from datus.prompts.prompt_manager import PromptManager
 from datus.utils.path_manager import DatusPathManager
 
 
-@pytest.mark.parametrize("kind", ["analytics_explorer", "analytics_builder"])
+@pytest.mark.parametrize(
+    "kind, role_boundary",
+    [
+        ("analytics_explorer", "Never modify files, create or publish artifacts"),
+        ("analytics_builder", "do not claim creation or publication without a successful supporting tool result"),
+    ],
+)
 @pytest.mark.parametrize("interactive", [True, False])
-def test_analytics_prompt_uses_available_tools_and_business_rules(tmp_path, kind, interactive):
+def test_analytics_prompt_uses_available_tools_and_business_rules(tmp_path, kind, role_boundary, interactive):
     manager = PromptManager(path_manager=DatusPathManager(tmp_path / "home"))
     tools = [
         "search_metrics",
@@ -37,8 +43,7 @@ def test_analytics_prompt_uses_available_tools_and_business_rules(tmp_path, kind
     assert "update the relevant knowledge" not in prompt
     assert "`search_reference_sql`" not in prompt
     assert "`search_semantic_objects`" not in prompt
-    if kind == "analytics_explorer":
-        assert "Never modify files, create or publish artifacts" in prompt
+    assert role_boundary in prompt
 
 
 def test_analytics_prompt_without_query_tools_explains_capability_gap(tmp_path):
