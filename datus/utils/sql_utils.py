@@ -186,7 +186,16 @@ def extract_table_names_for_scope(sql: str, dialect: str) -> List[str]:
         if isinstance(scope.expression, Table):
             references.append(scope.expression)
         for table in references:
-            if isinstance(scope.sources.get(table.alias_or_name), Scope):
+            source = scope.sources.get(table.alias_or_name)
+            # An alias/name can be shared by a CTE and a physical table in the
+            # same scope. Only an unqualified reference to that exact CTE may
+            # be excluded; qualification always denotes a physical relation.
+            if (
+                not table.db
+                and not table.catalog
+                and isinstance(source, Scope)
+                and scope.cte_sources.get(table.name) is source
+            ):
                 virtual_references.add(id(table))
     tables = [table for table in parsed.find_all(Table) if id(table) not in virtual_references]
     return sorted({".".join(part.sql(dialect=read_dialect) for part in table.parts) for table in tables})

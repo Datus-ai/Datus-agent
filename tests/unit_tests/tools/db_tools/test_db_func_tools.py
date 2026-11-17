@@ -2183,6 +2183,34 @@ class TestPlanDatasource:
             "WITH source AS (SELECT id FROM public.payroll) UPDATE public.payroll SET salary=s.id FROM private.source s WHERE payroll.id=s.id",
             False,
         ),
+        (
+            "sqlite",
+            {"database"},
+            "main.allowed",
+            "WITH payroll AS (SELECT 1 AS x) SELECT COUNT(*) FROM private.payroll CROSS JOIN payroll",
+            False,
+        ),
+        (
+            "sqlite",
+            {"database"},
+            "main.allowed",
+            "WITH payroll AS (SELECT 1 AS x) SELECT COUNT(*) FROM payroll CROSS JOIN private.payroll",
+            False,
+        ),
+        (
+            "sqlite",
+            {"database"},
+            "main.allowed",
+            "WITH payroll AS (SELECT 1 AS x) SELECT COUNT(*) FROM private.payroll AS payroll CROSS JOIN payroll",
+            False,
+        ),
+        (
+            "sqlite",
+            {"database"},
+            "main.allowed",
+            "WITH payroll AS (SELECT 1 AS x) SELECT COUNT(*) FROM orders AS payroll CROSS JOIN payroll",
+            False,
+        ),
     ],
 )
 def test_sql_scope_preserves_physical_identifier_boundaries(monkeypatch, dialect, capabilities, scope, query, allowed):
