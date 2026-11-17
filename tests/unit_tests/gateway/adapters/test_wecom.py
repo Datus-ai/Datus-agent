@@ -42,7 +42,9 @@ async def until(predicate):
 async def peer():
     frames = []
     sockets = []
-    ack = {"auth_error": False, "ping": True}
+    ack = {"auth_error": False, "ping": True, "stream_finish": "ok"}
+    closed_streams = set()
+    stream_close_seen = asyncio.Event()
 
     async def handler(request):
         ws = web.WebSocketResponse()
@@ -53,10 +55,22 @@ async def peer():
             frames.append(frame)
             if frame["cmd"] == "ping" and not ack["ping"]:
                 continue
+            errcode = 40014 if ack["auth_error"] and frame["cmd"] == "aibot_subscribe" else 0
+            if frame["cmd"] == "aibot_respond_msg":
+                req_id = frame["headers"]["req_id"]
+                if req_id in closed_streams:
+                    errcode = 40001
+                if frame["body"]["stream"]["finish"]:
+                    closed_streams.add(req_id)
+                    stream_close_seen.set()
+                    if ack["stream_finish"] == "drop":
+                        continue
+                    if ack["stream_finish"] == "reject":
+                        errcode = 40001
             await ws.send_json(
                 {
                     "headers": frame["headers"],
-                    "errcode": 40014 if ack["auth_error"] and frame["cmd"] == "aibot_subscribe" else 0,
+                    "errcode": errcode,
                 }
             )
         return ws
@@ -68,7 +82,9 @@ async def peer():
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
     port = site._server.sockets[0].getsockname()[1]
-    yield SimpleNamespace(url=f"http://127.0.0.1:{port}", sockets=sockets, frames=frames, ack=ack)
+    yield SimpleNamespace(
+        url=f"http://127.0.0.1:{port}", sockets=sockets, frames=frames, ack=ack, stream_close_seen=stream_close_seen
+    )
     for ws in sockets:
         await ws.close()
     await runner.cleanup()
@@ -221,3 +237,72 @@ def test_utf8_chunks_preserve_all_characters():
     chunks = list(_chunks(text))
     assert "".join(chunks) == text
     assert all(len(chunk.encode("utf-8")) <= 4000 for chunk in chunks)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("close_ack", ["drop", "reject"])
+@pytest.mark.parametrize("completion", ["after_close_failure", "during_close"])
+async def test_stream_close_failure_cannot_discard_the_agent_result(peer, close_ack, completion):
+    peer.ack["stream_finish"] = close_ack
+    expected = "partial result"
+    if completion == "after_close_failure":
+        expected += " and final result"
+
+    async def handle(msg, adapter, config):
+        await adapter.send_message(
+            OutboundMessage(channel_id="wecom", conversation_id=msg.conversation_id, text="partial result")
+        )
+        await peer.stream_close_seen.wait()
+        if completion == "after_close_failure":
+            # Let the dropped ACK time out before the agent produces its final output.
+            await asyncio.sleep(0.25)
+            await adapter.send_message(
+                OutboundMessage(channel_id="wecom", conversation_id=msg.conversation_id, text=" and final result")
+            )
+        # Returning while close ACK is pending cancels the stream-expiry task.
+
+    async with running(peer, SimpleNamespace(handle_message=handle), stream_timeout=0.03) as adapter:
+        await peer.sockets[-1].send_json(callback())
+        await until(lambda: any(f["cmd"] == "aibot_send_msg" for f in peer.frames))
+        await until(lambda: not adapter._handlers)
+        pushed = [f["body"] for f in peer.frames if f["cmd"] == "aibot_send_msg"]
+        assert pushed == [{"chatid": "user1", "msgtype": "markdown", "markdown": {"content": expected}}]
+        close_index = next(i for i, f in enumerate(peer.frames) if f.get("body", {}).get("stream", {}).get("finish"))
+        assert all(f["cmd"] != "aibot_respond_msg" for f in peer.frames[close_index + 1 :])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("server_closes_socket", [False, True])
+async def test_connection_takeover_stops_reconnecting_and_cancels_callbacks(peer, server_closes_socket):
+    entered = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def handle(*args):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    async with running(peer, SimpleNamespace(handle_message=handle), heartbeat_interval=0.03) as adapter:
+        ws = peer.sockets[-1]
+        await ws.send_json(callback())
+        await asyncio.wait_for(entered.wait(), 2)
+        await ws.send_json(
+            {
+                "cmd": "aibot_event_callback",
+                "headers": {"req_id": "takeover-event"},
+                "body": {"msgtype": "event", "event": {"eventtype": "disconnected_event"}},
+            }
+        )
+        if server_closes_socket:
+            await ws.close()
+        await until(lambda: adapter._runner.done())
+        await asyncio.wait_for(cancelled.wait(), 1)
+        await until(lambda: ws.closed)
+        # A normal network disconnect reconnects after one second; takeover must not.
+        await asyncio.sleep(1.1)
+        assert len(peer.sockets) == 1
+        assert sum(f["cmd"] == "aibot_subscribe" for f in peer.frames) == 1
+        assert not adapter._pending
+        assert not adapter._handlers

@@ -36,10 +36,14 @@ gateway reads YAML on startup; restart it after changing configuration.
   accumulated Markdown. The final update sets `finish=true`.
 - A turn still running after 300 seconds closes its stream and delivers the final
   result using `aibot_send_msg`. Oversized results are also delivered separately,
-  split on UTF-8 boundaries. Platform permissions/rate limits still apply.
+  split on UTF-8 boundaries. A missing/rejected stream-close ACK does not prevent
+  proactive delivery. Platform permissions/rate limits still apply.
 - One bot should have one active gateway owner. Backend deployments use their
   existing Redis leader election; standalone instances must not compete for the same bot.
-- Reconnection uses exponential backoff. Heartbeats are protocol `ping` frames,
+- A server `disconnected_event` means another connection took ownership of the bot.
+  The displaced adapter closes and stops automatic reconnection. Resolve duplicate
+  bot configurations before explicitly restarting it (or re-enabling the channel).
+- Network reconnection uses exponential backoff. Heartbeats are protocol `ping` frames,
   not chat-message polling. Pending callbacks are cancelled on connection loss;
   there is no durable message queue or exactly-once delivery across process restarts.
 

@@ -65,6 +65,7 @@ class WeComAdapter(ChannelAdapter):
         self._session: Optional[aiohttp.ClientSession] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
         self._runner: Optional[asyncio.Task] = None
+        self._taken_over = False
         self._pending: dict[str, asyncio.Future] = {}
         self._handlers: set[asyncio.Task] = set()
         self._seen: OrderedDict[str, None] = OrderedDict()
@@ -88,6 +89,7 @@ class WeComAdapter(ChannelAdapter):
             return
         if not self.is_configured():
             raise ValueError("WeCom requires bot_id and secret")
+        self._taken_over = False
         self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None, sock_connect=10))
         self._runner = asyncio.create_task(self._run(), name=f"wecom-{self.channel_id}")
 
@@ -101,7 +103,7 @@ class WeComAdapter(ChannelAdapter):
             self._session = None
 
     async def _request(self, cmd: str, body=None, req_id: Optional[str] = None) -> dict:
-        if self._ws is None or self._ws.closed:
+        if self._taken_over or self._ws is None or self._ws.closed:
             raise ConnectionError("WeCom connection is unavailable")
         req_id = req_id or f"{cmd}_{uuid.uuid4().hex}"
         future = asyncio.get_running_loop().create_future()
@@ -131,6 +133,19 @@ class WeComAdapter(ChannelAdapter):
                     task = asyncio.create_task(self._handle_message(frame))
                     self._handlers.add(task)
                     task.add_done_callback(self._handlers.discard)
+                elif frame.get("cmd") == "aibot_event_callback":
+                    if frame.get("body", {}).get("event", {}).get("eventtype") == "disconnected_event":
+                        self._taken_over = True
+                        logger.warning(
+                            "WeCom channel %s received disconnected_event: another connection took over; "
+                            "automatic reconnect disabled. Resolve duplicate bot connections before restarting.",
+                            self.channel_id,
+                        )
+                        # Wake auth/heartbeat requests too: the runner may be waiting for an ACK.
+                        for future in self._pending.values():
+                            if not future.done():
+                                future.set_exception(ConnectionError("WeCom connection taken over"))
+                        return
                 else:
                     future = self._pending.get(frame.get("headers", {}).get("req_id"))
                     if future is not None and not future.done():
@@ -155,11 +170,15 @@ class WeComAdapter(ChannelAdapter):
                         done, _ = await asyncio.wait({receiver}, timeout=self._heartbeat_interval)
                         if done:
                             await receiver
+                            break
                         await self._request("ping")
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.warning("WeCom channel %s disconnected (%s); reconnecting", self.channel_id, type(exc).__name__)
+                if not self._taken_over:
+                    logger.warning(
+                        "WeCom channel %s disconnected (%s); reconnecting", self.channel_id, type(exc).__name__
+                    )
             finally:
                 if receiver:
                     receiver.cancel()
@@ -172,6 +191,9 @@ class WeComAdapter(ChannelAdapter):
                     task.cancel()
                 await asyncio.gather(*handlers, return_exceptions=True)
                 self._ws = None
+            if self._taken_over:
+                await self._session.close()
+                return
             await asyncio.sleep(delay)
             delay = min(delay * 2, 60)
 
@@ -186,9 +208,18 @@ class WeComAdapter(ChannelAdapter):
 
     async def _expire_stream(self, state: _Reply) -> None:
         await asyncio.sleep(self._stream_timeout)
+        # Commit the one-way transition before waiting for either the reply lock
+        # or a close ACK. Callback completion may cancel this task at either await.
+        state.expired = True
         async with state.lock:
-            await self._stream(state, True, "Still working. The result will be sent as a separate message.")
-            state.expired = True
+            try:
+                await self._stream(state, True, "Still working. The result will be sent as a separate message.")
+            except Exception as exc:
+                logger.warning(
+                    "WeCom stream close failed on %s (%s); final result will use proactive delivery",
+                    self.channel_id,
+                    type(exc).__name__,
+                )
 
     async def _handle_message(self, frame: dict) -> None:
         state = None
