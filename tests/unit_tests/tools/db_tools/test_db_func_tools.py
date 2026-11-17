@@ -2110,6 +2110,11 @@ class TestPlanDatasource:
 )
 def test_sql_scope_preserves_physical_identifier_boundaries(monkeypatch, dialect, capabilities, scope, query, allowed):
     tool = TestCheckSqlTableScopeDialects._make_tool(
-        monkeypatch, dialect, capabilities, {scope}, database_name="mydb", schema_name="public"
+        monkeypatch,
+        dialect,
+        capabilities,
+        {scope},
+        database_name="main" if dialect == "sqlite" else "mydb",
+        schema_name="public",
     )
     assert (tool._check_sql_table_scope(query) == []) is allowed
