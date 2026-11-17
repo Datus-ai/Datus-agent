@@ -195,6 +195,7 @@ def test_analytics_reference_discovery_and_exact_read_keep_subject_scope(real_ag
         assert denied.success == 0
         assert "private_value" not in json.dumps(denied.result)
         searched = context.search_reference_sql("private_query")
+        assert searched.success == 1
         assert "private_value" not in json.dumps(searched.result)
         node._rebuild_tools()
 
