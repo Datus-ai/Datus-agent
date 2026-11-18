@@ -189,6 +189,7 @@ def test_plan_file_tool_available_with_default_and_wildcard_configs(real_agent_c
 
 def test_plan_file_uses_project_root_for_vscode_source(real_agent_config, mock_llm_create, tmp_path, monkeypatch):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+    from tests.unit_tests.semantic_plan_support import select_plan_model
 
     daemon_cwd = tmp_path / "daemon"
     daemon_cwd.mkdir()
@@ -204,6 +205,8 @@ def test_plan_file_uses_project_root_for_vscode_source(real_agent_config, mock_l
     node._populate_tool_registry()
     assert node.tool_registry.get("write_semantic_model_plan_file") == "semantic_tools"
 
+    model_path = Path(real_agent_config.project_root) / "subject/semantic_models/sales_model.yaml"
+    select_plan_model(node.osi_target_state, model_path, "sales_model")
     result = node.semantic_plan_file_tool.write_semantic_model_plan_file("sales_model", '{"summary":"plan"}')
 
     assert result.success == 1
@@ -550,6 +553,7 @@ def test_generated_result_uses_selected_artifact_finalizer(real_agent_config, mo
     assert result.status == "generated"
     assert result.semantic_models == ["subject/semantic_models/warehouse/orders.yml"]
     assert result.business_validation == []
+    assert not (Path(real_agent_config.project_root) / ".datus/semantic-model-plans").exists()
 
 
 @pytest.mark.asyncio

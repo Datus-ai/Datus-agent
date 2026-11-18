@@ -861,10 +861,10 @@ async def test_http_tool_result_requires_the_session_owner(tmp_path, decision):
 
     from datus.api.deps import get_app_context, get_datus_service
     from datus.api.routes.chat_routes import router
-    from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
     from datus.tools.proxy.semantic_plan_review import apply_semantic_plan_review
+    from tests.unit_tests.semantic_plan_support import plan_writer
 
-    writer = SemanticPlanFileTools(tmp_path)
+    writer = plan_writer(tmp_path)
     node = SimpleNamespace(
         action_bus=MagicMock(),
         semantic_plan_file_tool=writer,

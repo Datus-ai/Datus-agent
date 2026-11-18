@@ -3363,9 +3363,9 @@ class TestSubagentInheritsParentDatabase:
 
 @pytest.mark.asyncio
 async def test_task_delegation_reviews_plans_through_the_parent_session(task_tool, tmp_path):
-    from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
     from datus.tools.proxy.semantic_plan_review import apply_semantic_plan_review
     from datus.tools.proxy.tool_result_channel import ToolResultChannel
+    from tests.unit_tests.semantic_plan_support import plan_writer
 
     class ReadyChannel(ToolResultChannel):
         async def wait_for(self, call_id, timeout=None):
@@ -3385,7 +3385,7 @@ async def test_task_delegation_reviews_plans_through_the_parent_session(task_too
     )
     apply_semantic_plan_review(parent)
     task_tool.set_parent_node(parent)
-    writer = SemanticPlanFileTools(tmp_path)
+    writer = plan_writer(tmp_path)
     child = MagicMock()
     child.semantic_plan_file_tool = writer
     child.tools = writer.available_tools()
