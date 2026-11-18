@@ -205,8 +205,10 @@ def extract_table_names_for_scope(sql: str, dialect: str) -> List[str]:
             # An alias/name can be shared by a CTE and a physical table in the
             # same scope. Only an unqualified reference to that exact CTE may
             # be excluded; qualification always denotes a physical relation.
+            # SELECT INTO targets are in scope.tables too, but are never CTE reads.
             if (
-                not table.db
+                not isinstance(table.parent, expressions.Into)
+                and not table.db
                 and not table.catalog
                 and isinstance(source, Scope)
                 and scope.cte_sources.get(table.name) is source

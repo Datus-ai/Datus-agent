@@ -2310,6 +2310,34 @@ class TestPlanDatasource:
             "WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<3) SELECT * FROM seq",
             True,
         ),
+        (
+            "postgresql",
+            {"schema", "database"},
+            "mydb.public.orders",
+            "WITH payroll AS (SELECT 1 AS id) SELECT id INTO payroll FROM payroll",
+            False,
+        ),
+        (
+            "sqlserver",
+            {"schema", "database"},
+            "mydb.public.orders",
+            "WITH payroll AS (SELECT 1 AS id) SELECT id INTO payroll FROM payroll",
+            False,
+        ),
+        (
+            "postgresql",
+            {"schema", "database"},
+            "mydb.public.orders",
+            "WITH payroll AS (SELECT 1 AS id) SELECT id INTO private.payroll FROM payroll",
+            False,
+        ),
+        (
+            "postgresql",
+            {"schema", "database"},
+            "mydb.public.orders",
+            "WITH orders AS (SELECT 1 AS id) SELECT id INTO orders FROM orders",
+            True,
+        ),
     ],
 )
 def test_sql_scope_preserves_physical_identifier_boundaries(monkeypatch, dialect, capabilities, scope, query, allowed):
