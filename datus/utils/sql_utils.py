@@ -159,6 +159,64 @@ def extract_table_names(sql, dialect="snowflake", ignore_empty=False) -> List[st
     return _table_names_from_expression(parsed, dialect=dialect, ignore_empty=ignore_empty)
 
 
+def extract_table_names_for_scope(sql: str, dialect: str) -> List[str]:
+    """Physical SQL identifiers with their component boundaries preserved.
+
+    Display-oriented extraction drops quotes and can turn a literal dot into a
+    namespace separator. Scope checks also need lexical CTE resolution: a CTE
+    named ``orders`` must not hide a physical ``private.orders`` reference.
+    """
+    analyzer = _registry_hook("get_sql_analyzer", dialect)
+    if analyzer is not None:
+        return list(analyzer(sql).require_complete().tables)
+    from sqlglot.optimizer.scope import Scope, traverse_scope
+
+    read_dialect = parse_read_dialect(dialect)
+    parsed = sqlglot.parse_one(sql, read=read_dialect, error_level=sqlglot.ErrorLevel.RAISE)
+    if parsed is None:
+        raise ValueError("SQL parser returned no expression")
+    original_tables = {
+        id(table): ".".join(part.sql(dialect=read_dialect) for part in table.parts) for table in parsed.find_all(Table)
+    }
+    # Scope dictionaries use strings, so construct them from dialect identities:
+    # PostgreSQL Foo == foo, but "Foo" != foo; Snowflake folds the other way.
+    # Normalize identifiers directly: SQL comments must not opt out through
+    # sqlglot's case_sensitive metadata. Keep original spellings for table ACLs.
+    sql_dialect = sqlglot.Dialect.get_or_raise(read_dialect)
+    for identifier in parsed.find_all(expressions.Identifier):
+        sql_dialect.normalize_identifier(identifier)
+    if read_dialect in {"sqlite", "tsql", "snowflake", "oracle"}:
+        # These engines allow recursive CTEs without the RECURSIVE keyword.
+        # This affects lexical analysis only; the submitted SQL is unchanged.
+        for with_clause in parsed.find_all(expressions.With):
+            with_clause.set("recursive", True)
+    # Exclude only references resolved to a virtual source in their own scope.
+    # Scopes enumerate query sources, not DML/DDL targets: starting with all
+    # Table nodes also keeps UPDATE/INSERT/DELETE targets with subqueries checked.
+    virtual_references = set()
+    for scope in traverse_scope(parsed):
+        # selected_sources omits SEMI/ANTI join relations. Relation-root scopes
+        # (e.g. UPDATE ... FROM cte) expose the reference as the expression.
+        references = list(scope.tables)
+        if isinstance(scope.expression, Table):
+            references.append(scope.expression)
+        for table in references:
+            source = scope.sources.get(table.alias_or_name)
+            # An alias/name can be shared by a CTE and a physical table in the
+            # same scope. Only an unqualified reference to that exact CTE may
+            # be excluded; qualification always denotes a physical relation.
+            # SELECT INTO targets are in scope.tables too, but are never CTE reads.
+            if (
+                not isinstance(table.parent, expressions.Into)
+                and not table.db
+                and not table.catalog
+                and isinstance(source, Scope)
+                and scope.cte_sources.get(table.name) is source
+            ):
+                virtual_references.add(id(table))
+    return sorted({name for identity, name in original_tables.items() if identity not in virtual_references})
+
+
 def extract_table_names_strict(sql, dialect="snowflake", ignore_empty=False) -> List[str]:
     """Extract table names and raise when sqlglot cannot parse the SQL."""
     analyzer = _registry_hook("get_sql_analyzer", dialect)

@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 """Conversational analytics nodes with shared builtin capability policies.
 
-Artifact delegation and isolated writable workspaces are intentionally deferred.
+Hosts supply independent context, artifact output and session roots.
 """
 
 from typing import Optional
@@ -70,7 +70,10 @@ class AnalyticsExplorerAgenticNode(ChatAgenticNode):
         self.tools = [
             tool
             for tool, definition in zip(self.tools, definitions)
-            if definition.tool_id in allowed or definition.access == "session" or definition.category == "skills"
+            if definition.tool_id in allowed
+            or definition.access == "session"
+            or definition.category == "skills"
+            or (definition.tool_id == "sub_agent_tools.task" and self.NODE_NAME == "analytics_builder")
         ]
 
     def _get_system_prompt(self, *args, **kwargs):
@@ -84,3 +87,29 @@ class AnalyticsBuilderAgenticNode(AnalyticsExplorerAgenticNode):
     NODE_NAME = "analytics_builder"
     DEFAULT_SUBAGENTS = ",".join(SUBAGENT_POLICIES[NODE_NAME].subagents)
     _db_read_only = SUBAGENT_POLICIES[NODE_NAME].db_read_only
+
+    def _selected_tool_families(self) -> set:
+        return super()._selected_tool_families() | {"sub_agent_tools"}
+
+    def _setup_sub_agent_task_tool(self):
+        allowed = {"gen_visual_report", "gen_visual_dashboard"}
+        configured = self.node_config.get("subagents")
+        from datus.schemas.agent_models import SubAgentConfig
+
+        normalized = SubAgentConfig(subagents=configured).subagent_list
+        selected = allowed if configured is None or normalized == ["*"] else allowed & set(normalized)
+        self.node_config["subagents"] = ",".join(sorted(selected))
+        super()._setup_sub_agent_task_tool()
+
+    def _resolve_workspace_root(self) -> str:
+        output = getattr(self.agent_config, "artifact_output_root", None)
+        return str(output) if output else super()._resolve_workspace_root()
+
+    def _make_filesystem_tool(self, **kwargs):
+        if getattr(self.agent_config, "artifact_output_root", None):
+            from functools import partial
+
+            from datus.utils.artifact_output import artifact_mutation_guard
+
+            kwargs["mutation_guard"] = partial(artifact_mutation_guard, self.agent_config)
+        return super()._make_filesystem_tool(**kwargs)

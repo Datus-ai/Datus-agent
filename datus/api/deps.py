@@ -11,6 +11,7 @@ from datus.api.services.datus_service import DatusService
 from datus.api.services.datus_service_cache import DatusServiceCache
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
+from datus.utils.artifact_output import artifact_request_scope
 from datus.utils.exceptions import DatusException
 from datus.utils.loggings import get_logger
 
@@ -128,15 +129,22 @@ async def service_request(request: Request, svc: Annotated[DatusService, Depends
     """Pin the service through the request, including streaming its response."""
     # Preserve the protocol used by older host-provided facades; default
     # DatusService instances always implement request ownership.
-    if not callable(getattr(svc, "acquire_request", None)):
-        yield svc
-        return
-    while not svc.acquire_request():
-        svc = await get_datus_service(request)
+    owns_request = callable(getattr(svc, "acquire_request", None))
+    if owns_request:
+        while not svc.acquire_request():
+            svc = await get_datus_service(request)
+    context = getattr(request.state, "app_context", None)
+    config = getattr(context, "config", None)
+    if config is None:
+        config = getattr(svc, "agent_config", None)
     try:
-        yield svc
+        # Cached facades retain structural config. The allocator is a fresh
+        # host callback and can close over this request's occupied names.
+        with artifact_request_scope(config):
+            yield svc
     finally:
-        svc.release_request()
+        if owns_request:
+            svc.release_request()
 
 
 ServiceDep = Annotated[DatusService, Depends(service_request)]

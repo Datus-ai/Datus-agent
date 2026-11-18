@@ -10,7 +10,7 @@ from datus.utils.path_manager import DatusPathManager
     "kind, role_boundary",
     [
         ("analytics_explorer", "Never modify files, create or publish artifacts"),
-        ("analytics_builder", "do not claim creation or publication without a successful supporting tool result"),
+        ("analytics_builder", "Report creation, edits and validation only from successful"),
     ],
 )
 @pytest.mark.parametrize("interactive", [True, False])

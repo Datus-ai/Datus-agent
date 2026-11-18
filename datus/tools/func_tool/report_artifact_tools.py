@@ -57,6 +57,7 @@ from datus.tools.func_tool._visual_artifact_helpers import (
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.metric_artifact_tools import MetricArtifactToolsMixin
 from datus.tools.registry.contracts import tool_contract
+from datus.utils.artifact_output import artifact_output_root, current_artifact_slug_factory
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -326,7 +327,7 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
         # stays focused on real intent.
         self._user_message = user_message or ""
 
-        project_root = Path(getattr(agent_config, "project_root", "")).resolve()
+        project_root = artifact_output_root(agent_config)
         if not project_root or str(project_root) == ".":
             raise ValueError("agent_config.project_root must be a non-empty directory")
         self._project_root = project_root
@@ -417,6 +418,11 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
                 success=0,
                 error="description must be a non-empty one-paragraph description of what the report covers.",
             )
+        factory = current_artifact_slug_factory(self.agent_config)
+        if factory is not None:
+            slug = factory("report", slug)
+            if not REPORT_SLUG_RE.fullmatch(slug):
+                return FuncToolResult(success=0, error="Host returned an invalid artifact slug")
         candidate = self._project_root / "reports" / slug
         if candidate.exists():
             return FuncToolResult(

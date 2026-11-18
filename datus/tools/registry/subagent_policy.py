@@ -76,6 +76,7 @@ SUBAGENT_POLICIES = {
     ),
     "analytics_builder": SubagentPolicy(
         (*_DB_READ_TOOLS, *_SEMANTIC_READ_TOOLS, *_CONTEXT_READ_TOOLS, *_FILE_READ_TOOLS, *_FILE_WRITE_TOOLS),
+        subagents=("gen_visual_report", "gen_visual_dashboard"),
         db_read_only=True,
         filesystem_access="isolated_read_write",
     ),

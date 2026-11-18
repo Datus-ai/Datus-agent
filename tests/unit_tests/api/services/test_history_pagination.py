@@ -569,3 +569,22 @@ def test_history_turn_boundaries_ignore_non_object_content_blocks(history, has_t
         assert "mixed_child_tool" in calls
     else:
         assert questions(page) == ["mixed question"]
+
+
+def test_scoped_session_directory_returns_history_page_for_authenticated_user(history):
+    service, write = history
+    service.agent_config.session_dir_scoped = True
+    write("chat_scoped", turn(1), user=None)
+    page = get_history_page(service, "chat_scoped", "alice", 10, None)
+    assert questions(page) == ["question 1"]
+    assert page.total_turns == 1
+
+
+def test_scoped_session_directory_serves_deferred_tool_content(history):
+    service, write = history
+    service.agent_config.session_dir_scoped = True
+    content = "large result " * 4000
+    write("chat_scoped_content", turn(1)[:1] + tool("lookup", "execute_sql", content), user=None)
+    page = get_history_page(service, "chat_scoped_content", "alice", 10, None)
+    result = next(p.payload["result"] for m in page.messages for p in m.content if p.type == "call-tool-result")
+    assert get_history_content(service, "chat_scoped_content", "alice", result["historyContent"]["ref"]) == content

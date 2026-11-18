@@ -45,6 +45,7 @@ from datus.api.services.turn_stats import resolve_subagent
 from datus.configuration.agent_config import AgentConfig
 from datus.models.session_manager import SessionManager, extract_agent_from_session_id, session_matches_agent
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.utils.artifact_output import session_user_scope
 from datus.utils.config_utils import coerce_positive_int
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -373,7 +374,9 @@ class ChatService:
 
     def session_exists(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """Check if a session exists on disk."""
-        session_mgr = SessionManager(session_dir=self._session_dir, scope=user_id)
+        session_mgr = SessionManager(
+            session_dir=self._session_dir, scope=session_user_scope(self.agent_config, user_id)
+        )
         return session_mgr.session_exists(session_id)
 
     def list_sessions(
@@ -430,7 +433,9 @@ class ChatService:
             # since a negative offset would silently slice from the tail.
             offset = max(offset, 0)
 
-            session_mgr = SessionManager(session_dir=self._session_dir, scope=user_id)
+            session_mgr = SessionManager(
+                session_dir=self._session_dir, scope=session_user_scope(self.agent_config, user_id)
+            )
             all_ids = session_mgr.list_sessions(sort_by_modified=True)
             if subagent_id is not None:
                 all_ids = [sid for sid in all_ids if session_matches_agent(sid, subagent_id)]
@@ -477,7 +482,9 @@ class ChatService:
     def delete_session(self, session_id: str, user_id: Optional[str] = None) -> Result[ChatSessionData]:
         """Delete a session from disk."""
         try:
-            session_mgr = SessionManager(session_dir=self._session_dir, scope=user_id)
+            session_mgr = SessionManager(
+                session_dir=self._session_dir, scope=session_user_scope(self.agent_config, user_id)
+            )
             if session_mgr.session_exists(session_id):
                 session_mgr.delete_session(session_id)
 
@@ -546,7 +553,9 @@ class ChatService:
         """Get chat history messages for a session."""
         try:
             # Use SessionManager to get messages from SQLite
-            session_manager = SessionManager(session_dir=self._session_dir, scope=user_id)
+            session_manager = SessionManager(
+                session_dir=self._session_dir, scope=session_user_scope(self.agent_config, user_id)
+            )
             bounds = {"min_id": window[0], "max_id": window[1]} if window else {}
             raw_messages = session_manager.get_session_messages(session_id, **bounds)
             tool_results = session_manager.get_tool_result_contents(session_id, **bounds)

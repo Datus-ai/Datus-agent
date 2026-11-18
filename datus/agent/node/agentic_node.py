@@ -50,6 +50,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.base import BaseInput, BaseResult
 from datus.tools.db_tools.async_workers import DATABASE_CLEANUP
 from datus.tools.db_tools.data_file_loader import LOCAL_FILES_DATASOURCE
+from datus.utils.artifact_output import session_user_scope
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.language_utils import build_fallback_directive as _build_fallback_directive
 from datus.utils.language_utils import ensure_native_directive as _ensure_native_directive
@@ -405,7 +406,7 @@ class AgenticNode(Node):
                 from datus.utils.path_manager import get_path_manager
 
                 base_dir = str(get_path_manager(agent_config=cfg).sessions_dir)
-            user_scope = getattr(self, "scope", None)
+            user_scope = session_user_scope(cfg, getattr(self, "scope", None))
             session_subdir = getattr(self, "session_subdir", None)
 
             if session_subdir:
@@ -2771,6 +2772,7 @@ class AgenticNode(Node):
             "rules",
             "max_turns",
             "workspace_root",
+            "db_read_only",
             "scoped_context",
             "scoped_kb_path",
             "adapter_type",
