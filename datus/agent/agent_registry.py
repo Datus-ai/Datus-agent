@@ -10,15 +10,21 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import jsonschema
+from referencing import Registry
+from referencing.exceptions import Unresolvable
 
 from datus.plugins.agents import PluginAgentDefinition
 from datus.plugins.registry import collect_plugin_agents
 from datus.schemas.agent_spec import AgentSpec
 from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.loggings import get_logger
+from datus.utils.node_utils import validate_node_class
 
 if TYPE_CHECKING:
     from datus.configuration.agent_config import AgentConfig
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -34,7 +40,7 @@ class ResolvedAgentDefinition:
         if self.plugin is None or self.plugin.config_schema is None:
             return
         try:
-            jsonschema.validate(self.runtime_config or {}, self.plugin.config_schema)
+            jsonschema.validate(self.runtime_config or {}, self.plugin.config_schema, registry=Registry())
         except jsonschema.ValidationError as exc:
             raise DatusException(
                 ErrorCode.COMMON_CONFIG_ERROR,
@@ -42,6 +48,11 @@ class ResolvedAgentDefinition:
                     f"Plugin agent {self.spec.name!r} runtime configuration is invalid at {list(exc.path)}: "
                     f"failed {exc.validator} validation."
                 ),
+            ) from exc
+        except Unresolvable as exc:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=f"Plugin agent {self.spec.name!r} config_schema has an unresolvable reference.",
             ) from exc
 
 
@@ -62,16 +73,19 @@ def _node_config(name: str, agent_config: AgentConfig) -> dict[str, Any]:
     return config
 
 
-def resolve_configurable_agent(name: str, agent_config: AgentConfig) -> ResolvedAgentDefinition | None:
+def resolve_configurable_agent(
+    name: str, agent_config: AgentConfig, *, plugin_agents: dict[str, PluginAgentDefinition] | None = None
+) -> ResolvedAgentDefinition | None:
     """Resolve a definition, rejecting collisions and missing explicit plugin references."""
     config = _node_config(name, agent_config)
     configured = is_configurable_entry(config)
+    if configured:
+        validate_node_class("configurable", name)
     if configured and "resources" in config:
         raise DatusException(
             ErrorCode.COMMON_CONFIG_ERROR,
             message="Configure business access through scoped_context; resources is not supported.",
         )
-    plugins = collect_plugin_agents(agent_config)
     source = config.get("source") if configured else None
     plugin = None
 
@@ -91,25 +105,32 @@ def resolve_configurable_agent(name: str, agent_config: AgentConfig) -> Resolved
                 ErrorCode.COMMON_CONFIG_ERROR,
                 message=f"Agent {name!r} source requires exactly plugin and agent references.",
             )
-        plugin = plugins.get(source["agent"])
+    if plugin_agents is None:
+        plugin_agents = collect_plugin_agents(
+            agent_config, source["agent"] if source is not None else name, strict=source is not None or not configured
+        )
+
+    if source is not None:
+        plugin = plugin_agents.get(source["agent"])
         if plugin is None or plugin.plugin_name != source["plugin"]:
             raise DatusException(
                 ErrorCode.COMMON_CONFIG_ERROR,
                 message=f"Agent {name!r} references a missing or disabled plugin agent.",
             )
     elif configured:
-        if name in plugins:
+        if name in plugin_agents:
             raise DatusException(
                 ErrorCode.COMMON_CONFIG_ERROR,
                 message=f"Configured agent {name!r} conflicts with a plugin agent; declare its source explicitly.",
             )
-    elif name in plugins:
+    elif name in plugin_agents:
         if config or name in SYS_SUB_AGENTS:
             raise DatusException(
                 ErrorCode.COMMON_CONFIG_ERROR,
                 message=f"Plugin agent {name!r} conflicts with an existing node; configure an explicit source.",
             )
-        plugin = plugins[name]
+        validate_node_class("configurable", name)
+        plugin = plugin_agents[name]
     else:
         return None
 
@@ -134,13 +155,18 @@ def resolve_configurable_agent(name: str, agent_config: AgentConfig) -> Resolved
 
 
 def list_configurable_agents(agent_config: AgentConfig) -> dict[str, ResolvedAgentDefinition]:
-    """Use the same resolution for discovery, direct calls and task delegation."""
-    names = set(collect_plugin_agents(agent_config))
+    """Discover available definitions while excluding individually invalid entries."""
+    plugin_agents = collect_plugin_agents(agent_config, strict=False)
+    names = set(plugin_agents)
     nodes = getattr(agent_config, "agentic_nodes", None) or {}
     names.update(name for name, config in nodes.items() if is_configurable_entry(config))
     definitions = {}
     for name in sorted(names):
-        definition = resolve_configurable_agent(name, agent_config)
+        try:
+            definition = resolve_configurable_agent(name, agent_config, plugin_agents=plugin_agents)
+        except (DatusException, ValueError) as exc:
+            logger.warning("Skipping unavailable configurable agent %r: %s", name, exc)
+            continue
         if definition is not None:
             definitions[name] = definition
     return definitions

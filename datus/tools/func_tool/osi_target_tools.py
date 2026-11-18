@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional
 
+import yaml
+
 from datus.configuration.agent_config import AgentConfig
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.registry.contracts import tool_contract
@@ -275,6 +277,7 @@ class OsiSemanticModelTargetTools:
     ):
         self.agent_config = agent_config
         self.path_allowed = path_allowed
+        self.integrity_config = agent_config
         self.target_state = target_state or OsiSemanticModelTargetState()
         self.generation_evidence = generation_evidence
         self._inventory_cache: Optional[Dict[str, Any]] = None
@@ -422,6 +425,44 @@ class OsiSemanticModelTargetTools:
                 "Call list_existing_osi_semantic_models again before selecting a target."
             )
 
+    def _check_scoped_target_integrity(self, target: Path, model_name: str, *, creating: bool = False) -> None:
+        if self.path_allowed is None:
+            return
+        from datus.agent.node.semantic_authoring import inline_mapping_models, osi_semantic_model_directory
+        from datus.tools.semantic_tools.dosi.engine import document_kind
+
+        directory = osi_semantic_model_directory(self.integrity_config)
+        if directory is None:
+            return
+        root = directory.resolve()
+        selected = root / target.relative_to(self._model_dir())
+        has_flat_model = False
+        for path in directory.rglob("*"):
+            if path.suffix.lower() not in {".yml", ".yaml"} or "metrics" in path.relative_to(directory).parts:
+                continue
+            resolved = path.resolve()
+            if not resolved.is_relative_to(root):
+                continue
+            try:
+                document = yaml.safe_load(resolved.read_text(encoding="utf-8"))
+            except (OSError, ValueError, yaml.YAMLError):
+                continue
+            if document_kind(document) == "model":
+                has_flat_model = True
+                if resolved != selected and document.get("name") == model_name:
+                    raise ValueError("The model name conflicts with another artifact in this datasource")
+        if (
+            creating
+            and not has_flat_model
+            and inline_mapping_models(
+                self.integrity_config,
+                path_allowed=lambda path: path.resolve().is_relative_to(path.parent.resolve()),
+            )
+        ):
+            raise ValueError(
+                "An inline model already exists in this project. Creating a flat model would change its binding."
+            )
+
     @tool_contract(access="restricted", direct_call=True)
     def plan_osi_semantic_model_target(
         self,
@@ -451,6 +492,9 @@ class OsiSemanticModelTargetTools:
                 )
 
             canonical = self._canonical_selector(str(target["semantic_model_file"]))
+            self._check_scoped_target_integrity(
+                canonical, str(target["semantic_model_name"]), creating=not target.get("exists")
+            )
             selected = {
                 **target,
                 "absolute_path": str(canonical),
@@ -607,6 +651,7 @@ class OsiSemanticModelTargetTools:
                 )
 
             selected = matches[0]
+            self._check_scoped_target_integrity(Path(selected["absolute_path"]), selected["semantic_model_name"])
             self._require_inventory_revision(selected)
             if self.generation_evidence is not None:
                 self.generation_evidence.invalidate_artifact_evidence()

@@ -28,7 +28,9 @@ def _symbol(node: ast.AST) -> str:
     return ""
 
 
-def _imports(tree: ast.Module, module: str, is_package: bool) -> dict[str, str]:
+def _imports(
+    tree: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef, module: str, is_package: bool
+) -> dict[str, str]:
     """Resolve aliases for decorators, constructors and inherited tool classes."""
     names = {}
     package = module if is_package else module.rpartition(".")[0]
@@ -53,6 +55,16 @@ def _resolve(symbol: str, imports: dict[str, str], module: str = "") -> str:
     if first in imports:
         return imports[first] + (f".{rest}" if rest else "")
     return f"{module}.{symbol}" if module else symbol
+
+
+def _scoped_calls(node: ast.AST, imports: dict[str, str], module: str, is_package: bool):
+    """Resolve imports in the function that owns each call."""
+    if isinstance(node, FUNCTIONS):
+        imports = {**imports, **_imports(node, module, is_package)}
+    if isinstance(node, ast.Call):
+        yield node, _resolve(_symbol(node.func), imports)
+    for child in ast.iter_child_nodes(node):
+        yield from _scoped_calls(child, imports, module, is_package)
 
 
 def _decorator(method: ast.AST, name: str, imports: dict[str, str]) -> ast.Call | None:
@@ -304,12 +316,6 @@ def collect_contracts(package_root: Path) -> dict:
             if not isinstance(call, ast.Call):
                 continue
             target = _resolve(_symbol(call.func), imports)
-            if target.endswith((".plugin_function_tool", ".plugin_tool_definition")) and not (
-                module.startswith(f"{package_root.name}.plugins.") or module.endswith(".registry.contracts")
-            ):
-                errors.append(
-                    f"{path}:{call.lineno}: Runtime metadata registration is restricted to the plugin boundary"
-                )
             if target == "dataclasses.replace" and any(k.arg == "on_invoke_tool" for k in call.keywords):
                 errors.append(f"{path}:{call.lineno}: Use clone_registered_tool for function-tool wrappers")
             if target.endswith(".ToolDefinition") and not module.endswith(".registry.contracts"):
@@ -330,6 +336,15 @@ def collect_contracts(package_root: Path) -> dict:
                 )
                 if not allowed:
                     errors.append(f"{path}:{call.lineno}: Use registered_function_tool or clone_registered_tool")
+
+        contracts_module = f"{package_root.name}.tools.registry.contracts"
+        if module != contracts_module and not module.startswith(f"{package_root.name}.plugins."):
+            runtime_helpers = {f"{contracts_module}.plugin_function_tool", f"{contracts_module}.plugin_tool_definition"}
+            for call, target in _scoped_calls(tree, imports, module, path.name == "__init__.py"):
+                if target in runtime_helpers:
+                    errors.append(
+                        f"{path}:{call.lineno}: Runtime metadata registration is restricted to the plugin boundary"
+                    )
 
     for tool_id, capability in tools.items():
         owner = capability["companion_of"]

@@ -51,6 +51,31 @@ def native_factory(metadata):
         collect_contracts(package)
 
 
+def test_native_modules_cannot_use_locally_imported_plugin_registrations(package):
+    source(
+        package,
+        """
+async def native_factory(metadata):
+    from datus.tools.registry.contracts import plugin_tool_definition as runtime_definition
+    return runtime_definition(metadata["id"], "read")
+""",
+    )
+    with pytest.raises(CatalogError, match="restricted to the plugin boundary"):
+        collect_contracts(package)
+
+
+def test_unrelated_registration_helpers_with_the_same_name_do_not_break_the_catalog(package):
+    source(
+        package,
+        """
+from an_optional_package import plugin_tool_definition
+def build_metadata(tool_id):
+    return plugin_tool_definition(tool_id)
+""",
+    )
+    assert collect_contracts(package) == {"schema_version": 1, "tools": {}}
+
+
 def test_async_inherited_contracts_and_aliases(package):
     """Inventory inherited methods across modules, even with unavailable dependencies."""
     source(

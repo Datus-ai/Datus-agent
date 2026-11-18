@@ -12,7 +12,7 @@ import stat
 import tempfile
 import threading
 import weakref
-from contextlib import contextmanager, suppress
+from contextlib import ExitStack, contextmanager, suppress
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -87,6 +87,18 @@ def ontology_dir_for_model(path: str | Path | None) -> Path | None:
 
 
 @contextmanager
+def semantic_bundle_read_lock(model_path: str | Path | None, ontology_dir: str | Path | None = None) -> Iterator[None]:
+    """Coordinate discovery with both the model project and explicit ontology inputs."""
+    directories = {
+        Path(directory).resolve() for directory in (ontology_dir_for_model(model_path), ontology_dir) if directory
+    }
+    with ExitStack() as stack:
+        for directory in sorted(directories):
+            stack.enter_context(ontology_bundle_lock(directory))
+        yield
+
+
+@contextmanager
 def semantic_model_load_lock(target_path: str | Path, *, ontology_dir: str | Path | None = None) -> Iterator[None]:
     """Take the project lock before the model's thread lock, without loading it.
 
@@ -95,8 +107,7 @@ def semantic_model_load_lock(target_path: str | Path, *, ontology_dir: str | Pat
     file locks. The same order applies to model editors and ontology publication.
     """
     target_path = Path(target_path).resolve(strict=False)
-    directory = ontology_dir or ontology_dir_for_model(target_path)
-    with ontology_bundle_lock(directory), _thread_mutation_lock(target_path):
+    with semantic_bundle_read_lock(target_path, ontology_dir), _thread_mutation_lock(target_path):
         yield
 
 
@@ -227,7 +238,7 @@ def ontology_bundle_lock(ontology_dir: str | Path | None, *, create: bool = Fals
         yield
         return
     directory = Path(ontology_dir).resolve()
-    key = str(directory)
+    key = str(directory.parent if os.name == "posix" else directory)
     held = getattr(_ONTOLOGY_LOCK_DEPTH, "paths", set())
     if key in held:
         yield
@@ -262,18 +273,21 @@ def ontology_bundle_lock(ontology_dir: str | Path | None, *, create: bool = Fals
         return
     import msvcrt
 
-    with _thread_mutation_lock(lock_path), lock_path.open("a+b") as stream:
-        stream.seek(0)
-        if not stream.read(1):
-            stream.write(b"\0")
-            stream.flush()
-        stream.seek(0)
-        msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
-        _ONTOLOGY_LOCK_DEPTH.paths = held
-        held.add(key)
+    with _thread_mutation_lock(lock_path):
         try:
-            yield
-        finally:
-            held.remove(key)
+            stream = lock_path.open("rb")
+        except FileNotFoundError:
+            stream = lock_path.open("a+b")
+        # Byte-range locks accept a read-only descriptor and can extend beyond
+        # EOF. Readers can coordinate with publishers without reading a locked byte.
+        with stream:
             stream.seek(0)
-            msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+            _ONTOLOGY_LOCK_DEPTH.paths = held
+            held.add(key)
+            try:
+                yield
+            finally:
+                held.remove(key)
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)

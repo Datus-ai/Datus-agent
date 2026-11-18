@@ -132,7 +132,23 @@ def test_configured_and_plugin_name_collision_requires_an_explicit_source(plugin
     config = _config({"researcher": {"node_class": "configurable"}}, plugins=("research",))
 
     with pytest.raises(DatusException, match="conflicts with a plugin agent"):
-        list_configurable_agents(config)
+        resolve_configurable_agent("researcher", config)
+    assert "researcher" not in list_configurable_agents(config)
+
+
+def test_invalid_plugin_agent_does_not_hide_other_agents_or_block_builtins(plugin_env):
+    plugin_env(
+        "research",
+        "manifest_version: 1\nagents:\n  bad_agent:\n    protocol_version: 2\n  researcher: {}\n",
+    )
+    config = _config({"support": {"node_class": "configurable"}}, plugins=("research",))
+
+    assert set(list_configurable_agents(config)) == {"support", "researcher"}
+    assert resolve_configurable_agent("support", config).plugin is None
+    assert resolve_configurable_agent("gen_sql", config) is None
+    assert resolve_configurable_agent("researcher", config).plugin.plugin_name == "research"
+    with pytest.raises(DatusException, match="protocol_version"):
+        resolve_configurable_agent("bad_agent", config)
 
 
 def test_runtime_configuration_error_does_not_echo_a_secret_value(plugin_env):

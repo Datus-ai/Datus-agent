@@ -280,9 +280,6 @@ class DatusCLI:
         # Initialize available subagents early (needed by autocomplete)
         self.available_subagents = self._available_system_subagents()
         self.available_subagents.add("chat")
-        from datus.agent.agent_registry import list_configurable_agents
-
-        self.available_subagents.update(list_configurable_agents(self.agent_config))
         if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
             self.available_subagents.update(
                 name for name in self.agent_config.agentic_nodes.keys() if name not in SYS_SUB_AGENTS and name != "chat"
@@ -1146,11 +1143,6 @@ class DatusCLI:
             return
         self._closed = True
         chat = getattr(self, "chat_commands", None)
-        if chat is not None:
-            from datus.agent.node.configurable_agentic_node import ConfigurableAgenticNode
-
-            if isinstance(getattr(chat, "current_node", None), ConfigurableAgenticNode):
-                chat.current_node = None
         self.agent_ready = False
         self.agent_initializing = False
         bg_sync = getattr(self, "bg_sync", None)
@@ -1184,6 +1176,11 @@ class DatusCLI:
                 if not loop.is_running():
                     loop.close()
 
+        if chat is not None:
+            from datus.agent.node.configurable_agentic_node import ConfigurableAgenticNode
+
+            if isinstance(getattr(chat, "current_node", None), ConfigurableAgenticNode):
+                chat.current_node = None
         if self.db_connector:
             try:
                 self.db_connector.close()
@@ -1623,17 +1620,29 @@ class DatusCLI:
         """
 
         visible = {name for name in self.available_subagents if name not in HIDDEN_SYS_SUB_AGENTS}
-        from datus.agent.agent_registry import list_configurable_agents
+        from datus.agent.agent_registry import is_configurable_entry, list_configurable_agents
 
-        visible.update(list_configurable_agents(self.agent_config))
-        visible &= self._available_system_subagents() | {name for name in visible if name not in SYS_SUB_AGENTS}
+        current_db = getattr(self.agent_config, "current_datasource", None)
+        configurable = list_configurable_agents(self.agent_config)
         if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
-            current_db = getattr(self.agent_config, "current_datasource", None)
             for name, sub_config in self.agent_config.agentic_nodes.items():
+                if is_configurable_entry(sub_config):
+                    visible.discard(name)
+                    continue
                 sc = (sub_config or {}).get("scoped_context", {})
                 scoped_ns = sc.get("datasource")
                 if scoped_ns and scoped_ns != current_db:
                     visible.discard(name)
+        for name, definition in configurable.items():
+            scope = definition.spec.scoped_context
+            if scope is not None and scope.tables_by_datasource is not None:
+                if current_db not in scope.tables_by_datasource:
+                    continue
+            elif scope is not None and scope.datasource and scope.datasource != current_db:
+                continue
+            if name not in HIDDEN_SYS_SUB_AGENTS:
+                visible.add(name)
+        visible &= self._available_system_subagents() | {name for name in visible if name not in SYS_SUB_AGENTS}
         return visible
 
     def _available_system_subagents(self) -> set[str]:

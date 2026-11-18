@@ -21,6 +21,7 @@ class ConfigurableNodeInput(AtContextInput):
     db_schema: str | None = None
     prompt_language: str = "en"
     prompt_version: str | None = None
+    plan_mode: bool = False
 
 
 class ConfigurableNodeResult(BaseResult):

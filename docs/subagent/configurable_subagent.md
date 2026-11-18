@@ -170,7 +170,8 @@ agents:
 The publisher can declare all common behavior fields, optional `config` defaults
 and a JSON `config_schema` for business parameters. Plugin tools use a separate
 permission family such as `concept_tools`. The host reserves its own tool
-families, `load_skill` and names starting with `mcp__`. The host grants
+families, `load_skill` and names starting with `mcp__`. The `ontology_tools`
+family belongs to the official `datus-semantic-plugin` package. The host grants
 permission to publisher tools through ordinary permission configuration.
 
 ```yaml
@@ -244,12 +245,14 @@ does not expose AgentConfig, connectors or the node.
 
 Common result fields include `response`, `data`, `success`, `error` and
 `tokens_used`. Additional JSON business fields survive node serialization and
-`task()` success/failure envelopes. Dynamic prompt content and selected skill
-contents invalidate stale system-prompt snapshots.
+`task()` success/failure envelopes. For JSON output, the host parses the model
+reply into `data` before finalization. The finalizer can return a display summary
+in `response` and update the machine-readable payload in `data`. Dynamic prompt
+content and selected skill contents invalidate stale system-prompt snapshots.
 
-Configuration-only and static plugin agents need no runtime. This Agent change
-provides infrastructure; packaging and migrating `ontology_modeling` and
-`ontology_analyst` into Backend remains a separate integration step.
+Configuration-only and static plugin agents need no runtime. Backend packages
+the enhanced semantic-modeling runtime for SaaS and On-Prem. Agent provides
+the built-in semantic modeler and `ontology_analyst`.
 
 
 ## 5. Shared semantic authoring
@@ -259,32 +262,34 @@ The built-in semantic modeler and configurable agents reuse an Agent-owned
 no authoring tools are added by default. For example:
 
 ```yaml
-agentic_nodes:
-  semantic_modeling:
-    node_class: configurable
-    source:
-      plugin: datus-semantic-plugin
-      agent: semantic_modeling
-    tools:
-      - semantic_tools.list_existing_osi_semantic_models
-      - semantic_tools.plan_osi_semantic_model_target
-      - semantic_tools.bind_osi_semantic_model_target
-      - semantic_tools.upsert_osi_datasets
-      - semantic_tools.upsert_osi_metrics
-      - semantic_tools.validate_semantic
-      - semantic_tools.write_semantic_model_plan_file
-      - filesystem_tools.read_file
-    scoped_context:
-      datasource: warehouse
-      tables: orders,customers
-      project_files:
-        - subject/semantic_models/warehouse/**
-        - .datus/semantic-model-plans/**
+agent:
+  agentic_nodes:
+    semantic_modeling:
+      node_class: configurable
+      source:
+        plugin: datus-semantic-plugin
+        agent: semantic_modeling
+      tools:
+        - semantic_tools.list_existing_osi_semantic_models
+        - semantic_tools.plan_osi_semantic_model_target
+        - semantic_tools.bind_osi_semantic_model_target
+        - semantic_tools.upsert_osi_datasets
+        - semantic_tools.upsert_osi_metrics
+        - semantic_tools.validate_semantic
+        - semantic_tools.write_semantic_model_plan_file
+        - filesystem_tools.read_file
+      scoped_context:
+        datasource: warehouse
+        tables: orders,customers
+        project_files:
+          - subject/semantic_models/warehouse/**
+          - subject/ontology/**
+          - .datus/semantic-model-plans/**
 ```
 
 This example requires an installed, activated private package. The public Agent
 provides the host capability; it does not ship the private enhanced runtime.
-The package is maintained and installed separately by Backend for SaaS.
+Backend installs the package for SaaS and On-Prem deployments.
 
 A private runtime uses the injected host by duck typing, with no `datus` import
 or shared SDK. Existing `host.call_tool(tool_id, arguments)` calls invoke only
@@ -303,7 +308,9 @@ async def finalize(self, result, context):
     # files contains project-relative ontology/mapping paths and UTF-8 text.
     await self.host.semantic_authoring.inspect_bundle(files, mapping_file)
     await self.host.semantic_authoring.publish(files, expected_revision=checked["artifact_sha256"])
-    await self.host.semantic_authoring.reconcile()
+    reconciled = await self.host.semantic_authoring.reconcile()
+    if reconciled.get("code") == "kb_sync_failed":
+        return reconciled
     completed = await self.host.semantic_authoring.complete()
     return {"semantic_models": [completed["semantic_model_file"]]}
 ```

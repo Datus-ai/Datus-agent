@@ -441,6 +441,7 @@ def _build_typed_node_input(
             database=database,
             db_schema=db_schema,
             prompt_language=prompt_language,
+            plan_mode=plan_mode,
         )
     from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
     from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode

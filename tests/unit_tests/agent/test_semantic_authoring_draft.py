@@ -86,6 +86,102 @@ def test_semantic_draft_stays_private_then_publishes_validated_json_bundle(draft
     assert not (draft.live_root / "subject/ontology/Sales.json").exists()
 
 
+def test_joint_validation_cannot_certify_an_unrelated_invalid_contributed_mapping(draft):
+    files = _files()
+    mapping = json.loads(files["subject/ontology/Sales.mapping.json"])
+    mapping["name"] = "UnrelatedMapping"
+    mapping["ontology_ref"] = {"name": "AnotherOntology"}
+    mapping["semantic_model_ref"]["iri"] = "../semantic_models/warehouse/missing.yaml"
+    files["subject/ontology/unrelated.mapping.json"] = json.dumps(mapping)
+
+    with pytest.raises(PermissionError, match="Affected mapping dependency"):
+        draft.inspect(files, "subject/ontology/Sales.mapping.json")
+    assert draft.validation is None
+
+
+def test_model_only_publication_still_validates_a_dependent_mapping(draft):
+    files = _files()
+    mapping = json.loads(files["subject/ontology/Sales.mapping.json"])
+    mapping["ontology_ref"]["iri"] = "missing.json"
+    files["subject/ontology/Sales.mapping.json"] = json.dumps(mapping)
+    for name, body in files.items():
+        live = draft.live_root / name
+        live.parent.mkdir(parents=True, exist_ok=True)
+        live.write_text(body)
+
+    coordinated = SemanticAuthoringDraft(draft.scope)
+    try:
+        name, content = _change_model(coordinated)
+        with pytest.raises(PermissionError, match="Affected mapping dependency"):
+            coordinated.publish({}, name, digest(content))
+        assert (coordinated.live_root / name).read_bytes() == coordinated.baseline[name]
+        assert not coordinated.published
+    finally:
+        coordinated.close()
+
+
+def test_rollback_retries_only_files_that_still_need_restoring(draft, monkeypatch):
+    from datus.agent import semantic_authoring_draft
+
+    name, content = _change_model(draft)
+    model = draft.live_root / name
+    files = _files()
+    draft.inspect(files, "subject/ontology/Sales.mapping.json")
+    draft.publish(files, name, digest(content))
+    original_write = semantic_authoring_draft.atomic_write_bytes
+
+    def fail_model_write(path, body):
+        if path == model:
+            raise OSError("Model is temporarily unwritable")
+        return original_write(path, body)
+
+    with monkeypatch.context() as blocked:
+        blocked.setattr(semantic_authoring_draft, "atomic_write_bytes", fail_model_write)
+        with pytest.raises(OSError, match="Recovery remains pending"):
+            draft.rollback()
+    assert model.read_bytes() == content
+    assert draft.published == {name: content}
+    assert all(not (draft.live_root / key).exists() for key in files)
+
+    draft.rollback()
+    assert not draft.published
+    assert model.read_bytes() == draft.baseline[name]
+
+
+def test_publish_keeps_failed_recovery_available_for_retry(draft, monkeypatch):
+    from datus.agent import semantic_authoring_draft
+
+    name, content = _change_model(draft)
+    files = _files()
+    ontology = draft.live_root / "subject/ontology/Sales.json"
+    mapping = draft.live_root / "subject/ontology/Sales.mapping.json"
+    draft.inspect(files, "subject/ontology/Sales.mapping.json")
+    original_write = semantic_authoring_draft.atomic_write_bytes
+    original_unlink = Path.unlink
+
+    def fail_mapping_write(path, body):
+        if path == mapping:
+            raise OSError("Mapping write failed")
+        return original_write(path, body)
+
+    def fail_ontology_removal(path, *args, **kwargs):
+        if path == ontology:
+            raise OSError("Ontology cannot be removed yet")
+        return original_unlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as blocked:
+        blocked.setattr(semantic_authoring_draft, "atomic_write_bytes", fail_mapping_write)
+        blocked.setattr(Path, "unlink", fail_ontology_removal)
+        with pytest.raises(OSError, match="Recovery remains pending"):
+            draft.publish(files, name, digest(content))
+    assert list(draft.published) == ["subject/ontology/Sales.json"]
+    assert (draft.live_root / name).read_bytes() == draft.baseline[name]
+
+    draft.rollback()
+    assert not ontology.exists()
+    assert not mapping.exists()
+
+
 @pytest.mark.parametrize("change", ["model", "new_mapping", "validation"])
 def test_publication_rejects_concurrent_or_unvalidated_changes_without_overwriting(draft, change):
     name, content = _change_model(draft)

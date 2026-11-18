@@ -191,15 +191,81 @@ def test_plugin_tool_cannot_claim_a_reserved_permission_identity(tmp_path, tool_
         PluginAgentDefinition.from_manifest("research", tmp_path, "researcher", declaration)
 
 
+def test_profile_grants_for_ontology_tools_are_reserved_for_the_official_plugin(tmp_path):
+    declaration = {
+        "runtime_factory": "publisher.runtime:create_runtime",
+        "tool_definitions": [
+            {
+                "tool_id": "ontology_tools.describe_concept",
+                "description": "Describe the bound concept.",
+                "input_schema": {"type": "object"},
+                "access": "read",
+            }
+        ],
+    }
+
+    with pytest.raises(ValidationError, match="reserved for datus-semantic-plugin"):
+        PluginAgentDefinition.from_manifest("research", tmp_path, "researcher", declaration)
+    official = PluginAgentDefinition.from_manifest("datus-semantic-plugin", tmp_path, "semantic_modeling", declaration)
+    assert official.tool_definitions[0].definition.tool_id == "ontology_tools.describe_concept"
+
+
+def test_unresolvable_instructions_preserve_the_rest_of_the_manifest(tmp_path):
+    (tmp_path / "loop.md").symlink_to("loop.md")
+    manifest = parse_manifest(
+        {
+            "manifest_version": 1,
+            "cli": "research.cli:main",
+            "agents": {"researcher": {"instructions_file": "loop.md"}},
+        },
+        "research",
+        tmp_path,
+    )
+
+    assert manifest.cli == "research.cli:main"
+    assert "instructions_file" in manifest.agent_errors["researcher"]
+    assert "researcher" not in manifest.agents
+
+
+def test_invalid_tool_schema_is_rejected_in_its_declared_dialect(tmp_path):
+    manifest = parse_manifest(
+        {
+            "manifest_version": 1,
+            "agents": {
+                "researcher": {
+                    "runtime_factory": "research.runtime:create_runtime",
+                    "tool_definitions": [
+                        {
+                            "tool_id": "research_tools.search",
+                            "description": "Search the records.",
+                            "input_schema": {
+                                "$schema": "http://json-schema.org/draft-04/schema#",
+                                "type": "object",
+                                "required": [],
+                            },
+                            "access": "read",
+                        }
+                    ],
+                }
+            },
+        },
+        "research",
+        tmp_path,
+    )
+
+    assert "required" in manifest.agent_errors["researcher"]
+    assert "researcher" not in manifest.agents
+
+
 @pytest.mark.parametrize(
-    "changes",
+    "changes,message",
     [
-        {"input_schema": {"type": "array"}},
-        {"tool_id": "read_file"},
-        {"access": "readonly"},
+        ({"input_schema": {"type": "array"}}, "input_schema must describe an object"),
+        ({"tool_id": "read_file"}, "canonical family.method identity"),
+        ({"access": "readonly"}, "access"),
     ],
 )
-def test_plugin_tool_contract_is_validated_before_loading_code(tmp_path, changes):
+def test_plugin_tool_contract_is_validated_before_loading_code(tmp_path, changes, message):
     tool = {
         "tool_id": "research_tools.search",
         "description": "Search business documents.",
@@ -208,7 +274,7 @@ def test_plugin_tool_contract_is_validated_before_loading_code(tmp_path, changes
         **changes,
     }
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=message):
         PluginAgentDefinition.from_manifest(
             "research",
             tmp_path,

@@ -79,11 +79,14 @@ def test_symlink_and_traversal_cannot_escape_a_broad_project_glob(real_agent_con
     scope.root.mkdir(parents=True, exist_ok=True)
     outside = tmp_path / "outside.txt"
     outside.write_text("private credentials")
+    (scope.root / "inside.txt").write_text("authorized content")
     (scope.root / "alias.txt").symlink_to(outside)
     fs = _filesystem(scope)
     assert not fs.read_file("alias.txt").success
     assert not fs.read_file("../outside.txt").success
-    assert "alias.txt" not in str(fs.glob("**/*.txt").result)
+    output = fs.glob("**/*.txt")
+    assert output.success == 1, output.error
+    assert output.result["files"] == ["inside.txt"]
 
 
 def test_runtime_broad_glob_still_intersects_static_file_selection(real_agent_config):
@@ -104,6 +107,17 @@ def test_grouped_caller_scope_is_intersected_without_mutating_shared_config(real
     assert "california_schools" in real_agent_config.services.datasources
     with pytest.raises(DatusException, match="scoped_context.datasource"):
         scope.require_tool_scope("db_tools.execute_sql", {"sql": "select 1"})
+
+
+def test_empty_grouped_table_selection_is_not_a_wildcard(real_agent_config):
+    with pytest.raises(DatusException, match="requires a table selection"):
+        _scope(real_agent_config, {"tables_by_datasource": {"california_schools": ""}})
+
+    real_agent_config.agentic_nodes["research"] = {
+        "scoped_context": {"tables_by_datasource": {"california_schools": ""}}
+    }
+    with pytest.raises(DatusException, match="requires a table selection"):
+        _scope(real_agent_config, {"datasource": "california_schools"})
 
 
 def test_delegated_configurable_child_intersects_parent_tables_and_files(real_agent_config):

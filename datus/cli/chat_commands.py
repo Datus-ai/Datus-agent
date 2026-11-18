@@ -23,7 +23,7 @@ from rich.syntax import Syntax
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli.action_display.display import ActionHistoryDisplay
-from datus.cli.action_display.renderers import render_assistant_response_markdown
+from datus.cli.action_display.renderers import is_provisional_model_response, render_assistant_response_markdown
 from datus.cli.cli_styles import (
     CODE_THEME,
     print_error,
@@ -733,15 +733,7 @@ class ChatCommands:
                                 if action.depth == 0 and action.action_id and not defer_json_model_output:
                                     streaming_deltas.setdefault(action.action_id, []).append(action)
                                 continue
-                            if (
-                                defer_json_model_output
-                                and action.depth == 0
-                                and action.role == ActionRole.ASSISTANT
-                                and action.status == ActionStatus.SUCCESS
-                                and action.action_type == "response"
-                                and isinstance(action.output, dict)
-                                and action.output.get("is_thinking") is False
-                            ):
+                            if defer_json_model_output and is_provisional_model_response(action):
                                 continue
                             # Node final actions (e.g. chat_response) — keep for
                             # final response rendering but skip streaming trace.
@@ -948,15 +940,7 @@ class ChatCommands:
                                 if action.depth == 0 and action.action_id and not defer_json_model_output:
                                     streaming_deltas.setdefault(action.action_id, []).append(action)
                                 continue
-                            if (
-                                defer_json_model_output
-                                and action.depth == 0
-                                and action.role == ActionRole.ASSISTANT
-                                and action.status == ActionStatus.SUCCESS
-                                and action.action_type == "response"
-                                and isinstance(action.output, dict)
-                                and action.output.get("is_thinking") is False
-                            ):
+                            if defer_json_model_output and is_provisional_model_response(action):
                                 continue
                             # Node final actions (e.g. chat_response) — keep for
                             # final response rendering but skip streaming trace.

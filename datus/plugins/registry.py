@@ -256,14 +256,18 @@ def _is_active(name: Optional[str], active_names: Optional[Set[str]]) -> bool:
     return isinstance(name, str) and name in active_names
 
 
-def collect_plugin_agents(agent_config: "AgentConfig") -> Dict[str, "PluginAgentDefinition"]:
-    """Read project-enabled agent definitions without loading their runtime factories."""
+def collect_plugin_agents(
+    agent_config: "AgentConfig", agent_name: str | None = None, *, strict: bool = True
+) -> Dict[str, "PluginAgentDefinition"]:
+    """Discover enabled agents or validate a single requested name without importing code."""
     if not getattr(agent_config, "plugins_enabled", True):
         return {}
     candidates = [
         (name, manifest)
         for name, manifest in _loaded_manifests()
-        if manifest is not None and (manifest.agents or manifest.agent_errors)
+        if manifest is not None
+        and (manifest.agents or manifest.agent_errors)
+        and (agent_name is None or agent_name in manifest.agents or agent_name in manifest.agent_errors)
     ]
     if not candidates:
         return {}
@@ -278,32 +282,41 @@ def collect_plugin_agents(agent_config: "AgentConfig") -> Dict[str, "PluginAgent
         ):
             raise ValueError("Invalid activation whitelist")
     except Exception:
+        if not strict:
+            logger.warning("Unable to resolve enabled plugin agents for this project.")
+            return {}
         raise DatusException(
             ErrorCode.COMMON_CONFIG_ERROR, message="Unable to resolve enabled plugin agents for this project."
         ) from None
     agents = {}
+    invalid_names = set()
     for plugin_name, manifest in candidates:
         if not _is_active(plugin_name, active_names):
             continue
-        if manifest.agent_errors:
-            details = "; ".join(f"{name}: {error}" for name, error in manifest.agent_errors.items())
-            raise DatusException(
-                ErrorCode.COMMON_CONFIG_ERROR,
-                message=f"Plugin {plugin_name!r} has invalid agent definitions: {details}",
-            )
+        errors = {name: error for name, error in manifest.agent_errors.items() if agent_name in (None, name)}
+        if errors:
+            details = "; ".join(f"{name}: {error}" for name, error in errors.items())
+            message = f"Plugin {plugin_name!r} has invalid agent definitions: {details}"
+            if strict:
+                raise DatusException(ErrorCode.COMMON_CONFIG_ERROR, message=message)
+            logger.warning(message)
+            invalid_names.update(errors)
         for name, definition in manifest.agents.items():
+            if agent_name is not None and name != agent_name:
+                continue
             if name in agents:
-                raise DatusException(
-                    ErrorCode.COMMON_CONFIG_ERROR,
-                    message=f"Agent {name!r} is declared by multiple enabled plugins; select unique names.",
-                )
+                message = f"Agent {name!r} is declared by multiple enabled plugins; select unique names."
+                if strict:
+                    raise DatusException(ErrorCode.COMMON_CONFIG_ERROR, message=message)
+                logger.warning(message)
+                invalid_names.add(name)
             agents[name] = definition
-    return agents
+    return {name: definition for name, definition in agents.items() if name not in invalid_names}
 
 
 def resolve_agent_runtime_factory(definition: "PluginAgentDefinition", agent_config: "AgentConfig") -> Any:
     """Load executable code only for a currently enabled, registered definition."""
-    current = collect_plugin_agents(agent_config).get(definition.spec.name)
+    current = collect_plugin_agents(agent_config, definition.spec.name).get(definition.spec.name)
     if current != definition:
         raise DatusException(
             ErrorCode.COMMON_CONFIG_ERROR,

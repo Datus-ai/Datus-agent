@@ -190,6 +190,8 @@ async def test_post_reconciliation_failure_keeps_kb_matched_to_published_artifac
         assert error in node.result.error
         target = Path(node._semantic_authoring_session.osi_target_state.selected_path)
         document = yaml.safe_load(target.read_text())
+        assert document["datasets"][0]["description"] == "Schools"
+        assert [field["name"] for field in document["datasets"][0]["fields"]] == ["CDSCode"]
         rows = MetricRAG(node.agent_config).search_all_metrics()
         assert [(item["name"], item["uid"]) for item in rows] == [("school_count", metric_uid(document["metrics"][0]))]
     finally:

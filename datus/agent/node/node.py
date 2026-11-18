@@ -104,7 +104,6 @@ class Node(ABC):
                 node_type,
                 input_data,
                 agent_config,
-                tools,
                 node_name=node_name,
                 is_subagent=is_subagent,
                 session_id=session_id,

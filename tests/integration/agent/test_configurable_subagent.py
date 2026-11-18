@@ -41,7 +41,9 @@ async def test_configurable_subagent_real_model(nightly_agent_config, query_data
         assert node.result.success is True, node.result.error
         calls = [action for action in actions if action.role == ActionRole.TOOL]
         if query_database:
-            assert any(action.function_name() == "execute_sql" for action in calls)
+            assert any(
+                action.function_name() == "execute_sql" and action.status == ActionStatus.SUCCESS for action in calls
+            )
             assert node.result.data == {"count": 17686}
         else:
             assert calls == []
@@ -102,7 +104,7 @@ async def test_chat_answers_data_question_without_modeling_handoff(nightly_agent
         actions = await _run_chat(
             node, "How many rows are in the schools table? Answer from the database without changing definitions."
         )
-        assert _task_calls(actions) == []
+        assert not any(action.role == ActionRole.TOOL and action.action_type == "task" for action in actions)
         assert any(action.action_type == "execute_sql" and action.status == ActionStatus.SUCCESS for action in actions)
         assert "17686" in node.result.response.replace(",", "")
     finally:

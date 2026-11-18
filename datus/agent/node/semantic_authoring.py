@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 import weakref
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional
 
@@ -813,11 +813,11 @@ def osi_semantic_model_turn_context(agent_config: Any, user_input: Any) -> str:
     return "\n".join(lines)
 
 
-def semantic_authoring_lock_key(agent_config: Any = None) -> str:
+def semantic_authoring_lock_key(agent_config: Any = None, datasource: str | None = None) -> str:
     """Return the lock key shared by semantic authoring for one datasource."""
     path_manager = getattr(agent_config, "path_manager", None)
     project_root = getattr(path_manager, "project_root", "")
-    datasource = str(getattr(agent_config, "current_datasource", "") or "default")
+    datasource = datasource or str(getattr(agent_config, "current_datasource", "") or "default")
     try:
         project_key = str(Path(project_root).expanduser().resolve(strict=False))
     except TypeError:
@@ -825,17 +825,19 @@ def semantic_authoring_lock_key(agent_config: Any = None) -> str:
     return f"{project_key}:{datasource}"
 
 
-def _semantic_authoring_lock(agent_config: Any = None) -> asyncio.Lock:
+def _semantic_authoring_lock(agent_config: Any = None, datasource: str | None = None) -> asyncio.Lock:
     """Return the event-loop-local lock for one project datasource."""
     loop = asyncio.get_running_loop()
     loop_locks = _SEMANTIC_AUTHORING_LOCKS.setdefault(loop, {})
-    return loop_locks.setdefault(semantic_authoring_lock_key(agent_config), asyncio.Lock())
+    return loop_locks.setdefault(semantic_authoring_lock_key(agent_config, datasource), asyncio.Lock())
 
 
 @asynccontextmanager
-async def semantic_authoring_guard(agent_config: Any = None):
-    """Serialize semantic writes for one project datasource."""
-    async with _semantic_authoring_lock(agent_config):
+async def semantic_authoring_guard(agent_config: Any = None, *, datasources: Iterable[str] = ()):
+    """Serialize writes across the datasources a turn can select."""
+    async with AsyncExitStack() as stack:
+        for datasource in sorted(set(datasources)) or [None]:
+            await stack.enter_async_context(_semantic_authoring_lock(agent_config, datasource))
         yield
 
 

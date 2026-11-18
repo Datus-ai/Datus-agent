@@ -356,8 +356,6 @@ class SemanticPlanFileTools:
             return None
         candidates = []
         for path in parent.glob("*/semantic-model-plan.json"):
-            if self.path_allowed is not None and not self.path_allowed(path):
-                continue
             if not path.resolve().is_relative_to(self.project_root):
                 continue
             try:

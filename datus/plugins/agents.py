@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import jsonschema
+from jsonschema.validators import validator_for
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator, model_validator
 
 from datus.schemas.agent_models import ScopedContext
@@ -47,7 +48,7 @@ class PluginToolDeclaration(BaseModel):
         ToolCapability(self.access, self.direct_call)
         if self.input_schema.get("type") != "object":
             raise ValueError("Plugin tool input_schema must describe an object")
-        jsonschema.Draft202012Validator.check_schema(self.input_schema)
+        validator_for(self.input_schema).check_schema(self.input_schema)
         return self
 
     @property
@@ -81,13 +82,21 @@ class PluginAgentDefinition(BaseModel):
                 raise ValueError("runtime_factory must be a module:function reference")
         if self.instructions_file is not None:
             root = self.package_dir.resolve()
-            resource = (root / self.instructions_file).resolve()
+            try:
+                resource = (root / self.instructions_file).resolve()
+            except (OSError, RuntimeError) as exc:
+                raise ValueError("instructions_file could not be resolved inside the plugin package") from exc
             if not resource.is_relative_to(root) or not resource.is_file():
                 raise ValueError("instructions_file must name a file inside the plugin package")
         if self.config_schema is not None:
-            jsonschema.Draft202012Validator.check_schema(self.config_schema)
+            validator_for(self.config_schema).check_schema(self.config_schema)
         identities = [tool.tool_id for tool in self.tool_definitions]
-        names = [tool.definition.name for tool in self.tool_definitions]
+        definitions = [tool.definition for tool in self.tool_definitions]
+        if self.plugin_name != "datus-semantic-plugin" and any(
+            tool.category == "ontology_tools" for tool in definitions
+        ):
+            raise ValueError("The ontology_tools permission family is reserved for datus-semantic-plugin")
+        names = [tool.name for tool in definitions]
         if len(identities) != len(set(identities)) or len(names) != len(set(names)):
             raise ValueError("Plugin agent tool identities and model-visible names must be unique")
         if self.tool_definitions and self.runtime_factory is None:

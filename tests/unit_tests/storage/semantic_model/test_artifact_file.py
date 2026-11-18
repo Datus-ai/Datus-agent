@@ -172,29 +172,49 @@ def test_bundle_publication_excludes_another_process_reader(tmp_path):
     if os.name != "posix":
         pytest.skip("Directory flock is a POSIX contract")
     directory = tmp_path / "subject/ontology"
+    external = tmp_path / "external/ontology"
+    external.mkdir(parents=True)
+    model = tmp_path / "subject/semantic_models/warehouse/model.yaml"
     script = """
+import fcntl
+import os
 import sys
-from datus.storage.semantic_model.artifact_file import ontology_bundle_lock
-print('ready', flush=True)
-with ontology_bundle_lock(sys.argv[1]):
+
+from datus.storage.semantic_model.artifact_file import semantic_bundle_read_lock
+
+project_inode = os.stat(sys.argv[1]).st_ino
+flock = fcntl.flock
+
+def confirm_contention(fd, operation):
+    if operation == fcntl.LOCK_SH and os.fstat(fd).st_ino == project_inode:
+        try:
+            flock(fd, operation | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print('blocked', flush=True)
+        else:
+            print('crossed publication lock', flush=True)
+    flock(fd, operation)
+
+fcntl.flock = confirm_contention
+with semantic_bundle_read_lock(sys.argv[2], sys.argv[3]):
     print('acquired', flush=True)
 """
-    with ontology_bundle_lock(directory, create=True):
-        process = subprocess.Popen(
-            [sys.executable, "-c", script, str(directory)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[4])},
-        )
-        try:
-            assert select.select([process.stdout], [], [], 10)[0], "Reader did not start"
-            assert process.stdout.readline().strip() == "ready"
-            assert not select.select([process.stdout], [], [], 0.2)[0], "Reader crossed an active publication lock"
-        except BaseException:
+    process = None
+    try:
+        with ontology_bundle_lock(directory, create=True):
+            process = subprocess.Popen(
+                [sys.executable, "-c", script, str(directory.parent), str(model), str(external)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[4])},
+            )
+            assert select.select([process.stdout], [], [], 10)[0], "Reader did not attempt the project lock"
+            assert process.stdout.readline().strip() == "blocked"
+        output, error = process.communicate(timeout=10)
+    finally:
+        if process is not None and process.poll() is None:
             process.kill()
-            process.wait(timeout=5)
-            raise
-    output, error = process.communicate(timeout=10)
+            process.communicate(timeout=5)
     assert process.returncode == 0, error
     assert output.strip() == "acquired"

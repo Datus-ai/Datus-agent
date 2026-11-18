@@ -322,9 +322,9 @@ def plan_ontologies(
 
 def datasource_has_ontology(models_dir: str, ontology_dir: str) -> bool:
     """Whether a mapping in ``ontology_dir`` binds a model of ``models_dir``, or carries one inline."""
-    from datus.storage.semantic_model.artifact_file import ontology_bundle_lock
+    from datus.storage.semantic_model.artifact_file import semantic_bundle_read_lock
 
-    with ontology_bundle_lock(ontology_dir):
+    with semantic_bundle_read_lock(models_dir, ontology_dir):
         config = DosiConfig(semantic_models_path=models_dir, ontology_dir=ontology_dir)
         ontology_files = resolve_ontology_files(config)
         if not ontology_files:
@@ -524,14 +524,16 @@ class EngineHandle:
         return resolve_model_file(self._config)
 
     def get(self) -> Any:
-        from datus.storage.semantic_model.artifact_file import semantic_model_load_lock
+        from datus.storage.semantic_model.artifact_file import semantic_bundle_read_lock, semantic_model_load_lock
 
-        model_file = resolve_model_file(self._config)
+        source = self._config.semantic_model_path or self._config.semantic_models_path
         directory = self._config.ontology_dir
         if not directory and self._config.mapping_path:
             directory = str(Path(self._config.mapping_path).parent)
-        with semantic_model_load_lock(model_file, ontology_dir=directory):
-            return self._get_locked(model_file)
+        with semantic_bundle_read_lock(source, directory):
+            model_file = resolve_model_file(self._config)
+            with semantic_model_load_lock(model_file):
+                return self._get_locked(model_file)
 
     def _get_locked(self, model_file: str) -> Any:
         config = self._config
@@ -690,12 +692,10 @@ class EngineRegistry:
         self,
     ) -> tuple[tuple[tuple[str, int, int, int, int, int], ...], tuple[tuple[str, EngineHandle], ...]]:
         """Return a stable file signature and matching engine handles."""
-        from datus.storage.semantic_model.artifact_file import ontology_bundle_lock, ontology_dir_for_model
+        from datus.storage.semantic_model.artifact_file import semantic_bundle_read_lock
 
-        directory = self._config.ontology_dir or ontology_dir_for_model(
-            self._config.semantic_model_path or self._config.semantic_models_path
-        )
-        with ontology_bundle_lock(directory), self._lock:
+        source = self._config.semantic_model_path or self._config.semantic_models_path
+        with semantic_bundle_read_lock(source, self._config.ontology_dir), self._lock:
             ontology_files = resolve_ontology_files(self._config)
             no_model_files: Optional[SemanticCoreException] = None
             try:

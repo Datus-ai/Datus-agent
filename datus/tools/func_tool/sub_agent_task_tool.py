@@ -36,6 +36,7 @@ from datus.schemas.at_context import apply_at_context
 from datus.tools.func_tool.base import FuncToolResult, parse_tool_args, write_back_tool_args
 from datus.tools.registry.contracts import definition_from_callable, registered_function_tool, tool_contract
 from datus.utils.constants import SYS_SUB_AGENTS
+from datus.utils.exceptions import DatusException
 from datus.utils.loggings import get_logger
 from datus.utils.memory_loader import resolve_memory_node
 from datus.utils.node_utils import validate_node_class
@@ -1025,6 +1026,10 @@ class SubAgentTaskTool:
 
         raw_child = self.agent_config.sub_agent_config(subagent_type)
         child_dict = raw_child if isinstance(raw_child, dict) else {}
+        parent_db = getattr(self._parent_node, "db_func_tool", None)
+        parent_read_only = (isinstance(parent_cfg, dict) and parent_cfg.get("db_read_only")) or (
+            getattr(parent_db, "read_only", False) is True
+        )
         from datus.agent.agent_registry import resolve_configurable_agent
 
         if resolve_configurable_agent(subagent_type, self.agent_config) is not None:
@@ -1035,14 +1040,11 @@ class SubAgentTaskTool:
             if parent_sc is not None:
                 # The configurable host intersects this caller bound with its
                 # static declaration; legacy whole-segment overrides do not.
-                return child_cfg.model_copy(update={"scoped_context": parent_sc.model_copy(deep=True)})
-            return child_cfg
-        child_cfg = SubAgentConfig.model_validate(child_dict)
-        result = child_cfg.with_effective_scoped_context(parent_sc)
-        parent_db = getattr(self._parent_node, "db_func_tool", None)
-        if (isinstance(parent_cfg, dict) and parent_cfg.get("db_read_only")) or (
-            getattr(parent_db, "read_only", False) is True
-        ):
+                child_cfg = child_cfg.model_copy(update={"scoped_context": parent_sc.model_copy(deep=True)})
+            result = child_cfg
+        else:
+            result = SubAgentConfig.model_validate(child_dict).with_effective_scoped_context(parent_sc)
+        if parent_read_only:
             result = result.model_copy(update={"db_read_only": True})
         return result
 
@@ -1498,6 +1500,8 @@ class SubAgentTaskTool:
 
     def _build_task_description(self) -> str:
         """Describe available delegates without overriding the parent agent's role."""
+        from datus.agent.agent_registry import resolve_configurable_agent
+
         available = self._get_available_types()
 
         lines = [
@@ -1517,15 +1521,19 @@ class SubAgentTaskTool:
             "Available types:",
         ]
 
+        builtin_gen_sql = False
         for t in available:
-            from datus.agent.agent_registry import resolve_configurable_agent
-
-            definition = resolve_configurable_agent(t, self.agent_config)
+            try:
+                definition = resolve_configurable_agent(t, self.agent_config)
+            except (DatusException, ValueError):
+                logger.warning("Skipping unavailable task delegate %r", t)
+                continue
             if definition is not None:
                 lines.append(f"- {t}: {definition.spec.description}")
                 continue
             if t in BUILTIN_SUBAGENT_DESCRIPTIONS:
                 lines.append(f"- {t}: {BUILTIN_SUBAGENT_DESCRIPTIONS[t]}")
+                builtin_gen_sql |= t == "gen_sql"
             else:
                 sub_raw = self.agent_config.sub_agent_config(t)
                 desc = ""
@@ -1553,7 +1561,7 @@ class SubAgentTaskTool:
                 "continue the successful session instead.",
             ]
         )
-        if "gen_sql" in available:
+        if builtin_gen_sql:
             lines.extend(
                 [
                     "- Iterate-on-gen_sql example:",
@@ -1621,7 +1629,7 @@ class SubAgentTaskTool:
         in SYS_SUB_AGENTS (which only guards reserved system names).
         """
         types = ["explore"]
-        from datus.agent.agent_registry import list_configurable_agents
+        from datus.agent.agent_registry import is_configurable_entry, list_configurable_agents
 
         configurable = list_configurable_agents(self.agent_config)
         from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS
@@ -1630,13 +1638,14 @@ class SubAgentTaskTool:
         if not self._current_datasource_has_ontology():
             # Offered only where it can run: without an ontology it refuses.
             builtin_types.discard("ontology_analyst")
-        types.extend(sorted(builtin_types))
+        node_configs = getattr(self.agent_config, "agentic_nodes", None) or {}
+        types.extend(sorted(name for name in builtin_types if not is_configurable_entry(node_configs.get(name))))
 
         if self.agent_config and hasattr(self.agent_config, "agentic_nodes"):
             current_datasource = self.agent_config.current_datasource
 
             for name, config in self.agent_config.agentic_nodes.items():
-                if name in configurable:
+                if is_configurable_entry(config):
                     continue
                 if name in ("chat", "explore", "feedback") or name in SYS_SUB_AGENTS:
                     continue

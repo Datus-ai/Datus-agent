@@ -224,6 +224,56 @@ async def test_factory_input_and_serialization_preserve_agent_name_and_business_
         await node.aclose()
 
 
+@pytest.mark.asyncio
+async def test_configurable_input_activates_plan_mode(real_agent_config, mock_llm_create):
+    node = create_interactive_node("research", _configure(real_agent_config), execution_mode="workflow")
+    mock_llm_create.reset(responses=[MockLLMResponse(content="I'll prepare a plan.")])
+    node.input = create_node_input("Plan an analysis", node, plan_mode=True)
+    try:
+        _ = [action async for action in node.execute_stream()]
+        assert node.input.plan_mode is True
+        assert node.is_in_plan_mode()
+        assert node.plan_file_path
+    finally:
+        await node.aclose()
+
+
+@pytest.mark.asyncio
+async def test_malformed_native_arguments_return_retryable_tool_error(real_agent_config, mock_llm_create):
+    from agents.tool_context import ToolContext
+
+    config = _configure(
+        real_agent_config,
+        tools=["db_tools.execute_sql"],
+        scoped_context={"datasource": real_agent_config.current_datasource},
+    )
+    node = create_interactive_node("research", config, execution_mode="workflow")
+    mock_llm_create.reset(responses=[MockLLMResponse(content="Ready.")])
+    try:
+        await _run(node)
+        tool = next(item for item in node.tools if item.name == "execute_sql")
+        arguments = '{"sql":"SELECT 1"'
+        context = ToolContext(context=None, tool_name=tool.name, tool_call_id="repaired", tool_arguments=arguments)
+        hooks = node._compose_hooks()
+
+        await hooks.on_tool_start(context, None, tool)
+        result = await tool.on_invoke_tool(context, context.tool_arguments)
+        assert result["success"] == 0
+        assert "Retry the tool" in result["error"]
+
+        valid = ToolContext(
+            context=None,
+            tool_name=tool.name,
+            tool_call_id="valid",
+            tool_arguments='{"sql":"SELECT 1"}',
+        )
+        await hooks.on_tool_start(valid, None, tool)
+        actual = await tool.on_invoke_tool(valid, valid.tool_arguments)
+        assert actual["success"] == 1
+    finally:
+        await node.aclose()
+
+
 _RUNTIME = """
 class Runtime:
     def __init__(self, config, host):

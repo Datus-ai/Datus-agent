@@ -104,8 +104,8 @@ class SemanticAuthoringDraft:
 
     def path(self, name: str) -> Path:
         relative = PurePosixPath(name)
-        if relative.is_absolute() or ".." in relative.parts or "\\" in name:
-            raise ValueError("Artifact paths must be project-relative")
+        if relative.is_absolute() or ".." in relative.parts or "\\" in name or relative.as_posix() != name:
+            raise ValueError("Artifact paths must be canonical project-relative paths")
         path = self.live_root / relative
         if path.resolve() != path or not self.scope.allows_file(path):
             raise PermissionError(f"Artifact is outside scoped_context.project_files: {name}")
@@ -162,13 +162,7 @@ class SemanticAuthoringDraft:
         contents = self._contents(files)
         if mapping_file not in contents:
             raise ValueError("Selected mapping is unavailable in the authorized draft")
-        documents = {}
-        for name, body in contents.items():
-            try:
-                documents[name] = json.loads(body) if name.endswith(".json") else yaml.safe_load(body)
-            except (ValueError, yaml.YAMLError):
-                # An unrelated broken artifact must not block a different bundle.
-                documents[name] = {}
+        documents = {name: self._document(name, body) for name, body in contents.items()}
 
         selected = documents[mapping_file]
         if document_kind(selected) != "mapping":
@@ -176,28 +170,36 @@ class SemanticAuthoringDraft:
         if any(not isinstance(selected[key], dict) for key in ("ontology_ref", "semantic_model_ref")):
             raise ValueError("Selected mapping references must be objects")
         ontology_name = selected["ontology_ref"].get("name")
-
-        def reference_path(name, ref):
-            if not isinstance(ref, dict):
-                return None
-            iri = ref.get("iri")
-            if not isinstance(iri, str) or not iri or ":" in iri or Path(iri).is_absolute():
-                return None
-            return (self.root / name).parent.joinpath(iri).resolve()
-
-        ontology_path = reference_path(mapping_file, selected["ontology_ref"])
+        ontology_paths = {self._reference_path(mapping_file, selected["ontology_ref"])}
+        ontology_names = {ontology_name} if isinstance(ontology_name, str) and ontology_name else set()
+        contributed_ontologies = set()
+        for name in files:
+            kind = document_kind(documents[name])
+            if kind == "ontology":
+                contributed_ontologies.add(name)
+                ontology_paths.add(self.root / name)
+                ontology_names.add(str(documents[name].get("name") or ""))
+            elif kind != "mapping":
+                raise ValueError(f"Contributed artifact is not a valid ontology or mapping document: {name}")
+        changed_models = {
+            self.root / name
+            for name, content in contents.items()
+            if document_kind(documents[name]) == "model" and self.baseline.get(name) != content
+        }
+        ontology_paths.discard(None)
         affected = sorted(
             name
             for name, doc in documents.items()
             if document_kind(doc) == "mapping"
             and (
                 name == mapping_file
+                or name in files
                 or (
-                    ontology_name
-                    and isinstance(doc["ontology_ref"], dict)
-                    and doc["ontology_ref"].get("name") == ontology_name
+                    isinstance(doc["ontology_ref"], dict)
+                    and str(doc["ontology_ref"].get("name") or "") in ontology_names
                 )
-                or (ontology_path is not None and reference_path(name, doc["ontology_ref"]) == ontology_path)
+                or self._reference_path(name, doc["ontology_ref"]) in ontology_paths
+                or self._reference_path(name, doc["semantic_model_ref"]) in changed_models
             )
         )
         with tempfile.TemporaryDirectory(prefix="datus-bundle-validation-") as directory:
@@ -211,10 +213,13 @@ class SemanticAuthoringDraft:
             ]
             selected_engine = None
             notes = []
+            bound_ontologies = set()
             for name in affected:
                 doc = documents[name]
                 for key in ("ontology_ref", "semantic_model_ref"):
                     ref = doc[key]
+                    if not isinstance(ref, dict):
+                        raise ValueError(f"Mapping reference must be an object: {name}: {key}")
                     if key == "ontology_ref" and set(ref) == {"name"}:
                         continue
                     iri = ref.get("iri")
@@ -243,6 +248,9 @@ class SemanticAuthoringDraft:
                 binding = bindings.get(str(model))
                 if binding is None or binding.mapping_path != str(root / name):
                     raise ValueError(f"Production Agent discovery cannot bind mapping {name}")
+                ontology_source = binding.ontology_path or self._reference_path(name, doc["ontology_ref"], root=root)
+                if ontology_source is not None:
+                    bound_ontologies.add(Path(ontology_source).relative_to(root).as_posix())
                 native = EngineHandle(
                     DosiConfig(
                         semantic_model_path=str(model),
@@ -257,6 +265,8 @@ class SemanticAuthoringDraft:
                     selected_engine = native
             if selected_engine is None:
                 raise ValueError("The selected mapping was not validated")
+            if contributed_ontologies - bound_ontologies:
+                raise ValueError("Each contributed ontology must be validated through a bound mapping")
             args = arguments or {}
             if operation == "paths":
                 return {"paths": selected_engine.paths(args["source"], args["target"])}
@@ -286,6 +296,19 @@ class SemanticAuthoringDraft:
             self.validation = copy.deepcopy(result)
             return result
 
+    @staticmethod
+    def _document(name: str, body: bytes) -> Any:
+        try:
+            return json.loads(body) if name.endswith(".json") else yaml.safe_load(body)
+        except (ValueError, yaml.YAMLError):
+            return {}
+
+    def _reference_path(self, name: str, ref: Any, *, root: Path | None = None) -> Path | None:
+        iri = ref.get("iri") if isinstance(ref, dict) else None
+        if not isinstance(iri, str) or not iri or ":" in iri or Path(iri).is_absolute():
+            return None
+        return ((root or self.root) / name).parent.joinpath(iri).resolve()
+
     def publish(self, files: dict[str, str], semantic_file: str, expected_revision: str) -> dict[str, Any]:
         if self.published:
             raise RuntimeError("This draft has already been published")
@@ -297,6 +320,17 @@ class SemanticAuthoringDraft:
             or self.validation["validated_digests"] != {name: digest(body) for name, body in contents.items()}
         ):
             raise ValueError("Joint validation does not match the current bundle")
+        if not files:
+            for name, body in contents.items():
+                if PurePosixPath(name).parent != PurePosixPath("subject/ontology"):
+                    continue
+                document = self._document(name, body)
+                if (
+                    document_kind(document) == "mapping"
+                    and self._reference_path(name, document["semantic_model_ref"]) == self.root / semantic_file
+                ):
+                    self.inspect({}, name)
+                    break
         outputs = {name: contents[name] for name in [semantic_file, *files]}
         for name in outputs:
             self.path(name)
@@ -308,21 +342,14 @@ class SemanticAuthoringDraft:
             current = {path.relative_to(self.live_root).as_posix(): path.read_bytes() for path in self._live_files()}
             if current != self.baseline:
                 raise ValueError("Artifact files changed since draft creation; start a new turn")
-            written = []
             try:
                 for name, body in outputs.items():
                     path = self.path(name)
                     atomic_write_bytes(path, body)
-                    written.append(name)
+                    self.published[name] = body
             except BaseException:
-                for name in reversed(written):
-                    path = self.path(name)
-                    if name in self.baseline:
-                        atomic_write_bytes(path, self.baseline[name])
-                    else:
-                        path.unlink(missing_ok=True)
+                self._restore_pending()
                 raise
-            self.published = outputs
         return {"semantic_models": [semantic_file], "files": list(outputs)}
 
     def rollback(self) -> None:
@@ -336,13 +363,25 @@ class SemanticAuthoringDraft:
                     path = self.path(name)
                     if not path.is_file() or path.read_bytes() != content:
                         raise RuntimeError("Published artifacts changed before recovery; refusing to overwrite")
-                for name in self.published:
-                    path = self.path(name)
-                    if name in self.baseline:
-                        atomic_write_bytes(path, self.baseline[name])
-                    else:
-                        path.unlink(missing_ok=True)
-        self.published = {}
+                self._restore_pending()
+
+    def _restore_pending(self) -> None:
+        failures = []
+        for name in reversed(tuple(self.published)):
+            try:
+                path = self.path(name)
+                if name in self.baseline:
+                    atomic_write_bytes(path, self.baseline[name])
+                else:
+                    path.unlink(missing_ok=True)
+            except OSError as exc:
+                failures.append(exc)
+            else:
+                del self.published[name]
+        if failures:
+            raise OSError("Some semantic bundle files could not be restored. Recovery remains pending.") from failures[
+                0
+            ]
 
     def close(self) -> None:
         self._temp.cleanup()

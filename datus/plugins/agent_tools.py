@@ -14,6 +14,9 @@ from typing import Any
 
 import jsonschema
 from agents import FunctionTool
+from jsonschema.validators import validator_for
+from referencing import Registry
+from referencing.exceptions import Unresolvable
 
 from datus.plugins.agents import PluginToolDeclaration
 from datus.tools.func_tool.base import parse_tool_args, write_back_tool_args
@@ -49,18 +52,26 @@ def bind_plugin_tools(
             )
 
         def make_invoker(item: PluginToolDeclaration, callback: Callable[..., Any]) -> Callable:
+            validator = validator_for(item.input_schema)(item.input_schema, registry=Registry())
+
             async def invoke(context: Any, arguments: str) -> Any:
                 args, canonical, error = parse_tool_args(arguments, tool_name=item.definition.name)
                 write_back_tool_args(context, canonical)
                 if error:
                     return {"success": 0, "error": error, "result": None}
                 try:
-                    jsonschema.validate(args, item.input_schema)
+                    validator.validate(args)
                     inspect.signature(callback).bind(**args)
                 except jsonschema.ValidationError as exc:
                     return {
                         "success": 0,
                         "error": f"Invalid arguments at {list(exc.path)}: failed {exc.validator} validation.",
+                        "result": None,
+                    }
+                except Unresolvable:
+                    return {
+                        "success": 0,
+                        "error": "Plugin tool input schema has an unresolvable reference.",
                         "result": None,
                     }
                 except (TypeError, ValueError) as exc:

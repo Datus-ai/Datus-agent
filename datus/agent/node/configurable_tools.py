@@ -116,6 +116,7 @@ class ConfigurableToolSet:
             return instance
         if category == "db_tools" and node._uses_semantic_authoring:
             instance = node._get_semantic_authoring_session().db_func_tool
+            instance.sql_file_allowed = node.execution_scope.allows_file
             node.db_func_tool = instance
             return instance
         if category == "filesystem_tools":
@@ -142,6 +143,8 @@ class ConfigurableToolSet:
         else:
             instance = cls.create_dynamic(node.agent_config, sub_agent_name=node.get_node_name())
             if category == "db_tools":
+                instance.read_only = node.node_config.get("db_read_only", False)
+                instance.sql_file_allowed = node.execution_scope.allows_file
                 node.db_func_tool = instance
             elif category == "context_search_tools":
                 node.context_search_tools = instance
@@ -156,6 +159,9 @@ class ConfigurableToolSet:
 
     def select(self, selections: list[str]) -> list[FunctionTool]:
         """Build only declared methods, once per owning tool class and execution instance."""
+        from datus.tools.func_tool.database import DBFuncTool
+        from datus.tools.func_tool.semantic_model_filesystem_tools import SemanticModelFilesystemTools
+
         owners = _tool_owners()
         tools = []
         for tool_id in resolve_native_tool_ids(selections):
@@ -166,7 +172,18 @@ class ConfigurableToolSet:
                     self.groups[cls] = self._create(cls)
             instance = self.groups[cls]
             method_name = tool_id.split(".", 1)[1]
-            tool = trans_to_function_tool(getattr(instance, method_name))
+            method = getattr(instance, method_name)
+            if isinstance(instance, SemanticModelFilesystemTools):
+                tool = next((item for item in instance.available_tools() if item.name == method_name), None)
+                if tool is None:
+                    raise DatusException(
+                        ErrorCode.COMMON_CONFIG_ERROR,
+                        message=f"Tool {tool_id!r} is not available in a semantic authoring session.",
+                    )
+            elif isinstance(instance, DBFuncTool):
+                tool = instance.to_function_tool(method)
+            else:
+                tool = trans_to_function_tool(method)
             if tool_definition(tool).tool_id != tool_id:
                 raise DatusException(
                     ErrorCode.COMMON_CONFIG_ERROR,
@@ -176,6 +193,9 @@ class ConfigurableToolSet:
 
             def guard(invoke, identity):
                 async def checked(context, arguments):
+                    error = getattr(context, "_datus_configurable_argument_error", None)
+                    if error:
+                        return {"success": 0, "error": error, "result": None}
                     try:
                         with self.node.execution_scope.activate():
                             self.node.execution_scope.require_tool_scope(identity, json.loads(arguments or "{}"))

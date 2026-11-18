@@ -21,6 +21,7 @@ from pydantic import ValidationError
 from rich.console import Console
 
 from datus.agent.node.node_factory import create_interactive_node, create_node_input
+from datus.cli.action_display.renderers import is_provisional_model_response
 from datus.cli.autocomplete import AtReferenceCompleter
 from datus.cli.cli_styles import print_warning
 from datus.configuration.agent_config_loader import load_agent_config
@@ -158,6 +159,9 @@ class PrintModeRunner:
 
     async def _stream_chat(self, node):
         dispatch_task = None
+        stream_failed = False
+        output = getattr(getattr(node, "spec", None), "output", None)
+        defer_model_text = getattr(output, "format", None) == "json"
         self._stdin_stop_event = threading.Event()
         if self.proxy_tool_patterns:
             dispatch_task = asyncio.create_task(self._stdin_dispatch_loop(node))
@@ -182,7 +186,7 @@ class PrintModeRunner:
 
                 # Streaming thinking deltas: emit only when --stream is enabled
                 if action.action_type == "thinking_delta":
-                    if self.stream_thinking:
+                    if self.stream_thinking and (action.depth > 0 or not defer_model_text):
                         output = action.output if isinstance(action.output, dict) else {}
                         delta_text = output.get("delta", "")
                         contents = [MessageContent(type="thinking-delta", payload={"delta": delta_text})]
@@ -201,14 +205,7 @@ class PrintModeRunner:
                 # A model's terminal text can still be an internal JSON payload
                 # or describe an unpublished draft; do not display it as a
                 # second answer before the node's result (or failure).
-                if (
-                    action.role == ActionRole.ASSISTANT
-                    and action.status == ActionStatus.SUCCESS
-                    and action.depth == 0
-                    and action.action_type == "response"
-                    and isinstance(action.output, dict)
-                    and action.output.get("is_thinking") is False
-                ):
+                if is_provisional_model_response(action):
                     continue
 
                 if (
@@ -240,6 +237,9 @@ class PrintModeRunner:
                             parent_action_id=action.parent_action_id,
                         )
                     )
+        except BaseException:
+            stream_failed = True
+            raise
         finally:
             self._stdin_stop_event.set()
             if self.proxy_tool_patterns:
@@ -253,7 +253,12 @@ class PrintModeRunner:
             from datus.agent.node.configurable_agentic_node import ConfigurableAgenticNode
 
             if isinstance(node, ConfigurableAgenticNode):
-                await node.aclose()
+                try:
+                    await node.aclose()
+                except Exception:
+                    if not stream_failed:
+                        raise
+                    logger.exception("Configurable agent cleanup failed after a stream error")
 
     async def _stdin_dispatch_loop(self, node):
         """Read stdin lines and dispatch call-tool-result / user-interaction to the node."""

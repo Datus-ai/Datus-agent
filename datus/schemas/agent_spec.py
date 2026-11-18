@@ -20,6 +20,8 @@ def _identifiers(value: list[str]) -> list[str]:
         item = item.strip()
         if not item:
             raise ValueError("Identifiers must not be empty")
+        if any(separator in item for separator in (",", "\r", "\n")):
+            raise ValueError("List entries must contain one identifier each")
         if item not in result:
             result.append(item)
     return result

@@ -13,6 +13,7 @@ from typing import Any, Callable, List, Optional
 import yaml
 
 from datus.configuration.agent_config import AgentConfig
+from datus.storage.semantic_model.artifact_file import semantic_artifact_lock
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.generation_tools import GenerationTools
@@ -120,6 +121,7 @@ class SemanticAuthoringSession:
         from datus.tools.func_tool.semantic_verification_tools import SemanticVerificationTools
 
         self._runtime_db_context = runtime_db_context
+        self.osi_target_tools.integrity_config = database_config if database_config is not None else self.agent_config
         try:
             self.semantic_tools = SemanticTools(
                 self.agent_config,
@@ -512,25 +514,31 @@ class SemanticAuthoringSession:
 
     def reconcile_artifact(self) -> dict[str, Any]:
         """Project a prepared, validated revision into the KB; retain its rollback checkpoint."""
-        snapshot = self.prepare_artifact()
-        self.validate_artifact()
+        prepared = self.prepare_artifact()
+        snapshot = self.validate_artifact()
         _, resolved, _ = self._selected_osi_artifact()
-        metric_names = self.generation_tools.extract_osi_metric_names(resolved)
-        present_metrics, _ = self.osi_target_state.partition_touched_metrics(metric_names)
-        self.kb_sync_attempted = True
-        sync_result = self.generation_tools.sync_osi_to_db(
-            resolved,
-            include_semantic_objects=True,
-            include_metrics=bool(self.osi_target_state.touched_metric_names),
-            metric_names_to_sync=set(present_metrics),
-            compiled_metric_catalog=self.generation_evidence.compiled_metric_catalog(present_metrics),
-        )
-        if not sync_result.get("success"):
-            raise RuntimeError(f"OSI semantic model KB reconcile failed: {sync_result.get('error', 'unknown error')}")
+        revision = snapshot["artifact_sha256"]
+        with semantic_artifact_lock(Path(resolved), load_before_lock=False):
+            if prepared["artifact_sha256"] != revision or self.snapshot()["artifact_sha256"] != revision:
+                raise RuntimeError("The semantic model changed before knowledge-base reconciliation")
+            metric_names = self.generation_tools.extract_osi_metric_names(resolved)
+            present_metrics, _ = self.osi_target_state.partition_touched_metrics(metric_names)
+            self.kb_sync_attempted = True
+            sync_result = self.generation_tools.sync_osi_to_db(
+                resolved,
+                include_semantic_objects=True,
+                include_metrics=bool(self.osi_target_state.touched_metric_names),
+                metric_names_to_sync=set(present_metrics),
+                compiled_metric_catalog=self.generation_evidence.compiled_metric_catalog(present_metrics),
+            )
+            if not sync_result.get("success"):
+                raise RuntimeError(
+                    f"OSI semantic model KB reconcile failed: {sync_result.get('error', 'unknown error')}"
+                )
 
-        self.generation_evidence.mark_kb_sync()
-        self._reconciled_sha256 = snapshot["artifact_sha256"]
-        return self.snapshot()
+            self.generation_evidence.mark_kb_sync()
+            self._reconciled_sha256 = revision
+            return self.snapshot()
 
     def complete(self) -> dict[str, Any]:
         """Release rollback state only after the exact current revision reached the KB."""

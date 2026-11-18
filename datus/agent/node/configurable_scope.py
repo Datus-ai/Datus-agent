@@ -103,9 +103,15 @@ class ConfigurableScope:
     def _invalid(message: str) -> None:
         raise DatusException(ErrorCode.COMMON_CONFIG_ERROR, message=message)
 
+    @property
+    def declared_datasources(self) -> tuple[str, ...]:
+        return self._base_sources
+
     @staticmethod
     def _sources(scope: ScopedContext) -> list[str]:
         if scope.tables_by_datasource is not None:
+            if any(not ConfigurableScope._tokens(pattern) for pattern in scope.tables_by_datasource.values()):
+                ConfigurableScope._invalid("Each scoped_context.tables_by_datasource entry requires a table selection.")
             return list(scope.tables_by_datasource)
         return [scope.datasource] if scope.datasource else []
 
@@ -175,7 +181,7 @@ class ConfigurableScope:
             if path.is_absolute() or ".." in path.parts or "\\" in pattern:
                 self._invalid("Project file selections must be relative paths or globs within the project.")
 
-    def prepare(self, scope: ScopedContext | None) -> None:
+    def prepare(self, scope: ScopedContext | None, user_input: Any = None) -> None:
         """Apply partial per-turn narrowing; omitted fields keep the static bounds."""
         self.effective = self._base.model_copy(deep=True)
         if scope is not None:
@@ -223,6 +229,19 @@ class ConfigurableScope:
         self.config._runtime_db_context = (
             self._caller_runtime_context if self.config.current_datasource == self._caller_datasource else None
         )
+        if self.config.current_datasource and self.config.current_datasource == self._caller_datasource and user_input:
+            database = getattr(user_input, "database", None)
+            coordinates = {
+                "catalog": getattr(user_input, "catalog", None),
+                "database": database if database != self._caller_datasource else None,
+                "schema": getattr(user_input, "db_schema", None),
+            }
+            if any(coordinates.values()):
+                self.config.set_runtime_db_context(
+                    self.config.runtime_db_context(),
+                    datasource=self.config.current_datasource,
+                    **{key: value for key, value in coordinates.items() if value},
+                )
         self.config.agentic_nodes[self.name]["scoped_context"] = self.effective.model_dump(exclude_none=True)
 
     @contextmanager
@@ -274,7 +293,11 @@ class ConfigurableScope:
             from datus.utils.sql_utils import looks_like_sql_file_ref
 
             sql = arguments.get("sql", "")
-            if isinstance(sql, str) and looks_like_sql_file_ref(sql) and not self.allows_file(self.root / sql):
+            if (
+                isinstance(sql, str)
+                and looks_like_sql_file_ref(sql.lower() if method == "export_query" else sql)
+                and (not self.allows_file(self.root / sql.strip()))
+            ):
                 self._invalid("SQL file is outside scoped_context.project_files.")
         if arguments and category == "db_tools" and method == "export_query":
             output = arguments.get("output_file")

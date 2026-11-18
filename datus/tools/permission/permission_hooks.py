@@ -1783,6 +1783,9 @@ class PermissionHooks(AgentHooks):
             MCP:     ("mcp.filesystem", "read_file")
             Skills:  ("skills", "deep-analysis")  # skill_name from args
         """
+        mcp_server_name = getattr(context, "_datus_mcp_server_name", None)
+        if isinstance(mcp_server_name, str) and mcp_server_name:
+            return (f"mcp.{mcp_server_name}", tool_name)
         # 1. Skills: load_skill -> extract skill_name as pattern (check BEFORE registry)
         #    This allows permission rules like "skills.admin-*" to match specific skills
         if tool_name == "load_skill":

@@ -35,12 +35,15 @@ from datus.agent.semantic_authoring_session import (
 from datus.configuration.agent_config import AgentConfig
 from datus.plugins.agent_tools import bind_plugin_tools
 from datus.plugins.agents import RuntimePreparation
-from datus.plugins.registry import resolve_agent_runtime_factory
+from datus.plugins.registry import collect_plugin_agents, resolve_agent_runtime_factory
 from datus.plugins.semantic_authoring import SemanticAuthoringHost
 from datus.schemas.action_history import ActionHistory
 from datus.schemas.configurable_agentic_node_models import ConfigurableNodeInput, ConfigurableNodeResult
+from datus.tools.db_tools.async_workers import DATABASE_CLEANUP
 from datus.tools.func_tool.base import parse_tool_args, write_back_tool_args
+from datus.tools.permission.permission_hooks import CompositeHooks
 from datus.tools.registry.contracts import tool_definition
+from datus.tools.registry.tool_registry import ToolRegistry
 from datus.utils.exceptions import DatusException, ErrorCode
 
 
@@ -48,10 +51,11 @@ async def _await_result(value: Any) -> Any:
     return await value if inspect.isawaitable(value) else value
 
 
-class _ScopeHooks:
+class _ScopeHooks(CompositeHooks):
     """Run before permission hooks, which may themselves read SQL file arguments."""
 
-    def __init__(self, node: ConfigurableAgenticNode):
+    def __init__(self, node: ConfigurableAgenticNode, hooks: Any):
+        super().__init__([hooks])
         self.node = node
 
     async def on_tool_start(self, context: Any, agent: Any, tool: Any) -> None:
@@ -61,8 +65,10 @@ class _ScopeHooks:
             args, canonical, error = parse_tool_args(context.tool_arguments, tool_name=tool.name)
             write_back_tool_args(context, canonical)
             if error:
-                raise ValueError(error)
+                context._datus_configurable_argument_error = error
+                return
             self.node.execution_scope.require_tool_scope(identity, args)
+        await super().on_tool_start(context, agent, tool)
 
 
 class AgentRuntimeHost:
@@ -129,7 +135,7 @@ class ConfigurableAgenticNode(AgenticNode):
         self._runtime_closed = False
         self._prepared = RuntimePreparation()
         self._native_tools: list[FunctionTool] = []
-        self._native_scope_identity: str | None = None
+        self._native_scope_identity: tuple[str, str] | None = None
         self._active_skills: list[str] = []
         self._turn_context: dict[str, Any] = {}
         self.db_func_tool = None
@@ -219,8 +225,8 @@ class ConfigurableAgenticNode(AgenticNode):
         if not data_dir:
             raise DatusException(ErrorCode.STORAGE_FAILED, message="Session data directory is unavailable")
         reference_dir = prepare_authoring_references(Path(data_dir) / "semantic_authoring")
-        roots = getattr(self.skill_manager, "loaded_skill_roots", ()) if self.skill_manager else ()
-        self.execution_scope.host_read_roots = (reference_dir, *roots)
+        skill = self.skill_manager.get_skill(skill_name)
+        self.execution_scope.host_read_roots += (reference_dir, skill.location.resolve())
         return render_required_authoring_skill(
             skill_name,
             super()._render_required_skill_content(skill_name, content),
@@ -264,10 +270,7 @@ class ConfigurableAgenticNode(AgenticNode):
             "skills": [
                 self.skill_manager.format_skill_content(
                     name,
-                    self.skill_manager.load_skill(
-                        name, self.get_node_name(), check_permission=False, node_class="configurable"
-                    )[2]
-                    or "",
+                    self.skill_manager.registry.load_skill_content(name) or "",
                 )
                 for name in self._active_skills
             ],
@@ -293,29 +296,36 @@ class ConfigurableAgenticNode(AgenticNode):
         if self._runtime_closed:
             raise RuntimeError("This agent instance has been closed")
         self.result = None
+        plugin = self.definition.plugin
+        if (
+            self._runtime_initialized
+            and plugin is not None
+            and collect_plugin_agents(self.agent_config, plugin.spec.name).get(plugin.spec.name) != plugin
+        ):
+            raise ValueError(f"Plugin agent {plugin.spec.name!r} is no longer enabled with this definition")
+        self._sync_plan_mode_state(ctx.user_input)
+        self.execution_scope.host_read_roots = ()
+        if self.skill_manager is not None:
+            self.skill_manager.loaded_skill_roots.clear()
         if self._semantic_draft is not None:
             self._rollback_authoring()
             self._semantic_draft.close()
             self._semantic_draft = None
-            if (
-                self._semantic_authoring_session is not None
-                and self._semantic_authoring_session.db_func_tool is not None
-            ):
-                await asyncio.to_thread(self._semantic_authoring_session.db_func_tool.close)
+            await self._retire_database_tools()
             self._semantic_authoring_session = None
             self._native_scope_identity = None
         self._semantic_draft_completed = False
         if self._semantic_authoring_session is not None:
             self._semantic_authoring_session.begin_turn()
         self.definition.validate_runtime_config()
-        self.execution_scope.prepare(None)
+        self.execution_scope.prepare(None, ctx.user_input)
         await self._refresh_native_tools()
         self.tools = list(self._native_tools)
+        self._tool_transformers_applied = False
         self.permission_hooks = None
         self._filter_permission_denied_tools()
         self._apply_semantic_plan_review()
         if not self._runtime_initialized:
-            plugin = self.definition.plugin
             if plugin and plugin.runtime_factory:
                 factory = resolve_agent_runtime_factory(plugin, self.agent_config)
                 self._runtime = await _await_result(factory(deepcopy(self.definition.runtime_config or {}), self._host))
@@ -333,7 +343,14 @@ class ConfigurableAgenticNode(AgenticNode):
         self._prepared = RuntimePreparation.model_validate(prepared or {})
         # Reject non-serializable context before opening a model request.
         json.dumps(self._prepared.context)
-        self.execution_scope.prepare(self._prepared.scoped_context)
+        previous_scope = self.execution_scope.effective
+        self.execution_scope.prepare(self._prepared.scoped_context, ctx.user_input)
+        if self._semantic_draft is not None and self.execution_scope.effective != previous_scope:
+            session = self._semantic_authoring_session
+            if session is not None and session.osi_target_state.selected is not None:
+                raise ValueError("A publisher must narrow the scope before selecting a semantic target")
+            self._semantic_draft.close()
+            self._semantic_draft = SemanticAuthoringDraft(self.execution_scope)
         await self._refresh_native_tools()
         self._turn_context["scoped_context"] = self._host.scoped_context
         self._turn_context["context"] = dict(self._prepared.context)
@@ -358,9 +375,14 @@ class ConfigurableAgenticNode(AgenticNode):
             invoke = tool.on_invoke_tool
 
             async def load_selected(context, arguments):
-                if json.loads(arguments).get("skill_name") not in self._active_skills:
+                name = json.loads(arguments).get("skill_name")
+                if name not in self._active_skills:
                     return {"success": 0, "error": "Skill is outside this agent's selection", "result": None}
-                return await invoke(context, arguments)
+                result = await invoke(context, arguments)
+                root = self.skill_manager.get_skill(name).location.resolve()
+                if root in self.skill_manager.loaded_skill_roots and root not in self.execution_scope.host_read_roots:
+                    self.execution_scope.host_read_roots += (root,)
+                return result
 
             tool.on_invoke_tool = load_selected
             tool.__datus_tool_local_only__ = True
@@ -396,16 +418,15 @@ class ConfigurableAgenticNode(AgenticNode):
     async def _refresh_native_tools(self) -> None:
         """Rebind data/RAG tools when the effective scope changes between turns."""
         self.node_config["scoped_context"] = self.execution_scope.effective.model_dump(exclude_none=True)
-        identity = self.execution_scope.effective.model_dump_json()
+        identity = (
+            self.execution_scope.effective.model_dump_json(),
+            json.dumps(self.agent_config.runtime_db_context(), sort_keys=True),
+        )
         if identity != self._native_scope_identity:
             if self._semantic_authoring_session is not None:
                 self._rollback_authoring()
-                if self._semantic_authoring_session.db_func_tool is not None:
-                    await asyncio.to_thread(self._semantic_authoring_session.db_func_tool.close)
-                self._semantic_authoring_session = None
-            if self.db_func_tool is not None:
-                await asyncio.to_thread(self.db_func_tool.close)
-            self.db_func_tool = None
+            await self._retire_database_tools()
+            self._semantic_authoring_session = None
             self.context_search_tools = None
             self.semantic_tools = None
             self.filesystem_func_tool = None
@@ -413,7 +434,24 @@ class ConfigurableAgenticNode(AgenticNode):
             self._native_tools = self._tool_set.select(self.spec.tools)
             self._native_scope_identity = identity
 
+    async def _retire_database_tools(self) -> None:
+        semantic_db = getattr(self._semantic_authoring_session, "db_func_tool", None)
+        tools = {tool for tool in (self.db_func_tool, semantic_db) if tool is not None}
+        self.db_func_tool = None
+        jobs = [DATABASE_CLEANUP.submit(tool.close) for tool in tools]
+        await asyncio.gather(*(self._wait_for_database_release(job) for job in jobs))
+
+    def _populate_tool_registry(self) -> None:
+        # Every mounted tool has its own verified contract. Discovery of
+        # unrelated tool groups must not assign a fallback permission family.
+        registry = ToolRegistry()
+        for tool in self.tools or []:
+            if isinstance(tool, FunctionTool):
+                registry.register_tools(tool_definition(tool).category, [tool])
+        self.tool_registry = registry
+
     async def _authorize_host_tool(self, identity: str, arguments: dict[str, Any]) -> tuple[FunctionTool, ToolContext]:
+        self._ensure_tool_transformers()
         tool = next((item for item in self.tools if tool_definition(item).tool_id == identity), None)
         if tool is None or identity not in {tool_definition(item).tool_id for item in self._native_tools}:
             raise PermissionError(f"Host tool {identity!r} is not in this agent's permitted native selection")
@@ -518,14 +556,14 @@ class ConfigurableAgenticNode(AgenticNode):
         current = self._semantic_authoring_session
         if current is not None and current.osi_target_state.selected is not None:
             raise RuntimeError("Begin the draft before selecting or modifying a semantic target")
-        if current is not None and current.db_func_tool is not None:
-            await asyncio.to_thread(current.db_func_tool.close)
+        await self._retire_database_tools()
         self._semantic_authoring_session = None
         self._semantic_draft = SemanticAuthoringDraft(self.execution_scope)
         self._native_scope_identity = None
         await self._refresh_native_tools()
         self.tools = list(self._native_tools)
         self.permission_hooks = None
+        self._tool_transformers_applied = False
         self._filter_permission_denied_tools()
         self._apply_semantic_plan_review()
         from datus.prompts.prompt_manager import get_prompt_manager
@@ -570,8 +608,7 @@ class ConfigurableAgenticNode(AgenticNode):
         original = draft.baseline.get(snapshot["semantic_model_file"])
         state.artifact_snapshot_content = original if original is not None else b""
         state.artifact_snapshot_existed = original is not None
-        if session.db_func_tool is not None:
-            await asyncio.to_thread(session.db_func_tool.close)
+        await self._retire_database_tools()
         new_session = SemanticAuthoringSession(
             self.agent_config,
             node_name=self.get_node_name(),
@@ -586,8 +623,6 @@ class ConfigurableAgenticNode(AgenticNode):
             filesystem_root=str(self.execution_scope.root),
         )
         new_session._existing_models_checked = True
-        if self.db_func_tool is not None:
-            await asyncio.to_thread(self.db_func_tool.close)
         native_ids = {tool_definition(tool).tool_id for tool in self._native_tools}
         contributed = [tool for tool in self.tools if tool_definition(tool).tool_id not in native_ids]
         self._tool_set = ConfigurableToolSet(self)
@@ -673,7 +708,9 @@ class ConfigurableAgenticNode(AgenticNode):
         if self._uses_semantic_authoring:
             from datus.agent.node.semantic_authoring import semantic_authoring_guard
 
-            async with semantic_authoring_guard(self.agent_config):
+            async with semantic_authoring_guard(
+                self.agent_config, datasources=self.execution_scope.declared_datasources
+            ):
                 yield
         else:
             yield
@@ -690,9 +727,7 @@ class ConfigurableAgenticNode(AgenticNode):
                     self._rollback_authoring()
 
     def _compose_hooks(self, extra: Any = None) -> Any:
-        from datus.tools.permission.permission_hooks import CompositeHooks
-
-        return CompositeHooks([_ScopeHooks(self), super()._compose_hooks(extra)])
+        return _ScopeHooks(self, super()._compose_hooks(extra))
 
     def _build_template_context(self, ctx: StreamRunContext) -> dict[str, str]:
         return {
@@ -759,10 +794,13 @@ class ConfigurableAgenticNode(AgenticNode):
                 if close:
                     await _await_result(close())
         finally:
-            if self._semantic_authoring_session is not None:
-                self._rollback_authoring()
-                if self._semantic_authoring_session.db_func_tool is not None:
-                    await asyncio.to_thread(self._semantic_authoring_session.db_func_tool.close)
-            if self._semantic_draft is not None:
-                self._semantic_draft.close()
-            await super().aclose()
+            try:
+                if self._semantic_authoring_session is not None:
+                    self._rollback_authoring()
+                if self._semantic_draft is not None:
+                    self._semantic_draft.close()
+            finally:
+                try:
+                    await self._retire_database_tools()
+                finally:
+                    await super().aclose()

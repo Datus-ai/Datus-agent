@@ -425,14 +425,7 @@ class AgenticNode(Node):
             if job is None:
                 job = DATABASE_CLEANUP.submit(db_tool.close)
                 self._database_close_job = job
-            try:
-                await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(job)), timeout=_DATABASE_CLOSE_TIMEOUT)
-            except asyncio.TimeoutError:
-                # DBFuncTool.close only drains operations and returns leases.
-                # Let that worker finish safely without delaying session closure.
-                logger.warning("Node database tool release timed out after %.1fs", _DATABASE_CLOSE_TIMEOUT)
-            except Exception:
-                logger.exception("Failed to release node database tool")
+            await AgenticNode._wait_for_database_release(job)
         session = getattr(self, "_session", None)
         close = getattr(session, "close", None)
         if callable(close):
@@ -447,6 +440,16 @@ class AgenticNode(Node):
         if manager is not None:
             manager.close_all_sessions()
         self._session_manager = None
+
+    @staticmethod
+    async def _wait_for_database_release(job) -> None:
+        try:
+            await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(job)), timeout=_DATABASE_CLOSE_TIMEOUT)
+        except asyncio.TimeoutError:
+            # The worker keeps its leases until the driver returns.
+            logger.warning("Node database tool release timed out after %.1fs", _DATABASE_CLOSE_TIMEOUT)
+        except Exception:
+            logger.exception("Failed to release node database tool")
 
     def relocate_session(self, *, scope: Optional[str], session_subdir: Optional[str]) -> None:
         """Point this node's session at another directory after construction.

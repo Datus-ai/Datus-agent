@@ -92,6 +92,37 @@ def test_undeclared_callbacks_cannot_add_tools():
         bind_plugin_tools([_declaration()], {"research_tools.other": lambda: {"done": True}})
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reference", ["#/$defs/text", "#/$defs/missing"], ids=["local-reference", "missing-reference"])
+async def test_plugin_input_references_return_an_error_before_invoking_callback(reference):
+    observations = []
+
+    def remember(value):
+        observations.append(value)
+        return {"observations": list(observations)}
+
+    declaration = PluginToolDeclaration(
+        **{
+            **_declaration().model_dump(),
+            "input_schema": {
+                "type": "object",
+                "$defs": {"text": {"type": "string"}},
+                "properties": {"value": {"$ref": reference}},
+            },
+        }
+    )
+    tool = bind_plugin_tools([declaration], {declaration.tool_id: remember})[0]
+    result = await tool.on_invoke_tool(None, '{"value":"sales"}')
+
+    if reference == "#/$defs/text":
+        assert result == {"observations": ["sales"]}
+        assert observations == ["sales"]
+    else:
+        assert result["success"] == 0
+        assert "unresolvable reference" in result["error"]
+        assert observations == []
+
+
 def test_plugin_callback_cannot_replace_native_implementation():
     with pytest.raises(DatusException, match="cannot replace a native tool"):
         bind_plugin_tools([_declaration("db_tools.execute_sql")], {"db_tools.execute_sql": lambda value: value})
@@ -113,13 +144,16 @@ async def test_parallel_model_tool_calls_do_not_race_shared_runtime_state():
         counter = previous + 1
         return {"count": counter, "value": value}
 
-    tool = bind_plugin_tools([_declaration()], {"research_tools.remember": remember})[0]
-    first = asyncio.create_task(tool.on_invoke_tool(None, '{"value":"first"}'))
+    first_tool, second_tool = bind_plugin_tools(
+        [_declaration(), _declaration("research_tools.remember_second")],
+        {"research_tools.remember": remember, "research_tools.remember_second": remember},
+    )
+    first = asyncio.create_task(first_tool.on_invoke_tool(None, '{"value":"first"}'))
     await entered.wait()
 
     async def second_call():
         second_attempted.set()
-        return await tool.on_invoke_tool(None, '{"value":"second"}')
+        return await second_tool.on_invoke_tool(None, '{"value":"second"}')
 
     second = asyncio.create_task(second_call())
     await second_attempted.wait()
