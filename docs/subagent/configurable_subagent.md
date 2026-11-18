@@ -168,10 +168,10 @@ agents:
 ```
 
 The publisher can declare all common behavior fields, optional `config` defaults
-and a JSON `config_schema` for business parameters. Plugin tools are separate
-from native `tools` and cannot replace native identities. Effect metadata does
-not grant permission: the host must authorize the publisher's tool category
-through ordinary permission configuration.
+and a JSON `config_schema` for business parameters. Plugin tools use a separate
+permission family such as `concept_tools`. The host reserves its own tool
+families, `load_skill` and names starting with `mcp__`. The host grants
+permission to publisher tools through ordinary permission configuration.
 
 ```yaml
 agent:

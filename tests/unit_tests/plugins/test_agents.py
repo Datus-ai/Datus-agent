@@ -166,6 +166,32 @@ def test_instructions_resource_cannot_escape_the_plugin_package(tmp_path):
 
 
 @pytest.mark.parametrize(
+    "tool_id",
+    [
+        "semantic_tools.review_model",
+        "skills.review_model",
+        "research_tools.load_skill",
+        "research_tools.mcp__documents__search",
+    ],
+)
+def test_plugin_tool_cannot_claim_a_reserved_permission_identity(tmp_path, tool_id):
+    declaration = {
+        "runtime_factory": "research.runtime:create_runtime",
+        "tool_definitions": [
+            {
+                "tool_id": tool_id,
+                "description": "Review a model.",
+                "input_schema": {"type": "object"},
+                "access": "write",
+            }
+        ],
+    }
+
+    with pytest.raises(ValidationError, match="reserved"):
+        PluginAgentDefinition.from_manifest("research", tmp_path, "researcher", declaration)
+
+
+@pytest.mark.parametrize(
     "changes",
     [
         {"input_schema": {"type": "array"}},

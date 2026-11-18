@@ -187,11 +187,19 @@ def registered_function_tool(*, definition: ToolDefinition, **kwargs: Any) -> An
 
 def plugin_tool_definition(tool_id: str, access: Access, direct_call: bool = False) -> ToolDefinition:
     """Validate runtime metadata without adding it to the build-time native inventory."""
-    from datus.tools.registry.capabilities import TOOL_CAPABILITIES
+    from datus.tools.registry.capabilities import DENIED_TOOL_FAMILIES, TOOL_CAPABILITIES
 
     definition = ToolDefinition(tool_id, access, direct_call)
-    if tool_id in TOOL_CAPABILITIES or access == "session":
-        raise ToolDefinitionError("Plugin metadata cannot replace native tools or declare session channels")
+    if access == "session":
+        raise ToolDefinitionError("Plugin metadata cannot declare session channels")
+    family_prefix = f"{definition.category}."
+    if definition.category in DENIED_TOOL_FAMILIES or any(
+        identity.startswith(family_prefix) for identity in TOOL_CAPABILITIES
+    ):
+        raise ToolDefinitionError(f"Plugin tool family {definition.category!r} is reserved for host tools")
+    # Skill and MCP calls are classified by name before the tool registry is consulted.
+    if definition.name == "load_skill" or definition.name.startswith("mcp__"):
+        raise ToolDefinitionError(f"Plugin tool name {definition.name!r} is reserved for host tools")
     return definition
 
 
