@@ -21,19 +21,19 @@ def test_generated_identity_is_stable_and_preserves_extension_metadata():
     metric = {
         "name": "revenue",
         "custom_extensions": [
-            {"vendor_name": "OTHER", "data": "opaque metadata"},
+            {"vendor_name": "OTHER", "data": '{"other":true}'},
             {"vendor_name": "DATUS", "data": '{"v":"1.2","subject_path":["sales"],"unit":"USD"}'},
         ],
     }
     assert ensure_metric_uid(metric)
     assert re.fullmatch(r"[a-z][a-z0-9]{23}", metric_uid(metric))
-    payload = json.loads(metric["custom_extensions"][1]["data"])
+    payload = metric["nonportable_extensions"][1]["data"]
     assert {key: value for key, value in payload.items() if key != "uid"} == {
         "v": "1.2",
         "subject_path": ["sales"],
         "unit": "USD",
     }
-    assert metric["custom_extensions"][0] == {"vendor_name": "OTHER", "data": "opaque metadata"}
+    assert metric["nonportable_extensions"][0] == {"vendor_name": "OTHER", "data": {"other": True}}
     original = copy.deepcopy(metric)
     assert not ensure_metric_uid(metric)
     assert metric == original

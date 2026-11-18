@@ -28,7 +28,7 @@ async def test_file_and_object_sdk_edits_share_revision_and_whole_run_rollback(t
     }
     original = yaml.safe_dump(
         {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "sales",
             "description": "Original model",
             "datasets": [dataset],

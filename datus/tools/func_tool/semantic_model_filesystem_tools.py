@@ -16,6 +16,7 @@ from datus.tools.func_tool.semantic_model_workspace import SemanticModelWorkspac
 from datus.tools.registry.contracts import tool_contract
 from datus.tools.semantic_tools.metric_identity import metric_definitions, prepare_metric_uids
 from datus.utils.memory_loader import apply_single_replacement
+from datus.utils.ossie_format import upgrade_document
 
 
 class SemanticModelFilesystemTools(FilesystemFuncTool):
@@ -99,12 +100,13 @@ class SemanticModelFilesystemTools(FilesystemFuncTool):
             if not isinstance(document, dict):
                 return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
             try:
+                upgraded = upgrade_document(document)
                 identities_changed = prepare_metric_uids(document, original_document or {})
             except ValueError as exc:
                 return FuncToolResult(success=0, error=f"Invalid OSI metric identity: {exc}")
             # Validate the edit before any reserialization can hide duplicate keys.
             validation_error = self.workspace.validate_document(new_content)
-            if not validation_error and identities_changed:
+            if not validation_error and (upgraded or identities_changed):
                 new_content = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 validation_error = self.workspace.validate_document(new_content)
             if validation_error:

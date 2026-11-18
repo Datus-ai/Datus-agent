@@ -70,7 +70,7 @@ def identity_tool(tmp_path, osi_schema_validator):
         target.write_text(
             yaml.safe_dump(
                 {
-                    "version": "0.2.0.dev0",
+                    "version": "0.3.0.dev0",
                     "name": "sales",
                     "datasets": [{"name": "orders", "source": "orders"}],
                     "metrics": metrics,
@@ -248,16 +248,16 @@ def test_metric_upsert_assigns_and_preserves_host_uid(identity_tool):
     assert repeated.result["unchanged"] == ["revenue"]
     assert target.read_bytes() == first_content
     metric["description"] = "Updated definition"
-    metric["custom_extensions"] = [{"vendor_name": "DATUS", "data": '{"uid":"model-mistake","unit":"USD"}'}]
+    metric["nonportable_extensions"] = [{"vendor_name": "DATUS", "data": {"uid": "model-mistake", "unit": "USD"}}]
     assert SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(str(target), json.dumps([metric])).success == 1
     updated = yaml.safe_load(target.read_bytes())["metrics"][0]
     assert metric_uid(updated) == uid
-    assert json.loads(updated["custom_extensions"][0]["data"])["unit"] == "USD"
+    assert updated["nonportable_extensions"][0]["data"]["unit"] == "USD"
     assert updated["description"] == "Updated definition"
     state.require_selected_revision(target)
 
 
-@pytest.mark.parametrize("replacement", [[], [{"vendor_name": "DATUS", "data": '{"uid":"model-mistake"}'}]])
+@pytest.mark.parametrize("replacement", [[], [{"vendor_name": "DATUS", "data": {"uid": "model-mistake"}}]])
 def test_edit_file_preserves_existing_uid(identity_tool, replacement):
     from datus.tools.semantic_tools.metric_identity import ensure_metric_uid, metric_uid
 
@@ -267,7 +267,7 @@ def test_edit_file_preserves_existing_uid(identity_tool, replacement):
     original = target.read_text()
     document = yaml.safe_load(original)
     candidate = document["metrics"][0]
-    candidate["custom_extensions"] = replacement
+    candidate["nonportable_extensions"] = replacement
     candidate["description"] = "Changed by edit_file"
     result = tool.edit_file(str(target), original, yaml.safe_dump(document, sort_keys=False))
     assert result.success == 1
@@ -393,7 +393,7 @@ def test_edit_file_rename_preserves_authoritative_uid(identity_tool):
 
 def test_edit_file_can_remove_metric_with_invalid_uid(identity_tool):
     source = _osi_metric("revenue", "SUM(orders.amount)")
-    source["custom_extensions"] = [{"vendor_name": "DATUS", "data": '{"uid":123}'}]
+    source["nonportable_extensions"] = [{"vendor_name": "DATUS", "data": {"uid": 123}}]
     tool, target, state, _ = identity_tool([source])
     original = target.read_text()
     document = yaml.safe_load(original)
@@ -414,7 +414,7 @@ def test_upsert_without_prior_uid_uses_host_identity(identity_tool, existing, in
 
     metric = _osi_metric("revenue", "SUM(orders.amount)")
     tool, target, state, _ = identity_tool([metric] if existing else [])
-    metric["custom_extensions"] = [{"vendor_name": "DATUS", "data": json.dumps({"uid": incoming_uid, "unit": "USD"})}]
+    metric["nonportable_extensions"] = [{"vendor_name": "DATUS", "data": {"uid": incoming_uid, "unit": "USD"}}]
 
     result = SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(str(target), json.dumps([metric]))
 
@@ -422,7 +422,7 @@ def test_upsert_without_prior_uid_uses_host_identity(identity_tool, existing, in
     authored = yaml.safe_load(target.read_bytes())["metrics"][0]
     assert metric_uid(authored) != incoming_uid
     assert len(metric_uid(authored)) == 24
-    assert json.loads(authored["custom_extensions"][0]["data"])["unit"] == "USD"
+    assert authored["nonportable_extensions"][0]["data"]["unit"] == "USD"
     assert SemanticModelEditingTools(tool.workspace).upsert_osi_metrics(str(target), json.dumps([metric])).result[
         "unchanged"
     ] == ["revenue"]
@@ -460,7 +460,7 @@ def test_edit_file_can_repair_existing_case_conflict_and_preserve_uids(identity_
     tool, target, state, _ = identity_tool(metrics)
     original = target.read_text()
     document = yaml.safe_load(original)
-    document["metrics"][0].pop("custom_extensions")
+    document["metrics"][0].pop("nonportable_extensions")
     document["metrics"][1]["name"] = "gross_revenue"
     result = tool.edit_file(str(target), original, yaml.safe_dump(document, sort_keys=False))
     assert result.success == 1
@@ -488,7 +488,7 @@ class TestSemanticModelFilesystemTools:
         metric = _osi_metric("revenue", "SUM(orders.amount)")
         ensure_metric_uid(metric)
         document = {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "sales",
             "datasets": [
                 {
@@ -556,7 +556,7 @@ class TestSemanticModelFilesystemTools:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         original_document = {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "sales",
             "datasets": [
                 {
@@ -634,7 +634,7 @@ class TestSemanticModelFilesystemTools:
         target.write_text(
             yaml.safe_dump(
                 {
-                    "version": "0.2.0.dev0",
+                    "version": "0.3.0.dev0",
                     "name": "sales",
                     "datasets": [{"name": "orders", "source": "analytics.orders"}],
                     "relationships": [{"name": "orders_to_customers"}],
@@ -666,7 +666,7 @@ class TestSemanticModelFilesystemTools:
             "source": "WITH cohort AS (SELECT user_id FROM users) SELECT COUNT(*) AS users FROM cohort",
             "description": "One row containing the retained-user result.",
             "ai_context": {"instructions": "Use for the exact retention result grain."},
-            "custom_extensions": [{"vendor_name": "DATUS", "data": '{"source_type":"query"}'}],
+            "nonportable_extensions": [{"vendor_name": "DATUS", "data": {"source_type": "query"}}],
         }
 
         result = SemanticModelEditingTools(tool.workspace).upsert_osi_datasets(
@@ -681,10 +681,10 @@ class TestSemanticModelFilesystemTools:
         assert model["relationships"] == [{"name": "orders_to_customers"}]
         assert model["metrics"] == [_osi_metric("revenue", "SUM(orders.amount)")]
         authored_query_dataset = model["datasets"][-1]
-        assert {key: value for key, value in authored_query_dataset.items() if key != "custom_extensions"} == {
-            key: value for key, value in query_dataset.items() if key != "custom_extensions"
+        assert {key: value for key, value in authored_query_dataset.items() if key != "nonportable_extensions"} == {
+            key: value for key, value in query_dataset.items() if key != "nonportable_extensions"
         }
-        assert json.loads(authored_query_dataset["custom_extensions"][0]["data"]) == {
+        assert authored_query_dataset["nonportable_extensions"][0]["data"] == {
             "source_type": "query",
             "v": datus_extension_version(),
         }
@@ -703,7 +703,13 @@ class TestSemanticModelFilesystemTools:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            yaml.safe_dump({"name": "sales", "datasets": [{"name": "orders", "source": "analytics.orders"}]}),
+            yaml.safe_dump(
+                {
+                    "version": "0.3.0.dev0",
+                    "name": "sales",
+                    "datasets": [{"name": "orders", "source": "analytics.orders"}],
+                }
+            ),
             encoding="utf-8",
         )
         state = OsiSemanticModelTargetState()
@@ -737,7 +743,7 @@ class TestSemanticModelFilesystemTools:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "name: sales\ndatasets:\n  - name: orders\n    source: analytics.orders\n",
+            "version: 0.3.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: analytics.orders\n",
             encoding="utf-8",
         )
         state = OsiSemanticModelTargetState()
@@ -773,7 +779,7 @@ class TestSemanticModelFilesystemTools:
         target.write_text(
             yaml.safe_dump(
                 {
-                    "version": "0.2.0.dev0",
+                    "version": "0.3.0.dev0",
                     "name": "sales",
                     "description": "Sales domain",
                     "datasets": [
@@ -855,7 +861,7 @@ class TestSemanticModelFilesystemTools:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "version: 0.2.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: analytics.orders\nrelationships: []\nmetrics: []\n",
+            "version: 0.3.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: analytics.orders\nrelationships: []\nmetrics: []\n",
             encoding="utf-8",
         )
         original = target.read_bytes()
@@ -911,7 +917,7 @@ class TestSemanticModelFilesystemTools:
         assert result.result["created"] == ["orders"]
         document = yaml.safe_load(target.read_text(encoding="utf-8"))
         assert document == {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "sales",
             "datasets": [{"name": "orders", "source": "analytics.orders"}],
             "relationships": [],
@@ -924,7 +930,7 @@ class TestSemanticModelFilesystemTools:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "version: 0.2.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: analytics.orders\nrelationships: []\nmetrics: []\n",
+            "version: 0.3.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: analytics.orders\nrelationships: []\nmetrics: []\n",
             encoding="utf-8",
         )
         original = target.read_text(encoding="utf-8")
@@ -956,11 +962,12 @@ class TestSemanticModelFilesystemTools:
         existing_dataset = {
             "name": "retained_users",
             "source": "SELECT user_id FROM retained_users",
-            "custom_extensions": [{"vendor_name": "DATUS", "data": '{"source_type":"query"}'}],
+            "metrics": [{"name": "declared_later", "expression": {"sql": "COUNT(*)"}}],
+            "nonportable_extensions": [{"vendor_name": "DATUS", "data": {"source_type": "query"}}],
         }
         target.write_text(
             yaml.safe_dump(
-                {"name": "sales", "datasets": [existing_dataset]},
+                {"version": "0.3.0.dev0", "name": "sales", "datasets": [existing_dataset]},
                 sort_keys=False,
             ),
             encoding="utf-8",
@@ -974,6 +981,7 @@ class TestSemanticModelFilesystemTools:
             "source": "SELECT user_id FROM newly_retained_users",
         }
 
+        del conflicting_dataset["metrics"]
         result = SemanticModelEditingTools(tool.workspace).upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
             json.dumps([conflicting_dataset]),
@@ -983,7 +991,8 @@ class TestSemanticModelFilesystemTools:
         assert result.result["updated"] == ["retained_users"]
         authored = yaml.safe_load(target.read_text(encoding="utf-8"))["datasets"][0]
         assert authored["source"] == "SELECT user_id FROM newly_retained_users"
-        assert json.loads(authored["custom_extensions"][0]["data"])["source_type"] == "query"
+        assert authored["nonportable_extensions"][0]["data"]["source_type"] == "query"
+        assert authored["metrics"] == existing_dataset["metrics"]
         osi_schema_validator.assert_called_once()
 
     def test_query_backed_dataset_source_identity_normalizes_line_endings(
@@ -996,11 +1005,11 @@ class TestSemanticModelFilesystemTools:
         existing_dataset = {
             "name": "retained_users",
             "source": "SELECT user_id\r\nFROM retained_users\r\n",
-            "custom_extensions": [{"vendor_name": "DATUS", "data": '{"source_type":"query"}'}],
+            "nonportable_extensions": [{"vendor_name": "DATUS", "data": {"source_type": "query"}}],
         }
         target.write_text(
             yaml.safe_dump(
-                {"name": "sales", "datasets": [existing_dataset]},
+                {"version": "0.3.0.dev0", "name": "sales", "datasets": [existing_dataset]},
                 sort_keys=False,
             ),
             encoding="utf-8",
@@ -1040,7 +1049,7 @@ class TestSemanticModelFilesystemTools:
                         {
                             "name": "orders_by_region",
                             "source": source_sql.replace("\n", "\r\n"),
-                            "custom_extensions": [{"vendor_name": "DATUS", "data": '{"source_type":"query"}'}],
+                            "nonportable_extensions": [{"vendor_name": "DATUS", "data": {"source_type": "query"}}],
                         }
                     ],
                 },
@@ -1076,7 +1085,7 @@ class TestSemanticModelFilesystemTools:
         assert result.result["created"] == ["regional_order_counts"]
         authored = yaml.safe_load(target.read_text(encoding="utf-8"))["datasets"][0]
         assert authored["source"] == source_sql
-        assert json.loads(authored["custom_extensions"][0]["data"])["source_type"] == "query"
+        assert authored["nonportable_extensions"][0]["data"]["source_type"] == "query"
         osi_schema_validator.assert_called_once()
 
     @pytest.mark.parametrize(
@@ -1095,7 +1104,7 @@ class TestSemanticModelFilesystemTools:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "version: 0.2.0.dev0\nname: sales\ndatasets: []\n",
+            "version: 0.3.0.dev0\nname: sales\ndatasets: []\n",
             encoding="utf-8",
         )
         evidence = GenerationEvidence()
@@ -1122,7 +1131,7 @@ class TestSemanticModelFilesystemTools:
         assert result.success == 1
         dataset = yaml.safe_load(target.read_text(encoding="utf-8"))["datasets"][0]
         assert dataset["source"] == exact_sql
-        extension_data = json.loads(dataset["custom_extensions"][0]["data"])
+        extension_data = dataset["nonportable_extensions"][0]["data"]
         assert extension_data == {"source_type": "query", "v": datus_extension_version()}
 
     def test_generated_query_can_replace_same_named_dataset_source(
@@ -1135,12 +1144,13 @@ class TestSemanticModelFilesystemTools:
         target.write_text(
             yaml.safe_dump(
                 {
+                    "version": "0.3.0.dev0",
                     "name": "sales",
                     "datasets": [
                         {
                             "name": "retained_users",
                             "source": "SELECT user_id FROM retained_users WHERE cohort = 'old'",
-                            "custom_extensions": [{"vendor_name": "DATUS", "data": '{"source_type":"query"}'}],
+                            "nonportable_extensions": [{"vendor_name": "DATUS", "data": {"source_type": "query"}}],
                         }
                     ],
                 },
@@ -1173,10 +1183,10 @@ class TestSemanticModelFilesystemTools:
         assert result.result["updated"] == ["retained_users"]
         dataset = yaml.safe_load(target.read_text(encoding="utf-8"))["datasets"][0]
         assert dataset["source"] == exact_sql
-        assert json.loads(dataset["custom_extensions"][0]["data"])["source_type"] == "query"
+        assert dataset["nonportable_extensions"][0]["data"]["source_type"] == "query"
         osi_schema_validator.assert_called_once()
 
-    def test_query_source_extension_always_serializes_data_as_json(self, tmp_path):
+    def test_query_source_extension_preserves_object_payload(self, tmp_path):
         tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
@@ -1186,8 +1196,8 @@ class TestSemanticModelFilesystemTools:
             [{"vendor_name": "DATUS", "data": {"owner": "semantic-authoring"}}]
         )
 
-        assert isinstance(extensions[0]["data"], str)
-        assert json.loads(extensions[0]["data"]) == {
+        assert isinstance(extensions[0]["data"], dict)
+        assert extensions[0]["data"] == {
             "owner": "semantic-authoring",
             "source_type": "query",
             "v": datus_extension_version(),
@@ -1203,11 +1213,11 @@ class TestSemanticModelFilesystemTools:
         existing_dataset = {
             "name": "retained_users",
             "source": "SELECT user_id FROM retained_users",
-            "custom_extensions": [{"vendor_name": "DATUS", "data": '{"source_type":"query"}'}],
+            "nonportable_extensions": [{"vendor_name": "DATUS", "data": {"source_type": "query"}}],
         }
         target.write_text(
             yaml.safe_dump(
-                {"name": "sales", "datasets": [existing_dataset]},
+                {"version": "0.3.0.dev0", "name": "sales", "datasets": [existing_dataset]},
                 sort_keys=False,
             ),
             encoding="utf-8",
@@ -1242,7 +1252,7 @@ class TestSemanticModelFilesystemTools:
         target.parent.mkdir(parents=True)
         target.write_text(
             """
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: sales
 description: Sales domain
 datasets:
@@ -1312,7 +1322,7 @@ metrics:
         target.write_text(
             yaml.safe_dump(
                 {
-                    "version": "0.2.0.dev0",
+                    "version": "0.3.0.dev0",
                     "name": "sales",
                     "description": "Sales domain",
                     "datasets": [{"name": "orders", "source": "orders"}],
@@ -1360,7 +1370,7 @@ metrics:
         target.write_text(
             yaml.safe_dump(
                 {
-                    "version": "0.2.0.dev0",
+                    "version": "0.3.0.dev0",
                     "name": "sales",
                     "datasets": [{"name": "orders", "source": "orders"}],
                     "metrics": [metric],
@@ -1394,7 +1404,7 @@ metrics:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "version: 0.2.0.dev0\nname: sales\ndatasets: []\n",
+            "version: 0.3.0.dev0\nname: sales\ndatasets: []\n",
             encoding="utf-8",
         )
         original = target.read_bytes()
@@ -1422,7 +1432,7 @@ metrics:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "version: 0.2.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: orders\n",
+            "version: 0.3.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: orders\n",
             encoding="utf-8",
         )
         evidence = GenerationEvidence(
@@ -1454,7 +1464,7 @@ metrics:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "version: 0.2.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: orders\n",
+            "version: 0.3.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: orders\n",
             encoding="utf-8",
         )
         original = target.read_bytes()
@@ -1483,7 +1493,7 @@ metrics:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "version: 0.2.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: orders\nmetrics: []\n",
+            "version: 0.3.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: orders\nmetrics: []\n",
             encoding="utf-8",
         )
         original = target.read_bytes()
@@ -1580,7 +1590,7 @@ metrics:
         with patch("datus.tools.semantic_tools.dosi.engine.datus_extension_version", return_value="1.3"):
             extensions = tool.workspace.query_source_extensions([])
 
-        assert json.loads(extensions[0]["data"]) == {"source_type": "query", "v": "1.3"}
+        assert extensions[0]["data"] == {"source_type": "query", "v": "1.3"}
 
     def test_failed_metric_authoring_rollback_returns_false_on_invalid_snapshot(self, tmp_path):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
@@ -1620,11 +1630,11 @@ metrics:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         metric = _osi_metric("revenue", "SUM(amount)")
-        metric["custom_extensions"] = [{"vendor_name": "DATUS", "data": '{"uid":"tz4a98xxat96iws9zmbrgj3a"}'}]
+        metric["nonportable_extensions"] = [{"vendor_name": "DATUS", "data": {"uid": "tz4a98xxat96iws9zmbrgj3a"}}]
         target.write_text(
             yaml.safe_dump(
                 {
-                    "version": "0.2.0.dev0",
+                    "version": "0.3.0.dev0",
                     "name": "sales",
                     "datasets": [{"name": "orders", "source": "orders"}],
                     "metrics": [metric],
@@ -1660,7 +1670,7 @@ metrics:
     def test_upsert_osi_metrics_rejects_present_invalid_metrics_collection(self, tmp_path, invalid_metrics):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
-        document = {"version": "0.2.0.dev0", "name": "sales", "datasets": [{"name": "orders", "source": "orders"}]}
+        document = {"version": "0.3.0.dev0", "name": "sales", "datasets": [{"name": "orders", "source": "orders"}]}
         document["metrics"] = invalid_metrics
         original = yaml.safe_dump(document, sort_keys=False)
         target.write_text(original, encoding="utf-8")
@@ -1681,7 +1691,7 @@ metrics:
     def test_upsert_osi_metrics_validates_metric_schema_before_writing(self, tmp_path, osi_schema_validator):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
-        original = "version: 0.2.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: orders\n"
+        original = "version: 0.3.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: orders\n"
         target.write_text(original, encoding="utf-8")
         tool = SemanticModelFilesystemTools(
             root_path=str(tmp_path),
@@ -1703,7 +1713,7 @@ metrics:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "version: 0.2.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: orders\n",
+            "version: 0.3.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: orders\n",
             encoding="utf-8",
         )
         target_state = _bound_state(target)

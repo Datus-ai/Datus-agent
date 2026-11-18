@@ -143,7 +143,7 @@ def bound_editor(tmp_path):
     from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetState
 
     document = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "sales",
         "datasets": [{"name": "orders", "source": "orders"}],
         "metrics": [
@@ -222,7 +222,8 @@ def test_malformed_objects_never_mutate_the_bound_model(bound_editor, method, pa
     ],
 )
 @pytest.mark.parametrize(
-    "content", [b"[]\n", b"name: sales\n", b"datasets: wrong\nmetrics: wrong\n", b"[unclosed", b"\xff"]
+    "content",
+    [b"[]\n", b"name: sales\n", b"version: 0.3.0.dev0\ndatasets: wrong\nmetrics: wrong\n", b"[unclosed", b"\xff"],
 )
 def test_corrupt_models_are_preserved_for_repair(bound_editor, method, parameter, payload, content):
     """Invalid existing documents must not be silently replaced by a valid batch."""

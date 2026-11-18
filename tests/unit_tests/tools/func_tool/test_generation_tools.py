@@ -122,17 +122,17 @@ def test_sync_projects_extension_uid_without_mutating_yaml(generation_tools, tmp
     target.write_text(
         json.dumps(
             {
-                "version": "0.2.0.dev0",
+                "version": "0.3.0.dev0",
                 "name": "sales",
                 "datasets": [{"name": "orders", "source": "orders"}],
                 "metrics": [
                     {
                         "name": "revenue",
                         "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(orders.amount)"}]},
-                        "custom_extensions": [
+                        "nonportable_extensions": [
                             {
                                 "vendor_name": "DATUS",
-                                "data": json.dumps({"uid": uid, "subject_path": ["sales", "revenue", "total"]}),
+                                "data": {"uid": uid, "subject_path": ["sales", "revenue", "total"]},
                             }
                         ],
                     },
@@ -175,11 +175,11 @@ def test_sync_rejects_invalid_metric_identities_before_kb_writes(generation_tool
     target.write_text(
         json.dumps(
             {
-                "version": "0.2.0.dev0",
+                "version": "0.3.0.dev0",
                 "name": "sales",
                 "datasets": [],
                 "metrics": [
-                    {"name": name, "custom_extensions": [{"vendor_name": "DATUS", "data": json.dumps({"uid": uid})}]}
+                    {"name": name, "nonportable_extensions": [{"vendor_name": "DATUS", "data": {"uid": uid}}]}
                     for name, uid in zip(("revenue", "order_count"), uids)
                 ],
             }
@@ -434,7 +434,7 @@ datasets:
             encoding="utf-8",
         )
         finance_file.write_text(
-            "version: 0.2.0.dev0\nname: finance\ndatasets: []\n",
+            "version: 0.3.0.dev0\nname: finance\ndatasets: []\n",
             encoding="utf-8",
         )
         generation_tools.generation_evidence.validation_passed = True
@@ -456,7 +456,7 @@ datasets:
         model_file = tmp_path / "semantic_models" / "warehouse" / "finance.yml"
         model_file.parent.mkdir(parents=True)
         model_file.write_text(
-            "version: 0.2.0.dev0\nname: finance\ndatasets: []\n",
+            "version: 0.3.0.dev0\nname: finance\ndatasets: []\n",
             encoding="utf-8",
         )
         _plan_osi_target(generation_tools, model_file, model_name="finance")

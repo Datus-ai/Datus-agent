@@ -58,9 +58,9 @@ The following excerpt is the `metrics` section from the `bank_failures.yml` file
         description: Number of failed banks, measured as bank failure event rows.
         ai_context:
           instructions: Use date as business time; group by state or a time grain when requested.
-        custom_extensions:
+        nonportable_extensions:
           - vendor_name: DATUS
-            data: '{"v":"1.4","dataset":"bank_failures","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","count"],"unit":"banks"}'
+            data: {"v":"1.4","dataset":"bank_failures","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","count"],"unit":"banks"}
 
       - name: failed_assets_million
         expression:
@@ -70,23 +70,23 @@ The following excerpt is the `metrics` section from the `bank_failures.yml` file
         description: Total assets of failed banks, in millions of US dollars.
         ai_context:
           instructions: Use date as business time and sum assets at failure.
-        custom_extensions:
+        nonportable_extensions:
           - vendor_name: DATUS
-            data: '{"v":"1.4","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","assets"],"unit":"USD million"}'
+            data: {"v":"1.4","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","assets"],"unit":"USD million"}
 ```
 
-Metric expressions use the same `expression.dialects[]` structure as field expressions. Qualify fields with their dataset name, as in `SUM(bank_failures.assets_million)`. An aggregate such as `COUNT(*)` cannot reveal its dataset from a qualified field, so its DATUS extension supplies `dataset` explicitly.
+Metric and field expressions can use `expression.sql` or a dialect-specific `expression.dialects[]` entry. Qualify fields with their dataset name, as in `SUM(bank_failures.assets_million)`. An aggregate such as `COUNT(*)` cannot reveal its dataset from a qualified field, so its DATUS extension supplies `dataset` explicitly.
 
-Do not place `dataset`, `time_dimension`, `subject_path`, `unit`, or window settings at the metric's top level. They are Datus behavior and belong in the metric's DATUS `custom_extensions` entry.
+Do not place `dataset`, `time_dimension`, `subject_path`, `unit`, or window settings at the metric's top level. They are Datus behavior and belong in the metric's DATUS `nonportable_extensions` entry.
 
 ## Metric extensions
 
-The DATUS extension is an OSI `custom_extensions` entry whose `data` value is a JSON string:
+The DATUS extension is an OSI `nonportable_extensions` entry whose `data` value is a JSON object:
 
 ```yaml
-custom_extensions:
+nonportable_extensions:
   - vendor_name: DATUS
-    data: '{"v":"1.4","time_dimension":"orders.order_date","subject_path":["sales","revenue","total"],"unit":"USD"}'
+    data: {"v":"1.4","time_dimension":"orders.order_date","subject_path":["sales","revenue","total"],"unit":"USD"}
 ```
 
 Common keys are:

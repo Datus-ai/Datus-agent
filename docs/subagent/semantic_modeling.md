@@ -175,9 +175,9 @@ Each authored file defines one model at the document root. Group related fact an
 
 ## YAML contract
 
-Dosi authors OSI Core `0.2.0.dev0` YAML. Unknown core fields are rejected, so Datus-specific behavior belongs in `custom_extensions` rather than arbitrary YAML keys.
+Dosi authors OSI Core `0.3.0.dev0` YAML. Unknown core fields are rejected, so Datus-specific behavior belongs in `nonportable_extensions` rather than arbitrary YAML keys.
 
-Dataset and metric upsert tools accept structured arrays in `datasets_json` and `metrics_json`; legacy JSON-encoded strings remain supported. DATUS extension `data` is always a JSON string.
+Dataset and metric upsert tools accept structured arrays in `datasets_json` and `metrics_json`; legacy JSON-encoded strings remain supported. DATUS extension `data` is always a JSON object.
 
 The authoring skill injects compact OSI shapes and the complete active DATUS capability directory. Detailed rules and examples are generated from the installed engine into the current session's read-only data directory. The agent uses the existing `read_file` tool to open the capability files it needs; the full core and extension references remain available there. Content changes create a new reference bundle and invalidate the prompt snapshot. No additional tool or loading-mode setting is required.
 
@@ -188,7 +188,7 @@ The principal fields are:
 | Object | Required or important fields | Meaning |
 | --- | --- | --- |
 | Root | `version`, `name`, `datasets` | Ossie version and model definition |
-| Semantic model | `name`, `datasets`; optional `description`, `ai_context`, `relationships`, `metrics`, `custom_extensions` | One business domain |
+| Semantic model | `name`, `datasets`; optional `description`, `ai_context`, `relationships`, `metrics`, `nonportable_extensions` | One business domain |
 | Dataset | `name`, `source`; optional `primary_key`, `unique_keys`, `fields`, descriptions and extensions | A physical table or reusable query |
 | Field | `name`, `expression`; optional `dimension`, `label`, descriptions and extensions | A source column or expression; dimension policy controls grouping availability |
 | Relationship | `name`, `from`, `to`, `from_columns`, `to_columns` | An equi-join; column arrays pair by position |
@@ -202,7 +202,7 @@ Use the dialect tag for the active datasource, for example `DUCKDB`, `POSTGRESQL
 The following model reflects that manual REPL output and passed native Dosi validation. Descriptions are translated for this English page; object names, expressions, and DATUS extensions match the generated structure.
 
 ```yaml
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: bank_failures
 datasets:
   - name: bank_failures
@@ -230,9 +230,9 @@ datasets:
         dimension:
           is_time: true
         description: Date of the bank failure.
-        custom_extensions:
+        nonportable_extensions:
           - vendor_name: DATUS
-            data: '{"v":"1.4","time_granularity":"day"}'
+            data: {"v":"1.4","time_granularity":"day"}
       - name: assets_million
         expression:
           dialects:
@@ -240,9 +240,9 @@ datasets:
               expression: '"Assets ($mil.)"'
         label: Assets ($mil.)
         description: Bank assets at failure, in millions of US dollars.
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DATUS
-        data: '{"v":"1.4","time_dimension":"date"}'
+        data: {"v":"1.4","time_dimension":"date"}
 
 relationships: []
 metrics:
@@ -254,9 +254,9 @@ metrics:
     description: Number of bank failure events.
     ai_context:
       instructions: Use date as business time; group by state or time granularity when requested.
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DATUS
-        data: '{"v":"1.4","dataset":"bank_failures","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","count"],"unit":"banks"}'
+        data: {"v":"1.4","dataset":"bank_failures","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","count"],"unit":"banks"}
 
   - name: failed_assets_million
     expression:
@@ -266,21 +266,21 @@ metrics:
     description: Total assets of failed banks, in millions of US dollars.
     ai_context:
       instructions: Use date as business time and sum assets at failure.
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DATUS
-        data: '{"v":"1.4","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","assets"],"unit":"USD million"}'
+        data: {"v":"1.4","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","assets"],"unit":"USD million"}
 ```
 
 This output comes from live schema and data checks rather than a prewritten template. It models only the four fields requested in the prompt and does not declare a key. DuckDB resolves the simple identifiers `Bank`, `State`, and `Date` without quotes; the physical name `Assets ($mil.)` requires double quotes because it contains spaces and punctuation.
 
 ## DATUS custom extensions
 
-`custom_extensions` is the OSI-standard escape hatch for vendor behavior. A DATUS entry keeps the document valid OSI while adding behavior used by Dosi. Consumers that do not understand DATUS may ignore the entry and still read the core model.
+`nonportable_extensions` is the OSI-standard escape hatch for vendor behavior. A DATUS entry keeps the document valid OSI while adding behavior used by Dosi. Consumers that do not understand DATUS may ignore the entry and still read the core model.
 
 ```yaml
-custom_extensions:
+nonportable_extensions:
   - vendor_name: DATUS
-    data: '{"v":"1.4","join_type":"left"}'
+    data: {"v":"1.4","join_type":"left"}
 ```
 
 Important rules:

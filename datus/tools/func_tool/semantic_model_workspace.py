@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Callable
 
@@ -16,6 +15,7 @@ from datus.tools.func_tool.fs_path_policy import PathZone, ResolvedPath
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetState
 from datus.tools.semantic_tools.metric_identity import metric_definitions, metric_uid, prepare_metric_uids
+from datus.utils.ossie_format import upgrade_document
 
 
 class SemanticModelWorkspace:
@@ -100,8 +100,9 @@ class SemanticModelWorkspace:
             self.require_metric_revision(target_path)
             original_content = target_path.read_bytes()
             document = yaml.safe_load(original_content)
+            upgraded = upgrade_document(document)
             changed = prepare_metric_uids(document)
-            if changed:
+            if changed or upgraded:
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 self.target_state.record_artifact_snapshot(target_path, original_content)
                 atomic_write_text(target_path, serialized)
@@ -119,26 +120,7 @@ class SemanticModelWorkspace:
         for extension in extensions:
             if not isinstance(extension, dict) or str(extension.get("vendor_name") or "").upper() != "DATUS":
                 continue
-            data = extension.get("data")
-            if isinstance(data, str):
-                try:
-                    parsed = json.loads(data)
-                except json.JSONDecodeError:
-                    parsed = {}
-                parsed = parsed if isinstance(parsed, dict) else {}
-                parsed["source_type"] = "query"
-                parsed["v"] = version
-                extension["data"] = json.dumps(parsed, ensure_ascii=False, sort_keys=True)
-            else:
-                parsed = dict(data) if isinstance(data, dict) else {}
-                parsed["source_type"] = "query"
-                parsed["v"] = version
-                extension["data"] = json.dumps(parsed, ensure_ascii=False, sort_keys=True)
+            extension["data"] = {**extension["data"], "source_type": "query", "v": version}
             return extensions
-        extensions.append(
-            {
-                "vendor_name": "DATUS",
-                "data": json.dumps({"source_type": "query", "v": version}, sort_keys=True),
-            }
-        )
+        extensions.append({"vendor_name": "DATUS", "data": {"source_type": "query", "v": version}})
         return extensions

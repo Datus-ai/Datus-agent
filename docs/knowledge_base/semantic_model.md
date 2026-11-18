@@ -60,7 +60,7 @@ The DuckDB datasource used in this example is configured in the [Semantic Modeli
 The following dataset is from the model generated against Datus's `duckdb-demo.duckdb` sample database. It shows the current OSI structure used by Dosi:
 
 ```yaml
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: bank_failures
 datasets:
   - name: bank_failures
@@ -88,9 +88,9 @@ datasets:
         dimension:
           is_time: true
         description: Bank failure date
-        custom_extensions:
+        nonportable_extensions:
           - vendor_name: DATUS
-            data: '{"v":"1.4","time_granularity":"day"}'
+            data: {"v":"1.4","time_granularity":"day"}
       - name: assets_million
         expression:
           dialects:
@@ -98,9 +98,9 @@ datasets:
               expression: '"Assets ($mil.)"'
         label: Assets ($mil.)
         description: Assets at failure, in millions of US dollars
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DATUS
-        data: '{"v":"1.4","time_dimension":"date"}'
+        data: {"v":"1.4","time_dimension":"date"}
 relationships: []
 metrics: []
 ```
@@ -126,24 +126,24 @@ relationships:
     to: customers
     from_columns: [customer_id]
     to_columns: [customer_id]
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DATUS
-        data: '{"v":"1.4","join_type":"left"}'
+        data: {"v":"1.4","join_type":"left"}
 ```
 
 `from` is normally the many side and `to` the one side. For a composite key, list all components in the same order on both sides.
 
 ## DATUS extensions
 
-`custom_extensions` is the OSI mechanism for Datus-specific behavior. A DATUS entry keeps the document valid OSI while adding execution or display hints used by Dosi.
+`nonportable_extensions` is the OSI mechanism for Datus-specific behavior. A DATUS entry keeps the document valid OSI while adding execution or display hints used by Dosi.
 
 ```yaml
-custom_extensions:
+nonportable_extensions:
   - vendor_name: DATUS
-    data: '{"v":"1.4","time_dimension":"date"}'
+    data: {"v":"1.4","time_dimension":"date"}
 ```
 
-The `data` value is a JSON string, not a nested YAML object. `semantic_modeling` writes the extension version expected by the installed engine, so generated version values should be preserved.
+The `data` value is a JSON object, not a nested YAML object. `semantic_modeling` writes the extension version expected by the installed engine, so generated version values should be preserved.
 
 Common semantic-model extensions are:
 

@@ -18,6 +18,7 @@ from datus.tools.semantic_tools.metric_identity import (
     ensure_metric_uid,
     validate_metric_uids,
 )
+from datus.utils.ossie_format import CURRENT_VERSION, EXTENSIONS, upgrade_dataset, upgrade_document, upgrade_extensions
 
 if TYPE_CHECKING:
     from datus.tools.func_tool.semantic_model_workspace import SemanticModelWorkspace
@@ -95,9 +96,13 @@ class SemanticModelEditingTools:
             if not isinstance(dataset, dict):
                 return FuncToolResult(success=0, error=f"datasets_json[{index}] must be a JSON object")
             dataset = dict(dataset)
+            try:
+                upgrade_dataset(dataset)
+            except ValueError as exc:
+                return FuncToolResult(success=0, error=str(exc))
             source = str(dataset.get("source") or "").lstrip().lower()
             if re.match(r"^(?:select|with)\s", source):
-                dataset["custom_extensions"] = self.workspace.query_source_extensions(dataset.get("custom_extensions"))
+                dataset[EXTENSIONS] = self.workspace.query_source_extensions(dataset.get(EXTENSIONS))
             name = str(dataset.get("name") or "").strip()
             if not name:
                 return FuncToolResult(success=0, error=f"datasets_json[{index}].name is required")
@@ -121,7 +126,7 @@ class SemanticModelEditingTools:
                         result={"code": "semantic_model_target_required"},
                     )
                 document = {
-                    "version": "0.2.0.dev0",
+                    "version": CURRENT_VERSION,
                     "name": planned_name,
                     "datasets": [],
                     "relationships": [],
@@ -139,6 +144,10 @@ class SemanticModelEditingTools:
                 except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
                     return FuncToolResult(success=0, error=f"Cannot load OSI semantic model {resolved.display}: {exc}")
 
+            try:
+                upgrade_document(document)
+            except ValueError as exc:
+                return FuncToolResult(success=0, error=str(exc))
             if not isinstance(document, dict):
                 return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
             models = [document] if "datasets" in document else None
@@ -163,6 +172,9 @@ class SemanticModelEditingTools:
             for name, dataset in incoming_by_name.items():
                 if name in dataset_indexes:
                     index = dataset_indexes[name]
+                    # Dataset-scoped metrics are opaque to the dataset authoring tool.
+                    if "metrics" not in dataset and "metrics" in existing_datasets[index]:
+                        dataset["metrics"] = existing_datasets[index]["metrics"]
                     if existing_datasets[index] == dataset:
                         unchanged.append(name)
                     else:
@@ -265,6 +277,10 @@ class SemanticModelEditingTools:
             except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
                 return FuncToolResult(success=0, error=f"Cannot load OSI semantic model {resolved.display}: {exc}")
 
+            try:
+                upgrade_document(document)
+            except ValueError as exc:
+                return FuncToolResult(success=0, error=str(exc))
             if not isinstance(document, dict):
                 return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
             models = [document] if "datasets" in document else None
@@ -378,6 +394,10 @@ class SemanticModelEditingTools:
                 return FuncToolResult(success=0, error=f"metrics_json[{index}].name is required")
             if name in incoming_by_name:
                 return FuncToolResult(success=0, error=f"metrics_json contains duplicate metric name: {name}")
+            try:
+                upgrade_extensions(metric)
+            except ValueError as exc:
+                return FuncToolResult(success=0, error=str(exc))
             incoming_by_name[name] = metric
 
         target_path = resolved.resolved
@@ -413,6 +433,10 @@ class SemanticModelEditingTools:
             except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
                 return FuncToolResult(success=0, error=f"Cannot load OSI semantic model {resolved.display}: {exc}")
 
+            try:
+                upgrade_document(document)
+            except ValueError as exc:
+                return FuncToolResult(success=0, error=str(exc))
             if not isinstance(document, dict):
                 return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
             models = [document] if "datasets" in document else None
@@ -565,6 +589,10 @@ class SemanticModelEditingTools:
             except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
                 return FuncToolResult(success=0, error=f"Cannot load OSI semantic model {resolved.display}: {exc}")
 
+            try:
+                upgrade_document(document)
+            except ValueError as exc:
+                return FuncToolResult(success=0, error=str(exc))
             if not isinstance(document, dict):
                 return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
             models = [document] if "datasets" in document else None

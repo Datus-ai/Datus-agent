@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import ast
 import copy
-import json
 from typing import Any
 
 import sqlglot
@@ -20,6 +19,7 @@ import yaml
 from sqlglot import exp
 
 from datus.tools.semantic_tools.dosi.authoring import dosi_validation_text_payload
+from datus.utils.ossie_format import EXTENSIONS, upgrade_document
 
 _OPERATORS = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/", ast.Mod: "%"}
 _MAX_EXPANDED_SQL = 1_000_000
@@ -67,6 +67,7 @@ def _ratio_sql(sql: str, dialect: str) -> str:
     """
     aliases = {
         "ansi_sql": None,
+        "ossie_sql_2026": None,
         "postgresql": "postgres",
         "greenplum": "postgres",
         "hologres": "postgres",
@@ -91,13 +92,33 @@ def _ratio_sql(sql: str, dialect: str) -> str:
     return sql
 
 
+def _member_expression(expression: dict, language: str, name: str) -> tuple[str, str]:
+    """Select the matching vendor variant, then the portable fallback."""
+    variants = expression.get("dialects", [])
+    portable = "OSSIE_SQL_2026"
+    order = [language]
+    if language != portable:
+        order.append(portable)
+    else:
+        order.append("ANSI_SQL")
+    for dialect in order:
+        if dialect == portable and "sql" in expression:
+            return dialect, expression["sql"]
+        matches = [item["expression"] for item in variants if item["dialect"] == dialect]
+        if len(matches) == 1:
+            return dialect, matches[0]
+        if matches:
+            break
+    raise ValueError(f"{name} must provide exactly one {language} expression")
+
+
 def _extension(metric: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    entries = [entry for entry in metric.get("custom_extensions", []) if entry.get("vendor_name") == "DATUS"]
+    entries = [entry for entry in metric.get(EXTENSIONS, []) if str(entry.get("vendor_name", "")).upper() == "DATUS"]
     if len(entries) > 1:
         raise ValueError(f"{metric['name']}: multiple DATUS extensions cannot be edited automatically")
     if not entries:
         return None, {}
-    data = json.loads(entries[0]["data"])
+    data = entries[0]["data"]
     if not isinstance(data, dict):
         raise ValueError(f"{metric['name']}: DATUS data must encode an object")
     return entries[0], data
@@ -113,6 +134,7 @@ def prepare_metric_definitions(
     """Expand affected compose definitions atomically and validate the candidate."""
     try:
         document = yaml.safe_load(model_text)
+        upgrade_document(document)
         models = [document] if isinstance(document, dict) and "datasets" in document else None
         if not isinstance(models, list) or len(models) != 1:
             raise ValueError("The editor requires one root model with datasets")
@@ -150,7 +172,7 @@ def prepare_metric_definitions(
                             renamed = True
                     if renamed:
                         derive["expr"] = ast.unparse(tree)
-                        entry["data"] = json.dumps(data, ensure_ascii=False)
+                        entry["data"] = data
                 trees[name] = tree
                 refs = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
             elif derive:
@@ -203,21 +225,21 @@ def prepare_metric_definitions(
                 expand(ref)
 
             metric = by_name[name]
-            dialects = metric.get("expression", {}).get("dialects", [])
-            if not dialects:
+            expression = metric.get("expression", {})
+            variants = [(entry["dialect"], entry, "expression") for entry in expression.get("dialects", [])]
+            if "sql" in expression:
+                variants.append(("OSSIE_SQL_2026", expression, "sql"))
+            if not variants:
                 raise ValueError(f"{name}: choose at least one SQL dialect")
-            for dialect in dialects:
-                language = dialect["dialect"]
+            for language, carrier, key in variants:
 
                 def render(node: ast.expr, language: str = language) -> str:
                     if isinstance(node, ast.Name):
-                        variants = by_name[node.id].get("expression", {}).get("dialects", [])
-                        matches = [item["expression"] for item in variants if item["dialect"] == language]
-                        if len(matches) != 1:
-                            raise ValueError(f"{name}: {node.id} must provide exactly one {language} expression")
-                        value = resolved.get((node.id, language))
+                        member = by_name[node.id].get("expression", {})
+                        member_language, sql = _member_expression(member, language, f"{name}: {node.id}")
+                        value = resolved.get((node.id, member_language))
                         if value is None:
-                            value = _ratio_sql(matches[0], language)
+                            value = _ratio_sql(sql, member_language)
                         return _bounded_sql(f"({value})")
                     if isinstance(node, ast.Constant):
                         return str(node.value)
@@ -229,7 +251,7 @@ def prepare_metric_definitions(
                 expanded = _ratio_sql(render(trees[name]), language)
                 resolved[(name, language)] = expanded
                 if name in affected:
-                    dialect["expression"] = expanded
+                    carrier[key] = expanded
             visiting.remove(name)
             done.add(name)
 
@@ -242,9 +264,7 @@ def prepare_metric_definitions(
         if validation.get("valid"):
             for name, metric in by_name.items():
                 fields = {
-                    key: metric[key]
-                    for key in ("expression", "custom_extensions")
-                    if metric.get(key) != original[name].get(key)
+                    key: metric[key] for key in ("expression", EXTENSIONS) if metric.get(key) != original[name].get(key)
                 }
                 if fields:
                     patches.append({"name": name, "fields": fields})

@@ -59,7 +59,7 @@ def test_native_authoring_errors_explain_complete_object_repairs():
 
     document = yaml.safe_load(_advanced_model("STARROCKS"))
     metrics = document["metrics"]
-    metrics[2]["expression"]["dialects"][0]["expression"] = "SUM(orders.amount)"
+    metrics[2]["expression"]["sql"] = "SUM(orders.amount)"
     result = dosi_validation_text_payload(yaml.safe_dump(document))
     mismatch = next(e for e in result["compile_errors"] if e["code"] == "derive_expression_mismatch")
     assert "does not generate" in mismatch["hint"]
@@ -69,7 +69,7 @@ def test_native_authoring_errors_explain_complete_object_repairs():
     assert "metric 'average_order_value'" in "; ".join(validation_messages(result))
 
     metrics[2] = yaml.safe_load(_advanced_model("STARROCKS"))["metrics"][2]
-    metrics[3]["expression"]["dialects"][0]["expression"] = "RANK() OVER (ORDER BY SUM(orders.amount))"
+    metrics[3]["expression"]["sql"] = "RANK() OVER (ORDER BY SUM(orders.amount))"
     result = dosi_validation_text_payload(yaml.safe_dump(document))
     window = next(e for e in result["compile_errors"] if e["code"] == "window_in_metric")
     assert "capability-window.yaml" in window["hint"]

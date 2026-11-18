@@ -885,7 +885,7 @@ async def test_catalog_refreshes_when_external_dependency_availability_changes(t
     external_dir = tmp_path / "shared"
     for directory in (models_dir, ontology_dir, external_dir):
         directory.mkdir()
-    model_template = """version: 0.2.0.dev0
+    model_template = """version: 0.3.0.dev0
 name: {name}
 datasets:
   - name: orders
@@ -900,7 +900,7 @@ metrics:
     for name in ("healthy", "recovering"):
         (models_dir / f"{name}.yaml").write_text(model_template.format(name=name))
     (ontology_dir / "mapping.yaml").write_text(
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         "name: recovering_mapping\n"
         "ontology_ref: {name: Shop, iri: ../shared/ontology.yaml}\n"
         "semantic_model_ref: {name: recovering, iri: ../models/recovering.yaml}\n"
@@ -917,7 +917,7 @@ metrics:
     assert [metric.name for metric in await runtime.list_metrics()] == ["healthy_count"]
     assert [metric.name for metric in await runtime.list_metrics()] == ["healthy_count"]
 
-    external.write_text("version: 0.2.0.dev0\nname: Shop\nontology: []\n")
+    external.write_text("version: 0.3.0.dev0\nname: Shop\nontology: []\n")
     assert [(path.read_bytes(), path.stat().st_mtime_ns) for path in tracked_files] == original
     assert [metric.name for metric in await runtime.list_metrics()] == ["healthy_count", "recovering_count"]
     result = await runtime.query_metrics(["recovering_count"], dry_run=True)
@@ -931,6 +931,6 @@ metrics:
     result = await runtime.query_metrics(["healthy_count"], dry_run=True)
     assert "COUNT" in result.metadata["sql"].upper()
 
-    external.write_text("version: 0.2.0.dev0\nname: Shop\nontology: []\n")
+    external.write_text("version: 0.3.0.dev0\nname: Shop\nontology: []\n")
     assert [metric.name for metric in await runtime.list_metrics()] == ["healthy_count", "recovering_count"]
     assert [(path.read_bytes(), path.stat().st_mtime_ns) for path in tracked_files] == original

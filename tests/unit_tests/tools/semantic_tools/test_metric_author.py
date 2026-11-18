@@ -29,7 +29,7 @@ def test_synced_metrics_can_be_read_and_mutated_without_rewrapping(tmp_path, suf
         ],
     }
     document = model
-    document["version"] = "0.2.0.dev0"
+    document["version"] = "0.3.0.dev0"
     original = copy.deepcopy(document)
     path = tmp_path / f"model.{suffix}"
     path.write_text(json.dumps(document) if suffix == "json" else yaml.safe_dump(document))

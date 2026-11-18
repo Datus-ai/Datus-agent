@@ -112,7 +112,9 @@ def decode_extension_data(raw: Any) -> dict[str, Any]:
 def datus_payload(node: dict[str, Any]) -> dict[str, Any]:
     """Return the first DATUS payload, matching the native engine."""
 
-    extensions = node.get("custom_extensions") or []
+    from datus.utils.ossie_format import extension_entries
+
+    extensions = extension_entries(node) or []
     if isinstance(extensions, dict):
         extensions = [extensions]
     for extension in extensions:

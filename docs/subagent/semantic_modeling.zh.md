@@ -175,9 +175,9 @@ subject/semantic_models/<datasource>/<semantic_model>.yml
 
 ## YAML 规范
 
-Dosi 生成 OSI Core `0.2.0.dev0` YAML。core schema 不允许未知字段，因此 Datus 特有行为必须写在 `custom_extensions` 中，不能随意增加 YAML key。
+Dosi 生成 OSI Core `0.3.0.dev0` YAML。core schema 不允许未知字段，因此 Datus 特有行为必须写在 `nonportable_extensions` 中，不能随意增加 YAML key。
 
-dataset 和 metric 写入工具的 `datasets_json`、`metrics_json` 接收结构化数组，兼容旧的 JSON 编码字符串。DATUS 扩展的 `data` 始终使用 JSON 字符串。
+dataset 和 metric 写入工具的 `datasets_json`、`metrics_json` 接收结构化数组，兼容旧的 JSON 编码字符串。DATUS 扩展的 `data` 始终使用 JSON 对象。
 
 Authoring skill 默认注入紧凑的 OSI 结构与完整的 DATUS 能力目录。详细规则和示例由当前安装的引擎生成，放入当前会话的数据目录，以只读方式访问。Agent 使用已有的 `read_file` 按需读取对应能力文件，也可读取完整的 core 和 extension 规范。内容变化会生成新的参考文件目录，并使 prompt 缓存失效；无需新增工具或配置加载模式。
 
@@ -188,7 +188,7 @@ Authoring skill 默认注入紧凑的 OSI 结构与完整的 DATUS 能力目录�
 | 对象 | 必需或重要字段 | 含义 |
 | --- | --- | --- |
 | 根对象 | `version`、`name`、`datasets` | Ossie 版本和模型定义 |
-| Semantic model | `name`、`datasets`；可选 `description`、`ai_context`、`relationships`、`metrics`、`custom_extensions` | 一个业务域 |
+| Semantic model | `name`、`datasets`；可选 `description`、`ai_context`、`relationships`、`metrics`、`nonportable_extensions` | 一个业务域 |
 | Dataset | `name`、`source`；可选 `primary_key`、`unique_keys`、`fields`、说明和 extension | 物理表或可复用查询 |
 | Field | `name`、`expression`；可选 `dimension`、`label`、说明和 extension | 来源列或表达式，维度策略决定能否参与分组 |
 | Relationship | `name`、`from`、`to`、`from_columns`、`to_columns` | 等值关联；两组列按位置配对 |
@@ -202,7 +202,7 @@ Authoring skill 默认注入紧凑的 OSI 结构与完整的 DATUS 能力目录�
 下面是这次手动 REPL 生成并通过 Dosi 原生校验的模型；仅调整了 YAML 缩进和长行换行，模型内容与真实产物一致：
 
 ```yaml
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: bank_failures
 datasets:
   - name: bank_failures
@@ -230,9 +230,9 @@ datasets:
         dimension:
           is_time: true
         description: 银行倒闭日期
-        custom_extensions:
+        nonportable_extensions:
           - vendor_name: DATUS
-            data: '{"v":"1.4","time_granularity":"day"}'
+            data: {"v":"1.4","time_granularity":"day"}
       - name: assets_million
         expression:
           dialects:
@@ -240,9 +240,9 @@ datasets:
               expression: '"Assets ($mil.)"'
         label: Assets ($mil.)
         description: 倒闭时资产总额（百万美元）
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DATUS
-        data: '{"v":"1.4","time_dimension":"date"}'
+        data: {"v":"1.4","time_dimension":"date"}
 
 relationships: []
 metrics:
@@ -254,9 +254,9 @@ metrics:
     description: 倒闭银行数量，即银行倒闭事件的记录数。
     ai_context:
       instructions: 按 date 作为业务时间，统计倒闭事件条数；可按 state 或时间粒度分组。
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DATUS
-        data: '{"v":"1.4","dataset":"bank_failures","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","count"],"unit":"banks"}'
+        data: {"v":"1.4","dataset":"bank_failures","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","count"],"unit":"banks"}
 
   - name: failed_assets_million
     expression:
@@ -266,21 +266,21 @@ metrics:
     description: 倒闭银行资产总额（单位：百万美元）。
     ai_context:
       instructions: 按 date 作为业务时间，对倒闭时资产求和；单位是百万美元。
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DATUS
-        data: '{"v":"1.4","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","assets"],"unit":"USD million"}'
+        data: {"v":"1.4","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","assets"],"unit":"USD million"}
 ```
 
 这个结果来自真实 schema 和数据检查，而不是预先编写的模板。它只为提示词要求的 4 个字段建模，也没有声明 key。DuckDB 可以不加引号解析 `Bank`、`State` 和 `Date` 这些简单标识符；`Assets ($mil.)` 含空格和符号，因此使用双引号表达式。
 
 ## DATUS custom extension 简介
 
-`custom_extensions` 是 OSI 规范为厂商行为预留的扩展机制。DATUS entry 可以在保持文档符合 OSI 的同时，增加 Dosi 使用的计算行为。不理解 DATUS 的 consumer 可以忽略该 entry，仍然读取 core model。
+`nonportable_extensions` 是 OSI 规范为厂商行为预留的扩展机制。DATUS entry 可以在保持文档符合 OSI 的同时，增加 Dosi 使用的计算行为。不理解 DATUS 的 consumer 可以忽略该 entry，仍然读取 core model。
 
 ```yaml
-custom_extensions:
+nonportable_extensions:
   - vendor_name: DATUS
-    data: '{"v":"1.4","join_type":"left"}'
+    data: {"v":"1.4","join_type":"left"}
 ```
 
 使用时需要注意：

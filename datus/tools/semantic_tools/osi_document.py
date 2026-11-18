@@ -22,6 +22,7 @@ import yaml
 from datus.tools.semantic_tools.dosi.model import iter_semantic_models
 from datus.tools.semantic_tools.metric_identity import validate_metric_uid, validate_unique_metric_uids
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.ossie_format import extension_entries
 
 _TEMPORAL_DATATYPES = frozenset({"Date", "Time", "DateTime", "DateTimeTz"})
 
@@ -109,7 +110,7 @@ class OsiDocument:
 
 def _extension_payload(node: dict[str, Any]) -> dict[str, Any]:
     payload: dict[str, Any] = {}
-    extensions = node.get("custom_extensions") or []
+    extensions = extension_entries(node) or []
     if isinstance(extensions, dict):
         extensions = [extensions]
     for extension in extensions:
@@ -137,9 +138,12 @@ def _expression(node: dict[str, Any]) -> str | None:
     if not isinstance(expression, dict):
         return None
     dialects = [item for item in expression.get("dialects") or [] if isinstance(item, dict)]
-    for item in dialects:
-        if str(item.get("dialect") or "").upper() == "ANSI_SQL" and isinstance(item.get("expression"), str):
-            return item["expression"]
+    if isinstance(expression.get("sql"), str):
+        return expression["sql"]
+    for preferred in ("OSSIE_SQL_2026", "ANSI_SQL"):
+        for item in dialects:
+            if str(item.get("dialect") or "").upper() == preferred and isinstance(item.get("expression"), str):
+                return item["expression"]
     for item in dialects:
         if isinstance(item.get("expression"), str):
             return item["expression"]
@@ -250,7 +254,7 @@ def _dataset(node: dict[str, Any]) -> OsiDataset:
         fields=field_views,
         description=str(node.get("description") or ""),
         ai_context=node.get("ai_context"),
-        custom_extensions=[item for item in node.get("custom_extensions") or [] if isinstance(item, dict)],
+        custom_extensions=[item for item in extension_entries(node) or [] if isinstance(item, dict)],
     )
 
 
