@@ -175,6 +175,21 @@ def extract_table_names_for_scope(sql: str, dialect: str) -> List[str]:
     parsed = sqlglot.parse_one(sql, read=read_dialect, error_level=sqlglot.ErrorLevel.RAISE)
     if parsed is None:
         raise ValueError("SQL parser returned no expression")
+    original_tables = {
+        id(table): ".".join(part.sql(dialect=read_dialect) for part in table.parts) for table in parsed.find_all(Table)
+    }
+    # Scope dictionaries use strings, so construct them from dialect identities:
+    # PostgreSQL Foo == foo, but "Foo" != foo; Snowflake folds the other way.
+    # Normalize identifiers directly: SQL comments must not opt out through
+    # sqlglot's case_sensitive metadata. Keep original spellings for table ACLs.
+    sql_dialect = sqlglot.Dialect.get_or_raise(read_dialect)
+    for identifier in parsed.find_all(expressions.Identifier):
+        sql_dialect.normalize_identifier(identifier)
+    if read_dialect in {"sqlite", "tsql", "snowflake", "oracle"}:
+        # These engines allow recursive CTEs without the RECURSIVE keyword.
+        # This affects lexical analysis only; the submitted SQL is unchanged.
+        for with_clause in parsed.find_all(expressions.With):
+            with_clause.set("recursive", True)
     # Exclude only references resolved to a virtual source in their own scope.
     # Scopes enumerate query sources, not DML/DDL targets: starting with all
     # Table nodes also keeps UPDATE/INSERT/DELETE targets with subqueries checked.
@@ -197,8 +212,7 @@ def extract_table_names_for_scope(sql: str, dialect: str) -> List[str]:
                 and scope.cte_sources.get(table.name) is source
             ):
                 virtual_references.add(id(table))
-    tables = [table for table in parsed.find_all(Table) if id(table) not in virtual_references]
-    return sorted({".".join(part.sql(dialect=read_dialect) for part in table.parts) for table in tables})
+    return sorted({name for identity, name in original_tables.items() if identity not in virtual_references})
 
 
 def extract_table_names_strict(sql, dialect="snowflake", ignore_empty=False) -> List[str]:

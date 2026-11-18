@@ -1000,3 +1000,25 @@ def test_cte_name_collision_cannot_hide_attached_sqlite_table(relations):
         assert allowed.success == 1, allowed.error
     finally:
         connector.close()
+
+
+@pytest.mark.acceptance
+def test_sqlite_implicit_recursive_cte_keeps_qualified_physical_references_scoped():
+    from datus.tools.db_tools.config import SQLiteConfig
+    from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+
+    connector = SQLiteConnector(SQLiteConfig(db_path=":memory:", database_name="main"))
+    try:
+        connector.connect()
+        connector.connection.executescript("CREATE TABLE seq (n INTEGER); INSERT INTO seq VALUES (1);")
+        tool = DBFuncTool(connector, scoped_tables={"main.allowed"})
+        recursive = "WITH seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<3) SELECT * FROM seq"
+        assert [row[0] for row in connector.connection.execute(recursive)] == [1, 2, 3]
+        allowed = tool.read_query(recursive)
+        assert allowed.success == 1, allowed.error
+        physical = "WITH seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM main.seq WHERE n<3) SELECT * FROM seq"
+        assert [row[0] for row in connector.connection.execute(physical)] == [1, 2]
+        denied = tool.read_query(physical)
+        assert denied.success == 0 and "outside scoped context" in denied.error
+    finally:
+        connector.close()
