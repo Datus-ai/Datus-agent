@@ -5,6 +5,7 @@
 """ChannelBridge — routes IM messages through ChatTaskManager and sends responses back."""
 
 import asyncio
+import json
 from collections import OrderedDict
 from typing import Dict, Optional
 
@@ -72,16 +73,31 @@ class ChannelBridge:
     def _conversation_key(self, msg: InboundMessage) -> str:
         """Stable key for a conversation (before session suffix)."""
         parts = [msg.channel_id, msg.conversation_id]
-        if msg.thread_id:
+        if msg.thread_id is not None:
             parts.append(msg.thread_id)
-        if msg.session_scope:
-            parts.append(msg.session_scope)
-        return "--".join(parts)
+        legacy = "--".join(parts)
+        if (
+            msg.session_scope is None
+            and all(part and "--" not in part and not part.startswith("-") and not part.endswith("-") for part in parts)
+            and SessionManager._SESSION_ID_RE.fullmatch(legacy)
+        ):
+            return legacy
+        # Explicit null slots distinguish scope from thread and empty from absent.
+        # JSON cannot alias the validator-safe legacy keys retained above.
+        return json.dumps(
+            [msg.channel_id, msg.conversation_id, msg.thread_id, msg.session_scope],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
 
     def build_session_id(self, msg: InboundMessage) -> str:
         """Deterministic session id from channel + conversation (+ thread)."""
         conv_key = self._conversation_key(msg)
-        return f"gateway_{conv_key}"
+        legacy = f"gateway_{conv_key}"
+        if SessionManager._SESSION_ID_RE.fullmatch(legacy):
+            return legacy
+        # A disjoint prefix prevents aliasing any historical gateway_ ID.
+        return f"gateway-v2_{conv_key.encode('utf-8').hex()}"
 
     def clear_session(self, msg: InboundMessage) -> None:
         """Clear the conversation history for the current session."""

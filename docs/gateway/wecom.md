@@ -32,6 +32,10 @@ gateway reads YAML on startup; restart it after changing configuration.
 - Only text is currently supported. Other message types receive an explanatory reply.
 - Direct conversations retain history per user. Group history is isolated per group
   and sender; WeCom does not use Slack-style threads. `/reset` resets that scope.
+  Unscoped conversations keep unambiguous, path-safe legacy session IDs. Scoped,
+  ambiguous, or unsafe identifiers use a distinct UTF-8 hex encoding to prevent
+  scope/thread and delimiter collisions. Ambiguous legacy IDs cannot be reused
+  safely because multiple conversations could already share the same ID.
 - Replies begin with a processing placeholder, then update the same stream with
   accumulated Markdown. The final update sets `finish=true`.
 - A turn still running after 300 seconds closes its stream and delivers the final
@@ -48,6 +52,9 @@ gateway reads YAML on startup; restart it after changing configuration.
   not chat-message polling. Pending callbacks cancel their chat tasks on connection
   loss and wait up to five seconds for cleanup before reconnecting. A cleanup timeout
   is logged; unfinished tasks remain tracked by the task manager.
+  Node database-lease release also has a five-second wait limit. A timed-out
+  release worker can finish later; session persistence is still drained before
+  task removal, and session resources are closed normally.
   There is no durable message queue or exactly-once delivery across process restarts.
 
 Advanced YAML-only `extra` options: `ws_url` (default

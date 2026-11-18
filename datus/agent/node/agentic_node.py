@@ -69,6 +69,9 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# Bound waiting for datasource leases; their release worker never writes sessions.
+_DATABASE_CLOSE_TIMEOUT = 5.0
+
 
 class AgenticNode(Node):
     """
@@ -417,7 +420,11 @@ class AgenticNode(Node):
         db_tool = getattr(self, "db_func_tool", None)
         if db_tool is not None:
             try:
-                await asyncio.to_thread(db_tool.close)
+                await asyncio.wait_for(asyncio.to_thread(db_tool.close), timeout=_DATABASE_CLOSE_TIMEOUT)
+            except asyncio.TimeoutError:
+                # DBFuncTool.close only drains operations and returns leases.
+                # Let that worker finish safely without delaying session closure.
+                logger.warning("Node database tool release timed out after %.1fs", _DATABASE_CLOSE_TIMEOUT)
             except Exception:
                 logger.exception("Failed to release node database tool")
         session = getattr(self, "_session", None)

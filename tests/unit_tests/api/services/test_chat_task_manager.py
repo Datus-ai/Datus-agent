@@ -3843,6 +3843,69 @@ async def test_repeated_stop_drains_persistence_before_releasing_node(real_agent
 
 
 @pytest.mark.asyncio
+async def test_gateway_shutdown_bounds_database_release_but_drains_session_writes(
+    real_agent_config, monkeypatch, caplog
+):
+    from datus.agent.node.agentic_node import AgenticNode
+    from datus.api.models.cli_models import StreamChatInput
+    from datus.gateway.runtime import DatusGateway
+
+    caplog.set_level("WARNING")
+    monkeypatch.setattr("datus.agent.node.agentic_node._DATABASE_CLOSE_TIMEOUT", 0.05, raising=False)
+    gateway = DatusGateway(real_agent_config, {})
+    manager = gateway._task_manager
+    node = TestRunLoopSettlesTurn._node(raise_after=asyncio.CancelledError())
+    monkeypatch.setattr(type(node), "aclose", AgenticNode.aclose, raising=False)
+    session, session_manager = MagicMock(), MagicMock()
+    node._session, node._session_manager = session, session_manager
+    db_entered, release_db = threading.Event(), threading.Event()
+    persist_entered, release_persist = asyncio.Event(), asyncio.Event()
+
+    def close_database():
+        db_entered.set()
+        release_db.wait()
+
+    async def persist(*args):
+        persist_entered.set()
+        await release_persist.wait()
+
+    node.db_func_tool = SimpleNamespace(close=close_database)
+    manager._create_node = lambda *args, **kwargs: node
+    manager._persist_message_contents = persist
+    task = ChatTask("gateway-stalled-release", None)
+    manager._tasks[task.session_id] = task
+    task.asyncio_task = asyncio.create_task(
+        manager._run_loop(task, real_agent_config, StreamChatInput(message="hi", session_id=task.session_id))
+    )
+    stopping = None
+    try:
+        await asyncio.wait_for(persist_entered.wait(), 2)
+        stopping = asyncio.create_task(gateway.shutdown())
+        await asyncio.sleep(0.08)
+        assert not stopping.done()
+        assert manager.get_task(task.session_id) is task
+        assert task.node is node
+        release_persist.set()
+        async with asyncio.timeout(1):
+            while not db_entered.is_set():
+                await asyncio.sleep(0.01)
+        await asyncio.wait({stopping}, timeout=0.3)
+        assert stopping.done()
+        assert stopping.exception() is None
+        session.close.assert_called_once()
+        session_manager.close_all_sessions.assert_called_once()
+        assert task.asyncio_task.done()
+        assert task.node is None
+        assert task.session_id not in manager._tasks
+        assert "database tool release timed out" in caplog.text
+    finally:
+        release_persist.set()
+        release_db.set()
+        await asyncio.gather(task.asyncio_task, *([stopping] if stopping is not None else []), return_exceptions=True)
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("limit", ["count", "bytes"])
 async def test_reused_session_replay_caps_keep_latest_completed_turns(real_agent_config, limit):
     from datus.api.models.cli_models import StreamChatInput

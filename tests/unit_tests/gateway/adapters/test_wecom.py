@@ -429,9 +429,12 @@ async def test_cancelled_handler_stops_and_drains_its_manager_task(peer, monkeyp
                 assert len(peer.sockets) == 1
                 assert stopping is None or not stopping.done()
                 # A second cancellation must not abandon native model cleanup.
-                for handler in list(adapter._handlers):
+                handlers = list(adapter._handlers)
+                assert handlers
+                for handler in handlers:
                     handler.cancel()
-                await asyncio.sleep(0)
+                done, _ = await asyncio.wait(handlers, timeout=0.03)
+                assert not done
                 assert not cleaned.is_set()
             finally:
                 release_cleanup.set()

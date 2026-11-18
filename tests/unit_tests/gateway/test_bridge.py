@@ -4,6 +4,7 @@
 """Unit tests for datus.gateway.bridge.ChannelBridge."""
 
 import asyncio
+import itertools
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -30,6 +31,7 @@ from datus.gateway.models import (
     ReactionEvent,
     Verbose,
 )
+from datus.models.session_manager import SessionManager
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -219,6 +221,36 @@ class TestChannelBridge:
         sid = bridge.build_session_id(msg)
         assert sid == "gateway_ch1--conv1--t42"
 
+    def test_session_keys_are_injective_and_validator_safe(self, setup):
+        bridge, _, _ = setup
+        combinations = list(
+            itertools.product(
+                ["ch1", "a--b", "a-", "a", "用户"],
+                ["conv1", "b--c", "-b", "b", "c", "chat@tenant"],
+                [None, "", "scope", "b--c"],
+                [None, "", "scope", "b--c"],
+            )
+        )
+        messages = [
+            _make_inbound().model_copy(
+                update=dict(zip(["channel_id", "conversation_id", "thread_id", "session_scope"], values))
+            )
+            for values in combinations
+        ]
+        assert len({bridge._conversation_key(msg) for msg in messages}) == len(combinations)
+        ids = [bridge.build_session_id(msg) for msg in messages]
+        assert len(set(ids)) == len(combinations)
+        assert all(SessionManager._validate_session_id(session_id) == session_id for session_id in ids)
+
+    @pytest.mark.parametrize("conversation", ["user@tenant", "讨论组", "folder/name", "path\\name"])
+    def test_invalid_legacy_session_id_uses_disjoint_hex_encoding(self, setup, conversation):
+        bridge, _, _ = setup
+        msg = _make_inbound().model_copy(update={"conversation_id": conversation})
+        session_id = bridge.build_session_id(msg)
+        assert not session_id.startswith("gateway_")
+        assert SessionManager._validate_session_id(session_id) == session_id
+        assert bytes.fromhex(session_id.removeprefix("gateway-v2_")).decode("utf-8") == bridge._conversation_key(msg)
+
     @pytest.mark.asyncio
     async def test_streams_each_event(self, setup):
         """Each SSE message event should produce a separate outbound message.
@@ -332,6 +364,11 @@ class TestChannelBridge:
                 repeater.cancel()
                 await asyncio.gather(repeater, return_exceptions=True)
             release_cleanup.set()
+            # Setup failures may leave a task before its cleanup checkpoint.
+            if not handler.done():
+                handler.cancel()
+            if not model_task.done() and not cleanup_started.is_set():
+                model_task.cancel()
             await asyncio.gather(handler, model_task, return_exceptions=True)
 
     @pytest.mark.asyncio
