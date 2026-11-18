@@ -1362,7 +1362,7 @@ class ClaudeModel(OpenAICompatibleModel):
                                     logger.error(f"Error executing function tool {block.name}: {str(e)}")
 
                             # Fall back to MCP servers via pre-built mapping
-                            if not tool_executed:
+                            if not tool_executed and block.name not in func_tool_map:
                                 target_server = tool_server_map.get(block.name)
                                 if target_server:
                                     try:

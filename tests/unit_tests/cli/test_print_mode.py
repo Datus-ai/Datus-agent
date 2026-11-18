@@ -835,7 +835,8 @@ class TestStreamChatActions:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("final_success", [True, False])
-    async def test_stream_chat_response_action(self, final_success):
+    @pytest.mark.parametrize("provider_action", ["response", "final_response"])
+    async def test_stream_chat_response_action(self, final_success, provider_action):
         """Only the finalized answer or failure reaches stdout, never the model's provisional JSON."""
         from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
@@ -843,7 +844,7 @@ class TestStreamChatActions:
             action_id="model_1",
             role=ActionRole.ASSISTANT,
             messages="Draft ready",
-            action_type="response",
+            action_type=provider_action,
             output={"raw_output": '{"output":"Draft ready; waiting for publication"}', "is_thinking": False},
             status=ActionStatus.SUCCESS,
         )
@@ -853,20 +854,33 @@ class TestStreamChatActions:
             messages="SQL generated" if final_success else "Finalization failed",
             action_type="gen_sql_response" if final_success else "error",
             input=None,
-            output={"sql": "SELECT 1", "response": "Final answer"} if final_success else {"error": "Invalid JSON"},
+            output={"sql": "SELECT 1", "response": "Final answer", "data": {"count": 3}}
+            if final_success
+            else {"error": "Invalid JSON"},
             status=ActionStatus.SUCCESS if final_success else ActionStatus.FAILED,
         )
 
         mock_node = MagicMock()
         mock_node.session_id = None
+        mock_node.defer_model_output = True
+        mock_node.spec.output.format = "json" if provider_action == "final_response" else "markdown"
 
         async def fake_stream(actions):
+            yield ActionHistory(
+                action_id="delta_1",
+                role=ActionRole.ASSISTANT,
+                messages="",
+                action_type="thinking_delta",
+                output={"delta": "Draft ready"},
+                status=ActionStatus.PROCESSING,
+            )
             yield model_action
             yield response_action
 
         mock_node.execute_stream_with_interactions = fake_stream
 
         runner = _make_runner()
+        runner.stream_thinking = True
 
         buf = io.StringIO()
         with patch("sys.stdout", buf):
@@ -878,6 +892,8 @@ class TestStreamChatActions:
         assert data["role"] == "assistant"
         assert "Draft ready" not in output
         assert ("Final answer" if final_success else "Finalization failed") in output
+        structured = [item["payload"]["data"] for item in data["content"] if item["type"] == "json"]
+        assert structured == ([{"count": 3}] if final_success and provider_action == "final_response" else [])
 
     @pytest.mark.asyncio
     async def test_stream_chat_finally_cancels_channel_in_proxy_mode(self):

@@ -234,6 +234,7 @@ async def test_configurable_input_activates_plan_mode(real_agent_config, mock_ll
         assert node.input.plan_mode is True
         assert node.is_in_plan_mode()
         assert node.plan_file_path
+        assert "confirm_plan" in {tool.name for tool in node.tools}
     finally:
         await node.aclose()
 

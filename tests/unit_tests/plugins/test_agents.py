@@ -100,6 +100,18 @@ def test_duplicate_agent_names_fail_instead_of_picking_one_plugin(plugin_env):
         collect_plugin_agents(_config("first", "second"))
 
 
+def test_duplicate_publisher_identity_is_rejected_before_agent_name_filtering(tmp_path, monkeypatch):
+    from datus.plugins import registry
+
+    one = parse_manifest({"manifest_version": 1, "agents": {"research": {}}}, "publisher", tmp_path)
+    two = parse_manifest({"manifest_version": 1, "agents": {"report": {}}}, "publisher", tmp_path)
+    monkeypatch.setattr(registry, "_loaded_manifests", lambda: [("publisher", one), ("publisher", two)])
+
+    with pytest.raises(DatusException, match="Multiple installed packages"):
+        collect_plugin_agents(_config("publisher"), "research")
+    assert collect_plugin_agents(_config("publisher"), strict=False) == {}
+
+
 def test_invalid_protocol_preserves_existing_plugin_features_but_cannot_activate(plugin_env):
     plugin_env(
         "research",
@@ -210,8 +222,17 @@ def test_profile_grants_for_ontology_tools_are_reserved_for_the_official_plugin(
     assert official.tool_definitions[0].definition.tool_id == "ontology_tools.describe_concept"
 
 
-def test_unresolvable_instructions_preserve_the_rest_of_the_manifest(tmp_path):
-    (tmp_path / "loop.md").symlink_to("loop.md")
+def test_unresolvable_instructions_preserve_the_rest_of_the_manifest(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    original_resolve = Path.resolve
+
+    def resolve(path, *args, **kwargs):
+        if path.name == "loop.md":
+            raise RuntimeError("Symlink loop")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
     manifest = parse_manifest(
         {
             "manifest_version": 1,
@@ -227,7 +248,11 @@ def test_unresolvable_instructions_preserve_the_rest_of_the_manifest(tmp_path):
     assert "researcher" not in manifest.agents
 
 
-def test_invalid_tool_schema_is_rejected_in_its_declared_dialect(tmp_path):
+@pytest.mark.parametrize(
+    "dialect, error",
+    [("http://json-schema.org/draft-04/schema#", "required"), ("urn:unknown-draft", "unsupported dialect")],
+)
+def test_invalid_tool_schema_is_rejected_in_its_declared_dialect(tmp_path, dialect, error):
     manifest = parse_manifest(
         {
             "manifest_version": 1,
@@ -239,7 +264,7 @@ def test_invalid_tool_schema_is_rejected_in_its_declared_dialect(tmp_path):
                             "tool_id": "research_tools.search",
                             "description": "Search the records.",
                             "input_schema": {
-                                "$schema": "http://json-schema.org/draft-04/schema#",
+                                "$schema": dialect,
                                 "type": "object",
                                 "required": [],
                             },
@@ -253,7 +278,7 @@ def test_invalid_tool_schema_is_rejected_in_its_declared_dialect(tmp_path):
         tmp_path,
     )
 
-    assert "required" in manifest.agent_errors["researcher"]
+    assert error in manifest.agent_errors["researcher"]
     assert "researcher" not in manifest.agents
 
 

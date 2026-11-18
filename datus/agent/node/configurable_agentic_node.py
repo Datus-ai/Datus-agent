@@ -45,6 +45,10 @@ from datus.tools.permission.permission_hooks import CompositeHooks
 from datus.tools.registry.contracts import tool_definition
 from datus.tools.registry.tool_registry import ToolRegistry
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
+_RUNTIME_CLOSE_TIMEOUT = 5.0
 
 
 async def _await_result(value: Any) -> Any:
@@ -61,13 +65,14 @@ class _ScopeHooks(CompositeHooks):
     async def on_tool_start(self, context: Any, agent: Any, tool: Any) -> None:
         identities = {item.name: tool_definition(item).tool_id for item in self.node._native_tools}
         identity = identities.get(tool.name)
-        if identity is not None:
+        if identity is not None or tool.name == "load_skill":
             args, canonical, error = parse_tool_args(context.tool_arguments, tool_name=tool.name)
             write_back_tool_args(context, canonical)
             if error:
                 context._datus_configurable_argument_error = error
                 return
-            self.node.execution_scope.require_tool_scope(identity, args)
+            if identity is not None:
+                self.node.execution_scope.require_tool_scope(identity, args)
         await super().on_tool_start(context, agent, tool)
 
 
@@ -166,6 +171,15 @@ class ConfigurableAgenticNode(AgenticNode):
 
     def get_node_class_name(self) -> str:
         return "configurable"
+
+    @property
+    def defer_model_output(self) -> bool:
+        plugin = self.definition.plugin
+        return (
+            self.spec.output.format == "json"
+            or self._uses_semantic_authoring
+            or bool(plugin and plugin.runtime_factory)
+        )
 
     def _parse_node_config(self, agent_config: AgentConfig | None, node_name: str) -> dict[str, Any]:
         config = super()._parse_node_config(agent_config, node_name)
@@ -375,10 +389,15 @@ class ConfigurableAgenticNode(AgenticNode):
             invoke = tool.on_invoke_tool
 
             async def load_selected(context, arguments):
-                name = json.loads(arguments).get("skill_name")
+                args, canonical, error = parse_tool_args(arguments, tool_name="load_skill")
+                write_back_tool_args(context, canonical)
+                error = getattr(context, "_datus_configurable_argument_error", None) or error
+                if error:
+                    return {"success": 0, "error": error, "result": None}
+                name = args.get("skill_name")
                 if name not in self._active_skills:
                     return {"success": 0, "error": "Skill is outside this agent's selection", "result": None}
-                result = await invoke(context, arguments)
+                result = await invoke(context, canonical)
                 root = self.skill_manager.get_skill(name).location.resolve()
                 if root in self.skill_manager.loaded_skill_roots and root not in self.execution_scope.host_read_roots:
                     self.execution_scope.host_read_roots += (root,)
@@ -389,6 +408,8 @@ class ConfigurableAgenticNode(AgenticNode):
             self.tools.append(tool)
         plugin = self.definition.plugin
         self.tools.extend(bind_plugin_tools(plugin.tool_definitions if plugin else [], self._prepared.tool_bindings))
+        if self.is_in_plan_mode():
+            self._register_plan_mode_tools()
         names = [tool.name for tool in self.tools]
         if len(names) != len(set(names)):
             raise ValueError("Native and plugin tools must have distinct model-visible names")
@@ -423,6 +444,9 @@ class ConfigurableAgenticNode(AgenticNode):
             json.dumps(self.agent_config.runtime_db_context(), sort_keys=True),
         )
         if identity != self._native_scope_identity:
+            self._native_scope_identity = None
+            self._native_tools = []
+            self.tools = []
             if self._semantic_authoring_session is not None:
                 self._rollback_authoring()
             await self._retire_database_tools()
@@ -449,6 +473,11 @@ class ConfigurableAgenticNode(AgenticNode):
             if isinstance(tool, FunctionTool):
                 registry.register_tools(tool_definition(tool).category, [tool])
         self.tool_registry = registry
+
+    def _ensure_permission_hooks(self) -> None:
+        super()._ensure_permission_hooks()
+        if self.permission_hooks is not None:
+            self.permission_hooks.sql_file_allowed = self.execution_scope.allows_file
 
     async def _authorize_host_tool(self, identity: str, arguments: dict[str, Any]) -> tuple[FunctionTool, ToolContext]:
         self._ensure_tool_transformers()
@@ -792,7 +821,14 @@ class ConfigurableAgenticNode(AgenticNode):
                 self._runtime_closed = True
                 close = getattr(self._runtime, "close", None)
                 if close:
-                    await _await_result(close())
+                    deadline = asyncio.timeout(_RUNTIME_CLOSE_TIMEOUT)
+                    try:
+                        async with deadline:
+                            await _await_result(close())
+                    except TimeoutError:
+                        if not deadline.expired():
+                            raise
+                        logger.warning("Plugin runtime close timed out for %s", self.get_node_name())
         finally:
             try:
                 if self._semantic_authoring_session is not None:

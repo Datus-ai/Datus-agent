@@ -120,6 +120,82 @@ def test_model_only_publication_still_validates_a_dependent_mapping(draft):
         coordinated.close()
 
 
+def test_model_only_publication_leaves_unmodified_inline_mapping_alone(draft):
+    files = _files()
+    mapping = json.loads(files["subject/ontology/Sales.mapping.json"])
+    inline = {
+        **mapping,
+        "name": "InlineMapping",
+        "semantic_model_ref": {
+            "name": "sales",
+            "document": yaml.safe_load((draft.root / "subject/semantic_models/warehouse/sales.yaml").read_bytes()),
+        },
+    }
+    files["subject/ontology/inline.mapping.json"] = json.dumps(inline)
+    for name, body in files.items():
+        live = draft.live_root / name
+        live.parent.mkdir(parents=True, exist_ok=True)
+        live.write_text(body)
+
+    coordinated = SemanticAuthoringDraft(draft.scope)
+    try:
+        name, content = _change_model(coordinated)
+        assert coordinated.publish({}, name, digest(content))["files"] == [name]
+        assert (draft.live_root / "subject/ontology/inline.mapping.json").read_text() == files[
+            "subject/ontology/inline.mapping.json"
+        ]
+    finally:
+        coordinated.close()
+
+
+def test_publication_rechecks_new_out_of_scope_json_model_names(draft):
+    from datus.schemas.agent_models import ScopedContext
+
+    name = "subject/semantic_models/warehouse/sales.yaml"
+    draft.scope.prepare(ScopedContext(project_files=[name]))
+    coordinated = SemanticAuthoringDraft(draft.scope)
+    try:
+        name, content = _change_model(coordinated)
+        conflicting = draft.live_root / "subject/semantic_models/warehouse/hidden.json"
+        conflicting.write_text(json.dumps(yaml.safe_load(coordinated.baseline[name])))
+        with pytest.raises(ValueError, match="model name conflicts") as error:
+            coordinated.publish({}, name, digest(content))
+        assert "hidden.json" not in str(error.value)
+        assert (draft.live_root / name).read_bytes() == coordinated.baseline[name]
+    finally:
+        coordinated.close()
+
+
+def test_renamed_ontology_rechecks_mappings_using_the_prior_name(draft):
+    files = _files()
+    legacy = json.loads(files["subject/ontology/Sales.mapping.json"])
+    legacy["name"] = "LegacyMapping"
+    legacy["ontology_ref"] = {"name": "Sales"}
+    legacy["semantic_model_ref"] = {"name": "legacy", "iri": "../semantic_models/warehouse/legacy.yaml"}
+    files["subject/ontology/legacy.mapping.json"] = json.dumps(legacy)
+    files["subject/semantic_models/warehouse/legacy.yaml"] = (
+        next(iter(draft.baseline.values())).decode().replace("name: sales", "name: legacy", 1)
+    )
+    for name, body in files.items():
+        live = draft.live_root / name
+        live.parent.mkdir(parents=True, exist_ok=True)
+        live.write_text(body)
+
+    coordinated = SemanticAuthoringDraft(draft.scope)
+    try:
+        renamed = {
+            "subject/ontology/Sales.json": files["subject/ontology/Sales.json"].replace('"Sales"', '"NewSales"'),
+            "subject/ontology/Sales.mapping.json": files["subject/ontology/Sales.mapping.json"].replace(
+                '"Sales"', '"NewSales"'
+            ),
+        }
+        with pytest.raises(ValueError, match="legacy.mapping.json"):
+            coordinated.inspect(renamed, "subject/ontology/Sales.mapping.json")
+        assert coordinated.validation is None
+    finally:
+        coordinated.close()
+
+
 def test_rollback_retries_only_files_that_still_need_restoring(draft, monkeypatch):
     from datus.agent import semantic_authoring_draft
 

@@ -155,7 +155,13 @@ class SemanticAuthoringDraft:
                 )
 
     def inspect(
-        self, files: dict[str, str], mapping_file: str, operation: str = "validate", arguments: dict | None = None
+        self,
+        files: dict[str, str],
+        mapping_file: str,
+        operation: str = "validate",
+        arguments: dict | None = None,
+        *,
+        follow_shared_ontology: bool = True,
     ) -> dict:
         """Use production binding discovery and native lowering on exact draft bytes."""
         self._require_ontology_inventory()
@@ -170,8 +176,12 @@ class SemanticAuthoringDraft:
         if any(not isinstance(selected[key], dict) for key in ("ontology_ref", "semantic_model_ref")):
             raise ValueError("Selected mapping references must be objects")
         ontology_name = selected["ontology_ref"].get("name")
-        ontology_paths = {self._reference_path(mapping_file, selected["ontology_ref"])}
-        ontology_names = {ontology_name} if isinstance(ontology_name, str) and ontology_name else set()
+        ontology_paths = (
+            {self._reference_path(mapping_file, selected["ontology_ref"])} if follow_shared_ontology else set()
+        )
+        ontology_names = (
+            {ontology_name} if follow_shared_ontology and isinstance(ontology_name, str) and ontology_name else set()
+        )
         contributed_ontologies = set()
         for name in files:
             kind = document_kind(documents[name])
@@ -179,6 +189,10 @@ class SemanticAuthoringDraft:
                 contributed_ontologies.add(name)
                 ontology_paths.add(self.root / name)
                 ontology_names.add(str(documents[name].get("name") or ""))
+                if name in self.baseline:
+                    previous = self._document(name, self.baseline[name])
+                    if document_kind(previous) == "ontology":
+                        ontology_names.add(str(previous.get("name") or ""))
             elif kind != "mapping":
                 raise ValueError(f"Contributed artifact is not a valid ontology or mapping document: {name}")
         changed_models = {
@@ -220,6 +234,8 @@ class SemanticAuthoringDraft:
                     ref = doc[key]
                     if not isinstance(ref, dict):
                         raise ValueError(f"Mapping reference must be an object: {name}: {key}")
+                    if name not in files and isinstance(ref.get("document"), dict):
+                        continue
                     if key == "ontology_ref" and set(ref) == {"name"}:
                         continue
                     iri = ref.get("iri")
@@ -236,9 +252,14 @@ class SemanticAuthoringDraft:
                         raise PermissionError(
                             f"Affected mapping dependency is outside the authorized draft: {name}: {key}"
                         )
-                model = (root / name).parent.joinpath(doc["semantic_model_ref"]["iri"]).resolve()
-                relative = model.relative_to(root / "subject/semantic_models")
-                models_dir = root / "subject/semantic_models" / relative.parts[0]
+                inline = isinstance(doc["semantic_model_ref"].get("document"), dict)
+                models_dir = root / "subject/semantic_models"
+                if inline:
+                    model = root / name
+                    models_dir /= self.config.current_datasource
+                else:
+                    model = (root / name).parent.joinpath(doc["semantic_model_ref"]["iri"]).resolve()
+                    models_dir /= model.relative_to(models_dir).parts[0]
                 models = [
                     str(root / path)
                     for path, value in documents.items()
@@ -329,16 +350,30 @@ class SemanticAuthoringDraft:
                     document_kind(document) == "mapping"
                     and self._reference_path(name, document["semantic_model_ref"]) == self.root / semantic_file
                 ):
-                    self.inspect({}, name)
+                    self.inspect({}, name, follow_shared_ontology=False)
                     break
         outputs = {name: contents[name] for name in [semantic_file, *files]}
         for name in outputs:
             self.path(name)
         with ExitStack() as stack:
+            from datus.agent.node.semantic_authoring import require_unique_model_target
+
             stack.enter_context(ontology_bundle_lock(self.live_root / "subject/ontology", create=True))
             for name in sorted(set(self.baseline) | set(outputs)):
                 stack.enter_context(semantic_artifact_lock(self.path(name), load_before_lock=False))
             self._require_ontology_inventory()
+            model_path = self.path(semantic_file)
+            document = self._document(semantic_file, contents[semantic_file])
+            if document_kind(document) == "model":
+                models_dir = self.live_root / "subject/semantic_models"
+                model_directory = models_dir / model_path.relative_to(models_dir).parts[0]
+                require_unique_model_target(
+                    self.scope.config,
+                    model_path,
+                    str(document["name"]),
+                    creating=not model_path.is_file(),
+                    model_directory=model_directory,
+                )
             current = {path.relative_to(self.live_root).as_posix(): path.read_bytes() for path in self._live_files()}
             if current != self.baseline:
                 raise ValueError("Artifact files changed since draft creation; start a new turn")

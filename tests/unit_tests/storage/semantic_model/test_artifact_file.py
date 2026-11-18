@@ -158,7 +158,8 @@ def test_bundle_reader_lock_does_not_modify_project_files(tmp_path):
     assert sorted(tmp_path.rglob("*")) == before
 
 
-def test_bundle_publication_excludes_another_process_reader(tmp_path):
+@pytest.mark.parametrize("lock_explicit_ontology", [False, True])
+def test_bundle_publication_excludes_another_process_reader(tmp_path, lock_explicit_ontology):
     import os
     import select
     import subprocess
@@ -175,6 +176,8 @@ def test_bundle_publication_excludes_another_process_reader(tmp_path):
     external = tmp_path / "external/ontology"
     external.mkdir(parents=True)
     model = tmp_path / "subject/semantic_models/warehouse/model.yaml"
+    writer = external if lock_explicit_ontology else directory
+    locked_parent = external.parent if lock_explicit_ontology else tmp_path
     script = """
 import fcntl
 import os
@@ -201,9 +204,9 @@ with semantic_bundle_read_lock(sys.argv[2], sys.argv[3]):
 """
     process = None
     try:
-        with ontology_bundle_lock(directory, create=True):
+        with ontology_bundle_lock(writer, create=True):
             process = subprocess.Popen(
-                [sys.executable, "-c", script, str(directory.parent), str(model), str(external)],
+                [sys.executable, "-c", script, str(locked_parent), str(model), str(external)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,

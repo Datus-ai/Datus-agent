@@ -24,6 +24,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import yaml
 
+from datus.storage.semantic_model.artifact_file import semantic_bundle_read_lock
 from datus.tools.semantic_tools.authoring import MetricMutationResult, MetricSource
 from datus.tools.semantic_tools.dosi.authoring import dosi_validation_text_payload
 from datus.tools.semantic_tools.dosi.config import DosiConfig
@@ -180,6 +181,11 @@ class DosiRuntime:
 
     # ==================== Metrics Interface ====================
 
+    def _metric_snapshot(self, model_path: str, handle: EngineHandle):
+        with semantic_bundle_read_lock(model_path, self.config.ontology_dir):
+            engine = handle.get()
+            return engine.metrics(), engine.datasets(), engine.dimensions(), self._metric_payloads(model_path)
+
     async def list_metrics(
         self,
         path: Optional[List[str]] = None,
@@ -190,11 +196,9 @@ class DosiRuntime:
         handles, _, _ = await asyncio.to_thread(self._catalog)
         metrics = []
         for model_path, handle in handles:
-            engine = await asyncio.to_thread(handle.get)
-            rows = await asyncio.to_thread(engine.metrics)
-            dataset_rows = await asyncio.to_thread(engine.datasets)
-            dimension_rows = await asyncio.to_thread(engine.dimensions)
-            payloads = await asyncio.to_thread(self._metric_payloads, model_path)
+            rows, dataset_rows, dimension_rows, payloads = await asyncio.to_thread(
+                self._metric_snapshot, model_path, handle
+            )
             for row in rows:
                 hints = payloads.get(str(row.get("name") or ""), {})
                 metric_path = (

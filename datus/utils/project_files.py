@@ -85,14 +85,17 @@ class ProjectFiles:
         descriptor = _walk_directory(self.fd, path.relative_to(self.root).parts, create=create)
         return ProjectDirectory(self, path, descriptor)
 
-    def read_sql(self, value: str, limit: int):
+    def read_sql(self, value: str, limit: int | None, *, path_allowed=None):
         path = self.resolve(value)
-        with self.directory(path.parent) as directory:
+        if path_allowed is not None and not path_allowed(path):
+            raise ValueError("SQL file is outside scoped_context.project_files.")
+        descriptor = _walk_directory(self.fd, path.parent.relative_to(self.root).parts)
+        with ProjectDirectory(self, path.parent, descriptor) as directory:
             directory.verify_current()
             with directory.open(path.name, "rb") as source:
-                data = source.read(limit + 1)
+                data = source.read() if limit is None else source.read(limit + 1)
             directory.verify_current()
-        if len(data) > limit:
+        if limit is not None and len(data) > limit:
             raise ValueError("SQL file exceeds the 16 MiB input limit")
         return data.decode("utf-8"), str(path.relative_to(self.root))
 

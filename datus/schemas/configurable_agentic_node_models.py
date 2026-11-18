@@ -19,6 +19,7 @@ class ConfigurableNodeInput(AtContextInput):
     catalog: str | None = None
     database: str | None = None
     db_schema: str | None = None
+    database_is_physical: bool = False
     prompt_language: str = "en"
     prompt_version: str | None = None
     plan_mode: bool = False

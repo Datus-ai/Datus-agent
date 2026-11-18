@@ -79,6 +79,8 @@ def resolve_configurable_agent(
     """Resolve a definition, rejecting collisions and missing explicit plugin references."""
     config = _node_config(name, agent_config)
     configured = is_configurable_entry(config)
+    if not configured and name in {"analytics_explorer", "analytics_builder"}:
+        return None
     if configured:
         validate_node_class("configurable", name)
     if configured and "resources" in config:
@@ -138,6 +140,15 @@ def resolve_configurable_agent(
     behavior.update({key: value for key, value in config.items() if key in AgentSpec.model_fields})
     behavior["name"] = name
     spec = AgentSpec.model_validate(behavior)
+    scope = spec.scoped_context
+    datasources = getattr(getattr(agent_config, "services", None), "datasources", None)
+    if scope is not None and isinstance(datasources, dict):
+        requested = set(scope.tables_by_datasource or {}) | ({scope.datasource} if scope.datasource else set())
+        if missing := requested - datasources.keys():
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=f"Datasources are unavailable in this project: {sorted(missing)}",
+            )
     if "name" in config and config["name"] != name:
         raise DatusException(
             ErrorCode.COMMON_CONFIG_ERROR,

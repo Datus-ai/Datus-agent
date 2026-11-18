@@ -34,6 +34,9 @@ class BulkQueryTools:
 
     def _bulk_sql(self, value: str, files: ProjectFiles) -> tuple[str, str]:
         if looks_like_sql_file_ref(value.lower()):
+            path_allowed = getattr(self, "sql_file_allowed", None)
+            if path_allowed is not None:
+                return files.read_sql(value.strip(), MAX_SQL_FILE_BYTES, path_allowed=path_allowed)
             return files.read_sql(value.strip(), MAX_SQL_FILE_BYTES)
         return value, "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 

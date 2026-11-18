@@ -233,7 +233,11 @@ class ConfigurableScope:
             database = getattr(user_input, "database", None)
             coordinates = {
                 "catalog": getattr(user_input, "catalog", None),
-                "database": database if database != self._caller_datasource else None,
+                "database": database
+                if database != self._caller_datasource
+                or getattr(user_input, "database_is_physical", False)
+                or database in self.config.list_databases(self._caller_datasource)
+                else None,
                 "schema": getattr(user_input, "db_schema", None),
             }
             if any(coordinates.values()):
@@ -303,6 +307,8 @@ class ConfigurableScope:
             output = arguments.get("output_file")
             if not output or not self.allows_file(self.root / output):
                 self._invalid("Exports require an explicit output_file within scoped_context.project_files.")
+            if not self.allows_file(self.root / f"{output}.meta.json"):
+                self._invalid("The export metadata file is outside scoped_context.project_files.")
 
 
 class ScopedAgentFilesystem(FilesystemFuncTool):

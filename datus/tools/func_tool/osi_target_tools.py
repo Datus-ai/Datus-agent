@@ -11,8 +11,6 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional
 
-import yaml
-
 from datus.configuration.agent_config import AgentConfig
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.registry.contracts import tool_contract
@@ -428,40 +426,12 @@ class OsiSemanticModelTargetTools:
     def _check_scoped_target_integrity(self, target: Path, model_name: str, *, creating: bool = False) -> None:
         if self.path_allowed is None:
             return
-        from datus.agent.node.semantic_authoring import inline_mapping_models, osi_semantic_model_directory
-        from datus.tools.semantic_tools.dosi.engine import document_kind
+        from datus.agent.node.semantic_authoring import osi_semantic_model_directory, require_unique_model_target
 
         directory = osi_semantic_model_directory(self.integrity_config)
-        if directory is None:
-            return
-        root = directory.resolve()
-        selected = root / target.relative_to(self._model_dir())
-        has_flat_model = False
-        for path in directory.rglob("*"):
-            if path.suffix.lower() not in {".yml", ".yaml"} or "metrics" in path.relative_to(directory).parts:
-                continue
-            resolved = path.resolve()
-            if not resolved.is_relative_to(root):
-                continue
-            try:
-                document = yaml.safe_load(resolved.read_text(encoding="utf-8"))
-            except (OSError, ValueError, yaml.YAMLError):
-                continue
-            if document_kind(document) == "model":
-                has_flat_model = True
-                if resolved != selected and document.get("name") == model_name:
-                    raise ValueError("The model name conflicts with another artifact in this datasource")
-        if (
-            creating
-            and not has_flat_model
-            and inline_mapping_models(
-                self.integrity_config,
-                path_allowed=lambda path: path.resolve().is_relative_to(path.parent.resolve()),
-            )
-        ):
-            raise ValueError(
-                "An inline model already exists in this project. Creating a flat model would change its binding."
-            )
+        if directory is not None:
+            selected = directory.resolve() / target.relative_to(self._model_dir())
+            require_unique_model_target(self.integrity_config, selected, model_name, creating=creating)
 
     @tool_contract(access="restricted", direct_call=True)
     def plan_osi_semantic_model_target(

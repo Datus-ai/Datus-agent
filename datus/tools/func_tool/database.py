@@ -1129,8 +1129,8 @@ class DBFuncTool(BulkQueryTools):
         workspace_root = self._resolve_workspace_root()
         path_allowed = getattr(self, "sql_file_allowed", None)
         try:
-            if path_allowed is not None and not path_allowed(Path(workspace_root) / file_path):
-                raise ValueError("SQL file is outside scoped_context.project_files.")
+            if path_allowed is not None:
+                return read_workspace_sql_file(file_path, workspace_root, path_allowed=path_allowed)
             return read_workspace_sql_file(file_path, workspace_root)
         except FileNotFoundError:
             raise DatusException(

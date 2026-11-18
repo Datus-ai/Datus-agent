@@ -54,9 +54,14 @@ def is_provisional_model_response(action: ActionHistory) -> bool:
         action.depth == 0
         and action.role == ActionRole.ASSISTANT
         and action.status == ActionStatus.SUCCESS
-        and action.action_type == "response"
-        and isinstance(action.output, dict)
-        and action.output.get("is_thinking") is False
+        and (
+            action.action_type == "final_response"
+            or (
+                action.action_type == "response"
+                and isinstance(action.output, dict)
+                and action.output.get("is_thinking") is False
+            )
+        )
     )
 
 

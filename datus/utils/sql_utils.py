@@ -754,7 +754,7 @@ def looks_like_sql_file_ref(text: str) -> bool:
     return bool(s) and s.endswith(".sql") and not any(char.isspace() for char in s)
 
 
-def read_workspace_sql_file(file_path: str, workspace_root: str) -> str:
+def read_workspace_sql_file(file_path: str, workspace_root: str, *, path_allowed=None) -> str:
     """Read a workspace-relative ``.sql`` file, rejecting unsafe paths.
 
     Shared by ``DBFuncTool._read_sql_from_file`` (execution) and
@@ -771,10 +771,17 @@ def read_workspace_sql_file(file_path: str, workspace_root: str) -> str:
     if ".." in file_path:
         raise ValueError(f"Invalid SQL file path: {file_path}")
     root = os.path.expanduser(workspace_root or ".")
+    if path_allowed is not None and os.name == "posix":
+        from datus.utils.project_files import ProjectFiles
+
+        with ProjectFiles(Path(root)) as project:
+            return project.read_sql(file_path, None, path_allowed=path_allowed)[0]
     full_path = (Path(root) / file_path).resolve()
     root_resolved = Path(root).resolve()
     if not str(full_path).startswith(str(root_resolved) + os.sep) and full_path != root_resolved:
         raise ValueError(f"SQL file path escapes workspace: {file_path}")
+    if path_allowed is not None and not path_allowed(full_path):
+        raise ValueError("SQL file is outside scoped_context.project_files.")
     if not full_path.exists():
         raise FileNotFoundError(file_path)
     return full_path.read_text(encoding="utf-8")

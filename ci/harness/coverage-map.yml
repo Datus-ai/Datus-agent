@@ -2114,6 +2114,7 @@ execution:
       targets:
         - tests/unit_tests/agent/node/test_gen_sql_agentic_node.py
         - tests/unit_tests/api/services/test_cli_service_policy.py
+        - tests/unit_tests/tools/func_tool/test_bulk_query_tools.py
         - tests/unit_tests/tools/func_tool/test_database.py
         - tests/unit_tests/tools/func_tool/test_hana_adapter.py
         - tests/unit_tests/tools/permission/

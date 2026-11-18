@@ -29,6 +29,13 @@ from datus.tools.registry.contracts import (
 )
 
 
+def _check_schema(schema: dict[str, Any]) -> None:
+    validator = validator_for(schema, default=None) if "$schema" in schema else jsonschema.Draft202012Validator
+    if validator is None:
+        raise ValueError("JSON schema declares an unsupported dialect")
+    validator.check_schema(schema)
+
+
 class PluginToolDeclaration(BaseModel):
     """A declared tool contract, separated from the instance-bound implementation."""
 
@@ -48,7 +55,7 @@ class PluginToolDeclaration(BaseModel):
         ToolCapability(self.access, self.direct_call)
         if self.input_schema.get("type") != "object":
             raise ValueError("Plugin tool input_schema must describe an object")
-        validator_for(self.input_schema).check_schema(self.input_schema)
+        _check_schema(self.input_schema)
         return self
 
     @property
@@ -89,7 +96,7 @@ class PluginAgentDefinition(BaseModel):
             if not resource.is_relative_to(root) or not resource.is_file():
                 raise ValueError("instructions_file must name a file inside the plugin package")
         if self.config_schema is not None:
-            validator_for(self.config_schema).check_schema(self.config_schema)
+            _check_schema(self.config_schema)
         identities = [tool.tool_id for tool in self.tool_definitions]
         definitions = [tool.definition for tool in self.tool_definitions]
         if self.plugin_name != "datus-semantic-plugin" and any(

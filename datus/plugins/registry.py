@@ -262,9 +262,10 @@ def collect_plugin_agents(
     """Discover enabled agents or validate a single requested name without importing code."""
     if not getattr(agent_config, "plugins_enabled", True):
         return {}
+    installed = _loaded_manifests()
     candidates = [
         (name, manifest)
-        for name, manifest in _loaded_manifests()
+        for name, manifest in installed
         if manifest is not None
         and (manifest.agents or manifest.agent_errors)
         and (agent_name is None or agent_name in manifest.agents or agent_name in manifest.agent_errors)
@@ -288,10 +289,20 @@ def collect_plugin_agents(
         raise DatusException(
             ErrorCode.COMMON_CONFIG_ERROR, message="Unable to resolve enabled plugin agents for this project."
         ) from None
+    ambiguous_plugins = {
+        name
+        for name, _ in candidates
+        if _is_active(name, active_names) and sum(name == installed_name for installed_name, _ in installed) > 1
+    }
+    if ambiguous_plugins and strict:
+        raise DatusException(
+            ErrorCode.COMMON_CONFIG_ERROR,
+            message=f"Multiple installed packages use active plugin names: {sorted(ambiguous_plugins)}.",
+        )
     agents = {}
     invalid_names = set()
     for plugin_name, manifest in candidates:
-        if not _is_active(plugin_name, active_names):
+        if not _is_active(plugin_name, active_names) or plugin_name in ambiguous_plugins:
             continue
         errors = {name: error for name, error in manifest.agent_errors.items() if agent_name in (None, name)}
         if errors:

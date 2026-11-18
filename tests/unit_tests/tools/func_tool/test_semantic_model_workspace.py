@@ -113,6 +113,25 @@ async def test_file_and_object_sdk_edits_share_revision_and_whole_run_rollback(t
     assert workspace.rollback_failed_authoring() is False
 
 
+def test_rollback_preserves_a_concurrent_model_revision(tmp_path):
+    target = tmp_path / "sales.yml"
+    original = b"name: sales\ndatasets: []\n"
+    authored = original + b"description: Authored\n"
+    concurrent = original + b"description: Saved by another editor\n"
+    target.write_bytes(authored)
+    state = OsiSemanticModelTargetState(
+        selected={"absolute_path": str(target)},
+        artifact_sha256=hashlib.sha256(authored).hexdigest(),
+    )
+    state.record_artifact_snapshot(target, original)
+    filesystem = SemanticModelFilesystemTools(root_path=str(tmp_path), strict=True, osi_target_state=state)
+    target.write_bytes(concurrent)
+
+    with pytest.raises(RuntimeError, match="newer contents were preserved"):
+        filesystem.workspace.rollback_failed_authoring()
+    assert target.read_bytes() == concurrent
+
+
 def test_workspace_can_use_generic_file_access_without_semantic_filesystem(tmp_path):
     """Object mutations require access policy and state, not a semantic file subclass."""
     filesystem = FilesystemFuncTool(root_path=str(tmp_path), strict=True)

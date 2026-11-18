@@ -859,6 +859,7 @@ class SubAgentTaskTool:
                             {"success": False, "error": target_error, "blocker_code": "table_target_unverified"},
                             session_id=session_id,
                             subagent_type=subagent_type,
+                            configurable=False,
                         )
             self._refresh_node_db_tools(node, db_ctx)
 
@@ -988,7 +989,12 @@ class SubAgentTaskTool:
                 except Exception:
                     logger.debug("Failed to release sub-agent session handle", exc_info=True)
 
-        return self._convert_to_func_result(final_output, session_id=node.session_id, subagent_type=subagent_type)
+        return self._convert_to_func_result(
+            final_output,
+            session_id=node.session_id,
+            subagent_type=subagent_type,
+            configurable=node.type == NodeType.TYPE_CONFIGURABLE,
+        )
 
     def _resolve_inherited_memory_node(self, subagent_type: str) -> Optional[str]:
         """Pick the memory node a sub-agent should inherit (read-only inline).
@@ -1196,7 +1202,10 @@ class SubAgentTaskTool:
         db_ctx = db_ctx if db_ctx is not None else self._parent_db_context()
 
         if isinstance(node, ConfigurableAgenticNode):
-            return self._apply_db_context(ConfigurableNodeInput(user_message=prompt), db_ctx)
+            return self._apply_db_context(
+                ConfigurableNodeInput(user_message=prompt, database_is_physical=bool(db_ctx.get("database"))),
+                db_ctx,
+            )
 
         if isinstance(node, ExploreAgenticNode):
             return self._apply_db_context(ExploreNodeInput(user_message=prompt), db_ctx)
@@ -1286,7 +1295,12 @@ class SubAgentTaskTool:
     # ── result conversion ──────────────────────────────────────────────
 
     def _convert_to_func_result(
-        self, output, *, session_id: Optional[str] = None, subagent_type: Optional[str] = None
+        self,
+        output,
+        *,
+        session_id: Optional[str] = None,
+        subagent_type: Optional[str] = None,
+        configurable: bool | None = None,
     ) -> FuncToolResult:
         """Convert AgenticNode output to FuncToolResult.
 
@@ -1300,7 +1314,8 @@ class SubAgentTaskTool:
 
         from datus.agent.agent_registry import resolve_configurable_agent
 
-        configurable = bool(subagent_type and resolve_configurable_agent(subagent_type, self.agent_config))
+        if configurable is None:
+            configurable = bool(subagent_type and resolve_configurable_agent(subagent_type, self.agent_config))
 
         def _failure(error_msg: str, output_payload: Optional[Dict[str, Any]] = None) -> FuncToolResult:
             # Carry session_id under `result` so the parent can resume the

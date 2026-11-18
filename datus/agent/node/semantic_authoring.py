@@ -113,6 +113,44 @@ def inline_mapping_models(
     return found
 
 
+def require_unique_model_target(
+    agent_config: Any, target: Path, model_name: str, *, creating: bool = False, model_directory: Path | None = None
+) -> None:
+    """Check project-wide artifact identity without returning out-of-scope metadata."""
+    from datus.tools.semantic_tools.dosi.engine import document_kind
+
+    directory = model_directory or _osi_semantic_model_dir(agent_config)
+    if directory is None:
+        return
+    root = directory.resolve()
+    has_flat_model = False
+    for path in directory.rglob("*"):
+        if path.suffix.lower() not in {".yml", ".yaml", ".json"} or "metrics" in path.relative_to(directory).parts:
+            continue
+        resolved = path.resolve()
+        if not resolved.is_relative_to(root):
+            continue
+        try:
+            document = yaml.safe_load(resolved.read_text(encoding="utf-8"))
+        except (OSError, ValueError, yaml.YAMLError):
+            continue
+        if document_kind(document) == "model":
+            has_flat_model = True
+            if resolved != target and isinstance(document, dict) and document.get("name") == model_name:
+                raise ValueError("The model name conflicts with another artifact in this datasource")
+    if (
+        creating
+        and not has_flat_model
+        and inline_mapping_models(
+            agent_config,
+            path_allowed=lambda path: path.resolve().is_relative_to(path.parent.resolve()),
+        )
+    ):
+        raise ValueError(
+            "An inline model already exists in this project. Creating a flat model would change its binding."
+        )
+
+
 def inline_mapping_message(datasource: str, mappings: Iterable[Dict[str, Any]]) -> str:
     """Guidance returned when semantic_modeling meets models it cannot author."""
     files = ", ".join(str(mapping.get("mapping_file")) for mapping in mappings) or "<none>"

@@ -161,7 +161,8 @@ class PrintModeRunner:
         dispatch_task = None
         stream_failed = False
         output = getattr(getattr(node, "spec", None), "output", None)
-        defer_model_text = getattr(output, "format", None) == "json"
+        json_output = getattr(output, "format", None) == "json"
+        defer_model_text = json_output or getattr(node, "defer_model_output", False) is True
         self._stdin_stop_event = threading.Event()
         if self.proxy_tool_patterns:
             dispatch_task = asyncio.create_task(self._stdin_dispatch_loop(node))
@@ -215,6 +216,8 @@ class PrintModeRunner:
                     and action.action_type.endswith("_response")
                 ):
                     contents = build_response_content(action)
+                    if json_output and action.depth == 0 and "data" in action.output:
+                        contents.append(MessageContent(type="json", payload={"data": action.output["data"]}))
                     self._write_payload(
                         MessagePayload(
                             message_id=action.action_id,

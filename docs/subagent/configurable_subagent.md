@@ -170,8 +170,8 @@ agents:
 The publisher can declare all common behavior fields, optional `config` defaults
 and a JSON `config_schema` for business parameters. Plugin tools use a separate
 permission family such as `concept_tools`. The host reserves its own tool
-families, `load_skill` and names starting with `mcp__`. The `ontology_tools`
-family belongs to the official `datus-semantic-plugin` package. The host grants
+families, `load_skill` and names starting with `mcp__`. The host reserves the
+`ontology_tools` family for the `datus-semantic-plugin` entry-point name and grants
 permission to publisher tools through ordinary permission configuration.
 
 ```yaml
@@ -247,7 +247,8 @@ Common result fields include `response`, `data`, `success`, `error` and
 `tokens_used`. Additional JSON business fields survive node serialization and
 `task()` success/failure envelopes. For JSON output, the host parses the model
 reply into `data` before finalization. The finalizer can return a display summary
-in `response` and update the machine-readable payload in `data`. Dynamic prompt
+in `response` and update the machine-readable payload in `data`. A successful
+`--print` run emits the finalized `data` as a JSON content block. Dynamic prompt
 content and selected skill contents invalidate stale system-prompt snapshots.
 
 Configuration-only and static plugin agents need no runtime. Backend packages
@@ -290,6 +291,9 @@ agent:
 This example requires an installed, activated private package. The public Agent
 provides the host capability; it does not ship the private enhanced runtime.
 Backend installs the package for SaaS and On-Prem deployments.
+The example assumes the affected models are all under `warehouse`. When an
+ontology is shared across datasources, grant each affected model path in
+`project_files` so the host can validate the complete set.
 
 A private runtime uses the injected host by duck typing, with no `datus` import
 or shared SDK. Existing `host.call_tool(tool_id, arguments)` calls invoke only

@@ -616,7 +616,10 @@ class ChatCommands:
             # replaced by runtime finalization before it becomes user-facing.
             # Keep it out of the live transcript until the node emits its result.
             output_spec = getattr(getattr(current_node, "spec", None), "output", None)
-            defer_json_model_output = getattr(output_spec, "format", None) == "json"
+            defer_json_model_output = (
+                getattr(output_spec, "format", None) == "json"
+                or getattr(current_node, "defer_model_output", False) is True
+            )
 
             # Ensure the node has a pending-input queue so the TUI Enter
             # handler, the API ``/insert`` route, and the model layer's

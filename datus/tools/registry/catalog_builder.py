@@ -57,10 +57,25 @@ def _resolve(symbol: str, imports: dict[str, str], module: str = "") -> str:
     return f"{module}.{symbol}" if module else symbol
 
 
+def _same_scope_imports(node: ast.AST):
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        yield node
+    elif not isinstance(node, (*FUNCTIONS, ast.ClassDef, ast.Lambda)):
+        for child in ast.iter_child_nodes(node):
+            yield from _same_scope_imports(child)
+
+
 def _scoped_calls(node: ast.AST, imports: dict[str, str], module: str, is_package: bool):
     """Resolve imports in the function that owns each call."""
     if isinstance(node, FUNCTIONS):
-        imports = {**imports, **_imports(node, module, is_package)}
+        parameters = {arg.arg for arg in ast.iter_child_nodes(node.args) if isinstance(arg, ast.arg)}
+        local_imports = ast.Module(
+            body=[entry for statement in node.body for entry in _same_scope_imports(statement)], type_ignores=[]
+        )
+        imports = {
+            **{name: target for name, target in imports.items() if name not in parameters},
+            **_imports(local_imports, module, is_package),
+        }
     if isinstance(node, ast.Call):
         yield node, _resolve(_symbol(node.func), imports)
     for child in ast.iter_child_nodes(node):

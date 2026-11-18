@@ -61,7 +61,11 @@ def path_mutation_lock(target_path: Path) -> Iterator[None]:
         with semantic_artifact_lock(path):
             yield
     elif "ontology" in path.parts and path.suffix.lower() in {".yaml", ".yml", ".json"}:
-        with ontology_bundle_lock(path.parent, create=True), _thread_mutation_lock(path):
+        ontology_dir = next(
+            (parent for parent in path.parents if parent.name == "ontology" and parent.parent.name == "subject"),
+            path.parent,
+        )
+        with ontology_bundle_lock(ontology_dir, create=True), _thread_mutation_lock(path):
             yield
     else:
         with _thread_mutation_lock(path):
@@ -211,10 +215,12 @@ def atomic_write_bytes(target_path: Path, content: bytes, *, mode: Optional[int]
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temp_path, target_path)
-    finally:
+    except BaseException:
         if fd >= 0:
             os.close(fd)
-        temp_path.unlink(missing_ok=True)
+        with suppress(OSError):
+            temp_path.unlink(missing_ok=True)
+        raise
 
 
 def atomic_write_text(target_path: Path, content: str, *, mode: Optional[int] = None) -> None:
@@ -238,15 +244,16 @@ def ontology_bundle_lock(ontology_dir: str | Path | None, *, create: bool = Fals
         yield
         return
     directory = Path(ontology_dir).resolve()
-    key = str(directory.parent if os.name == "posix" else directory)
+    lock_root = directory.parent.parent if directory.parent.name == "subject" else directory.parent
+    key = str(lock_root if os.name == "posix" else directory)
     held = getattr(_ONTOLOGY_LOCK_DEPTH, "paths", set())
     if key in held:
         yield
         return
-    # POSIX can lock the existing subject directory itself. Readers therefore
+    # POSIX can lock the existing project directory itself. Readers therefore
     # coordinate with first publication without creating files in the project.
     # Windows needs a sidecar because its byte-range locks cannot lock a directory.
-    lock_path = directory.parent / f".{directory.name}.bundle.lock"
+    lock_path = lock_root / f".{directory.name}.bundle.lock"
     if create:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
     if not lock_path.parent.is_dir():
@@ -258,7 +265,7 @@ def ontology_bundle_lock(ontology_dir: str | Path | None, *, create: bool = Fals
         # Ordinary readers/editors share the project lock and keep independent
         # per-model locks. Only coordinated bundle publication is exclusive.
         # Separate open descriptions also coordinate threads in one process.
-        descriptor = os.open(lock_path.parent, os.O_RDONLY)
+        descriptor = os.open(lock_root, os.O_RDONLY)
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX if create else fcntl.LOCK_SH)
             _ONTOLOGY_LOCK_DEPTH.paths = held

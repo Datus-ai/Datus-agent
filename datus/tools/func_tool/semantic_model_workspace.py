@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Callable
@@ -72,8 +73,13 @@ class SemanticModelWorkspace:
 
         target_path = Path(state.artifact_snapshot_path)
         original_content = state.artifact_snapshot_content
-        with semantic_artifact_lock(target_path):
+        with semantic_artifact_lock(target_path, load_before_lock=False):
             try:
+                current = target_path.read_bytes() if target_path.is_file() else None
+                current_revision = hashlib.sha256(current).hexdigest() if current is not None else ""
+                if state.artifact_sha256 and current_revision != state.artifact_sha256:
+                    state.clear_artifact_snapshot()
+                    raise RuntimeError("The semantic model changed concurrently. Its newer contents were preserved.")
                 if state.artifact_snapshot_existed:
                     restored_content = original_content.decode("utf-8")
                     atomic_write_text(target_path, restored_content)
