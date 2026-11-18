@@ -412,27 +412,29 @@ async def test_cancelled_handler_stops_and_drains_its_manager_task(peer, monkeyp
     manager._tasks["unrelated-session"] = ChatTask("unrelated-session", unrelated)
     try:
         async with running(peer, bridge) as adapter:
-            ws = peer.sockets[-1]
-            await ws.send_json(callback())
-            await asyncio.wait_for(entered.wait(), 1)
-            if cause == "stop":
-                stopping = asyncio.create_task(adapter.stop())
-            elif cause == "disconnect":
-                await ws.close()
-            else:
-                await ws.send_json(
-                    {"cmd": "aibot_event_callback", "body": {"event": {"eventtype": "disconnected_event"}}}
-                )
-            await asyncio.wait_for(cleanup_started.wait(), 0.5)
-            assert not cleaned.is_set()
-            assert len(peer.sockets) == 1
-            assert stopping is None or not stopping.done()
-            # A second cancellation must not abandon native model cleanup.
-            for handler in list(adapter._handlers):
-                handler.cancel()
-            await asyncio.sleep(0)
-            assert not cleaned.is_set()
-            release_cleanup.set()
+            try:
+                ws = peer.sockets[-1]
+                await ws.send_json(callback())
+                await asyncio.wait_for(entered.wait(), 1)
+                if cause == "stop":
+                    stopping = asyncio.create_task(adapter.stop())
+                elif cause == "disconnect":
+                    await ws.close()
+                else:
+                    await ws.send_json(
+                        {"cmd": "aibot_event_callback", "body": {"event": {"eventtype": "disconnected_event"}}}
+                    )
+                await asyncio.wait_for(cleanup_started.wait(), 0.5)
+                assert not cleaned.is_set()
+                assert len(peer.sockets) == 1
+                assert stopping is None or not stopping.done()
+                # A second cancellation must not abandon native model cleanup.
+                for handler in list(adapter._handlers):
+                    handler.cancel()
+                await asyncio.sleep(0)
+                assert not cleaned.is_set()
+            finally:
+                release_cleanup.set()
             if stopping is not None:
                 await stopping
             elif cause == "disconnect":
@@ -445,7 +447,6 @@ async def test_cancelled_handler_stops_and_drains_its_manager_task(peer, monkeyp
             assert all(task.done() for task in model_tasks)
             assert not unrelated.done()
     finally:
-        release_cleanup.set()
         await manager.shutdown()
         if stopping is not None:
             await asyncio.gather(stopping, return_exceptions=True)

@@ -40,6 +40,9 @@ _MAX_BOT_MSG_MAP = 10000
 # Maximum number of bot messages to remember as already-reacted (dedup for reactions)
 _MAX_REACTED_MSG = 10000
 
+# Fixed grace period for cancelled chat cleanup before releasing an IM handler.
+_CHAT_CLEANUP_TIMEOUT = 5.0
+
 
 class ChannelBridge:
     """Converts InboundMessage -> ChatTaskManager -> OutboundMessage.
@@ -253,10 +256,22 @@ class ChannelBridge:
                 await self._task_manager.stop_task(task.session_id)
                 if task.asyncio_task is not None:
                     completion = asyncio.gather(task.asyncio_task, return_exceptions=True)
-                    # Repeated handler cancellation must not orphan model cleanup.
+                    loop = asyncio.get_running_loop()
+                    deadline = loop.time() + _CHAT_CLEANUP_TIMEOUT
                     while not completion.done():
+                        remaining = deadline - loop.time()
+                        if remaining <= 0:
+                            # Keep the task tracked by its manager and consume late
+                            # errors via gather; do not cancel its cleanup again.
+                            logger.warning(
+                                "Chat cleanup timed out for session %s after %.1fs; abandoning wait",
+                                task.session_id,
+                                _CHAT_CLEANUP_TIMEOUT,
+                            )
+                            break
                         try:
-                            await asyncio.shield(completion)
+                            # wait never forwards cancellation to the model task.
+                            await asyncio.wait({completion}, timeout=remaining)
                         except asyncio.CancelledError:
                             pass
             raise

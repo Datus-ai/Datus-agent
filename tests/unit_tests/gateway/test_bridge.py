@@ -3,6 +3,7 @@
 
 """Unit tests for datus.gateway.bridge.ChannelBridge."""
 
+import asyncio
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -272,6 +273,66 @@ class TestChannelBridge:
 
         assert len(adapter.sent) == 1
         assert "still being processed" in adapter.sent[0].text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("repeat_count", [0, 40], ids=["single-cancel", "repeated-cancel"])
+    async def test_cancelled_chat_cleanup_has_a_fixed_deadline(self, setup, monkeypatch, caplog, repeat_count):
+        bridge, adapter, task_manager = setup
+        caplog.set_level("WARNING")
+        monkeypatch.setattr("datus.gateway.bridge._CHAT_CLEANUP_TIMEOUT", 0.05, raising=False)
+        consuming = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+
+        async def model_work():
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup_started.set()
+                await release_cleanup.wait()
+
+        model_task = asyncio.create_task(model_work())
+        chat_task = MagicMock(session_id="cancelled-session", asyncio_task=model_task)
+        task_manager.start_chat = AsyncMock(return_value=chat_task)
+        task_manager.stop_task = AsyncMock(side_effect=lambda session_id: model_task.cancel())
+
+        async def consume_events(task):
+            consuming.set()
+            await asyncio.Event().wait()
+            yield _make_sse_end()
+
+        task_manager.consume_events = consume_events
+        adapter.finalize_stream = AsyncMock()
+        handler = asyncio.create_task(bridge.handle_message(_make_inbound(), adapter))
+
+        async def repeat_cancellation():
+            for _ in range(repeat_count):
+                await asyncio.sleep(0.01)
+                handler.cancel()
+
+        repeater = None
+        try:
+            await asyncio.wait_for(consuming.wait(), 1)
+            handler.cancel()
+            await asyncio.wait_for(cleanup_started.wait(), 1)
+            repeater = asyncio.create_task(repeat_cancellation())
+            await asyncio.wait({handler}, timeout=0.3)
+            assert handler.done()
+            assert handler.cancelled()
+            assert not model_task.done()
+            # Abandon only the wait; do not interrupt model cleanup a second time.
+            assert model_task.cancelling() == 1
+            task_manager.stop_task.assert_awaited_once_with("cancelled-session")
+            adapter.finalize_stream.assert_awaited_once()
+            assert adapter.reactions_removed
+            assert adapter.reactions_added[-1][2] == ERROR_EMOJI
+            assert "Chat cleanup timed out" in caplog.text
+        finally:
+            if repeater is not None:
+                repeater.cancel()
+                await asyncio.gather(repeater, return_exceptions=True)
+            release_cleanup.set()
+            await asyncio.gather(handler, model_task, return_exceptions=True)
 
     @pytest.mark.asyncio
     async def test_no_response_fallback(self, setup):

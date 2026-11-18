@@ -45,9 +45,10 @@ gateway reads YAML on startup; restart it after changing configuration.
   The displaced adapter closes and stops automatic reconnection. Resolve duplicate
   bot configurations before explicitly restarting it (or re-enabling the channel).
 - Network reconnection uses exponential backoff. Heartbeats are protocol `ping` frames,
-  not chat-message polling. Pending callbacks and their chat tasks are cancelled
-  and awaited on connection loss before reconnecting;
-  there is no durable message queue or exactly-once delivery across process restarts.
+  not chat-message polling. Pending callbacks cancel their chat tasks on connection
+  loss and wait up to five seconds for cleanup before reconnecting. A cleanup timeout
+  is logged; unfinished tasks remain tracked by the task manager.
+  There is no durable message queue or exactly-once delivery across process restarts.
 
 Advanced YAML-only `extra` options: `ws_url` (default
 `wss://openws.work.weixin.qq.com`), `heartbeat_interval` (30 seconds),
