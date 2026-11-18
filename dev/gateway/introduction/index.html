@@ -8,19 +8,19 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/gateway/introduction/">
       
       
         <link rel="prev" href="../../web_chatbot/introduction/">
       
       
-        <link rel="next" href="../slack/">
+        <link rel="next" href="../wecom/">
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/gateway/introduction/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/gateway/introduction/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/gateway/introduction/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/gateway/introduction/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -2227,6 +2221,8 @@
       
         
       
+        
+      
     
     
     
@@ -2584,6 +2580,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Session Management">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#legacy-session-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Legacy session ownership
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -2689,6 +2702,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../wecom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WeCom
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -5477,6 +5518,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Session Management">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#legacy-session-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Legacy session ownership
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -5965,13 +6023,39 @@ save operation is written back to <code>agent.yml</code> immediately, so the nex
 <h3 id="session-management">Session Management<a class="headerlink" href="#session-management" title="Permanent link">&para;</a></h3>
 <p>Each conversation (group chat, DM, or thread) automatically maps to a persistent session. To start a fresh session, send <code>/new</code>, <code>/reset</code>, or <code>/clear</code>.</p>
 <p>The bot will confirm the reset with the new session ID.</p>
+<h4 id="legacy-session-ownership">Legacy session ownership<a class="headerlink" href="#legacy-session-ownership" title="Permanent link">&para;</a></h4>
+<p>Ordinary unscoped session IDs retain their historical <code>gateway_...</code> names.
+Other keys use <code>gateway-v3_</code> plus a SHA-256 digest of all four fields (channel,
+conversation, thread and scope), so long platform identifiers fit in session filenames.</p>
+<p>Older channel names containing <code>--</code> can produce ambiguous legacy IDs. To restore
+an existing Slack thread, <strong>stop the gateway first</strong>, inspect the saved conversation
+and its Slack thread permalink, and verify the exact channel instance, Slack channel
+ID and thread timestamp. An ID's filename alone does not establish its owner.
+Then record that reviewed mapping in the existing session database:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">datus.models.session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">SessionManager</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">manager</span> <span class="o">=</span> <span class="n">SessionManager</span><span class="p">(</span><span class="n">session_dir</span><span class="o">=</span><span class="s2">"/path/to/sessions"</span><span class="p">)</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="n">legacy_id</span> <span class="o">=</span> <span class="s2">"gateway_team--slack--C012345--1700000000.123456"</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="n">owner</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>    <span class="p">[</span><span class="s2">"team--slack"</span><span class="p">,</span> <span class="s2">"C012345"</span><span class="p">,</span> <span class="s2">"1700000000.123456"</span><span class="p">,</span> <span class="kc">None</span><span class="p">],</span>
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>    <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">separators</span><span class="o">=</span><span class="p">(</span><span class="s2">","</span><span class="p">,</span> <span class="s2">":"</span><span class="p">),</span>
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="p">)</span>
+</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="k">assert</span> <span class="n">manager</span><span class="o">.</span><span class="n">session_exists</span><span class="p">(</span><span class="n">legacy_id</span><span class="p">)</span>
+</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="k">assert</span> <span class="n">manager</span><span class="o">.</span><span class="n">load_session_meta</span><span class="p">(</span><span class="n">legacy_id</span><span class="p">,</span> <span class="s2">"gateway_conversation_key"</span><span class="p">)</span> <span class="ow">in</span> <span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="n">owner</span><span class="p">)</span>
+</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="n">manager</span><span class="o">.</span><span class="n">save_session_meta</span><span class="p">(</span><span class="n">legacy_id</span><span class="p">,</span> <span class="s2">"gateway_conversation_key"</span><span class="p">,</span> <span class="n">owner</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Restart the gateway after verifying the saved value. The bridge reuses this ID only
+for the exact recorded conversation; colliding tuples, including ordinary IDs with
+a different recorded owner, use their own digest IDs. Unowned ambiguous histories
+are not adopted automatically.</p>
 <h3 id="datasource-override">Datasource Override<a class="headerlink" href="#datasource-override" title="Permanent link">&para;</a></h3>
 <p>Each channel can specify a <code>datasource</code> in its configuration to override the gateway's default datasource. This allows different channels to query different databases.</p>
 <h3 id="subagent-routing">Subagent Routing<a class="headerlink" href="#subagent-routing" title="Permanent link">&para;</a></h3>
 <p>Use the <code>subagent_id</code> field to route messages from a specific channel to a dedicated sub-agent, enabling specialized behavior per channel.</p>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <h3 id="sdk-not-installed">SDK Not Installed<a class="headerlink" href="#sdk-not-installed" title="Permanent link">&para;</a></h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>ImportError: slack_sdk is required for the Slack adapter. Install it with: pip install slack-sdk[socket_mode]
+<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>ImportError: slack_sdk is required for the Slack adapter. Install it with: pip install slack-sdk[socket_mode]
 </span></code></pre></div>
 <p>Install the required SDK package for your platform. See the <a href="#installation">Installation</a> section.</p>
 <h3 id="invalid-credentials">Invalid Credentials<a class="headerlink" href="#invalid-credentials" title="Permanent link">&para;</a></h3>
@@ -5987,10 +6071,10 @@ save operation is written back to <code>agent.yml</code> immediately, so the nex
 </ul>
 <h3 id="debug-logging">Debug Logging<a class="headerlink" href="#debug-logging" title="Permanent link">&para;</a></h3>
 <p>Enable verbose logging to diagnose connection issues:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>datus-gateway<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--debug
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>datus-gateway<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--debug
 </span></code></pre></div>
 <p>Or set the environment variable:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DATUS_LOG_LEVEL</span><span class="o">=</span>DEBUG
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DATUS_LOG_LEVEL</span><span class="o">=</span>DEBUG
 </span></code></pre></div>
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <ul>
@@ -6045,13 +6129,13 @@ save operation is written back to <code>agent.yml</code> immediately, so the nex
         
         
           
-          <a href="../slack/" class="md-footer__link md-footer__link--next" aria-label="Next: Slack">
+          <a href="../wecom/" class="md-footer__link md-footer__link--next" aria-label="Next: WeCom">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Slack
+                WeCom
               </div>
             </div>
             <div class="md-footer__button md-icon">
