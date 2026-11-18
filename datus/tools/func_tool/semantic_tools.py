@@ -2736,7 +2736,8 @@ class SemanticTools:
             current_end: End of the later period, exclusive.
             where: As in query_metrics; it cannot name a metric.
             context_filter: As in query_metrics.
-            params: As in query_metrics.
+            params: As in query_metrics, but one value per parameter: an attribution explains one
+                binding, and a list of values is refused (`param_out_of_domain`).
             group_by: Only for a metric computed per row of a grouping (a rank, a share of a total,
                 a previous-period or running value, or get_metric `required`): its fields,
                 `dataset.field[:grain]`. where must then fix each with `field = value`, so the
@@ -2890,6 +2891,13 @@ class SemanticTools:
         success whatever its status: an unsupported metric is an answer, said by
         the status and issue lines. Only a refused request or a failed call is a
         failure."""
+        authorized_scope = None
+        if self._enforce_metric_scope:
+            try:
+                authorized_scope = self._query_cache_scope(self._policy_cache_scope())
+            except Exception as exc:
+                logger.warning("Could not capture configured metric scope: %s", exc)
+                return FuncToolResult(success=0, error="Configured metric scope could not be verified.")
         scope_error = self._check_metric_scope([request["metric"]])
         if scope_error is not None:
             return scope_error
@@ -2916,5 +2924,14 @@ class SemanticTools:
                 error=f"{tool_name} failed: {e}",
                 result={"execution_info": info} if info else None,
             )
+        # As query_metrics: a scope the host narrowed while the call ran wins.
+        if authorized_scope is not None and self._query_cache_scope(self._policy_cache_scope()) != authorized_scope:
+            return FuncToolResult(
+                success=0,
+                error="Configured metric scope changed while the attribution was running; retry in the current scope.",
+            )
+        scope_error = self._check_metric_scope([request["metric"]])
+        if scope_error is not None:
+            return scope_error
         notes = _period_length_notes(request["baseline"], request["current"])
         return FuncToolResult(success=1, result=render_attribution(result, notes))

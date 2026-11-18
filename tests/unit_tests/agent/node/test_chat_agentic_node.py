@@ -59,6 +59,44 @@ _ATTRIBUTION_PERIODS = {
 }
 
 
+def _inflight_scoped_semantic_tools(real_agent_config, tmp_path):
+    """Chat's semantic tools over the attribution fixture, scoped to the
+    `Finance.Allowed` subject (`net`), and a function that narrows the scope
+    to `Finance.Hidden` (`x_total`) as a host would while a call runs."""
+    import duckdb
+
+    from datus.configuration.agent_config import DbConfig
+    from datus.storage.metric.store import MetricRAG
+
+    fixtures = Path(__file__).resolve().parents[3] / "data/semantic_models/attribution"
+    database = tmp_path / "inflight.duckdb"
+    with duckdb.connect(str(database)) as connection:
+        connection.execute((fixtures / "seed.sql").read_text())
+    real_agent_config.services.datasources["inflight"] = DbConfig(type="duckdb", uri=str(database))
+    real_agent_config.current_datasource = "inflight"
+    models = real_agent_config.path_manager.semantic_model_path("inflight")
+    models.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(fixtures / "model.yaml", models / "model.yaml")
+    MetricRAG(real_agent_config).store_batch(
+        [
+            {
+                "name": name,
+                "semantic_model_name": "attribution_model",
+                "subject_path": ["Finance", subject],
+                "description": f"{name} in the {subject} subject",
+            }
+            for name, subject in (("net", "Allowed"), ("x_total", "Hidden"))
+        ]
+    )
+    real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "Finance.Allowed"}
+    node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
+
+    def narrow_scope():
+        real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "Finance.Hidden"}
+
+    return node.semantic_tools, narrow_scope
+
+
 class TestChatMetricTools:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("source", ["web", "vscode"])
@@ -125,37 +163,7 @@ class TestChatMetricTools:
     async def test_inflight_metric_scope_change_does_not_publish_rows(
         self, real_agent_config, mock_llm_create, tmp_path, monkeypatch, page_size, change_at
     ):
-        import duckdb
-
-        from datus.configuration.agent_config import DbConfig
-        from datus.storage.metric.store import MetricRAG
-
-        fixtures = Path(__file__).resolve().parents[3] / "data/semantic_models/attribution"
-        database = tmp_path / "inflight.duckdb"
-        with duckdb.connect(str(database)) as connection:
-            connection.execute((fixtures / "seed.sql").read_text())
-        real_agent_config.services.datasources["inflight"] = DbConfig(type="duckdb", uri=str(database))
-        real_agent_config.current_datasource = "inflight"
-        models = real_agent_config.path_manager.semantic_model_path("inflight")
-        models.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(fixtures / "model.yaml", models / "model.yaml")
-        MetricRAG(real_agent_config).store_batch(
-            [
-                {
-                    "name": name,
-                    "semantic_model_name": "attribution_model",
-                    "subject_path": ["Finance", subject],
-                    "description": f"{name} in the {subject} subject",
-                }
-                for name, subject in (("net", "Allowed"), ("x_total", "Hidden"))
-            ]
-        )
-        real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "Finance.Allowed"}
-        node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config)
-        semantic = node.semantic_tools
-
-        def narrow_scope():
-            real_agent_config.agentic_nodes["chat"]["scoped_context"] = {"metrics": "Finance.Hidden"}
+        semantic, narrow_scope = _inflight_scoped_semantic_tools(real_agent_config, tmp_path)
 
         if change_at == "query":
             original = semantic.runtime.query_metrics
@@ -181,6 +189,29 @@ class TestChatMetricTools:
         assert result.result is None
         assert "scope changed" in result.error
         assert len(semantic._query_metrics_result_cache) == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool", ["attribute_metrics", "attribute_dimensions"])
+    async def test_inflight_metric_scope_change_does_not_return_an_attribution(
+        self, real_agent_config, mock_llm_create, tmp_path, monkeypatch, tool
+    ):
+        semantic, narrow_scope = _inflight_scoped_semantic_tools(real_agent_config, tmp_path)
+        original = getattr(semantic.runtime, tool)
+
+        async def changed_call(request):
+            result = await original(request)
+            narrow_scope()
+            return result
+
+        monkeypatch.setattr(semantic.runtime, tool, changed_call)
+        kwargs = {"metric": "net", **_ATTRIBUTION_PERIODS}
+        if tool == "attribute_dimensions":
+            kwargs["dimensions"] = ["ledger.cat"]
+
+        result = getattr(semantic, tool)(**kwargs)
+        assert result.success == 0
+        assert result.result is None
+        assert "scope changed" in result.error
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("reader", ["query_metrics", "get_query_metrics_result"])
@@ -559,7 +590,10 @@ class TestChatMetricTools:
         by_group = await invoke(
             "attribute_dimensions", {"metric": "net", "dimensions": ["ledger.cat"], **_ATTRIBUTION_PERIODS}
         )
-        assert by_group.splitlines()[3:] == [
+        assert by_group.splitlines() == [
+            "status complete",
+            "note the periods differ in length (31 days and 29 days); values are not scaled to one length",
+            "",
             "net by ledger.cat | 120 → 140 | change +20",
             "- a | 80 → 120 | +40 (200.0%)",
             "- b | 40 → 20 | -20 (-100.0%)",
