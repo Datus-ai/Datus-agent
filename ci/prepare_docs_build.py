@@ -11,9 +11,13 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from yaml.constructor import ConstructorError
+
+if TYPE_CHECKING:
+    from mkdocs.config.defaults import MkDocsConfig
 
 CONTENT_SENSITIVE_KEYS = (
     "nav",
@@ -28,6 +32,28 @@ CONTENT_SENSITIVE_KEYS = (
     "draft_docs",
     "validation",
 )
+
+
+def on_config(config: MkDocsConfig) -> MkDocsConfig:
+    """Keep Chinese-only datasource pages out of the English navigation."""
+    if os.environ.get("DOCS_LOCALE", "en") == "en":
+        chinese_only = {
+            "configuration/datasources/gaussdb.zh.md",
+            "configuration/datasources/dws.zh.md",
+        }
+
+        def filter_nav(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            return [
+                {title: filter_nav(value) if isinstance(value, list) else value}
+                for item in items
+                for title, value in item.items()
+                if isinstance(value, list) or value not in chinese_only
+            ]
+
+        config.nav = filter_nav(config.nav)
+    return config
+
+
 LEGACY_CHINESE_DOCS_URL_RE = re.compile(r"https://docs\.datus\.ai/(?P<version>\d+(?:\.\d+)+)/zh/")
 
 
@@ -163,6 +189,7 @@ def merge_mkdocs_config(
 
     source_docs_dir = source_config.get("docs_dir", merged.get("docs_dir", "docs"))
     merged["docs_dir"] = str((source_root / source_docs_dir).resolve())
+    merged["hooks"] = [str((source_root / hook).resolve()) for hook in source_config.get("hooks", [])]
 
     source_extra = source_config.get("extra", {})
     base_extra = base_config.get("extra", {})

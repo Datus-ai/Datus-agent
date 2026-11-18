@@ -50,6 +50,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.proxy.proxy_tool import apply_proxy_tools
+from datus.utils.artifact_output import session_user_scope
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import set_current_path_manager
 from datus.utils.time_utils import now_utc_iso
@@ -948,7 +949,7 @@ class ChatTaskManager:
                     base_dir = getattr(agent_config, "session_dir", None) or str(
                         get_path_manager(agent_config=agent_config).sessions_dir
                     )
-                    sm = SessionManager(session_dir=base_dir, scope=user_id)
+                    sm = SessionManager(session_dir=base_dir, scope=session_user_scope(agent_config, user_id))
                     feedback_session_id = sm.copy_session(request.source_session_id, "feedback")
 
                 return self._create_node(
@@ -1666,7 +1667,7 @@ class ChatTaskManager:
         base_dir = getattr(agent_config, "session_dir", None) or str(
             get_path_manager(agent_config=agent_config).sessions_dir
         )
-        return SessionManager(session_dir=base_dir, scope=user_id)
+        return SessionManager(session_dir=base_dir, scope=session_user_scope(agent_config, user_id))
 
     # Preserve the internal name for existing subclasses; hosts use session_manager.
     _session_manager = session_manager

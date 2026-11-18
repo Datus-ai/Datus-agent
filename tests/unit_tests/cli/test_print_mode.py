@@ -65,6 +65,74 @@ def _make_runner(**overrides):
 # ---------------------------------------------------------------------------
 
 
+class TestPrintModePermissionWarning:
+    @pytest.mark.parametrize(
+        "profile,execution_mode,overrides,warning_expected",
+        [
+            ("normal", None, {}, True),
+            ("normal", "workflow", {}, True),
+            ("normal", "interactive", {}, False),
+            ("auto", "workflow", {}, False),
+            ("dangerous", "workflow", {}, False),
+            ("normal", "workflow", {"auto_review": {"enabled": True}}, False),
+            ("normal", "workflow", {"bash_commands": {"classifier": {"enabled": True}}}, False),
+        ],
+    )
+    def test_warning_precedes_execution_and_preserves_json(self, profile, execution_mode, overrides, warning_expected):
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+        from datus.tools.permission.permission_manager import PermissionManager
+        from datus.tools.permission.profiles import get_profile
+
+        runner = _make_runner(execution_mode=execution_mode)
+        manager = PermissionManager(
+            global_config=get_profile(profile),
+            active_profile=profile,
+            node_overrides={"chatbot": overrides} if overrides else {},
+        )
+        stderr = io.StringIO()
+        stdout = io.StringIO()
+        before_execution = []
+
+        async def stream(actions):
+            before_execution.append(stderr.getvalue())
+            yield ActionHistory(
+                action_id="a1",
+                role=ActionRole.ASSISTANT,
+                messages="Working",
+                action_type="llm_generation",
+                status=ActionStatus.PROCESSING,
+            )
+
+        node = SimpleNamespace(
+            permission_manager=manager,
+            get_node_name=lambda: "chatbot",
+            execute_stream_with_interactions=stream,
+        )
+        with (
+            patch("datus.cli.print_mode.create_interactive_node", return_value=node),
+            patch("datus.cli.print_mode.create_node_input", return_value=SimpleNamespace()),
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", stderr),
+        ):
+            runner.run()
+
+        warning = " ".join(stderr.getvalue().split())
+        if warning_expected:
+            assert "PERMISSION_DENIED" in warning
+            assert "--permission-mode auto" in warning
+            assert "eligible Bash/SQL" in warning
+            assert before_execution == [stderr.getvalue()]
+        else:
+            assert stderr.getvalue() == ""
+        payload = json.loads(stdout.getvalue())
+        assert payload["message_id"] == "a1"
+        assert payload["content"][0]["payload"]["content"] == "Working"
+        assert manager.active_profile == profile
+        assert manager.get_effective_config("chatbot").auto_review.enabled == (
+            overrides.get("auto_review", {}).get("enabled", profile == "auto")
+        )
+
+
 class TestDatabaseContextResolution:
     def test_init_uses_config_database_not_datasource(self):
         """Print mode must not pass the datasource key as database context."""
@@ -142,6 +210,33 @@ class TestWritePayload:
         assert data["message_id"] == "m1"
         assert data["role"] == "assistant"
         assert data["content"][0]["type"] == "markdown"
+
+    def test_factory_warning_is_a_json_line(self):
+        with (
+            patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
+            patch("datus.cli.print_mode.AtReferenceCompleter") as mock_completer,
+            patch("datus.cli.print_mode.create_interactive_node") as mock_factory,
+            patch("datus.cli.print_mode.create_node_input"),
+            patch("datus.cli.print_mode.run_async"),
+        ):
+            mock_cfg.return_value = MagicMock(datasource_configs={})
+            mock_completer.return_value.parse_at_context.return_value = ([], [], [], None)
+
+            def fake_factory(*args, on_warning, **kwargs):
+                on_warning("Unknown subagent 'x'")
+                return MagicMock()
+
+            mock_factory.side_effect = fake_factory
+            from datus.cli.print_mode import PrintModeRunner
+
+            buf = io.StringIO()
+            with patch("sys.stdout", buf):
+                PrintModeRunner(_make_args()).run()
+
+        data = json.loads(buf.getvalue().strip())
+        assert data["role"] == "assistant"
+        assert data["message_id"]
+        assert data["content"] == [{"type": "markdown", "payload": {"content": "Unknown subagent 'x'"}}]
 
 
 # ---------------------------------------------------------------------------
@@ -464,6 +559,7 @@ class TestResumeSessionId:
             scope=None,
             session_id="session_uuid123",
             execution_mode="workflow",
+            on_warning=runner._write_warning,
         )
 
 
@@ -513,6 +609,7 @@ class TestRunUsesFactory:
             scope=None,
             session_id=None,
             execution_mode="workflow",
+            on_warning=runner._write_warning,
         )
         mock_create_input.assert_called_once()
         assert mock_create_input.call_args.kwargs["catalog"] == "configured_catalog"

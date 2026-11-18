@@ -322,8 +322,8 @@ flow_groups:
           - docs/configuration/datasources/clickzetta.md
           - docs/configuration/datasources/doris.md
           - docs/configuration/datasources/duckdb.md
-          - docs/configuration/datasources/dws.md
-          - docs/configuration/datasources/gaussdb.md
+          - docs/configuration/datasources/dws.zh.md
+          - docs/configuration/datasources/gaussdb.zh.md
           - docs/configuration/datasources/greenplum.md
           - docs/configuration/datasources/hana.md
           - docs/configuration/datasources/hive.md
@@ -2552,6 +2552,7 @@ execution:
         - tests/unit_tests/api/services/test_dashboard_service.py
         - tests/unit_tests/api/services/test_explorer_service.py
         - tests/unit_tests/api/services/test_report_service.py
+        - tests/unit_tests/api/test_deps.py
         - tests/unit_tests/cli/test_package_builder.py
         - tests/unit_tests/cli/test_package_cli.py
         - tests/unit_tests/prompts/

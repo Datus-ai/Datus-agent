@@ -68,6 +68,7 @@ from datus.tools.func_tool.report_artifact_tools import (
     _resolve_relative_import,
 )
 from datus.tools.registry.contracts import tool_contract
+from datus.utils.artifact_output import artifact_output_root, current_artifact_slug_factory
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -381,7 +382,7 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
         # See ReportArtifactTools.__init__ for the rationale — mirror logic.
         self._user_message = user_message or ""
 
-        project_root = Path(getattr(agent_config, "project_root", "")).resolve()
+        project_root = artifact_output_root(agent_config)
         if not project_root or str(project_root) == ".":
             raise ValueError("agent_config.project_root must be a non-empty directory")
         self._project_root = project_root
@@ -469,6 +470,11 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
                 success=0,
                 error="description must be a non-empty one-paragraph description of what the dashboard covers.",
             )
+        factory = current_artifact_slug_factory(self.agent_config)
+        if factory is not None:
+            slug = factory("dashboard", slug)
+            if not DASHBOARD_SLUG_RE.fullmatch(slug):
+                return FuncToolResult(success=0, error="Host returned an invalid artifact slug")
         candidate = self._project_root / "dashboards" / slug
         if candidate.exists():
             return FuncToolResult(

@@ -439,7 +439,9 @@ class MetricArtifactToolsMixin:
                 request,
                 semantic_tools=self._semantic_tools,
                 db_tool=self._db_func_tool,
-                project_root=self._project_root,
+                # Metric paths identify their source model, independently of
+                # the writable artifact directory where its snapshot is saved.
+                project_root=Path(self.agent_config.project_root),
                 params=values,
             )
             model_content = binding.pop("model_snapshot")

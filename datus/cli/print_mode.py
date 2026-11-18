@@ -14,12 +14,15 @@ import os
 import select
 import sys
 import threading
+import uuid
 from typing import Any
 
 from pydantic import ValidationError
+from rich.console import Console
 
 from datus.agent.node.node_factory import create_interactive_node, create_node_input
 from datus.cli.autocomplete import AtReferenceCompleter
+from datus.cli.cli_styles import print_warning
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.schemas.action_content_builder import action_to_content, build_interaction_content, build_response_content
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
@@ -59,8 +62,8 @@ class PrintModeRunner:
         self.execution_mode = getattr(args, "execution_mode", None) or "workflow"
         # Print mode respects the configured / ``--permission-mode`` profile
         # even in workflow mode (instead of the forced ``dangerous`` used by
-        # unattended flows) — bash and other tools only auto-run when an allow
-        # rule matches; anything ASK fails fast (workflow) or prompts via the
+        # unattended flows). Allow rules and eligible Bash/SQL AI review can
+        # approve calls; remaining ASK calls fail (workflow) or prompt via the
         # stdin protocol (interactive). ``active_profile_name`` already
         # reflects ``--permission-mode`` (applied in load_agent_config).
         self.agent_config.workflow_permission_profile = self.agent_config.active_profile_name
@@ -98,7 +101,9 @@ class PrintModeRunner:
             scope=self.scope,
             session_id=self.session_id,
             execution_mode=self.execution_mode,
+            on_warning=self._write_warning,
         )
+        self._warn_non_interactive_permissions(node)
 
         if getattr(self, "orchestrator_tools", None):
             self._attach_orchestrator_tools(node)
@@ -129,6 +134,27 @@ class PrintModeRunner:
             node_input.auto_execute_plan = True
         node.input = node_input
         run_async(self._stream_chat(node))
+
+    def _warn_non_interactive_permissions(self, node: Any) -> None:
+        """Explain the normal profile's headless ASK behavior before execution."""
+        if self.execution_mode != "workflow":
+            return
+        manager = node.permission_manager
+        if manager is None or manager.active_profile != "normal":
+            return
+        effective = manager.get_effective_config(node.get_node_name())
+        if effective.auto_review.enabled:
+            return
+        # The deprecated classifier setting can still enable Bash review.
+        if effective.bash_commands is not None and effective.bash_commands.classifier.enabled:
+            return
+        print_warning(
+            Console(stderr=True),
+            "Warning: print mode is non-interactive and the 'normal' profile has AI review disabled. "
+            "ASK calls without automatic approval fail with PERMISSION_DENIED. "
+            "Use --permission-mode auto to enable AI review for eligible Bash/SQL calls "
+            "(review may still deny), or --execution-mode interactive with a program that answers approval requests.",
+        )
 
     async def _stream_chat(self, node):
         dispatch_task = None
@@ -289,6 +315,15 @@ class PrintModeRunner:
     def _write_payload(self, payload: MessagePayload):
         sys.stdout.write(payload.model_dump_json() + "\n")
         sys.stdout.flush()
+
+    def _write_warning(self, warning: str) -> None:
+        self._write_payload(
+            MessagePayload(
+                message_id=str(uuid.uuid4()),
+                role="assistant",
+                content=[MessageContent(type="markdown", payload={"content": warning})],
+            )
+        )
 
     def _attach_orchestrator_tools(self, node: Any) -> None:
         from datus.tools.func_tool.orchestrator_tools import OrchestratorIssueTools

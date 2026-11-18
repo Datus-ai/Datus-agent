@@ -512,3 +512,88 @@ async def test_service_pin_covers_stream_send_and_disconnect(real_agent_config, 
             assert response.status_code == 200
         await asyncio.wait_for(stopping, timeout=2)
         cli.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+@pytest.mark.parametrize("mode", ["inline", "background", "stream"])
+async def test_cached_facade_uses_request_allocator_including_background_tools(real_agent_config, kind, mode):
+    from fastapi import FastAPI, Request
+    from httpx import ASGITransport, AsyncClient
+
+    from datus.api.deps import ServiceDep
+    from datus.api.services.datus_service import DatusService
+    from datus.tools.func_tool import DashboardArtifactTools, ReportArtifactTools
+
+    old = copy.deepcopy(real_agent_config)
+    old.artifact_slug_factory = lambda artifact_kind, semantic: f"old_{artifact_kind}_{semantic}"
+    current = copy.deepcopy(old)
+    current.artifact_slug_factory = lambda artifact_kind, semantic: f"new_{artifact_kind}_{semantic}"
+    removed = copy.deepcopy(old)
+    removed.artifact_slug_factory = None
+    configs = [old, current, removed]
+    assert len({DatusService.compute_fingerprint(config) for config in configs}) == 1
+
+    class HostAuth:
+        def on_evict(self, callback):
+            pass
+
+        async def authenticate(self, request):
+            config = configs[int(request.path_params["revision"])]
+            return AppContext(user_id="alice", project_id="allocator-test", config=config)
+
+    cache = DatusServiceCache()
+    init_deps(HostAuth(), cache)
+    app = FastAPI()
+    seen = []
+    pending = []
+    release = asyncio.Event()
+    artifact_type = ReportArtifactTools if kind == "report" else DashboardArtifactTools
+
+    def create(config, semantic):
+        tools = artifact_type(agent_config=config, db_func_tool=None)
+        result = getattr(tools, f"start_new_{kind}")(semantic, "Sales", "Sales analysis")
+        assert result.success == 1, result.error
+        return getattr(tools, f"{kind}_slug")
+
+    async def deferred(config, semantic):
+        await release.wait()
+        return await asyncio.to_thread(create, config, semantic)
+
+    @app.post("/create/{revision}")
+    async def create_artifact(revision: int, request: Request, svc: ServiceDep):
+        seen.append(svc)
+        semantic = f"sales_{revision}"
+        if mode == "background":
+            pending.append(asyncio.create_task(deferred(svc.agent_config, semantic)))
+            return {"started": True}
+        if mode == "stream":
+            import json
+
+            from datus.api.utils.service_stream import ServiceStreamingResponse
+
+            async def content():
+                yield json.dumps({"slug": create(svc.agent_config, semantic)})
+
+            return ServiceStreamingResponse(content(), service=svc, media_type="application/json")
+        return {"slug": create(svc.agent_config, semantic)}
+
+    try:
+        slugs = []
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            for revision in range(3):
+                response = await client.post(f"/create/{revision}")
+                assert response.status_code == 200
+                if mode != "background":
+                    slugs.append(response.json()["slug"])
+        assert seen[0] is seen[1] is seen[2]
+        if mode == "background":
+            # Turns outlive request cleanup and still retain their own allocator.
+            release.set()
+            slugs = await asyncio.gather(*pending)
+        assert slugs == [f"old_{kind}_sales_0", f"new_{kind}_sales_1", "sales_2"]
+        assert create(old, "cli") == f"old_{kind}_cli"
+    finally:
+        release.set()
+        await asyncio.gather(*pending, return_exceptions=True)
+        await cache.shutdown()

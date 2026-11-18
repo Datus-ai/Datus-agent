@@ -1005,7 +1005,13 @@ class SubAgentTaskTool:
         raw_child = self.agent_config.sub_agent_config(subagent_type)
         child_dict = raw_child if isinstance(raw_child, dict) else {}
         child_cfg = SubAgentConfig.model_validate(child_dict)
-        return child_cfg.with_effective_scoped_context(parent_sc)
+        result = child_cfg.with_effective_scoped_context(parent_sc)
+        parent_db = getattr(self._parent_node, "db_func_tool", None)
+        if (isinstance(parent_cfg, dict) and parent_cfg.get("db_read_only")) or (
+            getattr(parent_db, "read_only", False) is True
+        ):
+            result = result.model_copy(update={"db_read_only": True})
+        return result
 
     def _emit_complete_action(
         self,
