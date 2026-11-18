@@ -970,3 +970,55 @@ async def test_cancelled_artifact_worker_retains_native_connection_until_save_fi
             for lease in leases:
                 lease.release()
             await asyncio.to_thread(manager.close)
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("relations", ["private.payroll CROSS JOIN payroll", "payroll CROSS JOIN private.payroll"])
+def test_cte_name_collision_cannot_hide_attached_sqlite_table(relations):
+    from datus.tools.db_tools.config import SQLiteConfig
+    from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+
+    connector = SQLiteConnector(SQLiteConfig(db_path=":memory:", database_name="main"))
+    try:
+        connector.connect()
+        connector.connection.executescript(
+            "CREATE TABLE orders (id INTEGER); INSERT INTO orders VALUES (1);"
+            "ATTACH DATABASE ':memory:' AS private;"
+            "CREATE TABLE private.payroll (salary INTEGER); INSERT INTO private.payroll VALUES (9000);"
+        )
+        sql = f"WITH payroll AS (SELECT 1 AS x) SELECT private.payroll.salary FROM {relations}"
+        # This is executable SQL, not an ambiguous-name parse rejection.
+        assert connector.connection.execute(sql).fetchone()[0] == 9000
+        tool = DBFuncTool(connector, scoped_tables={"main.orders"})
+        ordinary = tool.read_query("SELECT salary FROM private.payroll")
+        collision = tool.read_query(sql)
+        assert ordinary.success == 0 and "outside scoped context" in ordinary.error
+        assert collision.success == 0 and "outside scoped context" in collision.error
+        allowed = tool.read_query(
+            "WITH orders AS (SELECT 1 AS x) SELECT main.orders.id FROM main.orders CROSS JOIN orders"
+        )
+        assert allowed.success == 1, allowed.error
+    finally:
+        connector.close()
+
+
+@pytest.mark.acceptance
+def test_sqlite_implicit_recursive_cte_keeps_qualified_physical_references_scoped():
+    from datus.tools.db_tools.config import SQLiteConfig
+    from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+
+    connector = SQLiteConnector(SQLiteConfig(db_path=":memory:", database_name="main"))
+    try:
+        connector.connect()
+        connector.connection.executescript("CREATE TABLE seq (n INTEGER); INSERT INTO seq VALUES (1);")
+        tool = DBFuncTool(connector, scoped_tables={"main.allowed"})
+        recursive = "WITH seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<3) SELECT * FROM seq"
+        assert [row[0] for row in connector.connection.execute(recursive)] == [1, 2, 3]
+        allowed = tool.read_query(recursive)
+        assert allowed.success == 1, allowed.error
+        physical = "WITH seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM main.seq WHERE n<3) SELECT * FROM seq"
+        assert [row[0] for row in connector.connection.execute(physical)] == [1, 2]
+        denied = tool.read_query(physical)
+        assert denied.success == 0 and "outside scoped context" in denied.error
+    finally:
+        connector.close()
