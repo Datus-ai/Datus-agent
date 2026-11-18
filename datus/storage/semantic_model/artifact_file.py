@@ -12,7 +12,7 @@ import stat
 import tempfile
 import threading
 import weakref
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -143,10 +143,9 @@ def _dosi_file_lock(lock_path: Path) -> Iterator[None]:
     try:
         yield
     finally:
-        try:
+        # A directory the writer cannot change (read-only, say) keeps the file; the write stands.
+        with suppress(OSError):
             lock_path.unlink(missing_ok=True)
-        except OSError:
-            pass
         lock.close()
 
 
