@@ -12,7 +12,7 @@ import stat
 import tempfile
 import threading
 import weakref
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -86,20 +86,7 @@ def semantic_artifact_lock(target_path: Path) -> Iterator[None]:
         file_engine(target_path, allow_invalid=True)
     with _thread_mutation_lock(target_path):
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        with (target_path.parent / f".{target_path.name}.dosi.lock").open("a+b") as lock:
-            if os.name == "posix":
-                import fcntl
-
-                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            else:
-                import msvcrt
-
-                lock.seek(0)
-                if not lock.read(1):
-                    lock.write(b"\0")
-                    lock.flush()
-                lock.seek(0)
-                msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+        with _dosi_file_lock(target_path.parent / f".{target_path.name}.dosi.lock"):
             paths = getattr(_MODEL_LOCK_DEPTH, "paths", set())
             _MODEL_LOCK_DEPTH.paths = paths
             paths.add(str(target_path))
@@ -107,11 +94,59 @@ def semantic_artifact_lock(target_path: Path) -> Iterator[None]:
                 yield
             finally:
                 paths.remove(str(target_path))
-                if os.name == "posix":
-                    fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
-                else:
-                    lock.seek(0)
-                    msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+@contextmanager
+def _dosi_file_lock(lock_path: Path) -> Iterator[None]:
+    """Hold the lock file Dosi shares with every writer of a model, then remove it.
+
+    The file exists only while held, the protocol Dosi follows too. A holder removes it before
+    unlocking, so whoever then wins the removed file finds the path no longer names it and locks
+    the current one instead. Every writer has to follow both halves: one that keeps a lock on a
+    removed file excludes no one. Windows keeps the file, as these handles are opened without
+    delete sharing.
+    """
+    if os.name != "posix":
+        import msvcrt
+
+        with lock_path.open("a+b") as lock:
+            lock.seek(0)
+            if not lock.read(1):
+                lock.write(b"\0")
+                lock.flush()
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+
+    import fcntl
+
+    while True:
+        lock = lock_path.open("a+b")
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            held = os.fstat(lock.fileno())
+            try:
+                current = os.stat(lock_path)
+            except FileNotFoundError:
+                current = None
+        except BaseException:
+            lock.close()
+            raise
+        if current is not None and (current.st_dev, current.st_ino) == (held.st_dev, held.st_ino):
+            break
+        lock.close()
+    try:
+        yield
+    finally:
+        # A directory the writer cannot change (read-only, say) keeps the file; the write stands.
+        with suppress(OSError):
+            lock_path.unlink(missing_ok=True)
+        lock.close()
 
 
 def atomic_write_bytes(target_path: Path, content: bytes, *, mode: Optional[int] = None) -> None:
