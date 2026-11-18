@@ -269,16 +269,18 @@ flow_groups:
           - https://github.com/Datus-ai/Datus-agent/issues/910
 
       - id: chat_surface.im_gateway
-        title: IM Gateway for Slack and Feishu
+        title: IM Gateway for Slack, Feishu, and WeCom
         priority: p1
         quality_sensitive: false
         docs:
           - docs/gateway/introduction.md
           - docs/gateway/slack.md
           - docs/gateway/feishu.md
+          - docs/gateway/wecom.md
         entrypoints:
           - "Gateway: Slack"
           - "Gateway: Feishu"
+          - "Gateway: WeCom"
         contracts:
           - Gateway adapters parse inbound messages and render outbound rich text consistently.
           - Gateway runtime can route messages to Datus chat services.
@@ -289,12 +291,13 @@ flow_groups:
               - tests/unit_tests/gateway/test_runtime.py
               - tests/unit_tests/gateway/adapters/test_feishu.py
               - tests/unit_tests/gateway/adapters/test_slack.py
+              - tests/unit_tests/gateway/adapters/test_wecom.py
           merge_queue:
             status: not_applicable
           nightly:
             status: manual
             notes: >
-              Scoped out of automated nightly: live Slack/Feishu smoke needs real workspace/tenant
+              Scoped out of automated nightly: live Slack/Feishu/WeCom smoke needs real workspace/tenant
               credentials and Socket Mode/WebSocket connections, classified as an external dependency.
               Adapter parsing, rich-text rendering, and runtime routing are covered deterministically;
               end-to-end channel delivery is validated by manual release QA.
@@ -1566,6 +1569,7 @@ execution:
         - tests/unit_tests/agent/
         - tests/unit_tests/api/
         - tests/unit_tests/configuration/
+        - tests/unit_tests/gateway/adapters/test_wecom.py
         - tests/unit_tests/models/
         - tests/unit_tests/tools/
     - id: datus-api-utils
@@ -1634,6 +1638,7 @@ execution:
       paths:
         - datus/gateway/
       targets:
+        - tests/unit_tests/api/services/test_chat_task_manager.py
         - tests/unit_tests/configuration/
         - tests/unit_tests/gateway/
         - tests/unit_tests/utils/
@@ -1644,6 +1649,7 @@ execution:
         - tests/unit_tests/agent/node/
         - tests/unit_tests/api/
         - tests/unit_tests/cli/
+        - tests/unit_tests/gateway/test_bridge.py
         - tests/unit_tests/models/
         - tests/unit_tests/observability/
         - tests/unit_tests/test_saas_adaptation.py
@@ -2085,6 +2091,7 @@ execution:
       targets:
         - tests/unit_tests/api/
         - tests/unit_tests/cli/
+        - tests/unit_tests/gateway/adapters/test_wecom.py
     - id: skill-payloads
       paths:
         - datus/resources/skills/

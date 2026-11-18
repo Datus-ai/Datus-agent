@@ -48,6 +48,7 @@ from datus.observability.compaction import compact_metrics, compact_started, obs
 from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseInput, BaseResult
+from datus.tools.db_tools.async_workers import DATABASE_CLEANUP
 from datus.tools.db_tools.data_file_loader import LOCAL_FILES_DATASOURCE
 from datus.utils.artifact_output import session_user_scope
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -69,6 +70,9 @@ if TYPE_CHECKING:
     from datus.tools.skill_tools.skill_manager import SkillManager
 
 logger = get_logger(__name__)
+
+# Bound waiting for datasource leases; their release worker never writes sessions.
+_DATABASE_CLOSE_TIMEOUT = 5.0
 
 
 class AgenticNode(Node):
@@ -417,8 +421,16 @@ class AgenticNode(Node):
         """Release resources owned by this finished node, leaving shared models alone."""
         db_tool = getattr(self, "db_func_tool", None)
         if db_tool is not None:
+            job = getattr(self, "_database_close_job", None)
+            if job is None:
+                job = DATABASE_CLEANUP.submit(db_tool.close)
+                self._database_close_job = job
             try:
-                await asyncio.to_thread(db_tool.close)
+                await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(job)), timeout=_DATABASE_CLOSE_TIMEOUT)
+            except asyncio.TimeoutError:
+                # DBFuncTool.close only drains operations and returns leases.
+                # Let that worker finish safely without delaying session closure.
+                logger.warning("Node database tool release timed out after %.1fs", _DATABASE_CLOSE_TIMEOUT)
             except Exception:
                 logger.exception("Failed to release node database tool")
         session = getattr(self, "_session", None)

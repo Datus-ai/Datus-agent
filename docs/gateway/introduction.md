@@ -265,6 +265,38 @@ Each conversation (group chat, DM, or thread) automatically maps to a persistent
 
 The bot will confirm the reset with the new session ID.
 
+#### Legacy session ownership
+
+Ordinary unscoped session IDs retain their historical `gateway_...` names.
+Other keys use `gateway-v3_` plus a SHA-256 digest of all four fields (channel,
+conversation, thread and scope), so long platform identifiers fit in session filenames.
+
+Older channel names containing `--` can produce ambiguous legacy IDs. To restore
+an existing Slack thread, **stop the gateway first**, inspect the saved conversation
+and its Slack thread permalink, and verify the exact channel instance, Slack channel
+ID and thread timestamp. An ID's filename alone does not establish its owner.
+Then record that reviewed mapping in the existing session database:
+
+```python
+import json
+from datus.models.session_manager import SessionManager
+
+manager = SessionManager(session_dir="/path/to/sessions")
+legacy_id = "gateway_team--slack--C012345--1700000000.123456"
+owner = json.dumps(
+    ["team--slack", "C012345", "1700000000.123456", None],
+    ensure_ascii=False, separators=(",", ":"),
+)
+assert manager.session_exists(legacy_id)
+assert manager.load_session_meta(legacy_id, "gateway_conversation_key") in (None, owner)
+manager.save_session_meta(legacy_id, "gateway_conversation_key", owner)
+```
+
+Restart the gateway after verifying the saved value. The bridge reuses this ID only
+for the exact recorded conversation; colliding tuples, including ordinary IDs with
+a different recorded owner, use their own digest IDs. Unowned ambiguous histories
+are not adopted automatically.
+
 ### Datasource Override
 
 Each channel can specify a `datasource` in its configuration to override the gateway's default datasource. This allows different channels to query different databases.

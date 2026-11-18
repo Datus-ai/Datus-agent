@@ -5,6 +5,7 @@ import gc
 import re
 import threading
 import weakref
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -3840,6 +3841,121 @@ async def test_repeated_stop_drains_persistence_before_releasing_node(real_agent
     assert task.session_id not in manager._tasks
     assert manager.get_task(task.session_id) is task
     await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_gateway_shutdown_bounds_database_release_but_drains_session_writes(
+    real_agent_config, monkeypatch, caplog
+):
+    from datus.agent.node.agentic_node import AgenticNode
+    from datus.api.models.cli_models import StreamChatInput
+    from datus.gateway.runtime import DatusGateway
+
+    caplog.set_level("WARNING")
+    monkeypatch.setattr("datus.agent.node.agentic_node._DATABASE_CLOSE_TIMEOUT", 0.05, raising=False)
+    gateway = DatusGateway(real_agent_config, {})
+    manager = gateway._task_manager
+    node = TestRunLoopSettlesTurn._node(raise_after=asyncio.CancelledError())
+    monkeypatch.setattr(type(node), "aclose", AgenticNode.aclose, raising=False)
+    session, session_manager = MagicMock(), MagicMock()
+    node._session, node._session_manager = session, session_manager
+    db_entered, release_db = threading.Event(), threading.Event()
+    persist_entered, release_persist = asyncio.Event(), asyncio.Event()
+    original_wait_for = asyncio.wait_for
+
+    async def wait_for_running_close(awaitable, timeout):
+        if timeout == 0.05:
+            awaitable = asyncio.ensure_future(awaitable)
+            # Independent watchdog: the close must start before its test deadline.
+            async with asyncio.timeout(1):
+                while not db_entered.is_set():
+                    await asyncio.sleep(0.01)
+        return await original_wait_for(awaitable, timeout)
+
+    monkeypatch.setattr(asyncio, "wait_for", wait_for_running_close)
+
+    def close_database():
+        db_entered.set()
+        release_db.wait()
+
+    async def persist(*args):
+        persist_entered.set()
+        await release_persist.wait()
+
+    node.db_func_tool = SimpleNamespace(close=close_database)
+    manager._create_node = lambda *args, **kwargs: node
+    manager._persist_message_contents = persist
+    task = ChatTask("gateway-stalled-release", None)
+    manager._tasks[task.session_id] = task
+    task.asyncio_task = asyncio.create_task(
+        manager._run_loop(task, real_agent_config, StreamChatInput(message="hi", session_id=task.session_id))
+    )
+    stopping = None
+    try:
+        await asyncio.wait_for(persist_entered.wait(), 2)
+        stopping = asyncio.create_task(gateway.shutdown())
+        await asyncio.sleep(0.08)
+        assert not stopping.done()
+        assert manager.get_task(task.session_id) is task
+        assert task.node is node
+        release_persist.set()
+        async with asyncio.timeout(1):
+            while not db_entered.is_set():
+                await asyncio.sleep(0.01)
+        await asyncio.wait({stopping}, timeout=0.3)
+        assert stopping.done()
+        assert stopping.exception() is None
+        session.close.assert_called_once()
+        session_manager.close_all_sessions.assert_called_once()
+        assert task.asyncio_task.done()
+        assert task.node is None
+        assert task.session_id not in manager._tasks
+        assert "database tool release timed out" in caplog.text
+    finally:
+        release_persist.set()
+        release_db.set()
+        await asyncio.gather(task.asyncio_task, *([stopping] if stopping is not None else []), return_exceptions=True)
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_queued_database_close_returns_lease_after_wait_timeout(monkeypatch):
+    from datus.agent.node.agentic_node import AgenticNode
+    from datus.tools.func_tool.database import DBFuncTool
+
+    entered, release, returned = threading.Event(), threading.Event(), threading.Event()
+    executor = ThreadPoolExecutor(max_workers=1)
+
+    def occupy_worker():
+        entered.set()
+        release.wait()
+
+    occupied = executor.submit(occupy_worker)
+
+    async def offload(function, *args, **kwargs):
+        return await asyncio.wrap_future(executor.submit(function, *args, **kwargs))
+
+    monkeypatch.setattr("datus.agent.node.agentic_node.DATABASE_CLEANUP", executor, raising=False)
+    monkeypatch.setattr("datus.agent.node.agentic_node._DATABASE_CLOSE_TIMEOUT", 0.03)
+    monkeypatch.setattr(asyncio, "to_thread", offload)
+    tool = DBFuncTool.__new__(DBFuncTool)
+    tool._borrowed_connections = {"lease": SimpleNamespace(release=returned.set)}
+    node = SimpleNamespace(db_func_tool=tool, _session=None, _session_manager=None)
+    try:
+        async with asyncio.timeout(1):
+            while not entered.is_set():
+                await asyncio.sleep(0.01)
+        await AgenticNode.aclose(node)
+        assert not returned.is_set()
+        release.set()
+        await asyncio.wrap_future(occupied)
+        async with asyncio.timeout(0.5):
+            while not returned.is_set():
+                await asyncio.sleep(0.01)
+        assert not tool._borrowed_connections
+    finally:
+        release.set()
+        executor.shutdown(wait=True)
 
 
 @pytest.mark.asyncio

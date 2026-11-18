@@ -98,7 +98,10 @@ def test_first_entry_loads_and_exposes_the_current_file(project, entry):
     assert document["datasets"] == yaml.safe_load(MODEL)["datasets"]
     assert document["version"] == "0.3.0.dev0"
     assert document["metrics"][0]["nonportable_extensions"][0]["data"] == {"uid": "tz4a98xxat96iws9zmbrgj3a"}
-    assert not list(path.parent.glob(".*.bak"))
+    # Dosi upgrades in place without keeping a backup. The shared lock file is gone too, except
+    # on Windows, which keeps it: its writers open the file without delete sharing.
+    kept = [] if os.name == "posix" else [f".{path.name}.dosi.lock"]
+    assert sorted(p.name for p in path.parent.iterdir() if p.name.startswith(".")) == kept
 
 
 def test_engine_reuse_and_external_historical_replacement(project):

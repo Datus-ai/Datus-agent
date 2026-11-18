@@ -63,6 +63,7 @@ def connection_scope(method=None, *, owner_attr=None):
             finally:
                 _scope.reset(token)
 
+    wrapped.__datus_database_operation__ = True
     return wrapped
 
 

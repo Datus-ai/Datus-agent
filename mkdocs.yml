@@ -58,6 +58,7 @@ nav:
     - Chatbot: web_chatbot/introduction.md
     - IM Gateway:
       - Introduction: gateway/introduction.md
+      - WeCom: gateway/wecom.md
       - Slack: gateway/slack.md
       - Feishu: gateway/feishu.md
     - Knowledge Base:
