@@ -12,6 +12,7 @@ import pytest
 import pytest_asyncio
 from aiohttp import web
 
+from datus.api.services.chat_task_manager import ChatTask, ChatTaskManager
 from datus.gateway.adapters.wecom import WeComAdapter, _chunks
 from datus.gateway.bridge import ChannelBridge
 from datus.gateway.models import OutboundMessage
@@ -228,7 +229,7 @@ async def test_unsupported_attachment_is_explained_and_never_runs_agent(peer):
 async def test_missing_heartbeat_ack_reconnects(peer):
     async with running(peer, heartbeat_interval=0.02):
         peer.ack["ping"] = False
-        await until(lambda: len(peer.sockets) >= 2)
+        await until(lambda: len(peer.sockets) >= 2 and sum(f["cmd"] == "aibot_subscribe" for f in peer.frames) >= 2)
         assert sum(f["cmd"] == "aibot_subscribe" for f in peer.frames) >= 2
 
 
@@ -306,3 +307,145 @@ async def test_connection_takeover_stops_reconnecting_and_cancels_callbacks(peer
         assert sum(f["cmd"] == "aibot_subscribe" for f in peer.frames) == 1
         assert not adapter._pending
         assert not adapter._handlers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", ["a" * 24567, "a" + "查询📊" * 3000], ids=["ascii", "multibyte"])
+async def test_oversized_reply_pushes_only_the_unstreamed_suffix(peer, content):
+    async def handle(msg, adapter, config):
+        await adapter.send_message(
+            OutboundMessage(channel_id="wecom", conversation_id=msg.conversation_id, text=content)
+        )
+
+    async with running(peer, SimpleNamespace(handle_message=handle)) as adapter:
+        await peer.sockets[-1].send_json(callback())
+        await until(lambda: any(f.get("body", {}).get("stream", {}).get("finish") for f in peer.frames))
+        await until(lambda: not adapter._handlers)
+        prefix = next(
+            f["body"]["stream"]["content"] for f in peer.frames if f.get("body", {}).get("stream", {}).get("finish")
+        )
+        suffix = [f["body"]["markdown"]["content"] for f in peer.frames if f["cmd"] == "aibot_send_msg"]
+        assert suffix
+        assert prefix + "".join(suffix) == content
+        assert all(len(part.encode("utf-8")) <= 4000 for part in suffix)
+
+
+@pytest.mark.asyncio
+async def test_stalled_websocket_upgrade_times_out_and_reconnects():
+    attempts = []
+    writers = set()
+
+    async def stall_upgrade(reader, writer):
+        writers.add(writer)
+        try:
+            attempts.append(await reader.readuntil(b"\r\n\r\n"))
+            # TCP is connected, but the peer never sends HTTP upgrade headers.
+            await reader.read()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            writers.discard(writer)
+
+    server = await asyncio.start_server(stall_upgrade, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    adapter = WeComAdapter(
+        "wecom",
+        {"bot_id": "bot", "secret": "secret", "ws_url": f"http://127.0.0.1:{port}", "handshake_timeout": 0.03},
+        SimpleNamespace(handle_message=AsyncMock()),
+    )
+    try:
+        await adapter.start()
+        await until(lambda: len(attempts) >= 2)
+        assert all(b"Upgrade: websocket" in request for request in attempts)
+    finally:
+        await adapter.stop()
+        server.close()
+        await server.wait_closed()
+        for writer in list(writers):
+            writer.close()
+            await writer.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_handshake_deadline_does_not_expire_an_established_websocket(peer):
+    async with running(peer, handshake_timeout=0.03, heartbeat_interval=0.01) as adapter:
+        await until(lambda: sum(f["cmd"] == "ping" for f in peer.frames) >= 6)
+        await peer.sockets[-1].send_json(callback())
+        await until(lambda: any(f.get("body", {}).get("stream", {}).get("finish") for f in peer.frames))
+        assert len(peer.sockets) == 1
+        assert not adapter._runner.done()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cause", ["disconnect", "stop", "takeover"])
+async def test_cancelled_handler_stops_and_drains_its_manager_task(peer, monkeypatch, cause):
+    manager = ChatTaskManager(default_interactive=False)
+    bridge = ChannelBridge(SimpleNamespace(), manager)
+    entered = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    cleaned = asyncio.Event()
+    model_tasks = []
+
+    async def start_chat(config, request, **kwargs):
+        task = ChatTask(request.session_id, None)
+
+        async def model_work():
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup_started.set()
+                await release_cleanup.wait()
+                cleaned.set()
+
+        task.asyncio_task = asyncio.create_task(model_work())
+        manager._tasks[task.session_id] = task
+        model_tasks.append(task.asyncio_task)
+        return task
+
+    # Retain the real consume_events and public stop_task implementation. Only
+    # model startup is replaced, so no external model/config/storage is required.
+    monkeypatch.setattr(manager, "start_chat", start_chat)
+    stopping = None
+    unrelated = asyncio.create_task(asyncio.Event().wait())
+    manager._tasks["unrelated-session"] = ChatTask("unrelated-session", unrelated)
+    try:
+        async with running(peer, bridge) as adapter:
+            ws = peer.sockets[-1]
+            await ws.send_json(callback())
+            await asyncio.wait_for(entered.wait(), 1)
+            if cause == "stop":
+                stopping = asyncio.create_task(adapter.stop())
+            elif cause == "disconnect":
+                await ws.close()
+            else:
+                await ws.send_json(
+                    {"cmd": "aibot_event_callback", "body": {"event": {"eventtype": "disconnected_event"}}}
+                )
+            await asyncio.wait_for(cleanup_started.wait(), 0.5)
+            assert not cleaned.is_set()
+            assert len(peer.sockets) == 1
+            assert stopping is None or not stopping.done()
+            # A second cancellation must not abandon native model cleanup.
+            for handler in list(adapter._handlers):
+                handler.cancel()
+            await asyncio.sleep(0)
+            assert not cleaned.is_set()
+            release_cleanup.set()
+            if stopping is not None:
+                await stopping
+            elif cause == "disconnect":
+                await until(
+                    lambda: len(peer.sockets) >= 2 and sum(f["cmd"] == "aibot_subscribe" for f in peer.frames) >= 2
+                )
+            else:
+                await until(lambda: adapter._runner.done())
+            assert cleaned.is_set()
+            assert all(task.done() for task in model_tasks)
+            assert not unrelated.done()
+    finally:
+        release_cleanup.set()
+        await manager.shutdown()
+        if stopping is not None:
+            await asyncio.gather(stopping, return_exceptions=True)

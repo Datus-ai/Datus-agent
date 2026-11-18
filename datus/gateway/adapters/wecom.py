@@ -58,9 +58,10 @@ class WeComAdapter(ChannelAdapter):
         self._secret = config.get("secret", "")
         self._url = config.get("ws_url", WS_URL)
         self._heartbeat_interval = float(config.get("heartbeat_interval", 30))
+        self._handshake_timeout = float(config.get("handshake_timeout", 10))
         self._request_timeout = float(config.get("request_timeout", 5))
         self._stream_timeout = float(config.get("stream_timeout", 300))
-        if min(self._heartbeat_interval, self._request_timeout, self._stream_timeout) <= 0:
+        if min(self._heartbeat_interval, self._handshake_timeout, self._request_timeout, self._stream_timeout) <= 0:
             raise ValueError("WeCom timeouts must be positive")
         self._session: Optional[aiohttp.ClientSession] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
@@ -90,7 +91,9 @@ class WeComAdapter(ChannelAdapter):
         if not self.is_configured():
             raise ValueError("WeCom requires bot_id and secret")
         self._taken_over = False
-        self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None, sock_connect=10))
+        self._session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=None, sock_connect=self._handshake_timeout)
+        )
         self._runner = asyncio.create_task(self._run(), name=f"wecom-{self.channel_id}")
 
     async def stop(self) -> None:
@@ -159,7 +162,10 @@ class WeComAdapter(ChannelAdapter):
         while True:
             receiver = None
             try:
-                async with self._session.ws_connect(self._url, max_msg_size=1024 * 1024) as ws:
+                # Bound connection establishment and upgrade headers, not the live socket.
+                async with asyncio.timeout(self._handshake_timeout):
+                    ws = await self._session.ws_connect(self._url, max_msg_size=1024 * 1024)
+                async with ws:
                     self._ws = ws
                     receiver = asyncio.create_task(self._receive())
                     await self._request("aibot_subscribe", {"bot_id": self._bot_id, "secret": self._secret})
@@ -197,7 +203,7 @@ class WeComAdapter(ChannelAdapter):
             await asyncio.sleep(delay)
             delay = min(delay * 2, 60)
 
-    async def _stream(self, state: _Reply, finish: bool, content: Optional[str] = None) -> None:
+    async def _stream(self, state: _Reply, finish: bool, content: Optional[str] = None) -> str:
         text = state.content if content is None else content
         text = text.encode("utf-8")[:_STREAM_LIMIT].decode("utf-8", errors="ignore")
         await self._request(
@@ -205,6 +211,7 @@ class WeComAdapter(ChannelAdapter):
             {"msgtype": "stream", "stream": {"id": state.stream_id, "finish": finish, "content": text}},
             state.req_id,
         )
+        return text
 
     async def _expire_stream(self, state: _Reply) -> None:
         await asyncio.sleep(self._stream_timeout)
@@ -296,13 +303,13 @@ class WeComAdapter(ChannelAdapter):
         async with state.lock:
             content = state.content or "(No response generated)"
             if not state.expired:
-                await self._stream(state, True, content)
-            if state.expired or len(content.encode("utf-8")) > _STREAM_LIMIT:
-                for chunk in _chunks(content):
-                    await self._request(
-                        "aibot_send_msg",
-                        {"chatid": state.chat_id, "msgtype": "markdown", "markdown": {"content": chunk}},
-                    )
+                streamed = await self._stream(state, True, content)
+                content = content[len(streamed) :]
+            for chunk in _chunks(content):
+                await self._request(
+                    "aibot_send_msg",
+                    {"chatid": state.chat_id, "msgtype": "markdown", "markdown": {"content": chunk}},
+                )
 
     async def add_reaction(self, conversation_id, message_id, emoji, thread_id=None) -> None:
         """WeCom AI Bot has no equivalent reaction API."""

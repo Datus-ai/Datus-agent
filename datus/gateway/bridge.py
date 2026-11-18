@@ -247,6 +247,19 @@ class ChannelBridge:
                 bot_msg_id = await adapter.send_message(fallback)
                 if bot_msg_id:
                     await self._track_bot_message(bot_msg_id, session_id, msg, fallback.text)
+        except asyncio.CancelledError:
+            has_error = True
+            if task is not None:
+                await self._task_manager.stop_task(task.session_id)
+                if task.asyncio_task is not None:
+                    completion = asyncio.gather(task.asyncio_task, return_exceptions=True)
+                    # Repeated handler cancellation must not orphan model cleanup.
+                    while not completion.done():
+                        try:
+                            await asyncio.shield(completion)
+                        except asyncio.CancelledError:
+                            pass
+            raise
         except Exception:
             has_error = True
             raise

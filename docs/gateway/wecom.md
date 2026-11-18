@@ -35,8 +35,9 @@ gateway reads YAML on startup; restart it after changing configuration.
 - Replies begin with a processing placeholder, then update the same stream with
   accumulated Markdown. The final update sets `finish=true`.
 - A turn still running after 300 seconds closes its stream and delivers the final
-  result using `aibot_send_msg`. Oversized results are also delivered separately,
-  split on UTF-8 boundaries. A missing/rejected stream-close ACK does not prevent
+  result using `aibot_send_msg`. For oversized results that finish before expiry,
+  only the suffix beyond the stream limit is delivered separately, split on UTF-8
+  boundaries. A missing/rejected stream-close ACK does not prevent
   proactive delivery. Platform permissions/rate limits still apply.
 - One bot should have one active gateway owner. Backend deployments use their
   existing Redis leader election; standalone instances must not compete for the same bot.
@@ -44,11 +45,13 @@ gateway reads YAML on startup; restart it after changing configuration.
   The displaced adapter closes and stops automatic reconnection. Resolve duplicate
   bot configurations before explicitly restarting it (or re-enabling the channel).
 - Network reconnection uses exponential backoff. Heartbeats are protocol `ping` frames,
-  not chat-message polling. Pending callbacks are cancelled on connection loss;
+  not chat-message polling. Pending callbacks and their chat tasks are cancelled
+  and awaited on connection loss before reconnecting;
   there is no durable message queue or exactly-once delivery across process restarts.
 
 Advanced YAML-only `extra` options: `ws_url` (default
 `wss://openws.work.weixin.qq.com`), `heartbeat_interval` (30 seconds),
+`handshake_timeout` (10 seconds, connection and upgrade headers only),
 `request_timeout` (5 seconds), and `stream_timeout` (300 seconds). Use `ws_url`
 only with a trusted endpoint: bot credentials are sent to it.
 
