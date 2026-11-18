@@ -46,6 +46,16 @@ def warnings_logged(monkeypatch):
             f"semantic_tools.attribute_metrics,{OLD}",
             "semantic_tools.attribute_metrics, semantic_tools.attribute_dimensions",
         ),
+        # A list item may hold several names, and an entry that is not a name stays where it was.
+        (
+            [f"semantic_tools.query_metrics, {OLD}", None],
+            [
+                "semantic_tools.query_metrics",
+                "semantic_tools.attribute_metrics",
+                "semantic_tools.attribute_dimensions",
+                None,
+            ],
+        ),
     ],
 )
 def test_old_name_becomes_its_successors(tools, expanded, warnings_logged):
@@ -102,3 +112,31 @@ def test_sub_agent_config_from_the_api_is_expanded(warnings_logged):
         config.tools == "semantic_tools.attribute_metrics,semantic_tools.attribute_dimensions,semantic_tools.get_metric"
     )
     assert "agentic_nodes.ask_sales.tools" in warnings_logged[0]
+
+
+def test_sub_agent_config_splits_a_list_item_of_several_names(warnings_logged):
+    config = SubAgentConfig(system_prompt="ask_sales", tools=[f"semantic_tools.query_metrics, {OLD}"])
+
+    assert config.tools == (
+        "semantic_tools.query_metrics,semantic_tools.attribute_metrics,semantic_tools.attribute_dimensions"
+    )
+
+
+@pytest.mark.parametrize("pattern", ["attribution_analyze", "attribution_*"])
+def test_a_rule_written_for_the_old_name_applies_to_its_successors(pattern):
+    from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
+    from datus.tools.permission.permission_manager import PermissionManager
+
+    deny = PermissionRule(tool="semantic_tools", pattern=pattern, permission=PermissionLevel.DENY)
+    for successor in ("attribute_metrics", "attribute_dimensions"):
+        assert deny.matches("semantic_tools", successor)
+    assert not deny.matches("semantic_tools", "query_metrics")
+    assert not deny.matches("db_tools", "attribute_metrics")
+
+    config = PermissionConfig(
+        default_permission=PermissionLevel.ALLOW,
+        rules=[PermissionRule(tool="semantic_tools", pattern="*", permission=PermissionLevel.ALLOW), deny],
+    )
+    manager = PermissionManager(global_config=config)
+    assert manager.check_permission("semantic_tools", "attribute_dimensions", "chat") == PermissionLevel.DENY
+    assert manager.check_permission("semantic_tools", "query_metrics", "chat") == PermissionLevel.ALLOW

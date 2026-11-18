@@ -9,7 +9,10 @@ does not know (``ask_metrics`` logs it, ``chat`` does not). A configuration
 written for a replaced tool would quietly lose the capability. So a replaced
 name is expanded to its successors where the list is read — ``AgentConfig``
 loading ``agentic_nodes`` and ``SubAgentConfig.tools`` — before any node sees
-it, with one warning per sub-agent. The configuration file is not rewritten.
+it, with one warning per sub-agent. The configuration file is not rewritten on
+load. A permission rule written for a replaced name applies to its successors
+too (``replaced_names``), so a denied tool is not allowed again under its new
+names.
 
 Remove an entry one release after it is added: the old name then stops
 working like any other unknown tool.
@@ -52,32 +55,58 @@ def _warn_once(node_name: str, old: str, new: Tuple[str, ...]) -> None:
 def expand_replaced_tools(node_name: str, tools: Any) -> Any:
     """``tools`` with every replaced name swapped for its successors.
 
-    ``tools`` is a ``tools`` value as configured: a comma-separated string or a
-    list of strings; the same type comes back. Anything else, and a list
-    without a replaced name, is returned as is.
+    ``tools`` is a ``tools`` value as configured: a comma-separated string, or
+    a list whose strings may each hold several comma-separated names; a string
+    comes back as a string, a list as a list of single names. Entries that are
+    not strings are kept where they were, for the caller to handle as before.
+    Anything else, and a value without a replaced name, is returned as is.
     """
     if isinstance(tools, str):
-        items = tools.split(",")
-    elif isinstance(tools, (list, tuple)) and all(isinstance(item, str) for item in tools):
-        items = list(tools)
+        entries: List[Any] = [tools]
+    elif isinstance(tools, (list, tuple)):
+        entries = list(tools)
     else:
         return tools
-    if not any(item.strip() in REPLACED_TOOLS for item in items):
+    names = [name.strip() for entry in entries if isinstance(entry, str) for name in entry.split(",")]
+    if not any(name in REPLACED_TOOLS for name in names):
         return tools
-    expanded: List[str] = []
-    for item in items:
-        name = item.strip()
-        successors = REPLACED_TOOLS.get(name)
-        if successors is None:
-            if name:
-                expanded.append(name)
+    expanded: List[Any] = []
+    for entry in entries:
+        if not isinstance(entry, str):
+            expanded.append(entry)
             continue
-        _warn_once(node_name or "<unnamed>", name, successors)
-        expanded.extend(successors)
-    expanded = list(dict.fromkeys(expanded))
+        for item in entry.split(","):
+            name = item.strip()
+            successors = REPLACED_TOOLS.get(name)
+            if successors is None:
+                if name:
+                    expanded.append(name)
+                continue
+            _warn_once(node_name or "<unnamed>", name, successors)
+            expanded.extend(successors)
+    seen: Set[str] = set()
+    unique: List[Any] = []
+    for item in expanded:
+        if isinstance(item, str):
+            if item in seen:
+                continue
+            seen.add(item)
+        unique.append(item)
     if isinstance(tools, str):
-        return ", ".join(expanded)
-    return type(tools)(expanded) if isinstance(tools, tuple) else expanded
+        return ", ".join(unique)
+    return tuple(unique) if isinstance(tools, tuple) else unique
+
+
+def replaced_names(category: str, name: str) -> Tuple[str, ...]:
+    """The names ``category.name`` replaced, within its category:
+    ``("attribution_analyze",)`` for ``semantic_tools.attribute_metrics``."""
+    tool = f"{category}.{name}"
+    old_names = []
+    for old, successors in REPLACED_TOOLS.items():
+        old_category, _, old_name = old.partition(".")
+        if tool in successors and old_category == category:
+            old_names.append(old_name)
+    return tuple(old_names)
 
 
 def _reset_warnings_for_tests() -> None:
