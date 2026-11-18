@@ -41,7 +41,9 @@ SUMMARY_ERROR_MAX_CHARS = 19
 FS_TOOLS_NO_CLIP = frozenset(
     {"read_file", "read_image", "write_file", "edit_file", "delete_file", "glob", "grep", "web_search", "web_fetch"}
 )
-SUMMARY_TOOLS_NO_CLIP = FS_TOOLS_NO_CLIP | frozenset({"attribute_metrics", "attribute_dimensions"})
+# Tools whose result is text, not JSON: MCP and legacy adapters pass it bare.
+_TEXT_RESULT_TOOLS = frozenset({"attribute_metrics", "attribute_dimensions"})
+SUMMARY_TOOLS_NO_CLIP = FS_TOOLS_NO_CLIP | _TEXT_RESULT_TOOLS
 
 
 # ── Generic helpers (public API) ────────────────────────────────────────
@@ -1168,8 +1170,13 @@ class ToolSummaryRegistry:
         try:
             data = json.loads(content)
         except (TypeError, ValueError):
-            return _clip_short(truncate_text(content), tool_name)
+            data = content
+            if tool_name not in _TEXT_RESULT_TOOLS:
+                return _clip_short(truncate_text(content), tool_name)
 
+        if isinstance(data, str) and tool_name in _TEXT_RESULT_TOOLS:
+            # The bare text, or a JSON string of it, summarizes as the wrapped result does.
+            return self.summarize_dict({"success": 1, "result": data}, tool_name)
         if isinstance(data, dict):
             return self.summarize_dict(data, tool_name)
         if isinstance(data, list):

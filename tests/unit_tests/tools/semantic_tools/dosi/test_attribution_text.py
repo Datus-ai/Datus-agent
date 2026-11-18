@@ -24,7 +24,7 @@ from datus.tools.semantic_tools.dosi.attribution_text import (
     summarize_attribution_text,
 )
 
-RESULTS = Path(__file__).resolve().parents[3] / "data" / "attribution_results"
+RESULTS = Path(__file__).resolve().parents[4] / "data" / "attribution_results"
 
 
 def _load(name):
@@ -224,6 +224,28 @@ def test_sampling_error_is_shown_only_where_it_changes_the_digits():
     assert lines[4] == "- Home | 102083599 → 104823721 | +2740122 (56.5%) ±1200"
 
 
+def test_sampling_error_counts_against_the_last_integer_digit_of_a_large_effect():
+    # +3216288 is written to the unit, so an error of 5 changes a written digit.
+    result = copy.deepcopy(_load("dims_additive"))
+    result["tree"]["children"][0]["uncertainty"] = {"sample_stddev": 40.0, "standard_error": 5.0}
+
+    assert render_attribute_dimensions(result).splitlines()[3] == (
+        "- Children | 99319529 → 102535817 | +3216288 (66.3%) ±5"
+    )
+
+
+def test_a_text_group_that_would_read_as_null_or_break_the_line_is_quoted():
+    result = copy.deepcopy(_load("dims_additive"))
+    children = result["tree"]["children"]
+    children[0]["label"], children[0]["key"] = "NULL", {"item.i_category": "NULL"}
+    children[1]["label"], children[1]["key"] = "it's\nnew", {"item.i_category": "it's\nnew"}
+
+    lines = render_attribute_dimensions(result).splitlines()
+
+    assert lines[3].startswith("- 'NULL' | ")
+    assert lines[4].startswith("- 'it''s\\nnew' | ")
+
+
 def test_a_group_whose_rank_is_within_noise_is_marked():
     result = copy.deepcopy(_load("dims_additive"))
     result["tree"]["children"][0]["rank_unstable"] = True
@@ -244,6 +266,19 @@ def test_a_group_whose_rank_is_within_noise_is_marked():
 )
 def test_summary_line(name, summary):
     assert summarize_attribution_text(render_attribution(_load(name))) == summary
+
+
+def test_summary_of_a_change_of_zero_names_the_largest_input():
+    text = "\n".join(
+        [
+            "status complete",
+            "",
+            "net | 140 → 140 | 0 (n/a)",
+            "  x_total | 150 → 160 | +10 (n/a)",
+            "  (SUM(y)) | 10 → 20 | -10 (n/a)",
+        ]
+    )
+    assert summarize_attribution_text(text) == "complete · Δ 0 · x_total +10 (n/a)"
 
 
 def test_summary_of_anything_else_is_empty():

@@ -111,10 +111,12 @@ def _uncertainty(effect: float, uncertainty: Any) -> str:
     error = uncertainty.get("standard_error")
     if not isinstance(error, (int, float)) or error <= 0 or not math.isfinite(error):
         return ""
-    # The last digit shown is 10^(magnitude - digits + 1); below that the
-    # sampling error does not change what is written.
-    if effect != 0:
-        last_digit = 10 ** (math.floor(math.log10(abs(effect))) - SIGNIFICANT_DIGITS + 1)
+    # The last digit shown, as `_fixed` writes the effect: every integer digit,
+    # then decimals up to six significant digits. Below it the sampling error
+    # does not change what is written.
+    if effect != 0 and math.isfinite(effect):
+        integer_digits = math.floor(math.log10(abs(effect))) + 1
+        last_digit = 10.0 ** -max(0, SIGNIFICANT_DIGITS - integer_digits)
         if error < last_digit:
             return ""
     # Two significant digits, integer digits included: 1234.5 is ±1200.
@@ -212,13 +214,18 @@ def _metric_head(node: Mapping[str, Any]) -> str:
 def _group_label(group: Mapping[str, Any]) -> str:
     """A group's value. Dosi labels a NULL value ``(null)``, as it does the
     text ``'(null)'``; the key tells them apart, and a NULL is written ``NULL``
-    so a follow-up filters it with ``IS NULL``."""
+    so a follow-up filters it with ``IS NULL``. A text that would read as that
+    NULL, or that would break the line, is written as a quoted literal:
+    ``'NULL'``, ``'a\\nb'``."""
     label = str(group.get("label"))
     key = group.get("key")
     if label == "(null)" and isinstance(key, Mapping):
         values = list(key.values())
         if None in values and "(null)" not in values:
             return "NULL"
+    if label == "NULL" or "\n" in label or "\r" in label:
+        escaped = label.replace("\\", "\\\\").replace("'", "''").replace("\n", "\\n").replace("\r", "\\r")
+        return f"'{escaped}'"
     return label
 
 
@@ -324,18 +331,19 @@ def render_attribution(result: Mapping[str, Any], notes: Sequence[str] = ()) -> 
 
 _STATUS = re.compile(r"^status (\w+)")
 _ISSUE = re.compile(r"^issue (\w+) ([\w.-]+):")
-_EFFECT = re.compile(r"([+-]?[\d.]+) \((-?[\d.]+)%\)")
+_EFFECT = re.compile(r"([+-]?[\d.]+) \((?:(-?[\d.]+)%|n/a)\)")
 _CHANGE = re.compile(r"\| change ([+-]?[\d.]+)\s*$")
 
 
-def _effect_of(line: str) -> Optional[Tuple[float, float]]:
-    """``(effect, share%)`` from the last field of a node line."""
+def _effect_of(line: str) -> Optional[Tuple[float, Optional[float]]]:
+    """``(effect, share%)`` from the last field of a node line; the share is
+    None when it is ``n/a`` (the change it would be a share of is 0)."""
     last = line.rsplit(" | ", 1)[-1]
     match = _EFFECT.search(last)
     if not match:
         return None
     try:
-        return float(match.group(1)), float(match.group(2))
+        return float(match.group(1)), float(match.group(2)) if match.group(2) is not None else None
     except ValueError:
         return None
 
@@ -370,7 +378,7 @@ def summarize_attribution_text(text: Any) -> str:
         if root_effect:
             parts.append(f"Δ {signed(root_effect[0])}")
 
-    best: Optional[Tuple[str, float, float]] = None
+    best: Optional[Tuple[str, float, Optional[float]]] = None
     if change:  # dimension tree: the first-level groups
         for line in body[1:]:
             if not line.startswith("- ") or line.count(" | ") < 2:
@@ -379,7 +387,7 @@ def summarize_attribution_text(text: Any) -> str:
             if parsed and (best is None or abs(parsed[0]) > abs(best[1])):
                 best = (line[2:].split(" | ", 1)[0], parsed[0], parsed[1])
     else:  # metric tree: inputs, the lines nothing is under, summed over their lines
-        totals: Dict[str, List[float]] = {}
+        totals: Dict[str, List[Optional[float]]] = {}
         nodes = [line for line in body[1:] if line.startswith("  ")]
         depths = [len(line) - len(line.lstrip(" ")) for line in nodes]
         for i, line in enumerate(nodes):
@@ -391,12 +399,13 @@ def summarize_attribution_text(text: Any) -> str:
             name = line.strip().split(" | ", 1)[0].split(" @ ", 1)[0]
             total = totals.setdefault(name, [0.0, 0.0])
             total[0] += parsed[0]
-            total[1] += parsed[1]
+            total[1] = None if total[1] is None or parsed[1] is None else total[1] + parsed[1]
         for name, (effect, share) in totals.items():
             if best is None or abs(effect) > abs(best[1]):
                 best = (name, effect, share)
     if best is not None:
-        parts.append(f"{best[0]} {signed(best[1], 3)} ({best[2]:.1f}%)")
+        share_text = "n/a" if best[2] is None else f"{best[2]:.1f}%"
+        parts.append(f"{best[0]} {signed(best[1], 3)} ({share_text})")
     return " · ".join(parts)
 
 

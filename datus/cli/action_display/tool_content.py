@@ -2161,8 +2161,15 @@ def _build_validate_semantic(action: ActionHistory, verbose: bool) -> ToolCallCo
 
 
 def _build_attribution(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """attribute_metrics / attribute_dimensions: share the canonical summary."""
+    """attribute_metrics / attribute_dimensions: share the canonical summary.
+
+    A refused request (``success=0``, e.g. ``dimensions_required``) does not
+    raise, so the action stays SUCCESS; the mark still flips to ✗. A result
+    whose status is ``unsupported`` is an answer and keeps its ✓."""
     tc = make_base_content(action)
+    data = parse_output_data(action.output)
+    if data is not None and (data.get("success") == 0 or data.get("error")):
+        tc.status_mark = "\u2717"
     if verbose:
         tc.args_lines = extract_args_markup(action)
         if action.output:

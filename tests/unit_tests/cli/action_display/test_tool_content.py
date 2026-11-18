@@ -1511,18 +1511,48 @@ class TestBuildValidateSemantic:
         assert "relationship_target_not_unique on kpi_cell" in rendered
 
 
+def _attribution_action(name: str, result: dict) -> ActionHistory:
+    return _make(input_data={"function_name": name}, output_data={"raw_output": json.dumps(result)})
+
+
+_FORMULA_TREE = (
+    "status complete\n\nm = a / b | 2 \u2192 3 | +1 (100.0%)\n"
+    "  a | 2 \u2192 4 | +1.5 (150.0%)\n  b | 1 \u2192 1.3333 | -0.5 (-50.0%)"
+)
+_GROUP_TREE = (
+    "status complete\n\nm by region | 2 \u2192 3 | change +1\n"
+    "- east | 1 \u2192 1.8 | +0.8 (80.0%)\n- west | 1 \u2192 1.2 | +0.2 (20.0%)"
+)
+
+
 @pytest.mark.ci
 class TestBuildAttribution:
-    @pytest.mark.parametrize("name", ["attribute_metrics", "attribute_dimensions"])
-    def test_compact(self, name):
-        a = _make(
-            input_data={"function_name": name},
-            output_data={
-                "raw_output": '{"success": 1, "result": "status complete\\n\\nm = a / b | 2 \\u2192 3 | +1 (100.0%)\\n  a | 2 \\u2192 4 | +1.5 (150.0%)\\n  b | 1 \\u2192 1.3333 | -0.5 (-50.0%)"}'
-            },
+    @pytest.mark.parametrize(
+        "name, text, compact",
+        [
+            ("attribute_metrics", _FORMULA_TREE, "complete · Δ +1 · a +1.5 (150.0%)"),
+            ("attribute_dimensions", _GROUP_TREE, "complete · Δ +1 · east +0.8 (80.0%)"),
+        ],
+    )
+    def test_compact_through_the_builder(self, name, text, compact):
+        tc = ToolCallContentBuilder().build(_attribution_action(name, {"success": 1, "result": text}), verbose=False)
+        assert tc.compact_result == compact
+        assert tc.status_mark == "\u2713"
+
+    def test_unsupported_is_an_answer(self):
+        text = "status unsupported\nissue error insufficient_state: counts distinct values"
+        a = _attribution_action("attribute_dimensions", {"success": 1, "result": text})
+        tc = ToolCallContentBuilder().build(a, verbose=False)
+        assert tc.status_mark == "\u2713"
+        assert tc.compact_result == "unsupported · insufficient_state"
+
+    @pytest.mark.parametrize("verbose", [False, True])
+    def test_a_refused_request_is_marked_failed(self, verbose):
+        a = _attribution_action(
+            "attribute_dimensions", {"success": 0, "error": "dimensions_required: name the fields to split by"}
         )
-        tc = _build_attribution(a, verbose=False)
-        assert tc.compact_result == "complete · Δ +1 · a +1.5 (150.0%)"
+        assert a.status == ActionStatus.SUCCESS
+        assert _build_attribution(a, verbose=verbose).status_mark == "\u2717"
 
 
 # ── Filesystem tools ──────────────────────────────────────────────

@@ -209,6 +209,15 @@ class TestRegistryRouting:
     def test_summarize_content_plain_string(self):
         assert TOOL_SUMMARY_REGISTRY.summarize_content("just a note", "tool") == "just a note"
 
+    @pytest.mark.parametrize("tool", ["attribute_metrics", "attribute_dimensions"])
+    def test_summarize_content_bare_attribution_text(self, tool):
+        text = "status complete\n\nm by region | 2 → 3 | change +1\n- east | 1 → 1.8 | +0.8 (80.0%)"
+        expected = "complete · Δ +1 · east +0.8 (80.0%)"
+        wrapped = json.dumps({"success": 1, "result": text})
+        assert TOOL_SUMMARY_REGISTRY.summarize_content(wrapped, tool) == expected
+        assert TOOL_SUMMARY_REGISTRY.summarize_content(text, tool) == expected
+        assert TOOL_SUMMARY_REGISTRY.summarize_content(json.dumps(text), tool) == expected
+
     def test_summarize_content_empty_string(self):
         assert TOOL_SUMMARY_REGISTRY.summarize_content("", "tool") == "Empty result"
 
