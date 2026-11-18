@@ -28,6 +28,7 @@ from datus.storage.registry import clear_storage_registry, configure_storage_def
 from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 from datus.utils.path_manager import DatusPathManager
 from datus.utils.query_result_text import parse_query_result_text
+from tests.unit_tests.plugins.conftest import plugin_env as plugin_env
 
 pytestmark = [pytest.mark.nightly, pytest.mark.product_e2e]
 
@@ -346,3 +347,92 @@ async def test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm(
     oracle = connector.execute_query("SELECT COUNT(*) AS school_count FROM schools", result_format="list")
     assert oracle.success is True, oracle.error
     assert float(rows[0]["school_count"]) == oracle.sql_return[0]["school_count"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(180)
+async def test_private_semantic_runtime_authors_queryable_model_with_real_llm(
+    nightly_agent_config, tmp_path, monkeypatch, restore_storage_defaults, plugin_env
+):
+    """The model authors through selected native tools; a plain plugin finalizes via host."""
+    from datus.agent.node.node_factory import create_interactive_node, create_node_input
+    from datus.tools.permission.profiles import get_profile
+
+    assert os.environ.get("DEEPSEEK_API_KEY"), "Semantic modeling requires DEEPSEEK_API_KEY"
+    _use_deterministic_embeddings(monkeypatch)
+    nightly_agent_config.home = str(tmp_path / "home")
+    config = _use_dosi(nightly_agent_config, tmp_path / "workspace")
+    plugin_env(
+        "semantic-private-live",
+        """manifest_version: 1
+agents:
+  semantic_modeling:
+    description: Author semantic models and metrics.
+    instructions: >-
+      Author one Dosi semantic model using the required authoring specification.
+      Inspect existing models before planning one exact target. Use dataset and metric
+      upserts. Validate your work. Return a concise summary; the host handles UID and
+      final validation and knowledge-base reconciliation.
+    runtime_factory: '{pkg}.runtime:create_runtime'
+""",
+        files={
+            "runtime.py": """
+class Runtime:
+    def __init__(self, host):
+        self.host = host
+    async def finalize(self, result, context):
+        await self.host.semantic_authoring.reconcile()
+        completed = await self.host.semantic_authoring.complete()
+        return {"semantic_models": [completed["semantic_model_file"]], "status": "generated"}
+def create_runtime(config, host):
+    return Runtime(host)
+"""
+        },
+    )
+    config.active_profile_name = "dangerous"
+    config.permissions_config = get_profile("dangerous")
+    config.agentic_nodes["semantic_modeling"] = {
+        "node_class": "configurable",
+        "source": {"plugin": "semantic-private-live", "agent": "semantic_modeling"},
+        "max_turns": 30,
+        "tools": [
+            "semantic_tools.list_existing_osi_semantic_models",
+            "semantic_tools.plan_osi_semantic_model_target",
+            "semantic_tools.upsert_osi_datasets",
+            "semantic_tools.upsert_osi_metrics",
+            "semantic_tools.validate_semantic",
+            "filesystem_tools.read_file",
+            "db_tools.execute_sql",
+            "db_tools.describe_table",
+        ],
+        "scoped_context": {
+            "datasource": config.current_datasource,
+            "tables": "schools",
+            "project_files": [f"subject/semantic_models/{config.current_datasource}/**"],
+        },
+    }
+    node = create_interactive_node("semantic_modeling", config, execution_mode="workflow")
+    node.input = create_node_input(
+        "Create a Dosi model named private_school_counts for main.schools. Include a reusable schools dataset "
+        "and a school_count metric that counts all schools. Validate it. "
+        "Reference SQL: SELECT COUNT(*) AS school_count FROM schools",
+        node,
+    )
+    try:
+        actions = [action async for action in node.execute_stream()]
+        assert node.result.success is True, node.result.error
+        assert actions[-1].output["status"] == "generated"
+        target = config.path_manager.project_root / actions[-1].output["semantic_models"][0]
+        assert target.is_file()
+        queried = node.semantic_tools.query_metrics(metrics=["school_count"])
+        assert queried.success == 1, queried.error
+        cached = node.semantic_tools.get_cached_query_metrics_result(parse_query_result_text(queried.result).result_id)
+        rows = list(csv.DictReader(io.StringIO(cached["csv"])))
+        oracle = node._semantic_authoring_session.db_func_tool.connector.execute_query(
+            "SELECT COUNT(*) AS school_count FROM schools", result_format="list"
+        )
+        assert oracle.success is True, oracle.error
+        assert len(rows) == 1
+        assert float(rows[0]["school_count"]) == oracle.sql_return[0]["school_count"]
+    finally:
+        await node.aclose()

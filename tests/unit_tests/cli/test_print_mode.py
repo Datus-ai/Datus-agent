@@ -834,24 +834,34 @@ class TestStreamChatActions:
         mock_node.interaction_broker.submit.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_stream_chat_response_action(self):
-        """Verify actions with action_type ending in '_response' write response content."""
+    @pytest.mark.parametrize("final_success", [True, False])
+    async def test_stream_chat_response_action(self, final_success):
+        """Only the finalized answer or failure reaches stdout, never the model's provisional JSON."""
         from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
+        model_action = ActionHistory(
+            action_id="model_1",
+            role=ActionRole.ASSISTANT,
+            messages="Draft ready",
+            action_type="response",
+            output={"raw_output": '{"output":"Draft ready; waiting for publication"}', "is_thinking": False},
+            status=ActionStatus.SUCCESS,
+        )
         response_action = ActionHistory(
             action_id="resp_1",
             role=ActionRole.ASSISTANT,
-            messages="SQL generated",
-            action_type="gen_sql_response",
+            messages="SQL generated" if final_success else "Finalization failed",
+            action_type="gen_sql_response" if final_success else "error",
             input=None,
-            output={"sql": "SELECT 1"},
-            status=ActionStatus.SUCCESS,
+            output={"sql": "SELECT 1", "response": "Final answer"} if final_success else {"error": "Invalid JSON"},
+            status=ActionStatus.SUCCESS if final_success else ActionStatus.FAILED,
         )
 
         mock_node = MagicMock()
         mock_node.session_id = None
 
         async def fake_stream(actions):
+            yield model_action
             yield response_action
 
         mock_node.execute_stream_with_interactions = fake_stream
@@ -866,6 +876,8 @@ class TestStreamChatActions:
         data = json.loads(output)
         assert data["message_id"] == "resp_1"
         assert data["role"] == "assistant"
+        assert "Draft ready" not in output
+        assert ("Final answer" if final_success else "Finalization failed") in output
 
     @pytest.mark.asyncio
     async def test_stream_chat_finally_cancels_channel_in_proxy_mode(self):

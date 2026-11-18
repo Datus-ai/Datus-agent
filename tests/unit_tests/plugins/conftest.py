@@ -74,4 +74,5 @@ def plugin_env(tmp_path, monkeypatch):
         registry.invalidate_plugin_cache()
         return pkg
 
-    return register
+    yield register
+    registry.invalidate_plugin_cache()

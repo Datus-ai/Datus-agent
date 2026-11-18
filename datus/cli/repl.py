@@ -280,6 +280,9 @@ class DatusCLI:
         # Initialize available subagents early (needed by autocomplete)
         self.available_subagents = self._available_system_subagents()
         self.available_subagents.add("chat")
+        from datus.agent.agent_registry import list_configurable_agents
+
+        self.available_subagents.update(list_configurable_agents(self.agent_config))
         if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
             self.available_subagents.update(
                 name for name in self.agent_config.agentic_nodes.keys() if name not in SYS_SUB_AGENTS and name != "chat"
@@ -1142,6 +1145,12 @@ class DatusCLI:
         if getattr(self, "_closed", False):
             return
         self._closed = True
+        chat = getattr(self, "chat_commands", None)
+        if chat is not None:
+            from datus.agent.node.configurable_agentic_node import ConfigurableAgenticNode
+
+            if isinstance(getattr(chat, "current_node", None), ConfigurableAgenticNode):
+                chat.current_node = None
         self.agent_ready = False
         self.agent_initializing = False
         bg_sync = getattr(self, "bg_sync", None)
@@ -1614,6 +1623,9 @@ class DatusCLI:
         """
 
         visible = {name for name in self.available_subagents if name not in HIDDEN_SYS_SUB_AGENTS}
+        from datus.agent.agent_registry import list_configurable_agents
+
+        visible.update(list_configurable_agents(self.agent_config))
         visible &= self._available_system_subagents() | {name for name in visible if name not in SYS_SUB_AGENTS}
         if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
             current_db = getattr(self.agent_config, "current_datasource", None)

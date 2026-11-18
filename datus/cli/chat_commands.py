@@ -111,6 +111,25 @@ def _drop_if_matches_final(
 class ChatCommands:
     """Handles all chat-related commands and functionality."""
 
+    @property
+    def current_node(self):
+        return getattr(self, "_current_node", None)
+
+    @current_node.setter
+    def current_node(self, node):
+        previous = getattr(self, "_current_node", None)
+        if previous is not None and previous is not node:
+            from datus.agent.node.configurable_agentic_node import ConfigurableAgenticNode
+
+            if isinstance(previous, ConfigurableAgenticNode):
+                try:
+                    from datus.utils.async_utils import run_async
+
+                    run_async(previous.aclose())
+                except Exception:
+                    logger.exception("Failed to release configurable agent runtime on switch")
+        self._current_node = node
+
     def __init__(self, cli_instance: "DatusCLI"):
         """Initialize with reference to the CLI instance for shared resources."""
         self.cli = cli_instance
@@ -593,6 +612,12 @@ class ChatCommands:
                     self.current_node = self._create_new_node(None)
                     current_node = self.current_node
 
+            # JSON output is a result contract: its model payload may be
+            # replaced by runtime finalization before it becomes user-facing.
+            # Keep it out of the live transcript until the node emits its result.
+            output_spec = getattr(getattr(current_node, "spec", None), "output", None)
+            defer_json_model_output = getattr(output_spec, "format", None) == "json"
+
             # Ensure the node has a pending-input queue so the TUI Enter
             # handler, the API ``/insert`` route, and the model layer's
             # ``call_model_input_filter`` can all push and drain through
@@ -705,8 +730,18 @@ class ChatCommands:
                             # the main-agent accumulator; sub-agents have their own
                             # pinned-region path.
                             if action.action_type == "thinking_delta":
-                                if action.depth == 0 and action.action_id:
+                                if action.depth == 0 and action.action_id and not defer_json_model_output:
                                     streaming_deltas.setdefault(action.action_id, []).append(action)
+                                continue
+                            if (
+                                defer_json_model_output
+                                and action.depth == 0
+                                and action.role == ActionRole.ASSISTANT
+                                and action.status == ActionStatus.SUCCESS
+                                and action.action_type == "response"
+                                and isinstance(action.output, dict)
+                                and action.output.get("is_thinking") is False
+                            ):
                                 continue
                             # Node final actions (e.g. chat_response) — keep for
                             # final response rendering but skip streaming trace.
@@ -910,8 +945,18 @@ class ChatCommands:
                                         await auto_submit_interaction(broker, action)
                                 continue
                             if action.action_type == "thinking_delta":
-                                if action.depth == 0 and action.action_id:
+                                if action.depth == 0 and action.action_id and not defer_json_model_output:
                                     streaming_deltas.setdefault(action.action_id, []).append(action)
+                                continue
+                            if (
+                                defer_json_model_output
+                                and action.depth == 0
+                                and action.role == ActionRole.ASSISTANT
+                                and action.status == ActionStatus.SUCCESS
+                                and action.action_type == "response"
+                                and isinstance(action.output, dict)
+                                and action.output.get("is_thinking") is False
+                            ):
                                 continue
                             # Node final actions (e.g. chat_response) — keep for
                             # final response rendering but skip streaming trace.

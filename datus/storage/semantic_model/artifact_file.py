@@ -60,6 +60,9 @@ def path_mutation_lock(target_path: Path) -> Iterator[None]:
     if "semantic_models" in path.parts and path.suffix.lower() in {".yaml", ".yml", ".json"}:
         with semantic_artifact_lock(path):
             yield
+    elif "ontology" in path.parts and path.suffix.lower() in {".yaml", ".yml", ".json"}:
+        with ontology_bundle_lock(path.parent, create=True), _thread_mutation_lock(path):
+            yield
     else:
         with _thread_mutation_lock(path):
             yield
@@ -72,19 +75,49 @@ def model_lock_held(path: str | Path) -> bool:
     return str(Path(path).resolve()) in getattr(_MODEL_LOCK_DEPTH, "paths", set())
 
 
+def ontology_dir_for_model(path: str | Path | None) -> Path | None:
+    """Find the project lock for a model under ``subject/semantic_models``."""
+    if not path:
+        return None
+    target = Path(path).resolve(strict=False)
+    for parent in (target, *target.parents):
+        if parent.name == "semantic_models" and parent.parent.name == "subject":
+            return parent.parent / "ontology"
+    return None
+
+
 @contextmanager
-def semantic_artifact_lock(target_path: Path) -> Iterator[None]:
-    """Load before editing, then coordinate with Dosi's atomic file replacement."""
+def semantic_model_load_lock(target_path: str | Path, *, ontology_dir: str | Path | None = None) -> Iterator[None]:
+    """Take the project lock before the model's thread lock, without loading it.
+
+    Native loading may migrate a historical model while holding the GIL. Wait
+    in Python before entering the native loader so a publisher can release its
+    file locks. The same order applies to model editors and ontology publication.
+    """
+    target_path = Path(target_path).resolve(strict=False)
+    directory = ontology_dir or ontology_dir_for_model(target_path)
+    with ontology_bundle_lock(directory), _thread_mutation_lock(target_path):
+        yield
+
+
+@contextmanager
+def semantic_artifact_lock(target_path: Path, *, load_before_lock: bool = True) -> Iterator[None]:
+    """Coordinate with Dosi's atomic file replacement.
+
+    Editors load before taking the native file lock to allow model migration.
+    Read-only dependencies must set ``load_before_lock=False`` to avoid migration.
+    """
     target_path = Path(target_path).resolve(strict=False)
     if model_lock_held(target_path):
         with _thread_mutation_lock(target_path):
             yield
         return
-    if target_path.is_file():
-        from datus.tools.semantic_tools.dosi.files import file_engine
+    with semantic_model_load_lock(target_path):
+        # Loading may migrate a model, so it must also wait for read-only holders.
+        if load_before_lock and target_path.is_file():
+            from datus.tools.semantic_tools.dosi.files import file_engine
 
-        file_engine(target_path, allow_invalid=True)
-    with _thread_mutation_lock(target_path):
+            file_engine(target_path, allow_invalid=True)
         target_path.parent.mkdir(parents=True, exist_ok=True)
         with _dosi_file_lock(target_path.parent / f".{target_path.name}.dosi.lock"):
             paths = getattr(_MODEL_LOCK_DEPTH, "paths", set())
@@ -177,3 +210,70 @@ def atomic_write_text(target_path: Path, content: str, *, mode: Optional[int] = 
     """Atomically write UTF-8 semantic artifact text."""
 
     atomic_write_bytes(target_path, content.encode("utf-8"), mode=mode)
+
+
+_ONTOLOGY_LOCK_DEPTH = threading.local()
+
+
+@contextmanager
+def ontology_bundle_lock(ontology_dir: str | Path | None, *, create: bool = False) -> Iterator[None]:
+    """Coordinate ontology bundle publication with Agent discovery and engine reloads.
+
+    Reentrant in one thread and coordinated between processes. POSIX readers
+    and ordinary per-model editors share the lock; ``create=True`` marks a
+    bundle writer and takes it exclusively. Native loaders follow the same order.
+    """
+    if not ontology_dir:
+        yield
+        return
+    directory = Path(ontology_dir).resolve()
+    key = str(directory)
+    held = getattr(_ONTOLOGY_LOCK_DEPTH, "paths", set())
+    if key in held:
+        yield
+        return
+    # POSIX can lock the existing subject directory itself. Readers therefore
+    # coordinate with first publication without creating files in the project.
+    # Windows needs a sidecar because its byte-range locks cannot lock a directory.
+    lock_path = directory.parent / f".{directory.name}.bundle.lock"
+    if create:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if not lock_path.parent.is_dir():
+        yield
+        return
+    if os.name == "posix":
+        import fcntl
+
+        # Ordinary readers/editors share the project lock and keep independent
+        # per-model locks. Only coordinated bundle publication is exclusive.
+        # Separate open descriptions also coordinate threads in one process.
+        descriptor = os.open(lock_path.parent, os.O_RDONLY)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX if create else fcntl.LOCK_SH)
+            _ONTOLOGY_LOCK_DEPTH.paths = held
+            held.add(key)
+            try:
+                yield
+            finally:
+                held.remove(key)
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+        return
+    import msvcrt
+
+    with _thread_mutation_lock(lock_path), lock_path.open("a+b") as stream:
+        stream.seek(0)
+        if not stream.read(1):
+            stream.write(b"\0")
+            stream.flush()
+        stream.seek(0)
+        msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+        _ONTOLOGY_LOCK_DEPTH.paths = held
+        held.add(key)
+        try:
+            yield
+        finally:
+            held.remove(key)
+            stream.seek(0)
+            msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)

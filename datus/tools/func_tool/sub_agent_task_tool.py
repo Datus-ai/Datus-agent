@@ -72,7 +72,9 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "pass sql_file_path directly to execute_sql() to execute (no need to read_file() first). "
         "Modifications return sql_diff in unified diff format. "
         "Use for specialist SQL generation, optimization and iterative query changes. "
-        "Follow your own agent's routing rules for governed metrics and simple direct execution."
+        "Use when SQL authorship or optimization is the requested deliverable. "
+        "Ordinary data questions and execution of complete user-supplied read-only SQL can stay in chat "
+        "when its tools are sufficient."
     ),
     "explore": (
         "Read-only data exploration. Supports 3 exploration directions:\n"
@@ -99,6 +101,7 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "Use for KPI values, trends, grouped metric results, and metric attribution "
         "when the question can be answered by the semantic layer. Does not fall back "
         "to raw SQL. "
+        "Read-only analysis; does not create or change semantic definitions. "
         "Returns JSON with {response, markdown_report, tokens_used}."
     ),
     "ontology_analyst": (
@@ -109,7 +112,8 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "this scoped agent is selected or ontology relationship capabilities are needed, such as "
         "which relationship is meant (the airport a flight arrives at vs departs from), "
         "filters on coded status values, or asks for individual records. Does not fall "
-        "back to raw SQL. Prompt: provide the question directly. "
+        "back to raw SQL. Read-only analysis; does not author ontology or mapping definitions. "
+        "Prompt: provide the question directly. "
         "Returns JSON with {response, markdown_report, tokens_used}."
     ),
     "gen_visual_report": (
@@ -118,15 +122,18 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "The subagent writes a render/ tree of React modules — the entry "
         "render/app.jsx imports siblings like render/kpi-banner.jsx via relative "
         "paths and pulls pre-executed query JSON via useQuerySql. "
-        "Use this — instead of writing HTML/Markdown directly — whenever the user asks "
-        "for a *report* with charts/tables, a dashboard, or any answer that benefits "
-        "from persisted SQL + rendered visualisations (the artifact is consumed by "
+        "Use when the requested deliverable is a persisted visual report with charts/tables "
+        "and pre-executed query results, rather than an ordinary analytical answer "
+        "(the artifact is consumed by "
         "Datus-CLI HTML export and Datus-SaaS dynamic iframe renderer). "
+        "Interactive filters that must re-query data require an assistant advertising that capability. "
         "When the user wants a report driven by existing or defined metrics / KPIs "
         "(names specific metrics, or asks for it to be based on metrics), "
         "this subagent is the right owner: it holds the semantic-layer tools "
         "(list_metrics / query_metrics) and dry-runs the canonical metric SQL as the "
-        "build baseline. "
+        "build baseline, without a separate metric-analysis handoff. "
+        "For external dashboard conversion, accept only the bounded report-building phase "
+        "after the main agent has followed the conversion workflow. "
         "Prompt: provide the analytical question and any context (time range, scope, "
         "metrics of interest); the agent will discover data, save queries via save_query, "
         "write_file the render/*.jsx components, then finalize with validate_render. "
@@ -147,7 +154,9 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "(names specific metrics, or asks for it to be based on metrics), "
         "this subagent is the right owner: it holds the semantic-layer tools "
         "(list_metrics / query_metrics) and dry-runs the canonical metric SQL as the "
-        "build baseline. "
+        "build baseline, without a separate metric-analysis handoff. "
+        "For external dashboard conversion, accept only the bounded visualization phase "
+        "after the main agent has followed the conversion workflow. "
         "The subagent picks a fresh slug "
         "via start_new_dashboard (or reuses one via bind_existing_dashboard), "
         "persists each query via save_query_template, write_file's the render/*.jsx "
@@ -159,6 +168,8 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
     ),
     "semantic_modeling": (
         "Create or update Dosi semantic datasets, metrics, or both in one coherent run. "
+        "Use for explicitly requested definition changes or an authoring phase authorized by the enclosing workflow; "
+        "ordinary data questions do not require creating new definitions. "
         "Prefer this owner when a request may need metric prerequisites or spans both artifact kinds. "
         "It always inspects the active datasource's existing semantic models first, reuses the unique suitable "
         "target, interprets the supplied SQL and request directly, and validates it before Host reconciliation. "
@@ -188,7 +199,8 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "and executes the DDL. Also owns later requested inserts, updates or schema changes "
         "to the table it delivered: resume the same session, preserve the table, apply and verify "
         "only the requested change instead of creating another table. For Dosi semantic authoring on the new table, "
-        "use semantic_modeling separately. Returns JSON with {response, tokens_used}."
+        "delegate separately to the advertised semantic-definition authoring assistant. "
+        "Returns JSON with {response, tokens_used}."
     ),
     "gen_job": (
         "Execute data pipeline jobs — BOTH intra-database ETL AND cross-database migration. "
@@ -405,7 +417,10 @@ class SubAgentTaskTool:
         existing session DB on first turn — no post-construct mutation.
         """
         # Builtin system subagents have non-standard constructors
-        if subagent_type in SYS_SUB_AGENTS:
+        from datus.agent.agent_registry import resolve_configurable_agent
+
+        configurable = resolve_configurable_agent(subagent_type, self.agent_config) is not None
+        if subagent_type in SYS_SUB_AGENTS and not configurable:
             node = self._create_builtin_node(subagent_type, session_id=session_id)
         else:
             node_type, node_name = self._resolve_node_type(subagent_type)
@@ -442,7 +457,7 @@ class SubAgentTaskTool:
         (see ``AgenticNode._setup_permission_manager``), and copying an
         interactive parent's profile down would narrow that.
         """
-        if getattr(node, "execution_mode", None) == "workflow":
+        if getattr(node, "execution_mode", None) == "workflow" and node.type != NodeType.TYPE_CONFIGURABLE:
             return
 
         parent_manager = getattr(self._parent_node, "permission_manager", None)
@@ -614,6 +629,10 @@ class SubAgentTaskTool:
         Raises:
             ValueError: If the subagent type is not recognized.
         """
+        from datus.agent.agent_registry import resolve_configurable_agent
+
+        if resolve_configurable_agent(subagent_type, self.agent_config) is not None:
+            return NodeType.TYPE_CONFIGURABLE, subagent_type
         # Built-in gen_sql type
         if subagent_type == "gen_sql":
             return NodeType.TYPE_GEN_SQL, "gen_sql"
@@ -960,7 +979,9 @@ class SubAgentTaskTool:
                 # Release in-memory handles WITHOUT deleting the .db file — the parent
                 # LLM may resume this session_id on a later turn.
                 try:
-                    if node._session_manager is not None:
+                    if node.type == NodeType.TYPE_CONFIGURABLE:
+                        await node.aclose()
+                    elif node._session_manager is not None:
                         node._session_manager.close_all_sessions()
                     node._session = None
                 except Exception:
@@ -1004,6 +1025,18 @@ class SubAgentTaskTool:
 
         raw_child = self.agent_config.sub_agent_config(subagent_type)
         child_dict = raw_child if isinstance(raw_child, dict) else {}
+        from datus.agent.agent_registry import resolve_configurable_agent
+
+        if resolve_configurable_agent(subagent_type, self.agent_config) is not None:
+            from datus.agent.node.configurable_scope import legacy_scope_config
+
+            child_dict = legacy_scope_config(child_dict)
+            child_cfg = SubAgentConfig.model_validate(child_dict)
+            if parent_sc is not None:
+                # The configurable host intersects this caller bound with its
+                # static declaration; legacy whole-segment overrides do not.
+                return child_cfg.model_copy(update={"scoped_context": parent_sc.model_copy(deep=True)})
+            return child_cfg
         child_cfg = SubAgentConfig.model_validate(child_dict)
         result = child_cfg.with_effective_scoped_context(parent_sc)
         parent_db = getattr(self._parent_node, "db_func_tool", None)
@@ -1151,12 +1184,17 @@ class SubAgentTaskTool:
         this a subagent on a multi-database glob datasource falls back to the arbitrary
         default database and explores the wrong one.
         """
+        from datus.agent.node.configurable_agentic_node import ConfigurableAgenticNode
         from datus.agent.node.explore_agentic_node import ExploreAgenticNode
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.schemas.configurable_agentic_node_models import ConfigurableNodeInput
         from datus.schemas.explore_agentic_node_models import ExploreNodeInput
         from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 
         db_ctx = db_ctx if db_ctx is not None else self._parent_db_context()
+
+        if isinstance(node, ConfigurableAgenticNode):
+            return self._apply_db_context(ConfigurableNodeInput(user_message=prompt), db_ctx)
 
         if isinstance(node, ExploreAgenticNode):
             return self._apply_db_context(ExploreNodeInput(user_message=prompt), db_ctx)
@@ -1258,6 +1296,10 @@ class SubAgentTaskTool:
         to a later task() call.
         """
 
+        from datus.agent.agent_registry import resolve_configurable_agent
+
+        configurable = bool(subagent_type and resolve_configurable_agent(subagent_type, self.agent_config))
+
         def _failure(error_msg: str, output_payload: Optional[Dict[str, Any]] = None) -> FuncToolResult:
             # Carry session_id under `result` so the parent can resume the
             # partial subagent session. ``result`` is None when no session
@@ -1277,6 +1319,8 @@ class SubAgentTaskTool:
                 )
                 if output_payload is not None and key in output_payload
             }
+            if configurable and output_payload is not None:
+                result_payload = dict(output_payload)
             if session_id:
                 result_payload["session_id"] = session_id
             if subagent_type:
@@ -1302,6 +1346,9 @@ class SubAgentTaskTool:
             if subagent_type:
                 d["type"] = subagent_type
             return FuncToolResult(result=d)
+
+        if configurable:
+            return _wrap(dict(output))
 
         # File-based SQL result: sql_file_path present
         sql_file_path = output.get("sql_file_path")
@@ -1461,8 +1508,9 @@ class SubAgentTaskTool:
             '- Call format: task(type="<available type>", prompt="<task or question>", '
             'description="<short one-line goal>")',
             "",
-            "Follow your own system prompt to decide what to handle yourself and what to delegate. "
-            "Use task only for a bounded task suited to one of the Available types below. "
+            "Follow your own system prompt's delegation principles. Match a bounded task to the current "
+            "capability descriptions below, including when an existing name resolves to a plugin implementation. "
+            "The name alone does not define capabilities. "
             "Do not assume other types are available or delegate back to yourself. "
             "Pass the goal, known evidence, exact target, allowed operations, protected items and stop conditions.",
             "",
@@ -1470,6 +1518,12 @@ class SubAgentTaskTool:
         ]
 
         for t in available:
+            from datus.agent.agent_registry import resolve_configurable_agent
+
+            definition = resolve_configurable_agent(t, self.agent_config)
+            if definition is not None:
+                lines.append(f"- {t}: {definition.spec.description}")
+                continue
             if t in BUILTIN_SUBAGENT_DESCRIPTIONS:
                 lines.append(f"- {t}: {BUILTIN_SUBAGENT_DESCRIPTIONS[t]}")
             else:
@@ -1567,6 +1621,9 @@ class SubAgentTaskTool:
         in SYS_SUB_AGENTS (which only guards reserved system names).
         """
         types = ["explore"]
+        from datus.agent.agent_registry import list_configurable_agents
+
+        configurable = list_configurable_agents(self.agent_config)
         from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS
 
         builtin_types = set(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS)
@@ -1579,6 +1636,8 @@ class SubAgentTaskTool:
             current_datasource = self.agent_config.current_datasource
 
             for name, config in self.agent_config.agentic_nodes.items():
+                if name in configurable:
+                    continue
                 if name in ("chat", "explore", "feedback") or name in SYS_SUB_AGENTS:
                     continue
 
@@ -1593,4 +1652,4 @@ class SubAgentTaskTool:
 
                 types.append(name)
 
-        return types
+        return list(dict.fromkeys([*types, *configurable]))

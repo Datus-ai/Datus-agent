@@ -197,6 +197,20 @@ class PrintModeRunner:
                         )
                     continue
 
+                # The node emits its authoritative answer after finalization.
+                # A model's terminal text can still be an internal JSON payload
+                # or describe an unpublished draft; do not display it as a
+                # second answer before the node's result (or failure).
+                if (
+                    action.role == ActionRole.ASSISTANT
+                    and action.status == ActionStatus.SUCCESS
+                    and action.depth == 0
+                    and action.action_type == "response"
+                    and isinstance(action.output, dict)
+                    and action.output.get("is_thinking") is False
+                ):
+                    continue
+
                 if (
                     action.role == ActionRole.ASSISTANT
                     and action.status == ActionStatus.SUCCESS
@@ -236,6 +250,10 @@ class PrintModeRunner:
                     await dispatch_task
                 except asyncio.CancelledError:
                     pass
+            from datus.agent.node.configurable_agentic_node import ConfigurableAgenticNode
+
+            if isinstance(node, ConfigurableAgenticNode):
+                await node.aclose()
 
     async def _stdin_dispatch_loop(self, node):
         """Read stdin lines and dispatch call-tool-result / user-interaction to the node."""

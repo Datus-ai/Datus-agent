@@ -25,6 +25,7 @@ A lightweight MinimalCLI helper (real object, not mock) provides the attributes
 ChatCommands needs without constructing a full DatusCLI.
 """
 
+import asyncio
 import io
 import json
 import os
@@ -39,6 +40,7 @@ from datus.cli.chat_commands import ChatCommands, _is_model_config_error
 from datus.cli.cli_context import CliContext
 from datus.cli.execution_state import ExecutionInterrupted, InterruptController, PendingInputQueue
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from tests.unit_tests.plugins.conftest import plugin_env as plugin_env
 
 # ===========================================================================
 # Lightweight real helpers (NOT mocks)
@@ -1668,6 +1670,72 @@ class TestDisplayExceptionPaths:
 
 class TestExecuteChatCommandResponseProcessing:
     """Tests for execute_chat_command response processing paths."""
+
+    @pytest.mark.parametrize("with_runtime", [False, True])
+    def test_json_agent_displays_only_finalized_output(
+        self, real_agent_config, mock_llm_create, plugin_env, monkeypatch, with_runtime
+    ):
+        """Internal JSON waits for finalization; user-requested JSON remains visible exactly once."""
+        from datus.cli.tui.live_display_state import LiveDisplayState
+        from tests.unit_tests.mock_llm_model import build_simple_response
+
+        if with_runtime:
+            plugin_env(
+                "json-reporter",
+                """manifest_version: 1
+agents:
+  research:
+    runtime_factory: '{pkg}.runtime:create_runtime'
+""",
+                files={
+                    "runtime.py": """
+class Runtime:
+    def finalize(self, result, context):
+        return {"response": "Final report saved and synchronized."}
+def create_runtime(config, host):
+    return Runtime()
+"""
+                },
+            )
+        real_agent_config.agentic_nodes["research"] = {
+            "node_class": "configurable",
+            "output": {"format": "json"},
+            **({"source": {"plugin": "json-reporter", "agent": "research"}} if with_runtime else {}),
+        }
+        body = '{"customer_count": 2}'
+        mock_llm_create.reset(responses=[build_simple_response(body)])
+        original_stream = mock_llm_create.generate_with_tools_stream
+
+        async def stream_response(*args, **kwargs):
+            yield ActionHistory(
+                action_id="json-stream",
+                role=ActionRole.ASSISTANT,
+                messages="",
+                action_type="thinking_delta",
+                input={},
+                output={"delta": body, "accumulated": body},
+                status=ActionStatus.PROCESSING,
+            )
+            async for action in original_stream(*args, **kwargs):
+                if action.role == ActionRole.ASSISTANT:
+                    action.output["is_thinking"] = False
+                yield action
+
+        monkeypatch.setattr(mock_llm_create, "generate_with_tools_stream", stream_response)
+        cmds = _make_chat_commands(real_agent_config)
+        cmds.cli.live_state = LiveDisplayState()
+        try:
+            cmds.execute_chat_command("Return the report", subagent_name="research")
+            assert cmds.current_node.result.success is True, cmds.current_node.result.error
+            output = _get_console_output(cmds.console)
+            if with_runtime:
+                assert output.count("Final report saved and synchronized.") == 1
+                assert "customer_count" not in output
+            else:
+                assert output.count("customer_count") == 1
+        finally:
+            if cmds.current_node is not None:
+                asyncio.run(cmds.current_node.aclose())
 
     def test_execute_with_mock_response_processes_output(self, real_agent_config, mock_llm_create):
         """execute_chat_command with a mock LLM response processes the output."""

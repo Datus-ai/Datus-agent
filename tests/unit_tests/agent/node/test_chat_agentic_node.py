@@ -535,16 +535,16 @@ class TestChatMetricTools:
             "semantic_tools.query_metrics,semantic_tools.get_metric,db_tools.*,sub_agent_tools.*",
         ],
     )
-    def test_task_routing_sql_fallback_matches_exposed_tools(self, real_agent_config, mock_llm_create, patterns):
+    def test_data_question_sql_fallback_matches_exposed_tools(self, real_agent_config, mock_llm_create, patterns):
         node = TestChatAgenticNodeHonoursConfiguredTools._node(real_agent_config, tools=patterns)
         names = {tool.name for tool in node.tools}
         assert "task" in names
         prompt = " ".join(node._get_session_system_prompt().split())
-        routing = prompt.split("Chat routing priority:", 1)[1].split("## Data Questions and Attribution", 1)[0]
-        assert ("If no suitable metric exists, generate and execute read-only SQL here" in routing) == (
+        guidance = prompt.split("## Data Questions and Attribution", 1)[1]
+        assert ("If no suitable metric exists, use the available schema and business knowledge" in guidance) == (
             "execute_sql" in names
         )
-        assert ("no SQL tool is available, explain the actual missing capability" in routing) == (
+        assert ("no SQL tool is available, explain the actual missing capability" in guidance) == (
             "execute_sql" not in names
         )
 
@@ -1332,7 +1332,7 @@ class TestChatAgenticNodeMCPSetup:
 class TestChatAgenticNodeSystemPrompt:
     """Verify system prompt generation and error handling."""
 
-    def test_chat_routing_is_in_system_prompt_only(self, real_agent_config, mock_llm_create):
+    def test_chat_delegation_principles_reference_current_task_capabilities(self, real_agent_config, mock_llm_create):
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
         node = ChatAgenticNode(
@@ -1344,18 +1344,21 @@ class TestChatAgenticNodeSystemPrompt:
         prompt = node._get_system_prompt()
         task_description = node.sub_agent_task_tool.available_tools()[0].description
 
-        assert "Chat routing priority" in prompt
+        assert "Chat delegation principles" in prompt
+        assert "Match the requested work to those descriptions" in prompt
+        assert "plugin replaces an assistant under an existing name" in prompt
+        assert "A draft-only request still belongs to that owner" in " ".join(prompt.split())
         assert "table_target_unverified" in prompt
-        assert "For file artifacts such as skills" in prompt
+        assert "For file artifacts, establish the file" in prompt
         assert "no database binding is required" in prompt
         assert "using this chat's available tools" in prompt
         assert "Missing metrics alone" in prompt
-        assert "only when the user explicitly requests that work" in prompt
-        assert "Scheduling and external BI operations use installed plugins directly" in prompt
-        assert "only to types listed as available" in prompt
-        assert "External BI-to-Datus conversion is a main-agent orchestration workflow" in prompt
+        assert "only when the user explicitly requests creating or changing definitions" in prompt
+        assert "Use only currently available, authorized assistants" in prompt
+        assert "Keep multi-stage workflows in the main agent" in prompt
+        assert "Capability descriptions do not grant additional permissions" in " ".join(prompt.split())
         assert 'load_skill(skill_name="dashboard-bootstrap")' in prompt
-        assert "Chat routing priority" not in task_description
+        assert "Match a bounded task to the current capability descriptions" in task_description
 
     def test_get_system_prompt_returns_string(self, real_agent_config, mock_llm_create):
         """_get_system_prompt returns a non-empty string for valid template."""

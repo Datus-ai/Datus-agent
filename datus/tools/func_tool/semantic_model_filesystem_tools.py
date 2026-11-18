@@ -98,6 +98,17 @@ class SemanticModelFilesystemTools(FilesystemFuncTool):
 
             if not isinstance(document, dict):
                 return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
+            selected = self.workspace.target_state.selected if self.workspace.target_state is not None else None
+            if selected is not None and document.get("name") != selected["semantic_model_name"]:
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        f"The selected semantic model name must remain {selected['semantic_model_name']!r}; "
+                        f"the edit would declare {document.get('name')!r}. "
+                        "Keep the exact name returned by the target tool and edit descriptive metadata instead."
+                    ),
+                    result={"written": False, "semantic_model_file": resolved.display},
+                )
             try:
                 identities_changed = prepare_metric_uids(document, original_document or {})
             except ValueError as exc:

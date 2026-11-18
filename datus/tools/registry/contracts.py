@@ -185,6 +185,24 @@ def registered_function_tool(*, definition: ToolDefinition, **kwargs: Any) -> An
     return register_tool_definition(FunctionTool(**kwargs), definition)
 
 
+def plugin_tool_definition(tool_id: str, access: Access, direct_call: bool = False) -> ToolDefinition:
+    """Validate runtime metadata without adding it to the build-time native inventory."""
+    from datus.tools.registry.capabilities import TOOL_CAPABILITIES
+
+    definition = ToolDefinition(tool_id, access, direct_call)
+    if tool_id in TOOL_CAPABILITIES or access == "session":
+        raise ToolDefinitionError("Plugin metadata cannot replace native tools or declare session channels")
+    return definition
+
+
+def plugin_function_tool(*, definition: ToolDefinition, **kwargs: Any) -> Any:
+    """Host-only registration boundary for installed, metadata-defined plugin tools."""
+    from agents import FunctionTool
+
+    verified = plugin_tool_definition(definition.tool_id, definition.access, definition.direct_call)
+    return register_tool_definition(FunctionTool(**kwargs), verified)
+
+
 def clone_registered_tool(original: Any, **changes: Any) -> Any:
     """Preserve all SDK fields and the contract through proxies and transformers."""
     definition = tool_definition(original)

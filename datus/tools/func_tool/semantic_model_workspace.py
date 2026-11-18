@@ -49,6 +49,9 @@ class SemanticModelWorkspace:
 
     def require_metric_revision(self, path: str | Path) -> None:
         """Require the current bytes of the selected existing or planned model."""
+        error = self.mutation_guard_error(Path(path))
+        if error is not None:
+            raise ValueError(error.error or "Semantic-model mutation is not permitted")
         self.target_state.require_selected_revision(path)
 
     def reject_write_policy(self, resolved: ResolvedPath) -> FuncToolResult | None:

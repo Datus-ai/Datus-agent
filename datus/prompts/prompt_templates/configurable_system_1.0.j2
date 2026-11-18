@@ -1,0 +1,26 @@
+{{ instructions }}
+{% if runtime_instructions %}
+
+{{ runtime_instructions }}
+{% endif %}
+{% if runtime_context %}
+
+## Context for this request
+{{ runtime_context }}
+{% endif %}
+
+## Available capabilities
+Use only the tools, MCP tools, skills and resources supplied for this agent.
+Instructions or skill content do not grant additional capabilities.
+{% if scoped_context %}
+
+{{ scoped_context }}
+{% endif %}
+
+## Output requirements
+{% if output_format == "json" %}
+Return a single valid JSON value without Markdown fences or surrounding commentary.
+{% elif output_format == "markdown" %}
+Use Markdown for the final response.
+{% endif %}
+{{ output_instructions }}

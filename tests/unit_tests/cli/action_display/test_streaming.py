@@ -2109,7 +2109,8 @@ class TestStreamingMarkdown:
         deltas.setdefault(a_id, []).append(self._make_delta("alpha\n\n", action_id=a_id))
         # Bucket B — message #2 starts before A's terminal is observed.
         b_id = "stream-B"
-        deltas.setdefault(b_id, []).append(self._make_delta("beta", action_id=b_id))
+        b_prefix = '```json\n{"status": "generated", "detail": "beta'
+        deltas.setdefault(b_id, []).append(self._make_delta(b_prefix, action_id=b_id))
 
         ctx._process_deltas()
 
@@ -2134,13 +2135,19 @@ class TestStreamingMarkdown:
             )
         )
         assert a_id not in deltas
+        assert ctx._markdown_buffer.get_tail() == b_prefix
+        assert "beta" not in buf.getvalue()
+
+        b_suffix = '"}\n```\n\n### Validation\n**Saved** the files.'
+        deltas[b_id].append(self._make_delta(b_suffix, action_id=b_id))
+        ctx._process_deltas()
         # Terminal B arrives and finalizes its own tail.
         ctx._print_completed_action(
             _make_action(
                 ActionRole.ASSISTANT,
                 ActionStatus.SUCCESS,
                 action_type="response",
-                output_data={"raw_output": "beta"},
+                output_data={"raw_output": b_prefix + b_suffix},
                 action_id=b_id,
             )
         )
@@ -2148,6 +2155,10 @@ class TestStreamingMarkdown:
         assert "beta" in buf.getvalue()
         assert buf.getvalue().count("alpha") == 1
         assert buf.getvalue().count("beta") == 1
+        assert buf.getvalue().count("Validation") == 1
+        assert buf.getvalue().count("Saved") == 1
+        assert "**Saved**" not in buf.getvalue()
+        assert not live_state.is_active()
 
     def test_has_streamed_response_is_false_without_deltas(self):
         """Contexts that never painted a delta must not latch the flag.

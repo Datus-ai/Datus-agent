@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional
 
 from datus.configuration.agent_config import AgentConfig
 from datus.tools.func_tool.base import FuncToolResult
@@ -271,8 +271,10 @@ class OsiSemanticModelTargetTools:
         *,
         target_state: Optional[OsiSemanticModelTargetState] = None,
         generation_evidence: Optional["GenerationEvidence"] = None,
+        path_allowed: Callable[[Path], bool] | None = None,
     ):
         self.agent_config = agent_config
+        self.path_allowed = path_allowed
         self.target_state = target_state or OsiSemanticModelTargetState()
         self.generation_evidence = generation_evidence
         self._inventory_cache: Optional[Dict[str, Any]] = None
@@ -326,6 +328,8 @@ class OsiSemanticModelTargetTools:
             canonical.relative_to(model_dir)
         except ValueError as exc:
             raise ValueError(f"semantic_model_file must resolve inside the active datasource {datasource!r}.") from exc
+        if self.path_allowed is not None and not self.path_allowed(canonical):
+            raise ValueError("Semantic model is outside scoped_context.project_files")
         if canonical.suffix.lower() not in {".yml", ".yaml"}:
             raise ValueError("semantic_model_file must be a .yml or .yaml file")
         return canonical
@@ -396,7 +400,9 @@ class OsiSemanticModelTargetTools:
         if self._inventory_revision != self.target_state.artifact_sha256:
             self.invalidate_inventory()
         if self._inventory_cache is None:
-            self._inventory_cache = inspect_osi_semantic_model_inventory(self.agent_config)
+            self._inventory_cache = inspect_osi_semantic_model_inventory(
+                self.agent_config, **({"path_allowed": self.path_allowed} if self.path_allowed is not None else {})
+            )
             self._inventory_revision = self.target_state.artifact_sha256
         return self._inventory_cache
 

@@ -138,3 +138,63 @@ def test_windows_locks_the_first_byte_and_keeps_the_file(tmp_path, monkeypatch):
     assert calls == [(msvcrt.LK_LOCK, 1), (msvcrt.LK_UNLCK, 1)]
     # msvcrt locks a byte range, so an empty file gets one byte to lock; the file stays.
     assert lock_path.read_bytes() == b"\0"
+
+
+def test_bundle_reader_lock_does_not_modify_project_files(tmp_path):
+    import os
+
+    import pytest
+
+    from datus.storage.semantic_model.artifact_file import ontology_bundle_lock
+
+    if os.name != "posix":
+        pytest.skip("Directory flock is a POSIX contract")
+    subject = tmp_path / "subject"
+    subject.mkdir()
+    before = sorted(tmp_path.rglob("*"))
+    with ontology_bundle_lock(subject / "ontology"):
+        with ontology_bundle_lock(subject / "ontology"):
+            assert sorted(tmp_path.rglob("*")) == before
+    assert sorted(tmp_path.rglob("*")) == before
+
+
+def test_bundle_publication_excludes_another_process_reader(tmp_path):
+    import os
+    import select
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    import pytest
+
+    from datus.storage.semantic_model.artifact_file import ontology_bundle_lock
+
+    if os.name != "posix":
+        pytest.skip("Directory flock is a POSIX contract")
+    directory = tmp_path / "subject/ontology"
+    script = """
+import sys
+from datus.storage.semantic_model.artifact_file import ontology_bundle_lock
+print('ready', flush=True)
+with ontology_bundle_lock(sys.argv[1]):
+    print('acquired', flush=True)
+"""
+    with ontology_bundle_lock(directory, create=True):
+        process = subprocess.Popen(
+            [sys.executable, "-c", script, str(directory)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[4])},
+        )
+        try:
+            assert select.select([process.stdout], [], [], 10)[0], "Reader did not start"
+            assert process.stdout.readline().strip() == "ready"
+            assert not select.select([process.stdout], [], [], 0.2)[0], "Reader crossed an active publication lock"
+        except BaseException:
+            process.kill()
+            process.wait(timeout=5)
+            raise
+    output, error = process.communicate(timeout=10)
+    assert process.returncode == 0, error
+    assert output.strip() == "acquired"

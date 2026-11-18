@@ -352,3 +352,19 @@ def test_commit_rejects_another_plan_identity_accepted_for_the_same_model(tmp_pa
     assert writer.commit(pending).success == 1
     assert writer.commit(old_pending).success == 0
     assert [p.read_text() for p in tmp_path.rglob("semantic-model-plan.json")] == [pending.new_text]
+
+
+def test_scoped_plan_rechecks_file_access_when_a_review_is_committed(tmp_path):
+    """A reviewed proposal cannot retain a file grant narrowed before acceptance."""
+    from datus.tools.func_tool.base import FuncToolResult
+    from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
+
+    allowed = True
+    writer = SemanticPlanFileTools(tmp_path, path_allowed=lambda path: allowed)
+    proposal = writer.prepare("sales", {"summary": "Review sales"})
+    assert not isinstance(proposal, FuncToolResult)
+    allowed = False
+    rejected = writer.commit(proposal)
+    assert rejected.success == 0
+    assert "project_files" in rejected.error
+    assert not (tmp_path / proposal.path).exists()

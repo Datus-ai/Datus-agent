@@ -113,6 +113,17 @@ _NORMAL_RULES = [
     _rule("semantic_tools", "end_*_generation", PermissionLevel.ALLOW),
     _rule("semantic_tools", "generate_*_id", PermissionLevel.ALLOW),
     _rule("semantic_tools", "*", PermissionLevel.ALLOW),
+    # Official semantic publisher tools are installed separately from the native catalog.
+    *[
+        _rule("ontology_tools", name, PermissionLevel.ALLOW)
+        for name in (
+            "list_ontology_targets",
+            "read_ontology_draft",
+            "validate_ontology",
+            "describe_concept",
+            "find_concept_paths",
+        )
+    ],
     # scheduler read + destructive deny
     _rule("scheduler_tools", "list_*", PermissionLevel.ALLOW),
     _rule("scheduler_tools", "get_*", PermissionLevel.ALLOW),
@@ -318,6 +329,17 @@ NORMAL = PermissionConfig(
 # posture, so forcing them to switch to ``dangerous`` just to remove one
 # chart is hostile. ASK still gates each call via the broker.
 _AUTO_EXTRA_RULES = [
+    *[
+        _rule("ontology_tools", name, PermissionLevel.ALLOW)
+        for name in (
+            "bind_ontology_target",
+            "upsert_ontology_concepts",
+            "upsert_ontology_mappings",
+            "update_ontology_metadata",
+        )
+    ],
+    _rule("ontology_tools", "delete_ontology_concepts", PermissionLevel.ASK),
+    _rule("ontology_tools", "delete_ontology_mappings", PermissionLevel.ASK),
     _rule("semantic_tools", "write_semantic_model_plan_file", PermissionLevel.ALLOW),
     # workspace writes — ALLOW promotes the INTERNAL × write decision in
     # ``_handle_filesystem_zone`` so the auto profile no longer falls through

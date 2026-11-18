@@ -4,7 +4,7 @@
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, Field, StrictStr, ValidationInfo, field_validator
 
 from datus.configuration.legacy_tool_names import expand_replaced_tools
 
@@ -27,6 +27,22 @@ class ScopedContext(BaseModel):
     )
     metrics: Optional[str] = Field(default=None, init=True, description="Metrics to be used by sub-agents")
     sqls: Optional[str] = Field(default=None, init=True, description="Reference SQL to be used by sub-agents")
+    project_files: Optional[List[StrictStr]] = Field(default=None, description="Project-relative file paths or globs")
+
+    @field_validator("project_files")
+    @classmethod
+    def validate_project_files(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        """Normalize explicit file selections without changing legacy KB-scope semantics."""
+        if value is None:
+            return None
+        result = []
+        for item in value:
+            item = item.strip()
+            if not item:
+                raise ValueError("Project file selections must not be empty")
+            if item not in result:
+                result.append(item)
+        return result
 
     @property
     def is_empty(self) -> bool:

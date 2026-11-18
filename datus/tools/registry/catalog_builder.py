@@ -304,6 +304,12 @@ def collect_contracts(package_root: Path) -> dict:
             if not isinstance(call, ast.Call):
                 continue
             target = _resolve(_symbol(call.func), imports)
+            if target.endswith((".plugin_function_tool", ".plugin_tool_definition")) and not (
+                module.startswith(f"{package_root.name}.plugins.") or module.endswith(".registry.contracts")
+            ):
+                errors.append(
+                    f"{path}:{call.lineno}: Runtime metadata registration is restricted to the plugin boundary"
+                )
             if target == "dataclasses.replace" and any(k.arg == "on_invoke_tool" for k in call.keywords):
                 errors.append(f"{path}:{call.lineno}: Use clone_registered_tool for function-tool wrappers")
             if target.endswith(".ToolDefinition") and not module.endswith(".registry.contracts"):

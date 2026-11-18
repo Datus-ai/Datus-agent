@@ -3068,6 +3068,10 @@ class AgenticNode(Node):
         del skill_name
         return content
 
+    def _required_skill_agent(self, skill_name: str) -> str:
+        """Resolve the authoring role used to load a host-required specification."""
+        return self.get_node_name()
+
     def _required_skill_context(self) -> str:
         """Resolve the exact skill context used for injection and snapshot identity.
 
@@ -3115,7 +3119,7 @@ class AgenticNode(Node):
         for skill_name in skills_to_inject:
             success, message, content = self.skill_manager.load_skill(
                 skill_name,
-                self.get_node_name(),
+                self._required_skill_agent(skill_name),
                 check_permission=False,
                 node_class=self.get_node_class_name(),
             )

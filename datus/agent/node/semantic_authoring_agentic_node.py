@@ -208,66 +208,9 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             reference_dir=reference_dir,
         )
 
-    def _setup_semantic_tools(self):
-        """Setup semantic tools for metrics querying and exploration."""
-        try:
-            from datus.tools.func_tool.semantic_tools import SemanticTools
-
-            # Initialize semantic func tool
-            self.semantic_tools = SemanticTools(
-                agent_config=self.agent_config,
-                sub_agent_name=self.NODE_NAME,
-                generation_evidence=self.generation_evidence,
-                runtime_db_context_provider=self._semantic_runtime_db_context,
-                warehouse_dry_run_provider=self._warehouse_dry_run_compiled_sql,
-                semantic_model_path_provider=lambda: self.osi_target_state.selected_path,
-                semantic_metric_names_provider=self._semantic_validation_metric_names,
-            )
-
-            # Add all available tools from semantic func tool
-            semantic_tools = [
-                tool
-                for tool in self.semantic_tools.available_tools()
-                if tool.name in {"get_metric", "query_metrics", "validate_semantic"}
-            ]
-            self.tools.extend(semantic_tools)
-
-            tool_names = [tool.name for tool in semantic_tools]
-            logger.info(f"Added Dosi semantic tools: {', '.join(tool_names)}")
-
-        except Exception as e:
-            logger.error(f"Failed to setup semantic tools: {e}")
-
     def _semantic_validation_metric_names(self) -> List[str]:
         """Return present touched metrics for same-pass compile evidence."""
-        state = self.osi_target_state
-        path = state.selected_path
-        if not path or not state.touched_metric_names or not self.generation_tools:
-            return []
-        current_names = self.generation_tools.extract_osi_metric_names(path)
-        present, _ = state.partition_touched_metrics(current_names)
-        return present
-
-    def _setup_db_tools(self, *, expose_tools: bool = True):
-        """Setup the database helper, optionally without exposing LLM tools."""
-        try:
-            from datus.tools.func_tool import DBFuncTool
-
-            self.db_func_tool = DBFuncTool(
-                # Same anchor the filesystem tools use, so a path the model got
-                # from glob resolves identically in load_file_as_table.
-                filesystem_root=self._resolve_workspace_root(),
-                agent_config=self.agent_config,
-                sub_agent_name=self.NODE_NAME,
-                read_only=not expose_tools,
-            )
-            if expose_tools:
-                self.tools.extend(self.db_func_tool.available_tools())
-                logger.debug("Added database tools from DBFuncTool")
-            else:
-                logger.debug("Initialized internal read-only database helper")
-        except Exception as e:
-            logger.error(f"Failed to setup database tools: {e}")
+        return self.authoring_session.validation_metric_names()
 
     def _warehouse_dry_run_compiled_sql(self, sql: str) -> Dict[str, Any]:
         """Validate adapter-compiled SQL with a read-only warehouse EXPLAIN."""

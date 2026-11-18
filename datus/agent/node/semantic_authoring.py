@@ -13,7 +13,7 @@ import re
 import weakref
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Optional
 
 import yaml
 
@@ -71,7 +71,9 @@ def _ontology_dir(agent_config: Any = None) -> Optional[Path]:
         return None
 
 
-def inline_mapping_models(agent_config: Any = None) -> list[Dict[str, Any]]:
+def inline_mapping_models(
+    agent_config: Any = None, *, path_allowed: Callable[[Path], bool] | None = None
+) -> list[Dict[str, Any]]:
     """Ossie mapping documents that carry their semantic model inline.
 
     Such a model lives inside ``semantic_model_ref.document`` of a file under
@@ -90,6 +92,8 @@ def inline_mapping_models(agent_config: Any = None) -> list[Dict[str, Any]]:
         path for pattern in ("*.yml", "*.yaml", "*.json") for path in ontology_dir.glob(pattern) if path.is_file()
     )
     for path in paths:
+        if path_allowed is not None and not path_allowed(path):
+            continue
         try:
             document = yaml.safe_load(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, yaml.YAMLError):
@@ -228,7 +232,9 @@ def validate_osi_authoring_document(document: Any) -> Optional[str]:
     return None
 
 
-def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, Any]:
+def inspect_osi_semantic_model_inventory(
+    agent_config: Any = None, *, path_allowed: Callable[[Path], bool] | None = None
+) -> Dict[str, Any]:
     """Inspect every YAML file in the active datasource semantic-model tree.
 
     ``models`` contains schema-valid targets that metrics may bind. A parsed
@@ -244,7 +250,7 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
             "issues": [],
             "discovery_warnings": [],
             "files_scanned": 0,
-            "inline_mapping_models": inline_mapping_models(agent_config),
+            "inline_mapping_models": inline_mapping_models(agent_config, path_allowed=path_allowed),
         }
 
     datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
@@ -256,7 +262,7 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
     paths = sorted(
         path
         for path in {*model_dir.rglob("*.yml"), *model_dir.rglob("*.yaml")}
-        if "metrics" not in path.relative_to(model_dir).parts
+        if "metrics" not in path.relative_to(model_dir).parts and (path_allowed is None or path_allowed(path))
     )
     for path in paths:
         relative_path = path.relative_to(model_dir).as_posix()
@@ -468,7 +474,7 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
         "issues": issues,
         "discovery_warnings": discovery_warnings,
         "files_scanned": len(paths),
-        "inline_mapping_models": inline_mapping_models(agent_config),
+        "inline_mapping_models": inline_mapping_models(agent_config, path_allowed=path_allowed),
     }
 
 

@@ -6,6 +6,8 @@
 
 import hashlib
 
+import pytest
+
 from datus.tools.func_tool.generation_evidence import (
     GenerationEvidence,
     _metadata_from_result,
@@ -278,3 +280,27 @@ class TestGenerationEvidence:
         result = {"success": 1, "result": {"metadata": {"sql": "SELECT 1"}}}
         ev.record_metric_dry_run(["revenue_total"], result)
         assert "revenue_total" in ev.metric_sqls
+
+
+def test_rebase_preserves_exact_validation_and_business_evidence(tmp_path):
+    source, target = tmp_path / "draft.yaml", tmp_path / "published.yaml"
+    for path in (source, target):
+        path.write_text("name: sales\n")
+    before, after = str(source.resolve()), str(target.resolve())
+    evidence = GenerationEvidence(
+        validated_semantic_artifacts={
+            "sales": {"path": before, "sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+        },
+        compiled_artifact_sha256={before: "validated"},
+        mutated_artifact_paths={before},
+        business_verifications={"sales": {"artifact": {"path": before}, "status": "passed"}},
+    )
+    evidence.rebase_artifact(before, after)
+    assert evidence.validated_semantic_artifacts["sales"]["path"] == after
+    assert evidence.compiled_artifact_sha256 == {after: "validated"}
+    assert evidence.mutated_artifact_paths == {after}
+    assert evidence.business_verifications["sales"] == {"artifact": {"path": after}, "status": "passed"}
+    source.write_text("name: different\n")
+    with pytest.raises(ValueError, match="bytes differ"):
+        evidence.rebase_artifact(before, after)
+    assert evidence.validated_semantic_artifacts["sales"]["path"] == after

@@ -23,6 +23,34 @@ def source(package, text, name="tools.py"):
     (package / name).write_text(text, encoding="utf-8")
 
 
+def test_installed_plugin_metadata_is_not_part_of_the_native_build_inventory(package):
+    (package / "plugins").mkdir()
+    source(
+        package,
+        """
+from datus.tools.registry.contracts import plugin_function_tool, plugin_tool_definition
+def bind(metadata, handler):
+    definition = plugin_tool_definition(metadata["id"], metadata["access"])
+    return plugin_function_tool(definition=definition, on_invoke_tool=handler)
+""",
+        "plugins/agents.py",
+    )
+    assert collect_contracts(package) == {"schema_version": 1, "tools": {}}
+
+
+def test_native_modules_cannot_evade_static_inventory_through_the_plugin_boundary(package):
+    source(
+        package,
+        """
+from datus.tools.registry.contracts import plugin_function_tool, plugin_tool_definition
+def native_factory(metadata):
+    return plugin_function_tool(definition=plugin_tool_definition(metadata["id"], "read"))
+""",
+    )
+    with pytest.raises(CatalogError, match="restricted to the plugin boundary"):
+        collect_contracts(package)
+
+
 def test_async_inherited_contracts_and_aliases(package):
     """Inventory inherited methods across modules, even with unavailable dependencies."""
     source(
