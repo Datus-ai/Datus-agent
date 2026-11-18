@@ -114,8 +114,12 @@ class SemanticModelWorkspace:
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 self.target_state.record_artifact_snapshot(target_path, original_content)
                 atomic_write_text(target_path, serialized)
-                self.notify_mutation(target_path)
-                self.target_state.record_metric_touch(target_path, serialized.encode("utf-8"), changed)
+                try:
+                    self.notify_mutation(target_path)
+                finally:
+                    # The replacement already succeeded. Rollback must use the committed bytes
+                    # even if notification fails or observes a newer revision.
+                    self.target_state.record_metric_touch(target_path, serialized.encode("utf-8"), changed)
             return {metric["name"]: metric_uid(metric) for metric in metric_definitions(document).values()}
 
     @staticmethod

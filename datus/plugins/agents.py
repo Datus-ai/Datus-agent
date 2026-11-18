@@ -30,6 +30,8 @@ from datus.tools.registry.contracts import (
 
 
 def _check_schema(schema: dict[str, Any]) -> None:
+    if "$schema" in schema and not isinstance(schema["$schema"], str):
+        raise ValueError("JSON schema dialect must be a string")
     validator = validator_for(schema, default=None) if "$schema" in schema else jsonschema.Draft202012Validator
     if validator is None:
         raise ValueError("JSON schema declares an unsupported dialect")

@@ -208,6 +208,29 @@ def test_registration_bypasses_fail_during_build(package, registration):
         collect_contracts(package)
 
 
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "def build(register=register()): pass",
+        "def build(register: register()): pass",
+        "@register()\ndef build(register): pass",
+    ],
+)
+def test_function_definition_expressions_use_enclosing_registrations(package, declaration):
+    source(package, "from datus.tools.registry.contracts import plugin_function_tool as register\n" + declaration)
+    with pytest.raises(CatalogError, match="registration is restricted to the plugin boundary"):
+        collect_contracts(package)
+
+
+def test_function_parameter_shadows_a_registration_helper_inside_body(package):
+    source(
+        package,
+        "from datus.tools.registry.contracts import plugin_function_tool as register\n"
+        "def build(register): return register()\n",
+    )
+    assert collect_contracts(package)["tools"] == {}
+
+
 def test_feature_checks_are_not_tool_registrations(package):
     """Calling an assembly helper does not make that helper a registered tool."""
     source(

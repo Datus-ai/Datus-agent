@@ -132,6 +132,26 @@ agents:
         collect_plugin_agents(_config("research"))
 
 
+def test_nonstring_schema_dialect_leaves_the_plugin_cli_available(plugin_env):
+    from datus.plugins.registry import load_plugin_manifest
+
+    plugin_env(
+        "research",
+        """manifest_version: 1
+cli: "{pkg}.cli:main"
+agents:
+  research:
+    config_schema: {$schema: 7}
+  report: {}
+""",
+    )
+
+    manifest = load_plugin_manifest("research")
+    assert manifest.cli.endswith(".cli:main")
+    assert "dialect must be a string" in manifest.agent_errors["research"]
+    assert set(manifest.agents) == {"report"}
+
+
 def test_manifest_agent_uses_common_list_configuration(tmp_path):
     metadata = yaml.safe_load(
         """manifest_version: 1

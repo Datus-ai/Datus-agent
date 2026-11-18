@@ -72,10 +72,14 @@ def _scoped_calls(node: ast.AST, imports: dict[str, str], module: str, is_packag
         local_imports = ast.Module(
             body=[entry for statement in node.body for entry in _same_scope_imports(statement)], type_ignores=[]
         )
-        imports = {
+        body_imports = {
             **{name: target for name, target in imports.items() if name not in parameters},
             **_imports(local_imports, module, is_package),
         }
+        body_statements = set(node.body)
+        for child in ast.iter_child_nodes(node):
+            yield from _scoped_calls(child, body_imports if child in body_statements else imports, module, is_package)
+        return
     if isinstance(node, ast.Call):
         yield node, _resolve(_symbol(node.func), imports)
     for child in ast.iter_child_nodes(node):

@@ -136,6 +136,21 @@ def test_configured_and_plugin_name_collision_requires_an_explicit_source(plugin
     assert "researcher" not in list_configurable_agents(config)
 
 
+@pytest.mark.parametrize("name", ["analytics_explorer", "ask_dashboard", "ask_report", "chat", "explore", "gen_sql"])
+def test_plugin_can_replace_a_builtin_only_with_an_explicit_source(plugin_env, name):
+    plugin_env("research", f"manifest_version: 1\nagents:\n  {name}: {{}}\n  researcher: {{}}\n")
+    config = _config(plugins=("research",))
+
+    assert resolve_configurable_agent(name, config) is None
+    assert set(list_configurable_agents(config)) == {"researcher"}
+
+    config.agentic_nodes[name] = {
+        "node_class": "configurable",
+        "source": {"plugin": "research", "agent": name},
+    }
+    assert list_configurable_agents(config)[name].plugin.plugin_name == "research"
+
+
 def test_invalid_plugin_agent_does_not_hide_other_agents_or_block_builtins(plugin_env):
     plugin_env(
         "research",

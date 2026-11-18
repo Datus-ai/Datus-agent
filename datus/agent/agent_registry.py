@@ -26,6 +26,16 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# Also include built-in dispatch names kept out of the public subagent menu.
+_BUILTIN_DISPATCH_NAMES = SYS_SUB_AGENTS | {
+    "analytics_builder",
+    "analytics_explorer",
+    "ask_dashboard",
+    "ask_report",
+    "chat",
+    "explore",
+}
+
 
 @dataclass(frozen=True)
 class ResolvedAgentDefinition:
@@ -79,7 +89,7 @@ def resolve_configurable_agent(
     """Resolve a definition, rejecting collisions and missing explicit plugin references."""
     config = _node_config(name, agent_config)
     configured = is_configurable_entry(config)
-    if not configured and name in {"analytics_explorer", "analytics_builder"}:
+    if not configured and name in _BUILTIN_DISPATCH_NAMES:
         return None
     if configured:
         validate_node_class("configurable", name)
@@ -126,7 +136,7 @@ def resolve_configurable_agent(
                 message=f"Configured agent {name!r} conflicts with a plugin agent; declare its source explicitly.",
             )
     elif name in plugin_agents:
-        if config or name in SYS_SUB_AGENTS:
+        if config:
             raise DatusException(
                 ErrorCode.COMMON_CONFIG_ERROR,
                 message=f"Plugin agent {name!r} conflicts with an existing node; configure an explicit source.",
