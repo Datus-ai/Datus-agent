@@ -2,7 +2,7 @@ name: Run Nightly Tests
 
 on:
   schedule:
-    - cron: '0 20 * * *' # 20:00 UTC daily (offset from integration at 18:00 UTC)
+    - cron: '17 20 * * *' # 20:17 UTC daily (04:17 Beijing time the next day)
   workflow_dispatch:
     inputs:
       datus_agent_ref:
