@@ -58,7 +58,6 @@ def project(tmp_path):
 @pytest.mark.parametrize("entry", ["inventory", "api_get", "read", "grep", "source", "edit", "runtime", "package"])
 def test_first_entry_loads_and_exposes_the_current_file(project, entry):
     root, path, config = project
-    original = path.read_bytes()
     relative = path.relative_to(root).as_posix()
     if entry == "inventory":
         result = inspect_osi_semantic_model_inventory(config)
@@ -98,9 +97,10 @@ def test_first_entry_loads_and_exposes_the_current_file(project, entry):
     assert document["name"] == "shop"
     assert document["datasets"] == yaml.safe_load(MODEL)["datasets"]
     assert document["metrics"][0]["custom_extensions"] == yaml.safe_load(MODEL)["metrics"][0]["custom_extensions"]
-    backups = list(path.parent.glob(".*.bak"))
-    assert len(backups) == 1
-    assert backups[0].read_bytes() == original
+    # Dosi upgrades in place without keeping a backup. The shared lock file is gone too, except
+    # on Windows, which keeps it: its writers open the file without delete sharing.
+    kept = [] if os.name == "posix" else [f".{path.name}.dosi.lock"]
+    assert sorted(p.name for p in path.parent.iterdir() if p.name.startswith(".")) == kept
 
 
 def test_engine_reuse_and_external_historical_replacement(project):
