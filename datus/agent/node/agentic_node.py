@@ -48,6 +48,7 @@ from datus.observability.compaction import compact_metrics, compact_started, obs
 from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseInput, BaseResult
+from datus.tools.db_tools.async_workers import DATABASE_CLEANUP
 from datus.tools.db_tools.data_file_loader import LOCAL_FILES_DATASOURCE
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.language_utils import build_fallback_directive as _build_fallback_directive
@@ -419,8 +420,12 @@ class AgenticNode(Node):
         """Release resources owned by this finished node, leaving shared models alone."""
         db_tool = getattr(self, "db_func_tool", None)
         if db_tool is not None:
+            job = getattr(self, "_database_close_job", None)
+            if job is None:
+                job = DATABASE_CLEANUP.submit(db_tool.close)
+                self._database_close_job = job
             try:
-                await asyncio.wait_for(asyncio.to_thread(db_tool.close), timeout=_DATABASE_CLOSE_TIMEOUT)
+                await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(job)), timeout=_DATABASE_CLOSE_TIMEOUT)
             except asyncio.TimeoutError:
                 # DBFuncTool.close only drains operations and returns leases.
                 # Let that worker finish safely without delaying session closure.

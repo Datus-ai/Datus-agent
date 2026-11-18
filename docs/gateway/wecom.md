@@ -33,9 +33,9 @@ gateway reads YAML on startup; restart it after changing configuration.
 - Direct conversations retain history per user. Group history is isolated per group
   and sender; WeCom does not use Slack-style threads. `/reset` resets that scope.
   Unscoped conversations keep unambiguous, path-safe legacy session IDs. Scoped,
-  ambiguous, or unsafe identifiers use a distinct UTF-8 hex encoding to prevent
-  scope/thread and delimiter collisions. Ambiguous legacy IDs cannot be reused
-  safely because multiple conversations could already share the same ID.
+  ambiguous, or unsafe identifiers use a SHA-256 digest of the complete structured
+  key under a distinct prefix, keeping filenames bounded. Ambiguous legacy IDs
+  require an [explicit ownership mapping](introduction.md#legacy-session-ownership).
 - Replies begin with a processing placeholder, then update the same stream with
   accumulated Markdown. The final update sets `finish=true`.
 - A turn still running after 300 seconds closes its stream and delivers the final
@@ -52,8 +52,11 @@ gateway reads YAML on startup; restart it after changing configuration.
   not chat-message polling. Pending callbacks cancel their chat tasks on connection
   loss and wait up to five seconds for cleanup before reconnecting. A cleanup timeout
   is logged; unfinished tasks remain tracked by the task manager.
-  Node database-lease release also has a five-second wait limit. A timed-out
-  release worker can finish later; session persistence is still drained before
+  Node database-lease release also has a five-second wait limit. Database operations
+  and close jobs run in bounded daemon-worker pools outside the default executor's
+  process-exit join. A cleanup owner retains even queued close jobs, observes their
+  eventual result and lets them finish after timeout without cancellation.
+  Session persistence is still drained before
   task removal, and session resources are closed normally.
   There is no durable message queue or exactly-once delivery across process restarts.
 

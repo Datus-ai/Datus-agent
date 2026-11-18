@@ -243,13 +243,66 @@ class TestChannelBridge:
         assert all(SessionManager._validate_session_id(session_id) == session_id for session_id in ids)
 
     @pytest.mark.parametrize("conversation", ["user@tenant", "讨论组", "folder/name", "path\\name"])
-    def test_invalid_legacy_session_id_uses_disjoint_hex_encoding(self, setup, conversation):
+    def test_invalid_legacy_session_id_uses_bounded_digest(self, setup, conversation):
         bridge, _, _ = setup
         msg = _make_inbound().model_copy(update={"conversation_id": conversation})
         session_id = bridge.build_session_id(msg)
         assert not session_id.startswith("gateway_")
         assert SessionManager._validate_session_id(session_id) == session_id
-        assert bytes.fromhex(session_id.removeprefix("gateway-v2_")).decode("utf-8") == bridge._conversation_key(msg)
+        assert len(session_id) <= 80
+
+    def test_long_scoped_session_creates_a_real_file(self, setup, tmp_path):
+        bridge, _, _ = setup
+        msg = _make_inbound().model_copy(update={"conversation_id": "讨论组" * 200, "session_scope": "user" * 200})
+        session_id = bridge.build_session_id(msg)
+        manager = SessionManager(session_dir=str(tmp_path))
+        session = manager.create_session(session_id)
+        try:
+            assert (tmp_path / f"{session_id}.db").is_file()
+        finally:
+            session.close()
+
+    @pytest.mark.asyncio
+    async def test_legacy_thread_requires_verified_conversation_mapping(self, setup):
+        bridge, adapter, task_manager = setup
+        msg = _make_inbound(thread_id="1700000000.123456", chat_type="group").model_copy(
+            update={"channel_id": "team--slack"}
+        )
+        legacy = "gateway_team--slack--conv1--1700000000.123456"
+        manager = SessionManager(session_dir=bridge._agent_config.session_dir)
+        session = manager.create_session(legacy)
+        try:
+            await session.add_items([{"role": "user", "content": "existing Slack history"}])
+            assert bridge.build_session_id(msg) != legacy
+            owner = '["team--slack","conv1","1700000000.123456",null]'
+            manager.save_session_meta(legacy, "gateway_conversation_key", owner)
+            assert bridge.build_session_id(msg) == legacy
+            task_manager.start_chat = AsyncMock(return_value=MagicMock())
+
+            async def consume_events(task):
+                yield _make_sse_message("continued")
+
+            task_manager.consume_events = consume_events
+            await bridge.handle_message(msg, adapter)
+            assert task_manager.start_chat.call_args.args[1].session_id == legacy
+            other = msg.model_copy(update={"channel_id": "team", "conversation_id": "slack--conv1"})
+            assert bridge.build_session_id(other) != legacy
+            task_manager.start_chat.reset_mock()
+            await bridge.handle_message(other, adapter)
+            task_manager.start_chat.assert_not_awaited()
+        finally:
+            session.close()
+
+    def test_verified_legacy_owner_also_blocks_an_ordinary_colliding_tuple(self, setup):
+        bridge, _, _ = setup
+        manager = SessionManager(session_dir=bridge._agent_config.session_dir)
+        session = manager.create_session("gateway_a--b--c")
+        try:
+            manager.save_session_meta("gateway_a--b--c", "gateway_conversation_key", '["a--b","c",null,null]')
+            msg = _make_inbound(thread_id="c").model_copy(update={"channel_id": "a", "conversation_id": "b"})
+            assert bridge.build_session_id(msg) != "gateway_a--b--c"
+        finally:
+            session.close()
 
     @pytest.mark.asyncio
     async def test_streams_each_event(self, setup):
@@ -473,6 +526,7 @@ class TestChannelBridge:
         with patch("datus.gateway.bridge.SessionManager") as mock_sm_cls:
             mock_sm = MagicMock()
             mock_sm.session_exists.return_value = True
+            mock_sm.load_session_meta.return_value = None
             mock_sm_cls.return_value = mock_sm
             await bridge.handle_message(_make_inbound("/new", message_id="m2"), adapter)
             mock_sm.clear_session.assert_called_once_with(first_session)
