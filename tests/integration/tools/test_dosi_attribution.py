@@ -135,20 +135,26 @@ def test_a_product_shares_its_change_between_its_factors(attribution_tool):
     ]
 
 
-def test_a_distinct_count_by_group_is_an_answer_not_a_tool_failure(attribution_tool):
-    result = _by_groups(attribution_tool, "unique_categories")
-
+def test_a_distinct_count_splits_only_by_what_its_field_determines(attribution_tool):
+    # By the field it counts, each group counts its own values, and the groups add up.
+    assert _tree(_by_groups(attribution_tool, "unique_categories")) == [
+        "unique_categories by ledger.cat | 2 → 2 | change 0",
+        "- a | 1 → 1 | 0 (n/a)",
+        "- b | 1 → 1 | 0 (n/a)",
+    ]
+    # By a field it does not determine, one category counts in several groups: the
+    # refusal is an answer that says what to split by, not a tool failure.
+    result = _by_groups(attribution_tool, "unique_categories", dimensions=("ledger.x",))
     assert result.success == 1, result.error
     assert result.result.splitlines()[:2] == [
         "status unsupported",
-        "issue error insufficient_state: `COUNT(DISTINCT cat)` counts distinct values: its groups do not add up to"
-        " the whole, and the state that would is not fetched",
+        "issue error insufficient_state: `COUNT(DISTINCT cat)` counts distinct values: its groups add up to"
+        " the whole only over the fields `ledger.cat` determines (its dataset's keys, many_to_one relationships,"
+        " fixed fields and `determines` declarations), not over `ledger.x` → split by ledger(cat)",
     ]
-    # get_metric says so before any call.
+    # `cat` is every field it offers, so get_metric says a plain yes, as for `net`.
     detail = attribution_tool.get_metric(name="unique_categories")
-    assert detail.result.splitlines()[-1] == (
-        "attribution: attribute_metrics yes; attribute_dimensions no (insufficient_state)"
-    )
+    assert detail.result.splitlines()[-1] == "attribution: attribute_metrics yes; attribute_dimensions yes"
     net = attribution_tool.get_metric(name="net").result
     assert net.splitlines()[-1] == "attribution: attribute_metrics yes; attribute_dimensions yes"
 
