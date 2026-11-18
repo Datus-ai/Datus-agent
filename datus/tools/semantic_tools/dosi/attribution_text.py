@@ -215,15 +215,16 @@ def _group_label(group: Mapping[str, Any]) -> str:
     """A group's value. Dosi labels a NULL value ``(null)``, as it does the
     text ``'(null)'``; the key tells them apart, and a NULL is written ``NULL``
     so a follow-up filters it with ``IS NULL``. A text that would read as that
-    NULL, or that would break the line, is written as a quoted literal:
-    ``'NULL'``, ``'a\\nb'``."""
+    NULL, that would break the line, or that starts with a quote (and so could
+    read as one of those) is written as a quoted literal: ``'NULL'``,
+    ``'a\\nb'``, and ``'''NULL'''`` for the text ``'NULL'``."""
     label = str(group.get("label"))
     key = group.get("key")
     if label == "(null)" and isinstance(key, Mapping):
         values = list(key.values())
         if None in values and "(null)" not in values:
             return "NULL"
-    if label == "NULL" or "\n" in label or "\r" in label:
+    if label == "NULL" or label.startswith("'") or "\n" in label or "\r" in label:
         escaped = label.replace("\\", "\\\\").replace("'", "''").replace("\n", "\\n").replace("\r", "\\r")
         return f"'{escaped}'"
     return label
@@ -383,9 +384,11 @@ def summarize_attribution_text(text: Any) -> str:
         for line in body[1:]:
             if not line.startswith("- ") or line.count(" | ") < 2:
                 continue  # deeper levels, and `others` lines
-            parsed = _effect_of(_drop_tail(line))
+            line = _drop_tail(line)
+            parsed = _effect_of(line)
             if parsed and (best is None or abs(parsed[0]) > abs(best[1])):
-                best = (line[2:].split(" | ", 1)[0], parsed[0], parsed[1])
+                # `label | values | effect`, read from the right: a label may hold ` | `.
+                best = (line[2:].rsplit(" | ", 2)[0], parsed[0], parsed[1])
     else:  # metric tree: inputs, the lines nothing is under, summed over their lines
         totals: Dict[str, List[Optional[float]]] = {}
         nodes = [line for line in body[1:] if line.startswith("  ")]
@@ -396,7 +399,7 @@ def summarize_attribution_text(text: Any) -> str:
             parsed = _effect_of(line)
             if parsed is None:
                 continue
-            name = line.strip().split(" | ", 1)[0].split(" @ ", 1)[0]
+            name = line.strip().rsplit(" | ", 2)[0].split(" @ ", 1)[0]
             total = totals.setdefault(name, [0.0, 0.0])
             total[0] += parsed[0]
             total[1] = None if total[1] is None or parsed[1] is None else total[1] + parsed[1]

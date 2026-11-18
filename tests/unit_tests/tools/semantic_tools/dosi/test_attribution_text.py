@@ -239,11 +239,14 @@ def test_a_text_group_that_would_read_as_null_or_break_the_line_is_quoted():
     children = result["tree"]["children"]
     children[0]["label"], children[0]["key"] = "NULL", {"item.i_category": "NULL"}
     children[1]["label"], children[1]["key"] = "it's\nnew", {"item.i_category": "it's\nnew"}
+    # A text that is already quoted is quoted again, so it does not read as the text NULL.
+    children[2]["label"], children[2]["key"] = "'NULL'", {"item.i_category": "'NULL'"}
 
     lines = render_attribute_dimensions(result).splitlines()
 
     assert lines[3].startswith("- 'NULL' | ")
     assert lines[4].startswith("- 'it''s\\nnew' | ")
+    assert lines[5].startswith("- '''NULL''' | ")
 
 
 def test_a_group_whose_rank_is_within_noise_is_marked():
@@ -279,6 +282,19 @@ def test_summary_of_a_change_of_zero_names_the_largest_input():
         ]
     )
     assert summarize_attribution_text(text) == "complete · Δ 0 · x_total +10 (n/a)"
+
+
+def test_summary_keeps_a_group_label_that_holds_the_separator():
+    text = "\n".join(
+        [
+            "status complete",
+            "",
+            "sales by item.i_category | 100 → 130 | change +30",
+            "- Home | Garden | 40 → 65 | +25 (83.3%) | 3 below",
+            "- Books | 60 → 65 | +5 (16.7%)",
+        ]
+    )
+    assert summarize_attribution_text(text) == "complete · Δ +30 · Home | Garden +25 (83.3%)"
 
 
 def test_summary_of_anything_else_is_empty():

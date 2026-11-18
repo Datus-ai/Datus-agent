@@ -424,7 +424,7 @@ An attribution report should include:
 - the strongest drivers and relevant caveats;
 - a conclusion grounded in metric query results.
 
-A region-then-country split lists a fixed number of groups across both levels, the largest first, so a region can appear with its country count and no countries named. To see more countries, ask for a larger `top_groups` (up to 200) rather than a separate call filtered to one region.
+A region-then-country split lists at most `top_groups` groups across both levels, picked by the size of their effect, and shows each country under its region. A region can therefore appear with its country count and no countries named. To see more countries, ask for a larger `top_groups` (up to 200) rather than a separate call filtered to one region.
 
 An abbreviated example:
 

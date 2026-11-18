@@ -214,6 +214,28 @@ class TestChatMetricTools:
         assert "scope changed" in result.error
 
     @pytest.mark.asyncio
+    async def test_a_scope_that_cannot_be_read_after_the_call_returns_no_attribution(
+        self, real_agent_config, mock_llm_create, tmp_path, monkeypatch
+    ):
+        semantic, _ = _inflight_scoped_semantic_tools(real_agent_config, tmp_path)
+        original = semantic.runtime.attribute_metrics
+
+        def unreadable():
+            raise RuntimeError("policy context provider is down")
+
+        async def call_then_fail(request):
+            result = await original(request)
+            monkeypatch.setattr(semantic, "_policy_cache_scope", unreadable)
+            return result
+
+        monkeypatch.setattr(semantic.runtime, "attribute_metrics", call_then_fail)
+
+        result = semantic.attribute_metrics(metric="net", **_ATTRIBUTION_PERIODS)
+        assert result.success == 0
+        assert result.result is None
+        assert result.error == "Configured metric scope could not be verified."
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("reader", ["query_metrics", "get_query_metrics_result"])
     async def test_registered_cache_reader_recovers_omitted_rows_without_requery(
         self, real_agent_config, mock_llm_create, tmp_path, monkeypatch, reader

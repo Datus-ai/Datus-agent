@@ -2924,8 +2924,15 @@ class SemanticTools:
                 error=f"{tool_name} failed: {e}",
                 result={"execution_info": info} if info else None,
             )
-        # As query_metrics: a scope the host narrowed while the call ran wins.
-        if authorized_scope is not None and self._query_cache_scope(self._policy_cache_scope()) != authorized_scope:
+        # As query_metrics: a scope the host narrowed while the call ran wins,
+        # and one that cannot be read again is not assumed unchanged.
+        if authorized_scope is not None:
+            try:
+                current_scope = self._query_cache_scope(self._policy_cache_scope())
+            except Exception as exc:
+                logger.warning("Could not verify configured metric scope after %s: %s", tool_name, exc)
+                return FuncToolResult(success=0, error="Configured metric scope could not be verified.")
+        if authorized_scope is not None and current_scope != authorized_scope:
             return FuncToolResult(
                 success=0,
                 error="Configured metric scope changed while the attribution was running; retry in the current scope.",
