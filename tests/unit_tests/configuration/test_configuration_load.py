@@ -204,7 +204,7 @@ def test_get_db_name_type(agent_config: AgentConfig):
 
 def test_get_db_name_type_with_custom_db_name(agent_config: AgentConfig):
     """When db_name is not a datasource key, it should be preserved as the database name."""
-    agent_config.current_datasource = "bird_sqlite"
+    agent_config.current_datasource = "bird_school"
     db_name, db_type = agent_config.current_db_name_type(db_name="my_custom_db")
     assert db_name == "my_custom_db"
     assert db_type == DBType.SQLITE

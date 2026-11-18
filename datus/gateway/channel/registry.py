@@ -43,10 +43,12 @@ def register_builtins() -> None:
     """Lazily import and register built-in adapters."""
     from datus.gateway.adapters.feishu import FeishuAdapter
     from datus.gateway.adapters.slack import SlackAdapter
+    from datus.gateway.adapters.wecom import WeComAdapter
 
     for name, cls in [
         ("feishu", FeishuAdapter),
         ("slack", SlackAdapter),
+        ("wecom", WeComAdapter),
     ]:
         if name not in _ADAPTER_TYPES:
             register_adapter(name, cls)
