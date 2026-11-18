@@ -4,6 +4,7 @@
 """Real local Dosi/SQL execution with fake host policy decisions; no external services."""
 
 import asyncio
+import warnings
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -217,14 +218,16 @@ async def test_attribution_denial_never_returns_evidence(execution, monkeypatch,
 
 @pytest.mark.asyncio
 async def test_the_request_where_goes_through_the_metric_policy(execution, monkeypatch):
-    """The caller's where reaches the metric policy, whose condition is what the engine runs, as for the shipped method."""
+    """The caller's where reaches the metric policy, whose condition is what the engine runs, as for the shipped method.
+
+    The caller's condition would drop east's baseline row (100): the values show it did not run beside the policy's."""
     _, executor, _ = execution
     calls = install_policy(monkeypatch, kind="metric")
     result = await executor.attribute_metrics(
-        native_request(where_sql="orders.amount > 0"), policy_context={"region": "east"}
+        native_request(where_sql="orders.amount > 150"), policy_context={"region": "east"}
     )
     metric_calls = [kwargs for stage, kwargs in calls if stage == "metric"]
-    assert metric_calls[0]["where"] == "orders.amount > 0"
+    assert metric_calls[0]["where"] == "orders.amount > 150"
     assert (result["tree"]["baseline"], result["tree"]["current"]) == (100, 200)
 
 
@@ -232,8 +235,12 @@ async def test_the_request_where_goes_through_the_metric_policy(execution, monke
 async def test_the_shipped_method_is_deprecated(execution, monkeypatch):
     _, executor, _ = execution
     install_policy(monkeypatch, kind="metric")
-    with pytest.warns(DeprecationWarning, match="attribute_metrics or attribute_dimensions"):
-        await executor.attribute(attribution(), policy_context={"region": "west"})
+    # The request models warn too; build the request first so only the executor's warning is checked.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        request = attribution()
+    with pytest.warns(DeprecationWarning, match="PolicyMetricExecutor.attribute is deprecated"):
+        await executor.attribute(request, policy_context={"region": "west"})
 
 
 @pytest.mark.parametrize(
