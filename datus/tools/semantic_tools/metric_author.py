@@ -6,7 +6,7 @@
 
 ``MetricAuthor`` reads/mutates a single metric *in place* inside its owning
 root ``metrics`` list, preserving the rest of the document (datasets,
-relationships, sibling metrics) and DATUS ``custom_extensions``. It operates on
+relationships, sibling metrics) and DATUS ``nonportable_extensions``. It operates on
 the raw core-schema dicts — not any compiled IR — so round-trips keep
 OSI-native fields (``expression.dialects``, ``ai_context``) intact.
 
@@ -26,6 +26,13 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import yaml
 
 from datus.storage.semantic_model.artifact_file import atomic_write_text, semantic_artifact_lock
+from datus.utils.ossie_format import (
+    CURRENT_VERSION,
+    EXTENSIONS,
+    extension_entries,
+    upgrade_document,
+    upgrade_extensions,
+)
 
 from .authoring import MetricMutationResult, MetricSource
 from .dosi.model import iter_semantic_models
@@ -34,7 +41,7 @@ from .models import ValidationIssue, ValidationResult
 
 # OSI-format constants (the on-disk authoring format these helpers operate on).
 DATUS_VENDOR = "DATUS"
-DEFAULT_SCHEMA_VERSION = "0.2.0.dev0"
+DEFAULT_SCHEMA_VERSION = CURRENT_VERSION
 
 # MetricSource / MetricMutationResult carry this as their ``format``.
 FORMAT = "osi"
@@ -86,6 +93,8 @@ def _read_docs(file_path: str) -> _DocumentSnapshot:
     source = Path(file_path).read_bytes()
     text = source.decode("utf-8")
     docs = [json.loads(text)] if file_path.lower().endswith(".json") else list(yaml.safe_load_all(text))
+    for doc in docs:
+        upgrade_document(doc)
     return _DocumentSnapshot(docs, source)
 
 
@@ -108,9 +117,9 @@ def _dump_yaml(obj: Any) -> str:
 
 
 def _datus_hints(node: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge every DATUS ``custom_extensions`` payload on ``node`` into one dict."""
+    """Merge every DATUS ``nonportable_extensions`` payload on ``node`` into one dict."""
     merged: Dict[str, Any] = {}
-    for ext in node.get("custom_extensions") or []:
+    for ext in extension_entries(node) or []:
         if not isinstance(ext, dict) or str(ext.get("vendor_name", "")).upper() != DATUS_VENDOR:
             continue
         raw = ext.get("data")
@@ -127,28 +136,16 @@ def _datus_hints(node: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _set_datus_hints(node: Dict[str, Any], updates: Dict[str, Any]) -> None:
-    """Write ``updates`` into node's DATUS custom extension, preserving JSON-string style."""
-    extensions = node.setdefault("custom_extensions", [])
+    """Write ``updates`` into node's DATUS custom extension, preserving other vendor entries."""
+    extensions = node.setdefault(EXTENSIONS, [])
     for ext in extensions:
         if isinstance(ext, dict) and str(ext.get("vendor_name", "")).upper() == DATUS_VENDOR:
-            raw = ext.get("data")
-            if isinstance(raw, str):
-                try:
-                    data = json.loads(raw) if raw.strip() else {}
-                except json.JSONDecodeError:
-                    data = {}
-                data.update(updates)
-                ext["data"] = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-            else:
-                data = dict(raw) if isinstance(raw, dict) else {}
-                data.update(updates)
-                ext["data"] = data
+            ext["data"] = {**ext["data"], **updates}
             return
-    # No DATUS entry yet — add one using the JSON-string convention.
     extensions.append(
         {
             "vendor_name": DATUS_VENDOR,
-            "data": json.dumps(updates, ensure_ascii=False, separators=(",", ":")),
+            "data": dict(updates),
         }
     )
 
@@ -297,6 +294,7 @@ class MetricAuthor:
             raise self._error_cls(f"Invalid YAML: {exc}") from exc
         if not isinstance(node, dict) or not node.get("name"):
             raise self._error_cls("Metric source must be a mapping with a `name` field.")
+        upgrade_extensions(node)
         return node
 
     def write(

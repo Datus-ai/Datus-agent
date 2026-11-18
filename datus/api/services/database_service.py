@@ -4,6 +4,7 @@ Service for handling Database Management operations.
 
 import copy
 import stat
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -48,6 +49,7 @@ from datus.utils.config_utils import coerce_positive_int, coerce_positive_second
 from datus.utils.exceptions import DatusException
 from datus.utils.exceptions import ErrorCode as DbErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.ossie_format import LEGACY_VERSION
 from datus.utils.sql_utils import parse_table_name_parts
 from datus.utils.text_utils import redact_uri
 from datus.utils.time_utils import now_utc_iso
@@ -871,8 +873,11 @@ class DatasourceService:
             document = yaml.safe_load(yaml_content)
         except yaml.YAMLError as exc:
             return None, False, str(exc)
-        models = list(iter_semantic_models(document)) if isinstance(document, dict) else []
-        if len(models) != 1:
+        if isinstance(document, dict) and "semantic_model" in document:
+            models = document["semantic_model"]
+        else:
+            models = list(iter_semantic_models(document))
+        if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
             return None, False, "OSI YAML must declare exactly one semantic model"
         model = models[0]
         model_name = str(model.get("name") or "").strip()
@@ -1088,6 +1093,22 @@ class DatasourceService:
                     errorMessage="; ".join(validation_errors),
                 )
 
+            # Keep the verified input bytes for current documents. Legacy text
+            # upgrades in memory in Dosi, so persist the upgraded format here too.
+            try:
+                document = yaml.safe_load(request.yaml)
+                if document.get("version") == LEGACY_VERSION or "semantic_model" in document:
+                    from datus.tools.semantic_tools.dosi.engine import load_binding
+
+                    with tempfile.TemporaryDirectory() as directory:
+                        candidate = Path(directory) / semantic_model_path.name
+                        candidate.write_bytes(candidate_content)
+                        load_binding().Engine(model_path=str(candidate))
+                        candidate_content = candidate.read_bytes()
+            except (ValueError, OSError, RuntimeError, yaml.YAMLError) as exc:
+                return Result[SaveSemanticModelData](
+                    success=False, errorCode=ErrorCode.SEMANTIC_MODEL_INVALID, errorMessage=str(exc)
+                )
             candidate_revision = artifact_revision(candidate_content)
             content_changed = candidate_content != original_content
             try:

@@ -58,7 +58,6 @@ def project(tmp_path):
 @pytest.mark.parametrize("entry", ["inventory", "api_get", "read", "grep", "source", "edit", "runtime", "package"])
 def test_first_entry_loads_and_exposes_the_current_file(project, entry):
     root, path, config = project
-    original = path.read_bytes()
     relative = path.relative_to(root).as_posix()
     if entry == "inventory":
         result = inspect_osi_semantic_model_inventory(config)
@@ -97,10 +96,9 @@ def test_first_entry_loads_and_exposes_the_current_file(project, entry):
     document = yaml.safe_load(path.read_text())
     assert document["name"] == "shop"
     assert document["datasets"] == yaml.safe_load(MODEL)["datasets"]
-    assert document["metrics"][0]["custom_extensions"] == yaml.safe_load(MODEL)["metrics"][0]["custom_extensions"]
-    backups = list(path.parent.glob(".*.bak"))
-    assert len(backups) == 1
-    assert backups[0].read_bytes() == original
+    assert document["version"] == "0.3.0.dev0"
+    assert document["metrics"][0]["nonportable_extensions"][0]["data"] == {"uid": "tz4a98xxat96iws9zmbrgj3a"}
+    assert not list(path.parent.glob(".*.bak"))
 
 
 def test_engine_reuse_and_external_historical_replacement(project):

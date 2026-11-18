@@ -14,15 +14,16 @@ from typing import Any
 from cuid2 import Cuid
 
 from datus.storage.metric.store import normalize_metric_name
+from datus.utils.ossie_format import EXTENSIONS, extension_entries, upgrade_extensions
 
 _UID_PATTERN = re.compile(r"[a-z][a-z0-9]{23}")
 _UID_GENERATOR = Cuid(length=24)
 
 
 def _extension(metric: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    extensions = metric.get("custom_extensions", [])
+    extensions = extension_entries(metric)
     if not isinstance(extensions, list) or any(not isinstance(item, dict) for item in extensions):
-        raise ValueError(f"{metric.get('name')}: custom_extensions must be a list of objects")
+        raise ValueError(f"{metric.get('name')}: extensions must be a list of objects")
     entries = [item for item in extensions if str(item.get("vendor_name", "")).strip().upper() == "DATUS"]
     if len(entries) > 1:
         raise ValueError(f"{metric.get('name')}: metric identity requires a single DATUS extension")
@@ -55,7 +56,7 @@ def metric_uid(metric: dict[str, Any]) -> str:
 
 def _set_metric_uid(metric: dict[str, Any], uid: str) -> bool:
     """Set or remove one metric's UID without mutating shared YAML extensions."""
-    extension, payload = _extension(metric)
+    _, payload = _extension(metric)
     payload = dict(payload)
     if uid:
         if payload.get("uid") == uid:
@@ -65,14 +66,15 @@ def _set_metric_uid(metric: dict[str, Any], uid: str) -> bool:
         if "uid" not in payload:
             return False
         del payload["uid"]
-    data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    extensions = list(metric.get("custom_extensions", []))
+    upgrade_extensions(metric)
+    extension, _ = _extension(metric)
+    extensions = list(extension_entries(metric))
     if extension is None:
-        extensions.append({"vendor_name": "DATUS", "data": data})
+        extensions.append({"vendor_name": "DATUS", "data": payload})
     else:
         # YAML anchors can share extension objects across different metrics.
-        extensions = [{**item, "data": data} if item is extension else item for item in extensions]
-    metric["custom_extensions"] = extensions
+        extensions = [{**item, "data": payload} if item is extension else item for item in extensions]
+    metric[EXTENSIONS] = extensions
     return True
 
 

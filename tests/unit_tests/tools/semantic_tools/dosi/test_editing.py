@@ -42,13 +42,33 @@ def model():
     }
 
 
+def test_portable_compose_uses_sql_and_preserves_vendor_variant():
+    doc = model()
+    doc["version"] = "0.3.0.dev0"
+    for metric in doc["metrics"]:
+        expression = metric["expression"]
+        expression["sql"] = expression["dialects"][0]["expression"]
+        if "custom_extensions" in metric:
+            entry = metric.pop("custom_extensions")[0]
+            metric["nonportable_extensions"] = [{**entry, "data": json.loads(entry["data"])}]
+    doc["metrics"][0]["expression"]["sql"] = "SUM(orders.amount) * 3"
+    doc["metrics"][0]["expression"]["dialects"].append({"dialect": "OSSIE_SQL_2026", "expression": "COUNT(*)"})
+    result = prepare_metric_definitions(yaml.safe_dump(doc), ["revenue"])
+    assert result["valid"], result["validation"]
+    patches = {patch["name"]: patch["fields"]["expression"] for patch in result["patches"]}
+    for name in ["aov", "double_aov"]:
+        assert "* 3" in patches[name]["sql"]
+        assert "* 3" not in patches[name]["dialects"][0]["expression"]
+        assert patches[name]["dialects"][0]["dialect"] == "ANSI_SQL"
+
+
 def test_updates_transitive_dependents_and_retains_metadata():
     doc = model()
     doc["metrics"][0]["expression"]["dialects"][0]["expression"] = "SUM(orders.amount) * 3"
     result = prepare_metric_definitions(yaml.safe_dump(doc), ["revenue"])
     assert result["valid"], result["validation"]
     assert {patch["name"] for patch in result["patches"]} == {"aov", "double_aov"}
-    assert all("custom_extensions" not in patch["fields"] for patch in result["patches"])
+    assert all("nonportable_extensions" not in patch["fields"] for patch in result["patches"])
     assert "* 3" in result["patches"][-1]["fields"]["expression"]["dialects"][0]["expression"]
 
 
@@ -83,7 +103,7 @@ def test_rename_updates_identifier_references_only():
     )
     assert result["valid"], result["validation"]
     patch = next(patch for patch in result["patches"] if patch["name"] == "aov")
-    hints = json.loads(patch["fields"]["custom_extensions"][0]["data"])
+    hints = patch["fields"]["nonportable_extensions"][0]["data"]
     assert hints["derive"]["expr"] == "net_revenue / orders_count"
     assert hints["unit"] == "ratio"
 

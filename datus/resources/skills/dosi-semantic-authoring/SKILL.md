@@ -19,11 +19,11 @@ Use this skill for modeling decisions. The node prompt owns request scope, targe
 
 ## Read the active contract
 
-The appended OSI shapes retain all core members and enums; they are reference shapes, not a complete model to paste. Required members are root `version`/`name`/`datasets`, dataset `name`/`source`, field and metric `name`/`expression`, and relationship `name`/`from`/`to`/`from_columns`/`to_columns`. An expression contains `dialects` entries with `dialect` and `expression`. Use the datasource's OSI dialect and reject unknown core keys.
+The appended OSI shapes retain all core members and enums; they are reference shapes, not a complete model to paste. Required members are root `version`/`name`/`datasets`, dataset `name`/`source`, field and metric `name`/`expression`, and relationship `name`/`from`/`to`/`from_columns`/`to_columns`. Use `expression.sql` for portable Ossie SQL. For warehouse-specific SQL use a `dialects` entry naming the datasource's dialect.
 
 The appended DATUS directory lists every active capability, its carriers and when to use it. Before authoring a capability with `schema_ref`, use `read_file` to read its full rules and examples from the generated authoring reference directory below. The directory entry gives its filename, such as `capability-window.yaml` or `capability-derive.yaml`; referenced definitions are included. Follow `related_references` when combining capabilities, such as windows with parameters. Read `osi-core.yaml` for full core details or `datus.yaml` for the complete extension contract when needed. An unread definition is not an unsupported capability.
 
-Put Dosi metadata in at most one `custom_extensions` entry per object, with `vendor_name: DATUS` and `data` encoding one JSON object. Use runtime version `<datus_extension_version>` and the directory's `requires` rules. Never invent extension keys or infer support from an older example. Native validation remains authoritative.
+Put Dosi metadata in at most one `nonportable_extensions` entry per object, with `vendor_name: DATUS` and an object-valued `data`. Use runtime version `<datus_extension_version>` and the directory's `requires` rules. Never invent extension keys or infer support from an older example. Native validation remains authoritative.
 
 ## Sources and relationships
 
@@ -58,49 +58,49 @@ Every metric requires an explicit `expression`; `derive` and `window` do not req
 The following complete model shows the base → composition → ranking → scoring path. Read the active `derive`, `window` and `time` references before adapting it. The example's ratio deliberately uses unguarded division in both representations; choose any required zero/NULL policy consistently, rather than adding a guard to only the SQL. The score's SQL replaces the rank with its basic base value; Dosi executes the referenced rank through `derive`. Query its ranks/scores with `orders.market` and the intended time grain so the ranking population is retained.
 
 ```yaml
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: sales_patterns
 datasets:
   - name: orders
     source: analytics.orders
     fields:
       - name: month
-        expression: {dialects: [{dialect: <osi_dialect>, expression: month}]}
+        expression: {sql: month}
         dimension: {is_time: true}
-        custom_extensions:
+        nonportable_extensions:
           - vendor_name: DATUS
-            data: '{"v":"<datus_extension_version>","requires":["time"],"time":{"format":"%Y-%m","storage":"string","granularity":"month"}}'
+            data: {"v":"<datus_extension_version>","requires":["time"],"time":{"format":"%Y-%m","storage":"string","granularity":"month"}}
       - name: market
-        expression: {dialects: [{dialect: <osi_dialect>, expression: market}]}
+        expression: {sql: market}
       - name: order_id
-        expression: {dialects: [{dialect: <osi_dialect>, expression: order_id}]}
+        expression: {sql: order_id}
       - name: amount
-        expression: {dialects: [{dialect: <osi_dialect>, expression: amount}]}
+        expression: {sql: amount}
 metrics:
   - name: revenue
-    expression: {dialects: [{dialect: <osi_dialect>, expression: SUM(orders.amount)}]}
+    expression: {sql: SUM(orders.amount)}
   - name: order_count
-    expression: {dialects: [{dialect: <osi_dialect>, expression: COUNT(DISTINCT orders.order_id)}]}
+    expression: {sql: COUNT(DISTINCT orders.order_id)}
   - name: average_order_value
-    expression: {dialects: [{dialect: <osi_dialect>, expression: SUM(orders.amount) / COUNT(DISTINCT orders.order_id)}]}
-    custom_extensions:
+    expression: {sql: SUM(orders.amount) / COUNT(DISTINCT orders.order_id)}
+    nonportable_extensions:
       - vendor_name: DATUS
-        data: '{"v":"<datus_extension_version>","derive":{"type":"compose","expr":"revenue / order_count"}}'
+        data: {"v":"<datus_extension_version>","derive":{"type":"compose","expr":"revenue / order_count"}}
   - name: revenue_rank
-    expression: {dialects: [{dialect: <osi_dialect>, expression: SUM(orders.amount)}]}
-    custom_extensions:
+    expression: {sql: SUM(orders.amount)}
+    nonportable_extensions:
       - vendor_name: DATUS
-        data: '{"v":"<datus_extension_version>","window":{"base":"revenue","rank":{"function":"rank","order":{"by":"value","direction":"desc"},"partition":{"mode":"query_dimensions_except","exclude":["orders.market"]}}}}'
+        data: {"v":"<datus_extension_version>","window":{"base":"revenue","rank":{"function":"rank","order":{"by":"value","direction":"desc"},"partition":{"mode":"query_dimensions_except","exclude":["orders.market"]}}}}
   - name: market_count
-    expression: {dialects: [{dialect: <osi_dialect>, expression: SUM(orders.amount)}]}
-    custom_extensions:
+    expression: {sql: SUM(orders.amount)}
+    nonportable_extensions:
       - vendor_name: DATUS
-        data: '{"v":"<datus_extension_version>","window":{"base":"revenue","frame":{"function":"count","scope":"partition","partition":{"mode":"query_dimensions_except","exclude":["orders.market"]}}}}'
+        data: {"v":"<datus_extension_version>","window":{"base":"revenue","frame":{"function":"count","scope":"partition","partition":{"mode":"query_dimensions_except","exclude":["orders.market"]}}}}
   - name: revenue_score
-    expression: {dialects: [{dialect: <osi_dialect>, expression: "CASE WHEN SUM(orders.amount) <= 3 THEN 90 WHEN SUM(orders.amount) >= SUM(orders.amount) - 2 THEN 0 ELSE 40 END"}]}
-    custom_extensions:
+    expression: {sql: "CASE WHEN SUM(orders.amount) <= 3 THEN 90 WHEN SUM(orders.amount) >= SUM(orders.amount) - 2 THEN 0 ELSE 40 END"}
+    nonportable_extensions:
       - vendor_name: DATUS
-        data: '{"v":"<datus_extension_version>","derive":{"type":"compose","expr":"CASE WHEN revenue_rank <= 3 THEN 90 WHEN revenue_rank >= market_count - 2 THEN 0 ELSE 40 END"}}'
+        data: {"v":"<datus_extension_version>","derive":{"type":"compose","expr":"CASE WHEN revenue_rank <= 3 THEN 90 WHEN revenue_rank >= market_count - 2 THEN 0 ELSE 40 END"}}
 ```
 
 The score's basic SQL is the mechanical expansion required by validation: `SUM(orders.amount) >= SUM(orders.amount) - 2` does not encode ranking. Runtime ranking and scoring come from `derive.expr` and its referenced windows.
@@ -114,7 +114,7 @@ The score's basic SQL is the mechanical expansion required by validation: `SUM(o
 ## Minimal physical model
 
 ```yaml
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: sales
 datasets:
   - name: orders
@@ -122,14 +122,14 @@ datasets:
     fields:
       - name: amount
         expression:
-          dialects: [{dialect: <osi_dialect>, expression: amount}]
+          sql: amount
 metrics:
   - name: revenue
     description: Total order revenue
     ai_context: {instructions: Sum order amounts at the requested grouping.}
     expression:
-      dialects: [{dialect: <osi_dialect>, expression: SUM(orders.amount)}]
-    custom_extensions:
+      sql: SUM(orders.amount)
+    nonportable_extensions:
       - vendor_name: DATUS
-        data: '{"v":"<datus_extension_version>","subject_path":["sales","revenue","total"],"unit":"USD"}'
+        data: {"v":"<datus_extension_version>","subject_path":["sales","revenue","total"],"unit":"USD"}
 ```

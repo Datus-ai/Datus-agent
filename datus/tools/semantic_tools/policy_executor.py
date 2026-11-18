@@ -11,7 +11,6 @@ need engine handles or model reconstruction details.
 """
 
 import asyncio
-import json
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +24,7 @@ from datus.tools.semantic_tools.dosi.engine import load_binding
 from datus.tools.semantic_tools.dosi.runtime import DosiRuntime
 from datus.tools.semantic_tools.models import AttributionRequest, AttributionResult, QueryResult
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.ossie_format import EXTENSIONS, upgrade_document
 
 
 def _denied(reason: str) -> DatusException:
@@ -114,6 +114,7 @@ class PolicyMetricExecutor:
             raise _denied("MAPPING_UNSUPPORTED")
         handle.get()
         document = yaml.safe_load(Path(handle._config.semantic_model_path).read_text())
+        upgrade_document(document)
         tool = DBFuncTool(agent_config=self.config, read_only=True)
         datasource = self.runtime.datasource or self.config.current_datasource
         database = (self.runtime.config.db_config or {}).get("database") or self.config.default_database_name(
@@ -139,14 +140,12 @@ class PolicyMetricExecutor:
                 if error:
                     raise _denied("QUERY_UNAVAILABLE")
                 dataset["source"] = enforced
-                extensions = dataset.setdefault("custom_extensions", [])
+                extensions = dataset.setdefault(EXTENSIONS, [])
                 extension = next((item for item in extensions if item.get("vendor_name") == "DATUS"), None)
                 if extension is None:
-                    extension = {"vendor_name": "DATUS", "data": "{}"}
+                    extension = {"vendor_name": "DATUS", "data": {}}
                     extensions.append(extension)
-                data = json.loads(extension["data"])
-                data["source_type"] = "query"
-                extension["data"] = json.dumps(data)
+                extension["data"] = {**extension["data"], "source_type": "query"}
         engine = load_binding().Engine(
             model_text=yaml.safe_dump(document), connections=handle._runtime_connections(handle._config), pool_size=1
         )

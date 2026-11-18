@@ -325,7 +325,7 @@ def test_datasets_only_scope_rolls_back_metric_changes_made_through_edit_file(
     model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
     model_dir.mkdir(parents=True, exist_ok=True)
     target = model_dir / "orders.yml"
-    original = """version: 0.2.0.dev0
+    original = """version: 0.3.0.dev0
 name: orders_model
 datasets: []
 relationships: []
@@ -406,7 +406,7 @@ def test_unified_dosi_selects_existing_model_once_for_dataset_and_metric_changes
     model_dir.mkdir(parents=True, exist_ok=True)
     target = model_dir / "commerce.yml"
     target.write_text(
-        """version: 0.2.0.dev0
+        """version: 0.3.0.dev0
 name: commerce
 datasets:
   - name: orders
@@ -700,7 +700,7 @@ def test_host_finalizer_validates_and_reconciles_complete_selected_yaml(
     model_dir.mkdir(parents=True, exist_ok=True)
     target = model_dir / "orders.yml"
     target.write_text(
-        "version: 0.2.0.dev0\nname: orders_model\ndatasets:\n  - name: orders\n    source: orders\n    fields: []\nrelationships: []\n"
+        "version: 0.3.0.dev0\nname: orders_model\ndatasets:\n  - name: orders\n    source: orders\n    fields: []\nrelationships: []\n"
         + metrics_yaml,
         encoding="utf-8",
     )
@@ -775,7 +775,7 @@ def test_host_finalizer_reports_unavailable_semantic_validation(real_agent_confi
     model_dir.mkdir(parents=True, exist_ok=True)
     target = model_dir / "orders.yml"
     target.write_text(
-        "version: 0.2.0.dev0\nname: orders_model\ndatasets: []\nmetrics: []\n",
+        "version: 0.3.0.dev0\nname: orders_model\ndatasets: []\nmetrics: []\n",
         encoding="utf-8",
     )
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
@@ -819,13 +819,13 @@ def test_finalizer_fills_legacy_uids_and_reconciles_existing_kb_identities(
         }
         for name in ("legacy", "retained")
     ]
-    metrics[1]["custom_extensions"] = [{"vendor_name": "DATUS", "data": json.dumps({"uid": retained_uid})}]
+    metrics[1]["nonportable_extensions"] = [{"vendor_name": "DATUS", "data": {"uid": retained_uid}}]
     if legacy_has_uid:
-        metrics[0]["custom_extensions"] = [{"vendor_name": "DATUS", "data": json.dumps({"uid": "a" * 24})}]
+        metrics[0]["nonportable_extensions"] = [{"vendor_name": "DATUS", "data": {"uid": "a" * 24}}]
     target.write_text(
         yaml.safe_dump(
             {
-                "version": "0.2.0.dev0",
+                "version": "0.3.0.dev0",
                 "name": "uid_model",
                 "datasets": [{"name": "orders", "source": "orders"}],
                 "metrics": metrics,
@@ -895,7 +895,7 @@ def test_finalizer_enforces_kb_name_uniqueness_before_uid_or_kb_writes(real_agen
     model_dir.mkdir(parents=True, exist_ok=True)
     target = model_dir / "uid_name_validation.yml"
     document = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "uid_name_validation",
         "datasets": [
             {

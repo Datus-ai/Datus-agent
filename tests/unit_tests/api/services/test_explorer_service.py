@@ -1024,7 +1024,7 @@ class TestExplorerServiceOSIAuthoring:
     """OSI metrics are read/written through the semantic runtime (file source of
     truth), not reconstructed from / written as Legacy YAML."""
 
-    SAMPLE = """version: 0.2.0.dev0
+    SAMPLE = """version: 0.3.0.dev0
 name: sample_shop
 datasets:
   - name: raw_orders
@@ -1048,9 +1048,9 @@ metrics:
       dialects:
         - dialect: STARROCKS
           expression: COUNT(DISTINCT id)
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DATUS
-        data: '{\"dataset\":\"raw_orders\",\"subject_path\":[\"operations\",\"daily\"]}'
+        data: {\"dataset\":\"raw_orders\",\"subject_path\":[\"operations\",\"daily\"]}
 """
 
     def _osi_runtime(self, tmp_path):
@@ -1310,8 +1310,8 @@ metrics:
             {
                 "name": "double_order_count",
                 "expression": {"dialects": [{"dialect": "STARROCKS", "expression": "COUNT(DISTINCT id) * 2"}]},
-                "custom_extensions": [
-                    {"vendor_name": "DATUS", "data": '{"derive":{"type":"compose","expr":"daily_order_count * 2"}}'}
+                "nonportable_extensions": [
+                    {"vendor_name": "DATUS", "data": {"derive": {"type": "compose", "expr": "daily_order_count * 2"}}}
                 ],
             }
         )

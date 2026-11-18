@@ -60,7 +60,7 @@ subject/semantic_models/duckdb_demo/bank_failures.yml
 下面的 dataset 来自 Datus `duckdb-demo.duckdb` 示例数据库上的真实生成结果，展示了 Dosi 当前使用的 OSI 结构：
 
 ```yaml
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: bank_failures
 datasets:
   - name: bank_failures
@@ -88,9 +88,9 @@ datasets:
         dimension:
           is_time: true
         description: 银行倒闭日期
-        custom_extensions:
+        nonportable_extensions:
           - vendor_name: DATUS
-            data: '{"v":"1.4","time_granularity":"day"}'
+            data: {"v":"1.4","time_granularity":"day"}
       - name: assets_million
         expression:
           dialects:
@@ -98,9 +98,9 @@ datasets:
               expression: '"Assets ($mil.)"'
         label: Assets ($mil.)
         description: 倒闭时资产总额（百万美元）
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DATUS
-        data: '{"v":"1.4","time_dimension":"date"}'
+        data: {"v":"1.4","time_dimension":"date"}
 relationships: []
 metrics: []
 ```
@@ -126,24 +126,24 @@ relationships:
     to: customers
     from_columns: [customer_id]
     to_columns: [customer_id]
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DATUS
-        data: '{"v":"1.4","join_type":"left"}'
+        data: {"v":"1.4","join_type":"left"}
 ```
 
 `from` 通常是多的一侧，`to` 是一的一侧。使用复合键时，两侧需要按相同顺序列出全部组成列。
 
 ## DATUS extension
 
-`custom_extensions` 是 OSI 为厂商行为预留的扩展机制。DATUS entry 在保持文档符合 OSI 的同时，增加 Dosi 使用的执行或展示提示。
+`nonportable_extensions` 是 OSI 为厂商行为预留的扩展机制。DATUS entry 在保持文档符合 OSI 的同时，增加 Dosi 使用的执行或展示提示。
 
 ```yaml
-custom_extensions:
+nonportable_extensions:
   - vendor_name: DATUS
-    data: '{"v":"1.4","time_dimension":"date"}'
+    data: {"v":"1.4","time_dimension":"date"}
 ```
 
-`data` 是 JSON 字符串，不是嵌套 YAML 对象。`semantic_modeling` 会写入已安装 engine 所需的 extension 版本，因此应保留生成的版本值。
+`data` 是 JSON 对象，不是嵌套 YAML 对象。`semantic_modeling` 会写入已安装 engine 所需的 extension 版本，因此应保留生成的版本值。
 
 常见的语义模型 extension 包括：
 

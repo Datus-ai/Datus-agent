@@ -4,7 +4,6 @@
 """Tests for reconciling the KB and subject tree with semantic YAML on disk."""
 
 import copy
-import json
 import shutil
 from pathlib import Path
 from unittest.mock import patch
@@ -26,14 +25,14 @@ def _model(name: str, metrics: dict[str, list[str]]) -> str:
     """An OSI model file declaring ``metrics`` (name -> subject_path)."""
     return yaml.safe_dump(
         {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": name,
             "datasets": [{"name": name, "source": f"public.{name}"}],
             "metrics": [
                 {
                     "name": metric,
                     "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(*)"}]},
-                    "custom_extensions": [{"vendor_name": "DATUS", "data": json.dumps({"subject_path": subject_path})}],
+                    "nonportable_extensions": [{"vendor_name": "DATUS", "data": {"subject_path": subject_path}}],
                 }
                 for metric, subject_path in metrics.items()
             ],
@@ -49,7 +48,7 @@ def _fake_sync(agent_config):
         doc = yaml.safe_load(Path(yaml_path).read_text())
         rows = []
         for metric in doc.get("metrics") or []:
-            hints = json.loads(metric["custom_extensions"][0]["data"])
+            hints = metric["nonportable_extensions"][0]["data"]
             rows.append(
                 {
                     "subject_path": hints["subject_path"],

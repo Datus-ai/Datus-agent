@@ -184,7 +184,9 @@ def _model_covers_table(model: Dict[str, Any], table: Any) -> bool:
 
 
 def _is_query_backed_dataset(dataset: Dict[str, Any]) -> bool:
-    extensions = dataset.get("custom_extensions") or []
+    from datus.utils.ossie_format import extension_entries
+
+    extensions = extension_entries(dataset) or []
     if isinstance(extensions, dict):
         extensions = [extensions]
     for extension in extensions:

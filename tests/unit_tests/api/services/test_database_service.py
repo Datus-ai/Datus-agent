@@ -56,12 +56,12 @@ def _write_model(
 
 def _osi_yaml(*, metric_name: str = "") -> str:
     metrics = f"\nmetrics:\n  - name: {metric_name}" if metric_name else "\nmetrics: []"
-    return f"version: 1.0.0\nname: orders\ndatasets:\n  - name: orders\n    source: orders{metrics}\n"
+    return f"version: 0.3.0.dev0\nname: orders\ndatasets:\n  - name: orders\n    source: orders{metrics}\n"
 
 
 def _flat_osi_yaml(*, metric_name: str = "") -> str:
     model = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "orders",
         "datasets": [
             {
@@ -305,13 +305,13 @@ class TestSemanticLayerServiceBranches:
         svc = _service(models_root=tmp_path)
         yaml_file, selector = _write_model(
             tmp_path,
-            "version: 1.0.0\nname: orders\ndatasets: []\n",
+            "version: 0.3.0.dev0\nname: orders\ndatasets: []\n",
         )
         svc._validate_dosi_semantic_yaml = MagicMock(return_value=(True, []))
         svc._full_osi_validation = MagicMock(return_value=(True, {"valid": True, "issues": []}, ""))
         request = SaveSemanticModelInput(
             semantic_model_file=selector,
-            yaml=("version: 1.0.0\nname: orders\ndatasets:\n  - name: orders\n    source: orders\nmetrics: []\n"),
+            yaml=("version: 0.3.0.dev0\nname: orders\ndatasets:\n  - name: orders\n    source: orders\nmetrics: []\n"),
         )
 
         with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
@@ -332,6 +332,29 @@ class TestSemanticLayerServiceBranches:
             include_semantic_objects=True,
             include_metrics=True,
         )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("wrapped", [False, True])
+    async def test_save_upgrades_old_submission_before_hashing(self, tmp_path, wrapped):
+        service = _service(models_root=tmp_path)
+        target, selector = _write_model(tmp_path, _flat_osi_yaml())
+        old = yaml.safe_load(_flat_osi_yaml())
+        del old["version"]
+        old["datasets"][0]["custom_extensions"] = [{"vendor_name": "ACME", "data": '{"nested":{"k":2}}'}]
+        document = {"version": "0.2.0.dev0", **({"semantic_model": [old]} if wrapped else old)}
+        request = SaveSemanticModelInput(
+            semantic_model_file=selector, yaml="# retain this comment\n" + yaml.safe_dump(document, sort_keys=False)
+        )
+        service._full_osi_validation = MagicMock(return_value=(True, {"valid": True, "issues": []}, ""))
+        with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools:
+            tools.return_value.sync_osi_to_db.return_value = {"success": True}
+            result = await service.save_semantic_model(request)
+        assert result.success, result.errorMessage
+        saved = yaml.safe_load(target.read_bytes())
+        assert saved["version"] == "0.3.0.dev0"
+        assert saved["datasets"][0]["nonportable_extensions"] == [{"vendor_name": "ACME", "data": {"nested": {"k": 2}}}]
+        assert "# retain this comment" in target.read_text()
+        assert result.data.revision == artifact_revision(target.read_bytes())
 
     @pytest.mark.asyncio
     async def test_save_semantic_model_rejects_stale_revision(self, tmp_path):
