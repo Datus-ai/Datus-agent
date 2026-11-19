@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/dev/">
       
       
       
@@ -16,9 +16,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -55,13 +55,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/dev/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -5089,7 +5083,7 @@
 <p>执行由 <a href="https://dosi.datus.ai/">Dosi</a> 引擎承担：同一份语义模型编译成 13+ 种数据库方言的 SQL。它是一个独立程序，也可以单独以 CLI、REST 服务或 MCP server 的方式部署，详见 <a href="semantic/dosi_engine/">Dosi 语义引擎</a>。</p>
 <p><img alt="语义建模：从 schema 与历史 SQL 到已校验的语义模型" src="assets/semantic_modeling_session.svg" /></p>
 <h3 id="_5">指标问答与归因<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h3>
-<p><a href="subagent/ask_metrics/">AskMetrics</a> 依据指标定义回答业务问题，而不是临时拼 SQL；指标出现波动时，<code>attribution_analyze</code> 给出各维度贡献的量化归因。</p>
+<p><a href="subagent/ask_metrics/">AskMetrics</a> 依据指标定义回答业务问题，而不是临时拼 SQL；指标出现波动时，<code>attribute_metrics</code> 把变化分给公式里的各个输入，<code>attribute_dimensions</code> 把变化分给维度的各个分组。</p>
 <p><img alt="一次指标问答：提问、语义层工具调用、归因结果" src="assets/metric_qa_session.svg" /></p>
 <h3 id="_6">越用越准的上下文引擎<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
 <p><a href="getting_started/contextual_data_engineering/">上下文引擎</a>汇集 schema 元数据、参考 SQL 和业务规则，按业务域树组织，配合向量检索召回。使用中的每次修正都会写回<a href="knowledge_base/introduction/">知识库</a>，让后续回答持续变准。</p>

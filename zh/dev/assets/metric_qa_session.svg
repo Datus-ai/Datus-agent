@@ -56,7 +56,7 @@
     <text class="ok" x="660" y="132">&#10003; 4 dims</text>
   </g>
   <g class="s4">
-    <text class="tool" x="28" y="158">&#9210; <tspan class="fn">attribution_analyze</tspan>(total_population, [region, country])</text>
+    <text class="tool" x="28" y="158">&#9210; <tspan class="fn">attribute_dimensions</tspan>(total_population, [region, country])</text>
     <text class="ok" x="660" y="158">&#10003; 0.3s</text>
   </g>
 
