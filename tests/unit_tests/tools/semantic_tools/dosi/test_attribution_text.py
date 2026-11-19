@@ -249,6 +249,34 @@ def test_a_text_group_that_would_read_as_null_or_break_the_line_is_quoted():
     assert lines[5].startswith("- '''NULL''' | ")
 
 
+def test_a_null_group_under_a_text_null_group_is_still_null():
+    # The key below holds the level above; only the level's own field decides.
+    result = copy.deepcopy(_load("dims_two_levels"))
+    parent = result["tree"]["children"][5]
+    parent["label"], parent["key"] = "(null)", {"i_category": "(null)"}
+    child = parent["children"][0]
+    child["label"], child["key"] = "(null)", {"i_category": "(null)", "i_class": None}
+
+    lines = render_attribute_dimensions(result).splitlines()
+
+    assert lines[8].startswith("- (null) | ")
+    assert lines[9].startswith("  - NULL | ")
+
+
+def test_every_line_boundary_in_a_label_is_escaped():
+    result = copy.deepcopy(_load("dims_additive"))
+    plain = render_attribute_dimensions(result).splitlines()
+    group = result["tree"]["children"][0]
+    group["label"], group["key"] = "North\u2028East", {"i_category": "North\u2028East"}
+
+    text = render_attribute_dimensions(result)
+    lines = text.splitlines()
+
+    assert len(lines) == len(plain)
+    assert lines[3].startswith("- 'North\\u2028East' | ")
+    assert summarize_attribution_text(text) == "complete · Δ +4851480 · 'North\\u2028East' +3216288 (66.3%)"
+
+
 def test_a_group_whose_rank_is_within_noise_is_marked():
     result = copy.deepcopy(_load("dims_additive"))
     result["tree"]["children"][0]["rank_unstable"] = True
@@ -295,6 +323,24 @@ def test_summary_keeps_a_group_label_that_holds_the_separator():
         ]
     )
     assert summarize_attribution_text(text) == "complete · Δ +30 · Home | Garden +25 (83.3%)"
+
+
+def test_summary_keeps_an_unnamed_input_whole_and_adds_up_its_rows():
+    text = "\n".join(
+        [
+            "status complete",
+            "",
+            "m | 100 → 105 | +5 (100.0%)",
+            "row d=1 / 2",
+            "  (SUM(x) FILTER (WHERE r = 'A @ West')) | 10 → 20 | +10 (200.0%)",
+            "  (SUM(x) FILTER (WHERE r = 'A @ East')) | 20 → 11 | -9 (-180.0%)",
+            "  y_total | 1 → 3 | +2 (40.0%)",
+            "  (SUM(z)) @ d=0 / 1 | 3 → 4 | +1 (20.0%)",
+            "  (SUM(z)) @ d=2 / 3 | 4 → 5 | +1 (20.0%)",
+        ]
+    )
+    # The two `A @ …` inputs stay apart; `SUM(z)` at two rows is one input.
+    assert summarize_attribution_text(text) == "complete · Δ +5 · (SUM(x) FILTER (WHERE r = 'A @ West')) +10 (200.0%)"
 
 
 def test_summary_of_anything_else_is_empty():

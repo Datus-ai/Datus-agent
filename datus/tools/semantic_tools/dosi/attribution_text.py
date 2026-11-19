@@ -42,6 +42,9 @@ EXPRESSION_MAX_CHARS = 80
 SIGNIFICANT_DIGITS = 6
 
 _TIME_SUFFIX = " 00:00:00"
+# Every character str.splitlines() ends a line at; a value holding one is
+# escaped so that one node stays one line.
+_LINE_BREAKS = "\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"
 
 
 def _fixed(value: float, digits: int) -> str:
@@ -83,9 +86,18 @@ def _one_line(text: Any) -> str:
     return " ".join(str(text).split())
 
 
+def _escape_breaks(text: str) -> str:
+    """``text`` with each line boundary written as an escape: ``\\n``, ``\\r``,
+    else ``\\u2028`` and the like."""
+    if not any(c in text for c in _LINE_BREAKS):
+        return text
+    named = {"\n": "\\n", "\r": "\\r"}
+    return "".join(named.get(c, f"\\u{ord(c):04x}") if c in _LINE_BREAKS else c for c in text)
+
+
 def _clean(value: Any) -> str:
     """A coordinate value: a midnight timestamp is the day it starts."""
-    text = str(value)
+    text = _escape_breaks(str(value))
     return text[: -len(_TIME_SUFFIX)] if text.endswith(_TIME_SUFFIX) else text
 
 
@@ -211,22 +223,24 @@ def _metric_head(node: Mapping[str, Any]) -> str:
     return f"({_expression(node)})"
 
 
-def _group_label(group: Mapping[str, Any]) -> str:
+def _group_label(group: Mapping[str, Any], parent_key: Any = None) -> str:
     """A group's value. Dosi labels a NULL value ``(null)``, as it does the
     text ``'(null)'``; the key tells them apart, and a NULL is written ``NULL``
-    so a follow-up filters it with ``IS NULL``. A text that would read as that
-    NULL, that would break the line, or that starts with a quote (and so could
-    read as one of those) is written as a quoted literal: ``'NULL'``,
-    ``'a\\nb'``, and ``'''NULL'''`` for the text ``'NULL'``."""
+    so a follow-up filters it with ``IS NULL``. In a drill-down the key also
+    holds the levels above (``parent_key``); only this level's field decides.
+    A text that would read as that NULL, that would break the line, or that
+    starts with a quote (and so could read as one of those) is written as a
+    quoted literal: ``'NULL'``, ``'a\\nb'``, and ``'''NULL'''`` for the text
+    ``'NULL'``."""
     label = str(group.get("label"))
     key = group.get("key")
     if label == "(null)" and isinstance(key, Mapping):
-        values = list(key.values())
-        if None in values and "(null)" not in values:
+        parent = parent_key if isinstance(parent_key, Mapping) else {}
+        own = [value for field, value in key.items() if field not in parent] or list(key.values())
+        if None in own and "(null)" not in own:
             return "NULL"
-    if label == "NULL" or label.startswith("'") or "\n" in label or "\r" in label:
-        escaped = label.replace("\\", "\\\\").replace("'", "''").replace("\n", "\\n").replace("\r", "\\r")
-        return f"'{escaped}'"
+    if label == "NULL" or label.startswith("'") or any(c in label for c in _LINE_BREAKS):
+        return "'" + _escape_breaks(label.replace("\\", "\\\\").replace("'", "''")) + "'"
     return label
 
 
@@ -307,7 +321,8 @@ def render_attribute_dimensions(result: Mapping[str, Any], notes: Sequence[str] 
             if child.get("groups_total") is not None:
                 listed = any(isinstance(c, Mapping) for c in child.get("children") or [])
                 tail = f" | {child['groups_total']} below" + ("" if listed else ", none listed")
-            lines.append(f"{indent}- {_group_label(child)}{flag} | {_values(child)} | {_effect(child)}{tail}")
+            label = _group_label(child, node.get("key"))
+            lines.append(f"{indent}- {label}{flag} | {_values(child)} | {_effect(child)}{tail}")
             level(child, depth + 1)
         others = node.get("others")
         if children and isinstance(others, Mapping) and others.get("group_count"):
@@ -399,7 +414,7 @@ def summarize_attribution_text(text: Any) -> str:
             parsed = _effect_of(line)
             if parsed is None:
                 continue
-            name = line.strip().rsplit(" | ", 2)[0].split(" @ ", 1)[0]
+            name = _input_of(line.strip().rsplit(" | ", 2)[0])
             total = totals.setdefault(name, [0.0, 0.0])
             total[0] += parsed[0]
             total[1] = None if total[1] is None or parsed[1] is None else total[1] + parsed[1]
@@ -410,6 +425,30 @@ def summarize_attribution_text(text: Any) -> str:
         share_text = "n/a" if best[2] is None else f"{best[2]:.1f}%"
         parts.append(f"{best[0]} {signed(best[1], 3)} ({share_text})")
     return " · ".join(parts)
+
+
+def _input_of(head: str) -> str:
+    """An input line's name without the row it is read at: ``name @ field=…``
+    is ``name``. An unnamed input is its aggregate in parentheses, whose text
+    may hold `` @ `` itself, so it ends where its parenthesis closes (outside
+    quotes); a cut-off one, where the last ``) @ `` begins."""
+    if not head.startswith("("):
+        return head.split(" @ ", 1)[0]
+    depth, quote = 0, ""
+    for i, c in enumerate(head):
+        if quote:
+            if c == quote:
+                quote = ""
+        elif c in "'\"":
+            quote = c
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return head[: i + 1]
+    cut = head.rfind(") @ ")
+    return head[: cut + 1] if cut >= 0 else head
 
 
 def _drop_tail(line: str) -> str:
