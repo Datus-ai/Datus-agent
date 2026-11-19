@@ -72,10 +72,27 @@ def test_release_is_resolved_once_and_verified_without_source_access(tmp_path, r
     assert receipt["status"] == "success"
     assert receipt["tag"] == "v0.5.3"
     assert receipt["source_commit"] == "a" * 40
+    assert receipt["dosi_requirement"] == "dosi-engine==0.2.1"
     assert receipt["dosi_version"] == "0.2.1"
     assert receipt["wheel"]["sha256"] == policy.checksum(release_server["wheel_data"])
     assert (work / receipt["wheel"]["file"]).read_bytes() == release_server["wheel_data"]
     assert json.loads((work / "sql-policy-release.json").read_text()) == receipt
+
+
+def test_different_dosi_version_warns_and_prepares_verified_wheel(tmp_path, release_server, monkeypatch, capsys):
+    monkeypatch.setattr(policy.metadata, "version", lambda _: "0.2.2")
+    work = tmp_path / "work"
+
+    policy.prepare(work, agent=ROOT)
+
+    receipt = json.loads((work / "sql-policy-release.json").read_text())
+    assert receipt["status"] == "success"
+    assert receipt["dosi_requirement"] == "dosi-engine==0.2.1"
+    assert receipt["dosi_version"] == "0.2.2"
+    assert (work / receipt["wheel"]["file"]).read_bytes() == release_server["wheel_data"]
+    warning = capsys.readouterr().err
+    assert "dosi-engine==0.2.1" in warning
+    assert "0.2.2" in warning
 
 
 @pytest.mark.parametrize("field", ["draft", "prerelease"])
@@ -114,17 +131,17 @@ def test_missing_or_incompatible_release_fails_without_a_build(tmp_path, release
 
 
 @pytest.mark.parametrize(
-    "case", ["wheel-checksum", "asset-digest", "source", "development", "version", "platform", "dosi"]
+    "case", ["wheel-checksum", "asset-digest", "source", "development", "version", "platform", "wrong-host"]
 )
-def test_inconsistent_release_identity_is_rejected(tmp_path, release_server, monkeypatch, case):
+def test_inconsistent_release_identity_is_rejected(tmp_path, release_server, case):
     if case == "wheel-checksum":
         release_server["wheel_data"] = b"corrupted download"
     elif case == "asset-digest":
         release_server["release"]["assets"][0]["digest"] = "sha256:" + "0" * 64
     elif case == "source":
         release_server["manifest"]["source_commit"] = "c" * 40
-    elif case == "dosi":
-        monkeypatch.setattr(policy.metadata, "version", lambda _: "0.1.0")
+    elif case == "wrong-host":
+        release_server["manifest"]["hosts"]["dosi_requirement"] = "other-engine==0.2.1"
     else:
         release_server["manifest"][case] = {"development": True, "version": "0.5.4", "platform": "macos-arm64"}[case]
     work = tmp_path / "work"

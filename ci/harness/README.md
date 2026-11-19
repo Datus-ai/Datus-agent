@@ -261,7 +261,10 @@ by default. The optional `policy_release` workflow input selects an explicit sta
 tag for reproduction. One Release response selects the asset IDs for the entire
 run; the wheel, platform build manifest and checksums all come from that response.
 The helper verifies the runner's Python/platform tags, asset digests, SHA256SUMS,
-release/source identity and compatibility with the installed published Dosi wheel.
+release/source identity and that the manifest declares a valid Dosi host requirement.
+A version mismatch emits a warning and allows preparation to continue.
+`SQL Policy Plugin Tests` checks compatibility by executing protected queries with
+the installed Dosi version.
 Drafts, prereleases, incompatible/missing assets and failed checks stop preparation;
 there is no source-build fallback.
 
@@ -275,10 +278,11 @@ and Dosi stays on its published dependency. Nightly performs no Policy/Dosi Rust
 builds; Policy's own build/release workflows own those checks.
 
 `sql-policy-release.json` evidence records the resolved tag, release/asset IDs,
-source/API revisions, Agent commit, installed Dosi version and wheel hash. It is
-included in `nightly-manifest.json` and uploaded with the test results. Payloads and
-credentials are not uploaded. A fresh per-run directory holds downloaded assets
-and is removed after evidence upload; credentials are scoped to the download step.
+source/API revisions, Agent commit, declared Dosi requirement, installed Dosi version
+and wheel hash. It is included in `nightly-manifest.json` and uploaded with the test
+results. Payloads and credentials are not uploaded. A fresh per-run directory holds
+downloaded assets and is removed after evidence upload; credentials are scoped to
+the download step.
 The final notification requires both successful Release preparation and tests.
 
 The local `ci/sql_policy_gate.py` source-build diagnostic tool remains available;
