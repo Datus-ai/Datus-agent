@@ -16,6 +16,7 @@ from datus.agent.node import semantic_authoring
 from datus.schemas.action_history import ActionHistoryManager
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from tests.unit_tests.mock_llm_model import build_simple_response
+from tests.unit_tests.semantic_plan_support import plan_writer
 
 
 @pytest.fixture(autouse=True)
@@ -554,6 +555,35 @@ def test_generated_result_uses_selected_artifact_finalizer(real_agent_config, mo
     assert result.semantic_models == ["subject/semantic_models/warehouse/orders.yml"]
     assert result.business_validation == []
     assert not (Path(real_agent_config.project_root) / ".datus/semantic-model-plans").exists()
+
+
+@pytest.mark.asyncio
+async def test_closing_stream_finishes_parent_cleanup_before_recording_outcome(
+    real_agent_config, mock_llm_create, tmp_path, monkeypatch
+):
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+    node.semantic_plan_file_tool = plan_writer(tmp_path)
+    saved = node.semantic_plan_file_tool.write_semantic_model_plan_file("sales", {"summary": "Accepted plan"})
+    target = tmp_path / saved.result["path"]
+    outcomes_at_parent_close = []
+    action = ActionHistoryManager()
+
+    async def parent_stream(_node, _manager):
+        try:
+            yield action
+        finally:
+            outcomes_at_parent_close.append(json.loads(target.read_text())["plan"].get("execution"))
+
+    monkeypatch.setattr(SemanticAuthoringAgenticNode, "execute_stream", parent_stream)
+    stream = node.execute_stream()
+    assert await anext(stream) is action
+    await stream.aclose()
+
+    assert outcomes_at_parent_close == [None]
+    assert json.loads(target.read_text())["plan"]["execution"] == "not_applied"
 
 
 @pytest.mark.asyncio

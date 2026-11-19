@@ -500,6 +500,40 @@ def test_existing_filter_update_keeps_the_same_dependency(tmp_path):
     assert _graph_nodes(proposal)["metric:x_above"]["detail"]["definition"] == "Changed description"
 
 
+@pytest.mark.parametrize(("key", "name"), [("datasets", "orders"), ("metrics", "revenue")])
+def test_rejects_unknown_actions_for_existing_objects(tmp_path, existing_sales, key, name):
+    writer = plan_writer(tmp_path, model_path=existing_sales)
+
+    result = writer.prepare("sales", {key: [{"name": name, "action": "upadte"}]})
+
+    assert result.success == 0
+    assert f"{name} has an unknown action" in result.error
+
+
+@pytest.mark.parametrize("move_existing_reader", [False, True])
+def test_table_readers_follow_dataset_source_changes(tmp_path, existing_sales, move_existing_reader):
+    writer = plan_writer(tmp_path, model_path=existing_sales)
+    datasets = [{"name": "orders_daily", "action": "create", "source_kind": "physical", "source": "main.orders"}]
+    if move_existing_reader:
+        datasets.append(
+            {"name": "orders", "action": "update", "source_kind": "query", "source_tables": ["main.raw_orders"]}
+        )
+
+    graph = json.loads(writer.prepare("sales", {"datasets": datasets}).new_text)
+
+    nodes = _graph_nodes(graph)
+    expected_readers = {"orders_daily"} if move_existing_reader else {"orders_daily", "orders"}
+    assert set(nodes["table:main.orders"]["detail"]["datasets"]) == expected_readers
+    assert {edge["target"] for edge in graph["edges"] if edge["source"] == "table:main.orders"} == {
+        f"dataset:{name}" for name in expected_readers
+    }
+    expected_source = (
+        (None, "query", ["main.raw_orders"]) if move_existing_reader else ("main.orders", "table", ["main.orders"])
+    )
+    detail = nodes["dataset:orders"]["detail"]
+    assert (detail["source"], detail["source_kind"], detail["source_tables"]) == expected_source
+
+
 def test_existing_join_exposes_review_fields_and_requires_explicit_update(tmp_path):
     model = tmp_path / "aviation.yaml"
     model.write_bytes((MODELS / "aviation/aviation.yaml").read_bytes())
@@ -516,6 +550,16 @@ def test_existing_join_exposes_review_fields_and_requires_explicit_update(tmp_pa
         "cardinality": "many_to_one",
         "join_kind": "left",
     }
+    same_endpoints = {
+        "name": "flights_operated_by",
+        "action": "update",
+        "from_dataset": "flights",
+        "to_dataset": "aircraft",
+        "join_kind": "inner",
+    }
+    updated = writer.prepare("aviation", {"relationships": [same_endpoints]})
+    updated_edge = next(edge for edge in json.loads(updated.new_text)["edges"] if edge["id"] == edge_id)
+    assert updated_edge["detail"] == {**edge["detail"], "join_kind": "inner"}
     replacement = {
         "name": "flights_operated_by",
         "action": "create",
@@ -529,6 +573,8 @@ def test_existing_join_exposes_review_fields_and_requires_explicit_update(tmp_pa
     updated = writer.prepare("aviation", {"relationships": [replacement]})
     updated_edge = next(edge for edge in json.loads(updated.new_text)["edges"] if edge["id"] == edge_id)
     assert updated_edge["source"] == "dataset:aircraft"
+    assert "from_fields" not in updated_edge["detail"]
+    assert "to_fields" not in updated_edge["detail"]
 
 
 def test_explicit_repair_uses_readable_baseline_instead_of_requiring_compilation(real_agent_config):
@@ -538,7 +584,9 @@ def test_explicit_repair_uses_readable_baseline_instead_of_requiring_compilation
     model_dir = root / "subject" / "semantic_models" / real_agent_config.current_datasource
     model_dir.mkdir(parents=True, exist_ok=True)
     existing = model_dir / "sales.yaml"
-    broken = SALES_YAML.replace("    source: main.orders\n", "")
+    broken = SALES_YAML.replace("    source: main.orders\n", "").replace(
+        "\nmetrics:", "\n  - name: refunds\n    source: main.refunds\nmetrics:"
+    )
     existing.write_text(broken)
     targets = OsiSemanticModelTargetTools(real_agent_config)
     assert targets.list_existing_osi_semantic_models().result["status"] == "repairable"
@@ -551,11 +599,43 @@ def test_explicit_repair_uses_readable_baseline_instead_of_requiring_compilation
     old = json.loads(prepared.baseline_text)
     new = json.loads(prepared.new_text)
     assert "dataset:orders" in _graph_nodes(old)
+    assert _graph_nodes(old)["dataset:refunds"]["detail"]["source"] == "main.refunds"
+    assert _graph_nodes(new)["table:main.refunds"]["detail"]["datasets"] == ["refunds"]
+    assert any(
+        edge["kind"] == "reads_table" and edge["source"] == "table:main.refunds" and edge["target"] == "dataset:refunds"
+        for edge in old["edges"]
+    )
     assert _graph_nodes(new)["dataset:orders"]["detail"]["source"] == "main.orders"
     assert _graph_nodes(new)["metric:revenue"] == _graph_nodes(old)["metric:revenue"]
     assert "without compiled lineage" in new["plan"]["summary"]
     assert writer.commit(prepared).success == 1
     assert existing.read_text() == broken
+
+
+def test_managed_yaml_update_invalidates_fixed_baseline_until_next_turn(tmp_path, existing_sales):
+    writer = plan_writer(tmp_path, model_path=existing_sales)
+    proposal = {"metrics": [{"name": "planned", "action": "create"}]}
+    first = writer.prepare("sales", proposal)
+
+    updated = (
+        SALES_YAML
+        + """\
+  - name: landed
+    expression:
+      dialects: [{dialect: ANSI_SQL, expression: MAX(orders.amount)}]
+"""
+    )
+    existing_sales.write_text(updated)
+    writer._target_state.record_metric_touch(existing_sales, updated.encode(), ["landed"])
+    stale = writer.prepare("sales", proposal)
+
+    assert stale.success == 0
+    assert "start a fresh planning turn" in stale.error
+    assert writer.commit(first).success == 0
+    writer.reset_turn()
+    refreshed = writer.prepare("sales", proposal)
+    assert "metric:landed" in _graph_nodes(json.loads(refreshed.new_text))
+    assert writer.commit(refreshed).success == 1
 
 
 @pytest.mark.parametrize("completed", [False, True])

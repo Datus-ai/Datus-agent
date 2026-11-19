@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -156,6 +157,56 @@ async def test_stop_discards_pending_proposal_without_a_write(tmp_path):
     node.tool_channel.cancel_all("stopped")
     assert (await running)["success"] == 0
     assert not (tmp_path / preview["filePath"]).exists()
+    assert not node.tool_review_previews
+
+
+@pytest.mark.asyncio
+async def test_stop_waits_for_accepted_commit_before_recording_outcome(tmp_path, monkeypatch):
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+    node = object.__new__(SemanticModelingAgenticNode)
+    vars(node).update(vars(node_for(tmp_path)))
+    writer = node.semantic_plan_file_tool
+    commit = writer.commit
+    started = asyncio.Event()
+    release = Event()
+    loop = asyncio.get_running_loop()
+
+    def delayed_commit(prepared):
+        loop.call_soon_threadsafe(started.set)
+        assert release.wait(5)
+        return commit(prepared)
+
+    async def parent_stream(_node, _manager):
+        yield "tool action"
+
+    monkeypatch.setattr(SemanticAuthoringAgenticNode, "execute_stream", parent_stream)
+    monkeypatch.setattr(writer, "commit", delayed_commit)
+    apply_semantic_plan_review(node)
+    stream = node.execute_stream()
+    await anext(stream)
+    running, preview = await start_review(node)
+    await node.tool_channel.publish("call-1", {"success": 1})
+    try:
+        await asyncio.wait_for(started.wait(), 5)
+        running.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await running
+        stopping = asyncio.create_task(stream.aclose())
+        await asyncio.sleep(0)
+        stopping.cancel()
+        await asyncio.sleep(0)
+        completed_before_write = stopping.done()
+    finally:
+        release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await stopping
+    assert not completed_before_write
+    saved = json.loads((tmp_path / preview["filePath"]).read_text())
+    assert saved["plan"]["execution"] == "not_applied"
+    assert "applied" not in saved
     assert not node.tool_review_previews
 
 

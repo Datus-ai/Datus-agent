@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import Callable
@@ -79,6 +80,13 @@ def _plan_names(items: list[dict], key: str, context: str) -> set[str]:
     return set(names)
 
 
+def _plan_action(item: dict, context: str) -> str | None:
+    action = item.get("action")
+    if action not in (None, "create", "reuse", "update", "delete"):
+        raise ValueError(f"{context} has an unknown action: {action!r}")
+    return action
+
+
 def _string_list(item: dict, key: str, context: str) -> list[str]:
     values = item.get(key, [])
     if not isinstance(values, list) or any(not isinstance(value, str) or not value.strip() for value in values):
@@ -144,7 +152,8 @@ def _plan_graph(plan: dict, model_name: str, plan_id: str, revision: int, baseli
     dataset_sources: dict[str, tuple[str | None, list[str]]] = {}
     for dataset in datasets:
         name = dataset["name"]
-        if dataset.get("action") == "delete" and name in fields_by_dataset:
+        action = dataset.get("action") if baseline is None else _plan_action(dataset, f"Dataset {name}")
+        if baseline is not None and action == "delete" and name in fields_by_dataset:
             raise ValueError(f"Cannot plan field decisions for dataset {name} planned for deletion")
         source_kind = dataset.get("source_kind")
         if source_kind not in (None, "physical", "query"):
@@ -157,7 +166,7 @@ def _plan_graph(plan: dict, model_name: str, plan_id: str, revision: int, baseli
         if source_kind is None and source:
             raise ValueError(f"Dataset {name} requires source_kind when source is set")
         sources = [source] if source_kind == "physical" and source else _string_list(dataset, "source_tables", name)
-        if dataset.get("action") in {"create", "update"} and source_kind in {"physical", "query"} and not sources:
+        if action in {"create", "update"} and source_kind in {"physical", "query"} and not sources:
             raise ValueError(f"Dataset {name} requires a physical source or query source_tables")
         if len(sources) != len(set(sources)):
             raise ValueError(f"Dataset {name} contains duplicate source tables")
@@ -226,7 +235,7 @@ def _plan_graph(plan: dict, model_name: str, plan_id: str, revision: int, baseli
                 "layer": 2 if kind == "metric_atomic" else 3,
                 "name": name,
                 "label": name,
-                "action": metric.get("action"),
+                "action": metric.get("action") if baseline is None else _plan_action(metric, f"Metric {name}"),
                 "detail": {
                     **{key: value for key, value in metric.items() if key not in {"name", "action", "kind"}},
                     "metric_kind": metric.get("kind") or ("atomic" if kind == "metric_atomic" else "derived"),
@@ -270,7 +279,9 @@ def _plan_graph(plan: dict, model_name: str, plan_id: str, revision: int, baseli
                 "source": f"dataset:{source}",
                 "target": f"dataset:{target}",
                 "name": name,
-                "action": relationship.get("action", "reuse") if baseline is None else relationship.get("action"),
+                "action": relationship.get("action", "reuse")
+                if baseline is None
+                else _plan_action(relationship, f"Relationship {name}"),
                 "detail": {
                     key: value
                     for key, value in relationship.items()
@@ -329,9 +340,17 @@ def _repair_model_inventory(model_text: bytes, model_name: str, model_file: str)
             }
         )
 
+    readable_datasets = []
+    for dataset in datasets:
+        entry = {"name": dataset["name"], "action": "reuse"}
+        source = dataset.get("source")
+        if isinstance(source, str) and source.strip() and "source_sql" not in dataset:
+            entry.update(source_kind="physical", source=source)
+        readable_datasets.append(entry)
+
     graph = _plan_graph(
         {
-            "datasets": [{"name": dataset["name"], "action": "reuse"} for dataset in datasets],
+            "datasets": readable_datasets,
             "field_decisions": [
                 {"dataset": dataset["name"], "field": field["name"]}
                 for dataset in datasets
@@ -461,11 +480,14 @@ def _merge_plan_graph(baseline: dict, proposal: dict) -> dict:
                     for key in ("source", "source_kind", "source_tables"):
                         if key in previous:
                             detail[key] = previous[key]
-                elif (detail["source_kind"], detail["source_tables"]) != (
-                    previous["source_kind"],
-                    previous["source_tables"],
-                ):
-                    replaced_inputs.add(node_id)
+                else:
+                    if detail["source_kind"] == "query":
+                        detail["source"] = None
+                    if (detail["source_kind"], detail["source_tables"]) != (
+                        previous["source_kind"],
+                        previous["source_tables"],
+                    ):
+                        replaced_inputs.add(node_id)
                 fields = {field["field"]: field for field in previous["fields"]}
                 for field in detail["fields"]:
                     name = field["field"]
@@ -483,8 +505,6 @@ def _merge_plan_graph(baseline: dict, proposal: dict) -> dict:
         if edge["kind"] == "join":
             edge_id = edge["id"]
             action = edge["action"] or ("reuse" if edge_id in known_joins else "create")
-            if action not in ("create", "reuse", "update", "delete"):
-                raise ValueError(f"Relationship {edge['name']} has an unknown action")
             if action == "create" and edge_id in known_joins:
                 raise ValueError(f"Relationship {edge['name']} already exists; mark it as reuse or update")
             if action in {"update", "reuse", "delete"} and edge_id not in known_joins:
@@ -492,6 +512,9 @@ def _merge_plan_graph(baseline: dict, proposal: dict) -> dict:
             if action == "delete":
                 edges.pop(edge_id, None)
             elif action != "reuse":
+                previous = edges.get(edge_id)
+                if previous and (edge["source"], edge["target"]) == (previous["source"], previous["target"]):
+                    edge = {**edge, "detail": {**previous["detail"], **edge["detail"]}}
                 proposed_joins.append({**edge, "action": action})
 
     for edge_id, edge in list(edges.items()):
@@ -515,10 +538,16 @@ def _merge_plan_graph(baseline: dict, proposal: dict) -> dict:
         edges[edge["id"]] = edge
     for node_id in deleted:
         del nodes[node_id]
-    used_tables = {edge["source"] for edge in edges.values() if edge["kind"] == "reads_table"}
+    table_readers: dict[str, list[str]] = {}
+    for edge in edges.values():
+        if edge["kind"] == "reads_table":
+            table_readers.setdefault(edge["source"], []).append(nodes[edge["target"]]["name"])
+    for table_id, readers in table_readers.items():
+        table = nodes[table_id]
+        nodes[table_id] = {**table, "detail": {**table["detail"], "datasets": readers}}
     return {
         **proposal,
-        "nodes": [node for node in nodes.values() if node["kind"] != "physical_table" or node["id"] in used_tables],
+        "nodes": [node for node in nodes.values() if node["kind"] != "physical_table" or node["id"] in table_readers],
         "edges": list(edges.values()),
     }
 
@@ -572,11 +601,13 @@ class SemanticPlanFileTools:
         self._plan_ids: dict[str, str] = {}
         self._revisions: dict[str, int] = {}
         self._write_lock = RLock()
+        self._review_commits: set[asyncio.Task[FuncToolResult]] = set()
         self.reset_turn()
 
     def reset_turn(self) -> None:
         with self._write_lock:
-            self._baseline: dict | None = None
+            self._baseline: tuple[str | None, dict] | None = None
+            self._accepting_reviews = True
             self._plan_id: str | None = None
             self._revision = 0
             self._saved: PreparedSemanticPlan | None = None
@@ -739,8 +770,7 @@ class SemanticPlanFileTools:
                     raise ValueError(f"{model_file} changed after selection; select the current target again")
                 if model_content is None and (state.mode != "planned" or state.selected.get("exists")):
                     raise ValueError(f"Cannot read existing model {model_file}")
-                baseline = self._baseline
-                if baseline is None:
+                if self._baseline is None:
                     baseline = {
                         "version": 1,
                         "model": model_name,
@@ -754,6 +784,12 @@ class SemanticPlanFileTools:
                     }
                     if previous:
                         baseline["plan"]["revision"] = previous
+                else:
+                    baseline_revision, baseline = self._baseline
+                    if baseline_revision != model_revision:
+                        raise ValueError(
+                            f"{model_file} changed since this plan's baseline; start a fresh planning turn"
+                        )
                 graph = _merge_plan_graph(baseline, _plan_graph(plan, model_name, plan_id, revision, baseline))
                 graph["plan"]["model_file"] = model_file
                 if baseline.get("lineage_incomplete"):
@@ -772,7 +808,7 @@ class SemanticPlanFileTools:
                 return FuncToolResult(success=0, error=f"Invalid semantic plan: {exc}")
             self._plan_id = plan_id
             self._revision = revision
-            self._baseline = baseline
+            self._baseline = (model_revision, baseline)
             return PreparedSemanticPlan(
                 target.relative_to(self.project_root).as_posix(),
                 model_name,
@@ -832,6 +868,38 @@ class SemanticPlanFileTools:
             return FuncToolResult(
                 result={"path": prepared.path, "revision": prepared.revision, "counts": prepared.counts}
             )
+
+    async def commit_review(self, prepared: PreparedSemanticPlan) -> FuncToolResult:
+        """Keep accepted web writes attached to the turn even if the tool task is cancelled."""
+        if prepared.model_path is None:
+            return await asyncio.to_thread(self.commit, prepared)
+        if not self._accepting_reviews:
+            return FuncToolResult(success=0, error="The planning turn ended before the plan could be written.")
+        task = asyncio.create_task(asyncio.to_thread(self.commit, prepared))
+        self._review_commits.add(task)
+        task.add_done_callback(self._review_commit_done)
+        return await asyncio.shield(task)
+
+    def _review_commit_done(self, task: asyncio.Task[FuncToolResult]) -> None:
+        self._review_commits.discard(task)
+        if not task.cancelled():
+            # The caller can be gone by the time the write fails.
+            task.exception()
+
+    async def finish_review_commits(self) -> None:
+        """Drain accepted writes before recording the final outcome."""
+        self._accepting_reviews = False
+        if not self._review_commits:
+            return
+        pending = asyncio.gather(*self._review_commits, return_exceptions=True)
+        cancelled = False
+        while not pending.done():
+            try:
+                await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError
 
     def record_outcome(self, *, completed: bool) -> None:
         """Record actual model state after validation/sync, leaving the review snapshot intact."""

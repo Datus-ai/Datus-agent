@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from typing import Any, Final, Iterable, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
@@ -136,10 +137,15 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         self, action_history_manager: Optional[ActionHistoryManager] = None
     ) -> AsyncGenerator[ActionHistory, None]:
         try:
-            async for action in super().execute_stream(action_history_manager):
-                yield action
+            async with aclosing(super().execute_stream(action_history_manager)) as parent:
+                async for action in parent:
+                    yield action
         finally:
-            self._record_plan_outcome(completed=False)
+            try:
+                await self.semantic_plan_file_tool.finish_review_commits()
+            finally:
+                # A successful finalization has already recorded and cleared its proposal.
+                self._record_plan_outcome(completed=False)
 
     def _record_plan_outcome(self, *, completed: bool) -> str | None:
         try:

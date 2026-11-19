@@ -91,7 +91,7 @@ def apply_semantic_plan_review(node: Any, *, context: SemanticPlanReviewContext 
                     error="User cancelled the plan proposal. Do not author the model or retry unchanged. Wait for feedback, then submit a revised plan with this tool.",
                 ).model_dump()
 
-            result = await asyncio.to_thread(writer.commit, prepared)
+            result = await writer.commit_review(prepared)
             if result.success:
                 result.result["review_status"] = "accepted"
             return result.model_dump()
