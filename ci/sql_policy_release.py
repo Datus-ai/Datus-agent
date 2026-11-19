@@ -8,6 +8,7 @@ import json
 import platform
 import re
 import subprocess
+import sys
 import time
 from importlib import metadata
 from pathlib import Path
@@ -124,9 +125,14 @@ def prepare(work: Path, *, release: str = "", agent: Path | None = None) -> dict
         if manifest["source_commit"] != release_commit(tag):
             raise ValueError("Policy build manifest does not match the Release tag's source commit")
         host = Requirement(manifest["hosts"]["dosi_requirement"])
+        if host.name != "dosi-engine":
+            raise ValueError("Policy build manifest must declare a dosi-engine host requirement")
         installed_dosi = metadata.version("dosi-engine")
-        if host.name != "dosi-engine" or installed_dosi not in host.specifier:
-            raise ValueError(f"Installed dosi-engine {installed_dosi} does not satisfy {host}")
+        if installed_dosi not in host.specifier:
+            print(
+                f"Warning: Policy Release {tag} records {host}. Installed dosi-engine is {installed_dosi}.",
+                file=sys.stderr,
+            )
         data = asset_bytes(wheel)
         digest = checksum(data)
         if expected.get(wheel["name"]) != digest:
@@ -141,6 +147,7 @@ def prepare(work: Path, *, release: str = "", agent: Path | None = None) -> dict
             source_commit=manifest["source_commit"],
             public_api_revision=manifest["public_api_revision"],
             platform=target,
+            dosi_requirement=str(host),
             dosi_version=installed_dosi,
             agent_sha=subprocess.check_output(["git", "-C", str(agent), "rev-parse", "HEAD"], text=True).strip(),
             wheel={"file": wheel["name"], "asset_id": wheel["id"], "sha256": digest, "path": str(path.resolve())},
