@@ -7,6 +7,7 @@ from typing import Dict, List, Set
 from agents.result import RunResultBase
 
 from datus.schemas.node_models import SQLContext
+from datus.schemas.tool_summary import detect_tool_failure
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
@@ -75,7 +76,7 @@ def extract_sql_contexts(result: RunResultBase, db_type: str = "snowflake") -> L
                             and input_list[j].get("call_id") == call_id
                         ):
                             output = input_list[j].get("output", "")
-                            logger.debug(f"Found function call output: {output[:100]}...")  # Log first 100 chars
+                            logger.debug(f"Found function call output: {str(output)[:100]}...")
 
                             # Check for assistant analysis after the output.
                             if j + 1 < len(input_list):
@@ -109,6 +110,9 @@ def extract_sql_contexts(result: RunResultBase, db_type: str = "snowflake") -> L
                                                 break
                                     break
                             break
+
+                    if detect_tool_failure(output):
+                        continue
 
                     # Create SQLContext and add to list
                     logger.debug(

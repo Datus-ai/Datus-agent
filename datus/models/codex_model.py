@@ -15,7 +15,7 @@ from contextlib import aclosing, nullcontext
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
-from agents import Agent, ModelSettings, Runner, SQLiteSession, Tool, WebSearchTool
+from agents import ModelSettings, Runner, SQLiteSession, Tool, WebSearchTool
 from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
 from agents.run import RunConfig
@@ -28,6 +28,7 @@ from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.models.observed_model import ObservedResponsesModel
 from datus.models.request_capacity import ContextCapacityError
+from datus.models.tool_preflight import ToolPreflightAgent as Agent
 from datus.observability.manager import get_observability_manager
 from datus.observability.model_call import current_model_call, native_model_call
 from datus.observability.tool_calls import observe_tool_hooks

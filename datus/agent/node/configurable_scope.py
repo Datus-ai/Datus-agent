@@ -23,7 +23,7 @@ from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.fs_path_policy import PathAllowlist, PathZone, classify_path
 from datus.tools.func_tool.semantic_model_filesystem_tools import SemanticModelFilesystemTools
 from datus.tools.registry.contracts import tool_contract
-from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.exceptions import DatusException, ErrorCode, InvalidToolArgument, ToolScopeDenied
 from datus.utils.reference_paths import split_reference_path
 from datus.utils.sql_utils import parse_table_name_parts
 
@@ -271,28 +271,41 @@ class ConfigurableScope:
         resolved = path.resolve()
         return any(resolved.is_relative_to(root.resolve()) for root in self.host_read_roots)
 
+    def _argument_path(self, name: str, value: Any) -> Path:
+        if not isinstance(value, str) or "\x00" in value:
+            raise InvalidToolArgument(name, "a path string without null bytes")
+        return self.root / value
+
     def require_tool_scope(self, tool_id: str, arguments: dict[str, Any]) -> None:
         """Check per-turn restrictions before existing tool-level table/policy checks."""
         category, method = tool_id.split(".", 1)
         if arguments and category == "filesystem_tools":
-            path = (self.root / arguments.get("path", ".")).resolve()
+            path = self._argument_path("path", arguments.get("path", ".")).resolve()
             if method in {"glob", "grep"}:
                 if not path.is_relative_to(self.root) or not self.effective.project_files:
-                    self._invalid("File search is outside scoped_context.project_files.")
+                    raise ToolScopeDenied("File search is outside scoped_context.project_files.")
             elif not self.allows_file(path) and not (
                 method in {"read_file", "read_image"} and self.allows_host_read(path)
             ):
-                self._invalid("File operation is outside scoped_context.project_files.")
+                raise ToolScopeDenied("File operation is outside scoped_context.project_files.")
         if category in {"db_tools", "context_search_tools", "semantic_tools", "reference_template_tools"}:
             allowed = set(self.datasources)
             datasource = arguments.get("datasource") or self.config.current_datasource
-            targets = [value for key, value in arguments.items() if key.endswith("datasource") and value]
+            targets = []
+            for name, value in arguments.items():
+                if name.endswith("datasource") and value:
+                    if not isinstance(value, str):
+                        raise InvalidToolArgument(name, "a datasource name string")
+                    targets.append(value)
             if not allowed or datasource not in allowed or any(target not in allowed for target in targets):
-                self._invalid("This tool call requires a permitted scoped_context.datasource or tables_by_datasource.")
+                raise ToolScopeDenied(
+                    "This tool call requires a permitted scoped_context.datasource or tables_by_datasource."
+                )
         if arguments and category == "db_tools" and method in {"load_file_as_table", "import_database_file"}:
-            path = arguments.get("file_path") or arguments.get("path") or ""
-            if not path or not self.allows_file(self.root / path):
-                self._invalid("File import is outside scoped_context.project_files.")
+            path_arg = "file_path" if arguments.get("file_path") else "path"
+            path = arguments.get(path_arg, "")
+            if not path or not self.allows_file(self._argument_path(path_arg, path)):
+                raise ToolScopeDenied("File import is outside scoped_context.project_files.")
         if category in {"db_tools", "reference_template_tools"}:
             from datus.utils.sql_utils import looks_like_sql_file_ref
 
@@ -300,15 +313,15 @@ class ConfigurableScope:
             if (
                 isinstance(sql, str)
                 and looks_like_sql_file_ref(sql.lower() if method == "export_query" else sql)
-                and (not self.allows_file(self.root / sql.strip()))
+                and (not self.allows_file(self._argument_path("sql", sql.strip())))
             ):
-                self._invalid("SQL file is outside scoped_context.project_files.")
+                raise ToolScopeDenied("SQL file is outside scoped_context.project_files.")
         if arguments and category == "db_tools" and method == "export_query":
             output = arguments.get("output_file")
-            if not output or not self.allows_file(self.root / output):
-                self._invalid("Exports require an explicit output_file within scoped_context.project_files.")
+            if not output or not self.allows_file(self._argument_path("output_file", output)):
+                raise ToolScopeDenied("Exports require an explicit output_file within scoped_context.project_files.")
             if not self.allows_file(self.root / f"{output}.meta.json"):
-                self._invalid("The export metadata file is outside scoped_context.project_files.")
+                raise ToolScopeDenied("The export metadata file is outside scoped_context.project_files.")
 
 
 class ScopedAgentFilesystem(FilesystemFuncTool):

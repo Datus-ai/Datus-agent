@@ -41,6 +41,8 @@ class ToolObservationHooks(AgentHooks):
         return await self._forward("on_llm_end", *args, **kwargs)
 
     async def on_tool_start(self, context, agent, tool):
+        if getattr(context, "_datus_tool_start_checked", False) is True:
+            return
         call_id = getattr(context, "tool_call_id", None)
         self._started[call_id or id(context)] = time.monotonic()
         logger.debug("tool.started", tool_name=tool.name, tool_call_id=call_id)

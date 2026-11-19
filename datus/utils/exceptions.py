@@ -270,6 +270,23 @@ class DatusException(Exception):
         return final_message
 
 
+class ToolScopeDenied(DatusException):
+    """A concrete tool invocation is outside the agent's resource scope."""
+
+    def __init__(self, message: str):
+        super().__init__(ErrorCode.COMMON_CONFIG_ERROR, message=message)
+
+
+class InvalidToolArgument(DatusException):
+    """An invalid model-supplied argument detected before tool execution."""
+
+    def __init__(self, name: str, requirement: str):
+        super().__init__(
+            ErrorCode.COMMON_VALIDATION_FAILED,
+            message=f"Tool argument '{name}' must be {requirement}.",
+        )
+
+
 def setup_exception_handler(console_logger=None, prefix_wrap_func=None):
     """Setup global exception handler for Datus
 

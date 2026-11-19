@@ -85,11 +85,13 @@ class RecordingScriptedModel(Model):
         tool_name: str = "probe_tool",
         final_text: str = "done",
         input_tokens_per_turn: Optional[Sequence[int]] = None,
+        tool_calls: Optional[Sequence[tuple[str, str]]] = None,
     ) -> None:
         self.inputs: List[Any] = []
         self.turn = 0
         self._script = list(script)
         self._tool_name = tool_name
+        self._tool_calls = tool_calls
         self._final_text = final_text
         self._input_tokens = list(input_tokens_per_turn or [])
 
@@ -108,15 +110,19 @@ class RecordingScriptedModel(Model):
 
         step = self._script[self.turn - 1] if self.turn - 1 < len(self._script) else "final"
         if step == "tool":
-            output: List[Any] = [
-                ResponseFunctionToolCall(
-                    id=f"fc_{self.turn}",
-                    call_id=f"call_{self.turn}",
-                    name=self._tool_name,
-                    arguments="{}",
-                    type="function_call",
+            calls = self._tool_calls if self._tool_calls is not None else [(self._tool_name, "{}")]
+            output: List[Any] = []
+            for index, (name, arguments) in enumerate(calls):
+                suffix = f"_{index + 1}" if index else ""
+                output.append(
+                    ResponseFunctionToolCall(
+                        id=f"fc_{self.turn}{suffix}",
+                        call_id=f"call_{self.turn}{suffix}",
+                        name=name,
+                        arguments=arguments,
+                        type="function_call",
+                    )
                 )
-            ]
         else:
             output = [
                 ResponseOutputMessage(

@@ -20,7 +20,7 @@ from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
 import httpx
 import litellm
 import yaml
-from agents import Agent, ModelSettings, Runner, Tool, WebSearchTool
+from agents import ModelSettings, Runner, Tool, WebSearchTool
 from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError, RunErrorDetails
 from agents.extensions.memory import AdvancedSQLiteSession
 from agents.mcp import MCPServerStdio
@@ -41,6 +41,7 @@ from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.models.output_truncation import ModelOutputTruncatedError
 from datus.models.request_capacity import DEFAULT_CONTEXT_LENGTH, DEFAULT_MAX_TOKENS
+from datus.models.tool_preflight import ToolPreflightAgent as Agent
 from datus.models.tool_result_stream import ToolResultStream
 from datus.observability.manager import get_observability_manager
 from datus.observability.model_call import ModelCall

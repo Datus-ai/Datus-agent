@@ -34,6 +34,7 @@ from datus.configuration.agent_config import ModelConfig
 from datus.models.litellm_adapter import is_official_anthropic_endpoint
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.models.openai_compatible import OpenAICompatibleModel
+from datus.models.tool_preflight import tool_rejection
 from datus.observability.model_call import native_model_call, observe_model_phase
 from datus.observability.native_agents import (
     capture_native_trace_content,
@@ -1287,15 +1288,7 @@ class ClaudeModel(OpenAICompatibleModel):
                                 action_history_manager.add_action(start_action)
                             yield start_action
 
-                            # Build the per-tool context and resolve a tool object
-                            # exposing ``.name`` BEFORE running the tool, then fire
-                            # ``on_tool_start`` so the composed permission hook can
-                            # gate execution exactly like the SDK Runner path. This
-                            # MUST sit before the execution try/except blocks below:
-                            # a ``PermissionDeniedException`` has to propagate out of
-                            # the generator (mirroring the SDK, where on_tool_start
-                            # raising aborts the run) instead of being swallowed and
-                            # downgraded into a tool_result error by them.
+                            # Build the same per-call context used by the permission and scope hooks.
                             tool_args = json.dumps(block.input, ensure_ascii=False)
                             tool_ctx = ToolContext(
                                 context=None,
@@ -1316,7 +1309,7 @@ class ClaudeModel(OpenAICompatibleModel):
                                 tool_call_id=block.id,
                                 input_value=block.input,
                             )
-                            await self._invoke_hook(hooks, "on_tool_start", tool_ctx, hook_agent, tool_obj)
+                            rejection = await tool_rejection(hooks, tool_ctx, hook_agent, tool_obj)
 
                             tool_executed = False
                             # Result handed to ``on_tool_end``: function tools pass their
@@ -1325,8 +1318,12 @@ class ClaudeModel(OpenAICompatibleModel):
                             hook_result: Any = None
                             image_content = None
 
-                            # Try function tools first
-                            if block.name in func_tool_map:
+                            if rejection is not None:
+                                hook_result = rejection
+                                tool_call_cache[block.id] = _ToolResult(
+                                    content=[_ToolResultPart(text=json.dumps(rejection))]
+                                )
+                            elif block.name in func_tool_map:
                                 try:
                                     ft = func_tool_map[block.name]
                                     # Reuse ``tool_ctx`` (a ToolContext, not a bare
@@ -1361,8 +1358,7 @@ class ClaudeModel(OpenAICompatibleModel):
                                 except Exception as e:
                                     logger.error(f"Error executing function tool {block.name}: {str(e)}")
 
-                            # Fall back to MCP servers via pre-built mapping
-                            if not tool_executed and block.name not in func_tool_map:
+                            else:
                                 target_server = tool_server_map.get(block.name)
                                 if target_server:
                                     try:
@@ -1378,7 +1374,7 @@ class ClaudeModel(OpenAICompatibleModel):
                                     except Exception as e:
                                         logger.error(f"Error executing tool {block.name}: {str(e)}")
 
-                            if not tool_executed:
+                            if not tool_executed and rejection is None:
                                 logger.error(f"Tool {block.name} could not be executed")
 
                             # Yield SUCCESS/FAILURE action for real-time tool call display.
@@ -1433,14 +1429,15 @@ class ClaudeModel(OpenAICompatibleModel):
                             # per tool completion, mirroring the SDK Runner loop. On
                             # failure pass a ``{"success": 0}`` marker so consumers that
                             # inspect the result treat it as a failed call.
-                            await self._invoke_hook(
-                                hooks,
-                                "on_tool_end",
-                                tool_ctx,
-                                hook_agent,
-                                tool_obj,
-                                hook_result if tool_executed else {"success": 0, "error": result_summary},
-                            )
+                            if rejection is None:
+                                await self._invoke_hook(
+                                    hooks,
+                                    "on_tool_end",
+                                    tool_ctx,
+                                    hook_agent,
+                                    tool_obj,
+                                    hook_result if tool_executed else {"success": 0, "error": result_summary},
+                                )
                             traced_tool_output = capture_native_trace_content("tool_results", tool_output)
                             traced_tool_error = None
                             if tool_failed:
@@ -1885,11 +1882,9 @@ class ClaudeModel(OpenAICompatibleModel):
 
         ``hooks`` may be a bare ``AgentHooks`` or a ``CompositeHooks`` wrapping
         several; either way we call ``getattr(hooks, method_name)`` once and let
-        ``CompositeHooks`` fan out to its children. ``PermissionDeniedException``
-        MUST propagate so a denied tool aborts the run, mirroring the SDK path
-        (where ``on_tool_start`` raising surfaces as a ``UserError``). Every
-        other exception is logged and swallowed so a best-effort hook (compact,
-        KB sync, token usage) can never crash the agent loop.
+        ``CompositeHooks`` fan out to its children. Tool preflight is driven
+        separately. Errors from best-effort hooks (compact, KB sync, token
+        usage) are logged and swallowed.
         """
         if hooks is None:
             return

@@ -778,6 +778,39 @@ class TestFilesystemZoneBranch:
             await hooks.on_tool_start(ctx, MagicMock(), tool)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("non_interactive", [False, True])
+    async def test_external_symlink_rejection_uses_requested_path_for_model(
+        self, mock_broker, tmp_path, non_interactive
+    ):
+        from datus.models.tool_preflight import tool_rejection
+
+        hooks, _, project = self._build(mock_broker, tmp_path)
+        hooks.non_interactive = non_interactive
+        external_dir = tmp_path / "private-directory"
+        external_dir.mkdir()
+        target = external_dir / "private-target.md"
+        target.write_text("x")
+        link = project / "entry.md"
+        link.symlink_to(target)
+        mock_broker.request = AsyncMock(return_value=[["n"]])
+        context = MagicMock(tool_arguments='{"path": "entry.md"}')
+        tool = MagicMock()
+        tool.name = "read_file"
+
+        result = await tool_rejection(hooks, context, None, tool)
+
+        assert result["success"] == 0
+        assert "entry.md" in result["error"]
+        assert external_dir.name not in result["error"]
+        assert target.name not in result["error"]
+        if non_interactive:
+            mock_broker.request.assert_not_awaited()
+        else:
+            mock_broker.request.assert_awaited_once()
+            (events,) = mock_broker.request.await_args.args
+            assert str(target.resolve()) in events[0].content
+
+    @pytest.mark.asyncio
     async def test_strict_external_delegates_to_tool_without_broker(self, mock_broker, tmp_path):
         """Strict policy → EXTERNAL is delegated to the tool layer (which
         returns FuncToolResult(success=0)) instead of raising. The broker is
@@ -859,10 +892,8 @@ class TestFilesystemZoneBranch:
         assert external.read_text() == "secret"
 
     @pytest.mark.asyncio
-    async def test_external_broker_cancel_denies(self, mock_broker, tmp_path):
-        """``InteractionCancelled`` from the broker must surface as a denial
-        (not a silent approval). Guards the catch-block in
-        ``_request_external_confirmation``."""
+    async def test_external_broker_close_propagates(self, mock_broker, tmp_path):
+        """A closed broker is a run failure, distinct from a user's refusal."""
         from datus.cli.execution_state import InteractionCancelled
 
         hooks, _, _ = self._build(mock_broker, tmp_path)
@@ -874,13 +905,12 @@ class TestFilesystemZoneBranch:
         ctx.tool_arguments = f'{{"path": "{target}"}}'
         tool = MagicMock()
         tool.name = "read_file"
-        with pytest.raises(PermissionDeniedException):
+        with pytest.raises(InteractionCancelled):
             await hooks.on_tool_start(ctx, MagicMock(), tool)
 
     @pytest.mark.asyncio
-    async def test_external_broker_unexpected_error_denies(self, mock_broker, tmp_path):
-        """A non-``InteractionCancelled`` exception from the broker should
-        also default to denial. Guards the generic ``except Exception`` arm."""
+    async def test_external_broker_unexpected_error_propagates(self, mock_broker, tmp_path):
+        """Preserve the cause so a broker failure cannot become a recoverable denial."""
         hooks, _, _ = self._build(mock_broker, tmp_path)
         target = tmp_path / "boom.md"
         target.write_text("x")
@@ -890,7 +920,7 @@ class TestFilesystemZoneBranch:
         ctx.tool_arguments = f'{{"path": "{target}"}}'
         tool = MagicMock()
         tool.name = "read_file"
-        with pytest.raises(PermissionDeniedException):
+        with pytest.raises(RuntimeError, match="broker explosion"):
             await hooks.on_tool_start(ctx, MagicMock(), tool)
 
     @pytest.mark.asyncio
