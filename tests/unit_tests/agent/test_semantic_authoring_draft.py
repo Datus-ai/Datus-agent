@@ -140,7 +140,9 @@ def test_model_only_publication_leaves_unmodified_inline_mapping_alone(draft):
     coordinated = SemanticAuthoringDraft(draft.scope)
     try:
         name, content = _change_model(coordinated)
-        assert coordinated.publish({}, name, digest(content))["files"] == [name]
+        receipt = coordinated.publish({}, name, digest(content))
+        assert receipt["files"] == [name]
+        assert receipt["validation"]["affected_mappings"] == ["subject/ontology/Sales.mapping.json"]
         assert (draft.live_root / "subject/ontology/inline.mapping.json").read_text() == files[
             "subject/ontology/inline.mapping.json"
         ]

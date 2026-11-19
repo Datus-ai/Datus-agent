@@ -803,6 +803,11 @@ def action_to_sse_event(
     try:
         role = action.role
         status = action.status
+        source = action.input if isinstance(action.input, dict) else {}
+        if source.get("_defer_model_output") is True and (
+            action.action_type == "thinking_delta" or _is_plain_assistant_response(action)
+        ):
+            return None
 
         sse_role = "assistant"
         sse_type = SSEDataType.CREATE_MESSAGE

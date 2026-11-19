@@ -1256,9 +1256,11 @@ class AgenticNode(Node):
             return node_class
         return AgenticNode.get_node_name(self)
 
-    def _response_provenance(self, user_input: Any) -> Dict[str, str]:
-        """Identify this producer and any versioned chat result protocol."""
-        source = {"_node_class": self.get_node_class_name()}
+    def _response_provenance(self, user_input: Any) -> Dict[str, str | bool]:
+        """Identify the response producer and its display protocol."""
+        source: Dict[str, str | bool] = {"_node_class": self.get_node_class_name()}
+        if getattr(self, "defer_model_output", False) is True:
+            source["_defer_model_output"] = True
         if source["_node_class"] == "chat":
             config = getattr(self, "node_config", None) or {}
             version = (

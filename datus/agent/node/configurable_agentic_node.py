@@ -417,9 +417,19 @@ class ConfigurableAgenticNode(AgenticNode):
         declared = {item.connection_ref: set(item.tools) for item in self.spec.mcp}
         if any(not set(item.tools).issubset(declared.get(item.connection_ref, set())) for item in selections):
             raise ValueError("Prepared MCP tools exceed the static declaration")
-        self.mcp_servers = build_mcp_servers(
-            self.agent_config, selections, permission_manager=self.permission_manager, node_name=self.get_node_name()
-        )
+        node_name = self.get_node_name()
+        inherited = getattr(self.agent_config, "_inherit_project_mcp_for", ())
+        if self._prepared.mcp is None and not self.spec.mcp and node_name in inherited:
+            # Project connections keep their existing filters and call authorization.
+            self.mcp_servers = {
+                name: server
+                for name in self.agent_config.services.mcp_servers
+                if (server := self._setup_mcp_server_from_config(name)) is not None
+            }
+        else:
+            self.mcp_servers = build_mcp_servers(
+                self.agent_config, selections, permission_manager=self.permission_manager, node_name=node_name
+            )
         self.permission_hooks = None
         self._tool_transformers_applied = False
         self._filter_permission_denied_tools()

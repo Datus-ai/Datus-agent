@@ -341,7 +341,8 @@ class SemanticAuthoringDraft:
             or self.validation["validated_digests"] != {name: digest(body) for name, body in contents.items()}
         ):
             raise ValueError("Joint validation does not match the current bundle")
-        if not files:
+        model_mapping_validation = None
+        if not files and self.baseline.get(semantic_file) != contents[semantic_file]:
             for name, body in contents.items():
                 if PurePosixPath(name).parent != PurePosixPath("subject/ontology"):
                     continue
@@ -350,7 +351,7 @@ class SemanticAuthoringDraft:
                     document_kind(document) == "mapping"
                     and self._reference_path(name, document["semantic_model_ref"]) == self.root / semantic_file
                 ):
-                    self.inspect({}, name, follow_shared_ontology=False)
+                    model_mapping_validation = self.inspect({}, name, follow_shared_ontology=False)
                     break
         outputs = {name: contents[name] for name in [semantic_file, *files]}
         for name in outputs:
@@ -385,7 +386,11 @@ class SemanticAuthoringDraft:
             except BaseException:
                 self._restore_pending()
                 raise
-        return {"semantic_models": [semantic_file], "files": list(outputs)}
+        return {
+            "semantic_models": [semantic_file],
+            "files": list(outputs),
+            "validation": model_mapping_validation,
+        }
 
     def rollback(self) -> None:
         if not self.published:
