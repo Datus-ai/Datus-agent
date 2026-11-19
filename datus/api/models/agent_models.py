@@ -2,7 +2,9 @@
 
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+
+from datus.configuration.legacy_tool_names import expand_replaced_tools
 
 # ========== Agent List ==========
 
@@ -55,6 +57,13 @@ class CreateAgentInput(BaseModel):
     )
     description: Optional[str] = Field(default=None, description="Agent description")
     tools: Optional[List[str]] = Field(default=None, description="Tool names")
+
+    @field_validator("tools")
+    @classmethod
+    def _expand_replaced_tools(cls, value: Optional[List[str]], info: ValidationInfo) -> Optional[List[str]]:
+        # A replaced tool name becomes its successors before it is validated and saved.
+        return expand_replaced_tools(str(info.data.get("name") or ""), value) if value else value
+
     mcp: Optional[List[str]] = Field(default_factory=list, description="MCP tool names")
     skills: Optional[List[str]] = Field(default_factory=list, description="Skills pattern filter")
     catalogs: Optional[List[str]] = Field(
@@ -67,7 +76,7 @@ class CreateAgentInput(BaseModel):
     permissions: Optional[dict] = Field(default_factory=dict, description="Permission overrides")
     hooks: Optional[dict] = Field(default_factory=dict, description="Hook configuration")
     rules: Optional[list[str]] = Field(default_factory=list, description="Instruction rules")
-    max_turns: Optional[int] = Field(default=100, description="Max conversation turns")
+    max_turns: Optional[int] = Field(default=200, description="Max conversation turns")
     workspace_root: Optional[str] = Field(default=None, description="Workspace root path")
     adapter_type: Optional[str] = Field(default=None, description="Adapter type")
     sql_file_threshold: Optional[int] = Field(default=None, description="SQL file threshold")
@@ -168,6 +177,13 @@ class EditAgentInput(BaseModel):
     name: Optional[str] = Field(default=None, description="Agent name to edit")
     description: Optional[str] = None
     tools: Optional[List[str]] = None
+
+    @field_validator("tools")
+    @classmethod
+    def _expand_replaced_tools(cls, value: Optional[List[str]], info: ValidationInfo) -> Optional[List[str]]:
+        # A replaced tool name becomes its successors before it is validated and saved.
+        return expand_replaced_tools(str(info.data.get("name") or info.data.get("id") or ""), value) if value else value
+
     mcp: Optional[List[str]] = None
     skills: Optional[List[str]] = None
     scoped_context: Optional[dict] = None

@@ -71,12 +71,6 @@ def test_nightly_pytest_commands_set_explicit_test_layer():
     assert any("tests/integration/adapters/test_doris.py" in command for command in pytest_commands)
     assert any("tests/integration/adapters/test_gaussdb.py" in command for command in pytest_commands)
     assert any("tests/integration/adapters/test_tidb.py" in command for command in pytest_commands)
-    from ci.p0_plan import load_profile
-
-    script = _nightly_script_text()
-    for group in load_profile()["groups"]:
-        assert f'run_p0_group "{group}"' in script
-    assert 'env DATUS_TEST_LAYER=nightly uv run python -m pytest "${nodeids[@]}"' in script
     for command in pytest_commands:
         expected_layer = "unit" if "Full Unit Tests" in command else "nightly"
         assert f"env DATUS_TEST_LAYER={expected_layer}" in command

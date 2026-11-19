@@ -4,7 +4,9 @@
 
 """Unit tests for datus.storage.embedding_openai (pure logic only, no API calls)."""
 
+import httpx
 import pytest
+from openai import OpenAI
 
 from datus.storage.embedding_openai import OpenAIEmbeddings
 from datus.utils.exceptions import DatusException
@@ -173,3 +175,48 @@ class TestSetattr:
         emb = OpenAIEmbeddings()
         emb.organization = "org-new"
         assert emb.organization == "org-new"
+
+
+@pytest.mark.parametrize(
+    "name,policy,expected",
+    [
+        ("mistral-embed", None, False),
+        ("custom-resizable", True, True),
+        ("text-embedding-3-small", None, True),
+        ("text-embedding-3-large", False, False),
+        ("text-embedding-ada-002", True, False),
+    ],
+)
+def test_embedding_request_policy(name, policy, expected):
+    """Local vector width must not imply provider support for dimensions."""
+    import json
+
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "model": name,
+                "data": [{"object": "embedding", "index": 0, "embedding": [0.1, 0.2]}],
+                "usage": {"prompt_tokens": 1, "total_tokens": 1},
+            },
+        )
+
+    embedding = OpenAIEmbeddings(name=name, dim=2, send_dimensions=policy)
+    with OpenAI(api_key="test", http_client=httpx.Client(transport=httpx.MockTransport(respond))) as client:
+        embedding.__dict__["_openai_client"] = client
+        assert embedding.generate_embeddings(["hello"]) == [[0.1, 0.2]]
+    assert requests[0]["model"] == name
+    assert ("dimensions" in requests[0]) is expected
+    assert requests[0].get("dimensions") == {True: 2, False: None}[expected]
+
+
+@pytest.mark.parametrize("name", ["mistral-embed", "deployment-alias"])
+def test_custom_embedding_uses_configured_width(name):
+    embedding = OpenAIEmbeddings(name=name, dim=1024)
+    assert embedding.ndims() == 1024
+    embedding.dim = 512
+    assert embedding.ndims() == 512

@@ -568,6 +568,10 @@ def _build_subagent_complete_content(action: ActionHistory) -> List[IMessageCont
 def _build_interaction_result_content(action: ActionHistory) -> Optional[List[IMessageContent]]:
     """Build content for interaction result event (SUCCESS status)."""
     output = action.output if isinstance(action.output, dict) else {}
+    if output.get("resolution") == "permission_mode_changed":
+        contents = _build_interaction_content(action)
+        contents[0].payload.update(submitted=True, resolution="permission_mode_changed")
+        return contents
     content = output.get("content", "")
     if not content:
         return None
@@ -799,6 +803,11 @@ def action_to_sse_event(
     try:
         role = action.role
         status = action.status
+        source = action.input if isinstance(action.input, dict) else {}
+        if source.get("_defer_model_output") is True and (
+            action.action_type == "thinking_delta" or _is_plain_assistant_response(action)
+        ):
+            return None
 
         sse_role = "assistant"
         sse_type = SSEDataType.CREATE_MESSAGE
@@ -868,6 +877,8 @@ def action_to_sse_event(
             contents = _build_interaction_content(action)
         elif role == ActionRole.INTERACTION and status == ActionStatus.SUCCESS:
             contents = _build_interaction_result_content(action)
+            if isinstance(action.output, dict) and action.output.get("resolution") == "permission_mode_changed":
+                sse_type = SSEDataType.UPDATE_MESSAGE
             if contents is None:
                 return None
         elif role == ActionRole.USER:

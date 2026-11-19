@@ -16,7 +16,10 @@ import itertools
 import json
 import re
 import secrets
+import weakref
 from collections import OrderedDict
+from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple
 
@@ -32,13 +35,10 @@ from datus.tools.func_tool.base import (
     trans_to_function_tool,
 )
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
+from datus.tools.registry.contracts import tool_contract
 from datus.tools.semantic_tools.dosi import DosiConfig, DosiRuntime
+from datus.tools.semantic_tools.dosi.attribution_text import render_attribution
 from datus.tools.semantic_tools.dosi.engine import has_model_files
-from datus.tools.semantic_tools.models import (
-    AttributionRequest,
-    AttributionResult,
-    AttributionWindow,
-)
 from datus.tools.semantic_tools.paging import (
     METRIC_CATALOG_MAX_PAGES,
     METRIC_CATALOG_PAGE_SIZE,
@@ -49,6 +49,7 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 from datus.utils.query_result_text import omitted_rows_line
+from datus.utils.result_pagination import native_pagination, validate_page
 
 logger = get_logger(__name__)
 
@@ -277,7 +278,52 @@ def render_metric_detail(detail: Mapping[str, Any], subject_path: Optional[List[
         line("requires_time_axis", "true")
     grains = detail.get("time_granularities") or []
     line("time", f"metric_time ({', '.join(grains)})" if grains else "none")
+    line("attribution", _render_attribution_capability(detail.get("attribution")))
     return "\n".join(lines)
+
+
+# Dosi's catalog ``attribution`` keys, by the tool each one is about.
+_ATTRIBUTION_TOOLS = (("metrics", "attribute_metrics"), ("dimensions", "attribute_dimensions"))
+
+
+def _render_attribution_capability(capability: Any) -> Optional[str]:
+    """``attribute_metrics yes; attribute_dimensions no (<code>)``: whether
+    each tool can explain the metric, with the code a call would be refused
+    with. Both are always written, so a metric one tool cannot explain does
+    not read as the only one with a limit. ``attribute_dimensions only by
+    orders(region), stores(city)`` when it splits the metric by those fields
+    alone (a distinct count, by what its field determines), every field
+    written out. None when the catalog says nothing."""
+    if not isinstance(capability, Mapping):
+        return None
+    parts = []
+    for key, tool in _ATTRIBUTION_TOOLS:
+        support = capability.get(key)
+        if not isinstance(support, Mapping) or not isinstance(support.get("supported"), bool):
+            continue
+        only_by = _render_only_by(support.get("only_by"))
+        if support["supported"] and only_by:
+            parts.append(f"{tool} only by {only_by}")
+        elif support["supported"]:
+            parts.append(f"{tool} yes")
+        else:
+            parts.append(f"{tool} no ({support.get('code') or 'unsupported'})")
+    return "; ".join(parts) or None
+
+
+def _render_only_by(only_by: Any) -> str:
+    """``orders(region, city), stores(store_name)``: the fields of Dosi's
+    ``only_by``, by dataset; empty when there are none."""
+    if not isinstance(only_by, list):
+        return ""
+    datasets = []
+    for dataset in only_by:
+        if not isinstance(dataset, Mapping) or not dataset.get("name"):
+            continue
+        fields = [str(field) for field in dataset.get("fields") or [] if field]
+        if fields:
+            datasets.append(f"{dataset['name']}({', '.join(fields)})")
+    return ", ".join(datasets)
 
 
 def _render_query_warning(warning: Any) -> str:
@@ -402,6 +448,29 @@ def _normalize_name_list(value) -> List[str]:
         if text:
             names.append(text)
     return names
+
+
+def _period_days(window: Mapping[str, Any]) -> Optional[float]:
+    """A period's length in days, when both ends are ISO dates or timestamps."""
+    try:
+        start = datetime.fromisoformat(str(window.get("start")))
+        end = datetime.fromisoformat(str(window.get("end")))
+    except (TypeError, ValueError):
+        return None
+    return (end - start).total_seconds() / 86400
+
+
+def _period_length_notes(baseline: Mapping[str, Any], current: Mapping[str, Any]) -> List[str]:
+    """A note when the two periods differ in length: Dosi compares the values
+    as they are, a total over 31 days with one over 30."""
+    before, after = _period_days(baseline), _period_days(current)
+    if before is None or after is None or before == after:
+        return []
+
+    def days(value: float) -> str:
+        return f"{value:g} day" + ("" if value == 1 else "s")
+
+    return [f"the periods differ in length ({days(before)} and {days(after)}); values are not scaled to one length"]
 
 
 def _normalize_optional_path(value) -> Optional[List[str]]:
@@ -591,7 +660,8 @@ class SemanticTools:
             "get_dataset",
             "query_metrics",
             "validate_semantic",
-            "attribution_analyze",
+            "attribute_metrics",
+            "attribute_dimensions",
             *cls.ONTOLOGY_TOOL_NAMES,
         ]
 
@@ -620,6 +690,9 @@ class SemanticTools:
         semantic_model_path_provider: Optional[Callable[[], Optional[str]]] = None,
         semantic_metric_names_provider: Optional[Callable[[], Optional[List[str]]]] = None,
         ontology_enabled: bool = False,
+        policy_context_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
+        initialize_runtime: bool = True,
+        enforce_metric_scope: bool = False,
     ):
         """
         Initialize semantic function tool.
@@ -637,19 +710,28 @@ class SemanticTools:
                 request-local semantic model selected for authoring or validation.
             semantic_metric_names_provider: Optional callback returning the
                 present touched metrics that require compiled publish evidence.
+            policy_context_provider: Trusted request-local policy context for
+                native compilation; defaults to the context on agent_config.
             ontology_enabled: Load the project's Apache Ossie ontologies
                 (``subject/ontology/``) through the mapping documents that
                 bind them to this datasource's models and expose the ontology tools. Off for every agent that
                 does not ask for it. Mapping documents there say which model
                 each ontology binds.
+            initialize_runtime: Initialize native engines during construction. Authoring nodes
+                retain this default; chat can defer initialization until its first metric call.
+            enforce_metric_scope: Restrict executable metric names to the configured
+                metric subject scope, independently of native database policies.
         """
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
+        self._enforce_metric_scope = enforce_metric_scope
         self.generation_evidence = generation_evidence
         self._runtime_db_context_provider = runtime_db_context_provider
         self._warehouse_dry_run_provider = warehouse_dry_run_provider
         self._semantic_model_path_provider = semantic_model_path_provider
         self._semantic_metric_names_provider = semantic_metric_names_provider
+        self._policy_context_provider = policy_context_provider
+        self._policy_metadata_managers = {}
         self.ontology_enabled = bool(ontology_enabled)
         self._runtime_db_context_static: Dict[str, str] = {}
         self._runtime_db_context_static_set = False
@@ -658,16 +740,51 @@ class SemanticTools:
         # list_metrics reads the KB only for navigation paths shared with
         # ContextSearchTools.list_subject_tree; ContextSearchTools owns RAG discovery.
         self.metric_rag = MetricRAG(agent_config, sub_agent_name)
+        self._metric_scope_key = None
         # The token budget of an executed result's preview, and of a dry run's data.
         self._compressor: Optional[DataCompressor] = None
         self._query_metrics_result_cache: OrderedDict[str, dict] = OrderedDict()
+        self._evicted_query_metrics_scopes: OrderedDict[str, dict] = OrderedDict()
 
         # Lazy load runtime and attribution tool
         self._runtime: Optional[DosiRuntime] = None
         self._runtime_load_error: Optional[str] = None
         self._runtime_context_key: Optional[Tuple[str, ...]] = None
+        # Authoring nodes need engines initialized before model file tools run.
+        # Chat only reads metrics and can wait until a metric tool needs them.
+        if initialize_runtime:
+            _ = self.runtime
 
     MODEL_FREE_READS_VERSION = 1
+
+    def _has_metric_scope(self) -> bool:
+        if not getattr(self, "_enforce_metric_scope", False) or not self.sub_agent_name:
+            return False
+        from datus.schemas.agent_models import SubAgentConfig
+
+        raw = self.agent_config.sub_agent_config(self.sub_agent_name)
+        config = SubAgentConfig.model_validate(raw) if raw else None
+        metrics = config.scoped_context.metrics if config and config.scoped_context else None
+        datasource = self._runtime_db_context().get("datasource") or self.agent_config.current_datasource
+        key = (datasource, metrics, config.scoped_kb_path if config else None)
+        if getattr(self, "_metric_scope_key", None) != key:
+            # RAG filters are constructed once; do not reuse a formerly unscoped
+            # projection after a host narrows the agent's scope.
+            self.metric_rag = MetricRAG(self.agent_config, self.sub_agent_name, datasource_id=datasource)
+            self._metric_scope_key = key
+        return bool(metrics)
+
+    def _check_metric_scope(self, names: List[str]) -> Optional[FuncToolResult]:
+        try:
+            if not self._has_metric_scope():
+                return None
+            allowed = set(self._metric_subject_paths(None))
+            if all(normalize_metric_name(name) in allowed for name in names):
+                return None
+            return FuncToolResult(success=0, error="Requested metric is outside this agent's configured metric scope.")
+        except Exception as exc:
+            logger.warning("Could not verify configured metric scope: %s", exc)
+            return FuncToolResult(success=0, error="Configured metric scope could not be verified.")
 
     @property
     def compressor(self) -> DataCompressor:
@@ -721,8 +838,38 @@ class SemanticTools:
                 writer.writerow([row])
         return buf.getvalue()
 
+    def _policy_cache_scope(self) -> str:
+        if getattr(self, "agent_config", None) is None:
+            return "unprotected"
+        bound = self._bind_dosi_read()
+        if bound is None:
+            return "unprotected"
+        return hashlib.sha256((bound.snapshot_json + bound.context_json).encode()).hexdigest()
+
+    def _query_cache_scope(self, native_scope: Optional[str]) -> Optional[str]:
+        """Bind chat's cached rows to the current policy, routing and metric scope."""
+        if not getattr(self, "_enforce_metric_scope", False):
+            return native_scope
+        from datus_storage_base.conditions import build_where
+
+        self._has_metric_scope()
+        condition = self.metric_rag._sub_agent_filter
+        identity = [
+            native_scope,
+            self._runtime_db_context(),
+            self._metric_scope_key,
+            build_where(condition) if condition is not None else "",
+        ]
+        return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+
     def _cache_query_metrics_result(
-        self, columns: List[str], data: Any, metadata: Optional[Mapping[str, Any]] = None
+        self,
+        columns: List[str],
+        data: Any,
+        metadata: Optional[Mapping[str, Any]] = None,
+        *,
+        authorized_scope: Optional[str] = None,
+        metric_names: Optional[List[str]] = None,
     ) -> Optional[str]:
         if data is None:
             return None
@@ -730,11 +877,19 @@ class SemanticTools:
         if not full_csv:
             return None
 
+        scope = self._query_cache_scope(
+            metadata["_policy_scope"] if metadata and "_policy_scope" in metadata else self._policy_cache_scope()
+        )
+        if authorized_scope is not None and scope != authorized_scope:
+            raise ValueError("Configured metric scope changed while the query was running; retry in the current scope.")
+
         # Random, not a counter: ``get_query_metrics_result`` hands a cached result
         # to whoever names its key, and on the agent's dynamic MCP server one
         # instance serves every client of a datasource.
         cache_key = f"query_metrics:{secrets.token_urlsafe(12)}"
         self._query_metrics_result_cache[cache_key] = {
+            "policy_scope": authorized_scope if authorized_scope is not None else scope,
+            "metric_names": tuple(metric_names or ()),
             "columns": list(columns),
             "csv": full_csv,
             "row_count": self._query_data_row_count(data),
@@ -748,11 +903,38 @@ class SemanticTools:
             "metadata": dict(metadata or {}),
         }
         while len(self._query_metrics_result_cache) > self.MAX_QUERY_METRICS_RESULT_CACHE_SIZE:
-            self._query_metrics_result_cache.popitem(last=False)
+            evicted_id, evicted = self._query_metrics_result_cache.popitem(last=False)
+            self._evicted_query_metrics_scopes[evicted_id] = {
+                "policy_scope": evicted["policy_scope"],
+                "metric_names": evicted["metric_names"],
+            }
+        while len(self._evicted_query_metrics_scopes) > self.MAX_QUERY_METRICS_RESULT_CACHE_SIZE:
+            self._evicted_query_metrics_scopes.popitem(last=False)
         return cache_key
 
+    def _cached_query_scope_is_current(self, cached: Mapping[str, Any]) -> bool:
+        try:
+            if cached.get("policy_scope", "unprotected") != self._query_cache_scope(self._policy_cache_scope()):
+                return False
+            if self._has_metric_scope():
+                names = list(cached.get("metric_names") or ())
+                return bool(names) and self._check_metric_scope(names) is None
+            return True
+        except (DatusException, ValueError):
+            return False
+
+    def can_use_query_metrics_preview(self, cache_key: str) -> bool:
+        """Permit an evicted preview only while its original metrics remain allowed."""
+        scope = self._evicted_query_metrics_scopes.get(cache_key)
+        return scope is not None and self._cached_query_scope_is_current(scope)
+
     def get_cached_query_metrics_result(self, cache_key: str) -> Optional[dict]:
-        return self._query_metrics_result_cache.get(cache_key)
+        cached = self._query_metrics_result_cache.get(cache_key)
+        if cached is None:
+            return None
+        if not self._cached_query_scope_is_current(cached):
+            return None
+        return cached
 
     # One page has to fit an MCP response; the cached result is bounded only by the query.
     MAX_QUERY_METRICS_RESULT_PAGE = 1000
@@ -760,10 +942,10 @@ class SemanticTools:
     # any size. A page over this many characters is cut down to fewer rows.
     MAX_QUERY_METRICS_RESULT_PAGE_CHARS = 1_000_000
 
-    # MCP only, deliberately not in ``available_tools``: a node's model is told the
-    # full result is used for its final output, and paging it into the context
-    # would be the opposite of the compression.
+    # MCP and chat expose this bounded reader. Other nodes consume full cached
+    # rows through their structured output path instead of mounting another tool.
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True, companion_of="semantic_tools.query_metrics")
     def get_query_metrics_result(self, result_id: str, offset: int = 0, limit: int = 500) -> FuncToolResult:
         """
         Read the full rows behind a ``query_metrics`` or ``select_records`` result, one page at a time.
@@ -823,6 +1005,39 @@ class SemanticTools:
             }
         )
 
+    def _query_result_page(self, result_id: str, offset: int, page_size: int) -> FuncToolResult:
+        validate_page(page_size, offset)
+        cached = self.get_cached_query_metrics_result(result_id)
+        if cached is None:
+            return FuncToolResult(success=0, error=f"Unknown or expired query_metrics result_id: {result_id}")
+        total = cached["row_count"]
+        if offset > total:
+            raise ValueError("offset is beyond this query result")
+        rows = self._slice_query_data(cached["data"], offset, page_size)
+        returned = self._query_data_row_count(rows)
+        more = offset + returned < total
+        page = {
+            "offset": offset,
+            "returned": returned,
+            "has_more": more,
+            "next_offset": offset + returned if more else None,
+        }
+        metadata = cached.get("metadata") or {}
+        csv = self._query_data_to_csv(cached["columns"], rows)
+        text = self._render_query_result(
+            result_id,
+            cached["columns"],
+            cached["data"],
+            warnings=metadata.get("warnings"),
+            notes=metadata.get("page_notes"),
+            outputs=metadata.get("outputs"),
+            execution_info=metadata.get("execution_info"),
+            row_cap=metadata.get("row_cap"),
+            page=page,
+            page_csv=csv,
+        )
+        return FuncToolResult(result=text, execution_context=metadata.get("execution_context"))
+
     @staticmethod
     def _slice_query_data(data: Any, offset: int, limit: int) -> Any:
         """Rows ``[offset, offset + limit)`` of a query result, in its own shape."""
@@ -851,13 +1066,18 @@ class SemanticTools:
         outputs: Optional[List[Any]] = None,
         execution_info: Optional[List[Dict[str, Any]]] = None,
         row_cap: Optional[int] = None,
+        page: Optional[dict] = None,
+        page_csv: Optional[str] = None,
     ) -> str:
         """An executed result as the agent reads it (``datus.utils.query_result_text``
         has the layout). Only what there is to report gets a line: the compiled
         SQL runs to tens of thousands of characters beside rows that are already
         here, and a column named after its metric needs no ``column`` line."""
         total = self._query_data_row_count(data)
-        preview, cut = self._preview_csv(columns, data, total)
+        if page is None:
+            preview, cut = self._preview_csv(columns, data, total)
+        else:
+            preview, cut = page_csv or "", None
         rows = f"rows: {total}"
         if row_cap is not None and total >= row_cap:
             rows += f" (reached the {row_cap}-row cap; there may be more)"
@@ -865,6 +1085,8 @@ class SemanticTools:
             rows += f"; text values longer than {cut} characters are cut and end in …"
         lines = [f"result_id: {result_id}"] if result_id else []
         lines.append(rows)
+        if page is not None:
+            lines.append("page: " + json.dumps(page))
         if execution_info:
             lines.append(f"execution_info: {json.dumps(execution_info, ensure_ascii=False)}")
         lines.extend(_render_query_warning(warning) for warning in warnings or [])
@@ -1151,7 +1373,8 @@ class SemanticTools:
                 runtime_config = runtime_config.model_copy(
                     update={"ontology_dir": str(self.agent_config.path_manager.ontology_dir)}
                 )
-            self._runtime = DosiRuntime(runtime_config)
+            self._runtime = DosiRuntime(runtime_config, read_policy_provider=self._bind_dosi_read)
+            self._runtime.initialize()
             self._runtime_context_key = context_key
             self._runtime_load_error = None
             logger.info("Loaded Dosi runtime for datasource %s", datasource)
@@ -1162,8 +1385,73 @@ class SemanticTools:
             self._runtime_context_key = None
         return self._runtime
 
-    async def _attribute(self, runtime: DosiRuntime, request: AttributionRequest) -> AttributionResult:
-        return await runtime.attribute(request)
+    def _bind_dosi_read(self):
+        from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
+        from datus.tools.policy_runtime import PolicyRuntime
+
+        runtime = PolicyRuntime(self.agent_config)
+        context = (
+            self._policy_context_provider()
+            if self._policy_context_provider is not None
+            else getattr(self.agent_config, "policy_context", None)
+        )
+        if context is None:
+            context = {}
+        elif not isinstance(context, Mapping):
+            raise DatusException(ErrorCode.POLICY_DENIED, message="Policy context must be a mapping")
+        context = dict(context)
+        if not runtime.requires_bound_read(context):
+            return None
+        current = self._runtime_db_context()
+        datasource = current.get("datasource") or self.agent_config.current_datasource
+        manager = db_manager_instance(self.agent_config.datasource_configs)
+        connector = manager.get_conn(datasource, current.get("database", ""))
+        # File-backed connections must retain the live session's attachments
+        # and temporary objects. Server metadata uses an isolated connector
+        # when the request selects a catalog/schema, including ask_metrics
+        # turns which do not mount a database tool to switch the shared one.
+        if connector.dialect not in {"sqlite", "duckdb"} and any(current.get(k) for k in ("catalog", "schema")):
+            key = tuple(current.get(k, "") for k in ("datasource", "catalog", "database", "schema"))
+            if key not in self._policy_metadata_managers:
+                config = self.agent_config.datasource_configs[datasource]
+                overrides = {k: current[k] for k in ("catalog", "schema") if current.get(k)}
+                extra = dict(config.extra or {})
+                for name in overrides:
+                    extra.pop(name, None)
+                    extra.pop(name + "_name", None)
+                scoped_manager = DBManager({datasource: replace(config, **overrides, extra=extra)})
+                scoped = scoped_manager.get_conn(datasource, current.get("database", ""))
+                self._policy_metadata_managers[key] = (scoped_manager, scoped)
+                weakref.finalize(self, scoped_manager.close)
+            connector = self._policy_metadata_managers[key][1]
+        bound = runtime.bind_read(connector=connector, datasource=datasource, policy_context=context)
+        if bound is not None:
+            actual = json.loads(bound.context_json)
+            names = None
+            for namespace in ("catalog", "database", "schema"):
+                # SQLite's Agent database label is the file stem; its SQL
+                # namespace is always main (or an explicit ATTACH alias).
+                if connector.dialect == "sqlite" and namespace == "database":
+                    continue
+                expected = current.get(namespace)
+                if connector.dialect == "oracle" and namespace == "database":
+                    # Match both the adapter and Dosi: service_name wins over
+                    # the legacy database alias, including a chat selection
+                    # which still carries that alias in its runtime context.
+                    profile = self._extract_db_config(datasource) or {}
+                    expected = profile.get("service_name") or expected
+                if expected and actual.get(namespace) != expected:
+                    from datus.tools.sql_read_context import SqlReadContext
+
+                    if names is None:
+                        names = SqlReadContext(connector, datasource)
+                    if names.canonical_name(str(actual.get(namespace) or "")) == names.canonical_name(expected):
+                        continue
+                    raise DatusException(
+                        ErrorCode.POLICY_DENIED,
+                        message=f"Dosi {namespace} does not match the policy metadata connection; switch the live connection and rebind",
+                    )
+        return bound
 
     def _runtime_unavailable_message(self) -> str:
         """Return a consistent message for Dosi runtime failures."""
@@ -1222,7 +1510,8 @@ class SemanticTools:
             trans_to_function_tool(self.get_dataset),
             trans_to_function_tool(self.query_metrics),
             trans_to_function_tool(self.validate_semantic),
-            trans_to_function_tool(self.attribution_analyze),
+            trans_to_function_tool(self.attribute_metrics),
+            trans_to_function_tool(self.attribute_dimensions),
         ]
         if self.ontology_enabled:
             tools.extend(trans_to_function_tool(getattr(self, name)) for name in self.ONTOLOGY_TOOL_NAMES)
@@ -1251,6 +1540,7 @@ class SemanticTools:
             success=0, error=f"{tool_name} failed: {exc}", result={"execution_info": info} if info else None
         )
 
+    @tool_contract(access="read", direct_call=True)
     def describe_concept(self, name: Optional[str] = None) -> FuncToolResult:
         """
         Describe the ontology: the concept catalog, or one concept in full.
@@ -1279,6 +1569,7 @@ class SemanticTools:
         except Exception as exc:  # noqa: BLE001 - surfaced as a failed tool call
             return self._semantic_failure("describe_concept", exc)
 
+    @tool_contract(access="read", direct_call=True)
     def find_concept_paths(self, source: str, target: str) -> FuncToolResult:
         """
         List every named path from one concept to another (up to 3 hops).
@@ -1314,13 +1605,18 @@ class SemanticTools:
     SELECT_RECORDS_DEFAULT_LIMIT = 200
 
     @tool_schema(strict_mode=False)
+    @tool_contract(access="read", direct_call=True)
+    @native_pagination()
     def select_records(
         self,
-        from_concept: str,
-        fields: List[str],
+        from_concept: Optional[str] = None,
+        fields: Optional[List[str]] = None,
         where: Optional[str] = None,
         order_by: Optional[List[str]] = None,
         limit: Optional[int] = None,
+        page_size: Optional[int] = None,
+        offset: int = 0,
+        result_id: Optional[str] = None,
     ) -> FuncToolResult:
         """
         Read individual records (not aggregates) of one concept.
@@ -1344,12 +1640,28 @@ class SemanticTools:
                 result column name; prefix with '-' for descending.
             limit: Optional maximum number of rows (default 200).
 
+        Pagination:
+            Agent calls show 200 continuous rows by default. Continue with result_id,
+            offset and page_size; no SQL is repeated and page_size has no hard cap.
+            The existing query limit defaults to 200 independently of the page size.
+
         Returns:
             FuncToolResult with text laid out like query_metrics': a ``result_id``
             line, a ``rows`` line, then the rows as CSV with columns named by the
             requested field paths (the full result is cached and used for the
             final output).
         """
+        try:
+            if result_id:
+                if any((from_concept, fields, where, order_by, limit is not None)):
+                    raise ValueError("Use only result_id, offset and page_size when continuing a result")
+                return self._query_result_page(result_id, offset, 200 if page_size is None else page_size)
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with result_id")
+            if page_size is not None:
+                validate_page(page_size, offset)
+        except (ValueError, TypeError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
         from_concept = str(from_concept or "").strip()
         fields = _normalize_name_list(fields)
         order_by = _normalize_name_list(order_by)
@@ -1373,7 +1685,12 @@ class SemanticTools:
         except Exception as exc:  # noqa: BLE001 - surfaced as a failed tool call
             return self._semantic_failure("select_records", exc)
 
-        metadata = result.metadata or {}
+        metadata = dict(result.metadata or {})
+        if page_size is not None:
+            if limit is None:
+                metadata["row_cap"] = self.SELECT_RECORDS_DEFAULT_LIMIT
+            cached_id = self._cache_query_metrics_result(result.columns, result.data, metadata)
+            return self._query_result_page(cached_id, 0, page_size)
         return FuncToolResult(
             result=self._render_query_result(
                 self._cache_query_metrics_result(result.columns, result.data, metadata),
@@ -1386,6 +1703,7 @@ class SemanticTools:
         )
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def list_metrics(
         self,
         path: Optional[List[str]] = None,
@@ -1416,17 +1734,18 @@ class SemanticTools:
             return error
 
         try:
+            scoped = self._has_metric_scope()
             try:
                 kb_paths = self._metric_subject_paths(path)
             except Exception as exc:
-                if path:
+                if path or scoped:
                     raise
                 logger.warning(
                     "Could not load KB metric subject paths; returning the runtime catalog without paths: %s",
                     exc,
                 )
                 kb_paths = {}
-            if path:
+            if path or scoped:
                 if not kb_paths:
                     return self._metric_list_result([], total=0, offset=offset, limit=limit)
 
@@ -1538,6 +1857,7 @@ class SemanticTools:
         return None
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def get_metric(
         self,
         name: str,
@@ -1575,6 +1895,10 @@ class SemanticTools:
           the default); ``none`` for a metric
           whose table has no time field (a snapshot): query it without
           time_start/time_end and pick the day it reads in ``where``.
+        - ``attribution``: whether attribute_metrics and attribute_dimensions
+          can each explain this metric's change: ``yes``; ``only by
+          dataset(field, ...)``, every field its change can be split by; or
+          ``no (<code>)`` with the code a call would be refused with.
 
         Args:
             name: Exact metric name from the selected model or metric catalog.
@@ -1583,6 +1907,9 @@ class SemanticTools:
         name = str(normalize_null(name) or "").strip()
         path = _normalize_optional_path(path)
         logger.debug(f"get_metric called: name={name}, path={path}")
+        scope_error = self._check_metric_scope([name])
+        if scope_error is not None:
+            return scope_error
         runtime, error = self._require_runtime("get_metric")
         if error:
             return error
@@ -1648,6 +1975,7 @@ class SemanticTools:
         return FuncToolResult(success=1, result=record)
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def get_dataset(self, name: str) -> FuncToolResult:
         """
         Get one dataset's fields and their definitions. Read every dataset a
@@ -1725,9 +2053,11 @@ class SemanticTools:
     # Dosi binding names come from metric declarations and require an open schema.
     @tool_schema(strict_mode=False)
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
+    @native_pagination()
     def query_metrics(
         self,
-        metrics: List[str],
+        metrics: Optional[List[str]] = None,
         dimensions: Optional[List[str]] = None,
         time_start: Optional[str] = None,
         time_end: Optional[str] = None,
@@ -1738,14 +2068,19 @@ class SemanticTools:
         params: Optional[Dict[str, Any]] = None,
         dry_run: bool = False,
         context_filter: Optional[str] = None,
+        page_size: Optional[int] = None,
+        offset: int = 0,
+        result_id: Optional[str] = None,
     ) -> FuncToolResult:
         """
         Query metrics data (requires runtime).
 
         Return complete metric results by default. Do not pass limit just to
-        preview data, reduce output size, or be conservative; the full result
-        is cached and used for the final output, so a cut preview is never a
-        reason to query again. Use limit only when the user explicitly asks for
+        preview data, reduce output size, or be conservative. Full rows are
+        cached under result_id for structured output consumers or the available
+        get_query_metrics_result reader. Use that reader for omitted rows instead
+        of rerunning the query; do not invent values missing from the preview.
+        Use limit only when the user explicitly asks for
         Top N, first N, maximum N rows, a preview, or another row-count
         restriction. When using limit for Top N/Bottom N, also pass order_by so
         the truncation has stable business meaning.
@@ -1843,9 +2178,90 @@ class SemanticTools:
                 the SQL itself: an executed result carries the same warnings, just
                 not its SQL, so a dry run before executing only repeats the query.
 
+        Pagination:
+            Agent calls default to 200 continuous rows. page_size has no hard cap.
+            Continue with result_id, offset and page_size only; this reads the cached
+            result and never executes the query again. limit still means business Top N.
+            Direct calls without page_size keep the existing compressed preview.
+
         Returns:
             FuncToolResult with the result text, or the compiled SQL of a dry run
         """
+        try:
+            if result_id:
+                if any(
+                    (
+                        metrics,
+                        dimensions,
+                        time_start,
+                        time_end,
+                        time_granularity,
+                        where,
+                        limit is not None,
+                        order_by,
+                        params,
+                        dry_run,
+                        context_filter,
+                    )
+                ):
+                    raise ValueError("Use only result_id, offset and page_size when continuing a result")
+                return self._query_result_page(result_id, offset, 200 if page_size is None else page_size)
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with result_id")
+            if page_size is not None:
+                validate_page(page_size, offset)
+        except (ValueError, TypeError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+        authorized_scope = None
+        if self._enforce_metric_scope:
+            try:
+                authorized_scope = self._query_cache_scope(self._policy_cache_scope())
+            except Exception as exc:
+                logger.warning("Could not capture configured metric scope: %s", exc)
+                return FuncToolResult(success=0, error="Configured metric scope could not be verified.")
+        scope_error = self._check_metric_scope(_normalize_name_list(metrics))
+        if scope_error is not None:
+            return scope_error
+        return self._query_metrics(
+            metrics=metrics,
+            dimensions=dimensions,
+            time_start=time_start,
+            time_end=time_end,
+            time_granularity=time_granularity,
+            where=where,
+            limit=limit,
+            order_by=order_by,
+            params=params,
+            dry_run=dry_run,
+            result_page_size=page_size,
+            authorized_scope=authorized_scope,
+            context_filter=context_filter,
+        )
+
+    def compile_metric_for_sql_execution(self, **arguments: Any) -> FuncToolResult:
+        """Host-only handoff: compile business SQL for the enforced SQL boundary."""
+        if arguments.get("dry_run") is not True:
+            raise ValueError("external SQL execution requires compile-only dry_run")
+        return self._query_metrics(**arguments, external_sql_execution=True)
+
+    def _query_metrics(
+        self,
+        metrics: List[str],
+        dimensions: Optional[List[str]] = None,
+        time_start: Optional[str] = None,
+        time_end: Optional[str] = None,
+        time_granularity: Optional[str] = None,
+        where: Optional[str] = None,
+        limit: Optional[int] = None,
+        order_by: Optional[List[str]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        dry_run: bool = False,
+        context_filter: Optional[str] = None,
+        *,
+        external_sql_execution: bool = False,
+        result_page_size: Optional[int] = None,
+        authorized_scope: Optional[str] = None,
+    ) -> FuncToolResult:
         metrics = _normalize_name_list(metrics)
         dimensions = _normalize_name_list(dimensions)
         order_by = _normalize_name_list(order_by)
@@ -1901,13 +2317,35 @@ class SemanticTools:
             if context_filter:
                 runtime_query_kwargs["context_filter"] = context_filter
             execution_context = self._query_execution_context(runtime)
-            result = _run_async(runtime.query_metrics(**runtime_query_kwargs))
+            compile_or_query = runtime.compile_for_sql_execution if external_sql_execution else runtime.query_metrics
+            result = _run_async(compile_or_query(**runtime_query_kwargs))
+            if authorized_scope is not None and self._query_cache_scope(self._policy_cache_scope()) != authorized_scope:
+                return FuncToolResult(
+                    success=0,
+                    error="Configured metric scope changed while the query was running; retry in the current scope.",
+                )
+            scope_error = self._check_metric_scope(metrics)
+            if scope_error is not None:
+                return scope_error
             if not dry_run:
-                metadata = result.metadata or {}
+                metadata = dict(result.metadata or {})
+                if result_page_size is not None:
+                    metadata["page_notes"] = self._query_hints(runtime, runtime_query_kwargs, result)
+                    metadata["execution_context"] = execution_context
+                    cached_id = self._cache_query_metrics_result(
+                        result.columns, result.data, metadata, authorized_scope=authorized_scope, metric_names=metrics
+                    )
+                    return self._query_result_page(cached_id, 0, result_page_size)
                 return FuncToolResult(
                     execution_context=execution_context,
                     result=self._render_query_result(
-                        self._cache_query_metrics_result(result.columns, result.data, metadata),
+                        self._cache_query_metrics_result(
+                            result.columns,
+                            result.data,
+                            metadata,
+                            authorized_scope=authorized_scope,
+                            metric_names=metrics,
+                        ),
                         list(result.columns),
                         result.data,
                         warnings=metadata.get("warnings"),
@@ -2107,6 +2545,7 @@ class SemanticTools:
         )
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=False)
     def validate_semantic(
         self,
         scope: Literal["all", "semantic_model"] = "all",
@@ -2244,91 +2683,262 @@ class SemanticTools:
     # Dosi parameter names come from metric declarations and require an open schema.
     @tool_schema(strict_mode=False)
     @mcp_tool()
-    def attribution_analyze(
+    @tool_contract(access="read", direct_call=True)
+    def attribute_metrics(
         self,
-        metric_name: str,
-        candidate_dimensions: List[str],
+        metric: str,
         baseline_start: str,
         baseline_end: str,
         current_start: str,
         current_end: str,
-        max_selected_dimensions: int = 3,
-        top_n_values: int = 10,
         where: Optional[str] = None,
-        max_dimension_values: int = 500,
-        time_dimension: Optional[str] = None,
+        context_filter: Optional[str] = None,
         params: Optional[Dict[str, Any]] = None,
+        group_by: Optional[List[str]] = None,
+        time_dimension: Optional[str] = None,
     ) -> FuncToolResult:
         """
-        Descriptive dimension analysis for metric changes.
+        Explain a metric's change between two periods through its formula: which
+        inputs moved it and by how much. Use it first when the metric is built
+        from other metrics (get_metric `expr`). A rank, a share of a total or a
+        change on the period before is explained the same way: call it on that
+        metric with group_by, and fix the row with where.
 
-        Ranks candidate dimensions by change concentration and calculates delta
-        contributions for selected dimensions. Results describe where a metric change
-        is concentrated; they do not establish causation. Failed, truncated, and
-        non-additive dimensions are excluded from rankings and summary contributions.
+        The result is text: a `status` line, `issue` lines when something is
+        missing or refused, then the formula tree, one node per line, indented
+        by level:
+          <metric> | <baseline> → <current> | <effect> (<share>)
+        - effect is the node's contribution to the top line's change, in the
+          metric's unit. A parent's effect is the sum of its children's; share
+          is effect over the top line's change. A node's own change is not its
+          effect: a growing denominator has a negative effect.
+        - A node with nothing under it is an input: an aggregate read from
+          data. One input can sit under several parents (a ratio's numerator
+          and denominator); a last line `<input> in all, <n> places | <effect>`
+          then gives its whole effect. Quote that, not one of its lines.
+        - To say what drove the change, compare the inputs by their whole
+          effects. A formula node in between (a numerator, a denominator, an
+          average of channels) only groups inputs; it is not a cause itself.
+        - A node is written by its metric's name (get_metric has its formula),
+          or as `(<formula>)` when it has no name of its own. A node with a
+          metric's name can be passed as `metric` to attribute_dimensions with
+          the same other arguments; a formula in parentheses cannot.
+        - `row` is the row the top line reads, for a metric with group_by;
+          `@ field=value` is the row or period a node reads where it differs
+          (the month before, the row being ranked).
+        Numbers have 6 significant digits; sums can differ in the last one.
 
         Args:
-            metric_name: Metric to analyze(from list_metrics/search_metrics)
-            candidate_dimensions: List of dimensions to evaluate (from get_metric)
-            baseline_start: Inclusive baseline start date in an OSI half-open range (e.g., "2026-01-01")
-            baseline_end: Exclusive baseline end date (e.g., "2026-01-08" for Jan 1-7)
-            current_start: Inclusive current start date in an OSI half-open range (e.g., "2026-01-08")
-            current_end: Exclusive current end date (e.g., "2026-01-15" for Jan 8-14)
-            max_selected_dimensions: Maximum dimensions to select (default 3)
-            top_n_values: Number of top dimension values to return (default 10)
-            where: Optional SQL boolean expression applied to every attribution query
-            max_dimension_values: Maximum grouped values per dimension (hard-capped at 1000)
-            time_dimension: Optional metric time dimension used for both windows
-            params: Optional parameter bindings for a parameterized metric
-
-        Returns:
-            FuncToolResult with:
-            - dimension_ranking: All dimensions ranked by importance score
-            - selected_dimensions: Top dimensions selected for analysis
-            - top_dimension_values: Delta contributions of dimension values
-            - implementation: dosi or generic
-            - strategy: term_wise, mix_shift, factor_shapley, or unsupported
-            - total_change: Baseline, current, and delta values
-            - per_dimension: Per-dimension contribution details
+            metric: The metric to explain.
+            baseline_start: Start of the earlier period, YYYY-MM-DD, inclusive.
+            baseline_end: End of the earlier period, exclusive.
+            current_start: Start of the later period, inclusive. Make the two periods the same length.
+            current_end: End of the later period, exclusive.
+            where: As in query_metrics; it cannot name a metric.
+            context_filter: As in query_metrics.
+            params: As in query_metrics, but one value per parameter: an attribution explains one
+                binding, and a list of values is refused (`param_out_of_domain`).
+            group_by: Only for a metric computed per row of a grouping (a rank, a share of a total,
+                a previous-period or running value, or get_metric `required`): its fields,
+                `dataset.field[:grain]`. where must then fix each with `field = value`, so the
+                target is one row.
+            time_dimension: The time field to cut the periods on, if not the metric's own.
         """
-        runtime, error = self._require_runtime("attribution_analyze")
+        return self._run_attribution(
+            "attribute_metrics",
+            self._attribution_request(
+                metric,
+                baseline_start,
+                baseline_end,
+                current_start,
+                current_end,
+                where=where,
+                context_filter=context_filter,
+                params=params,
+                group_by=group_by,
+                time_dimension=time_dimension,
+            ),
+        )
+
+    # Dosi parameter names come from metric declarations and require an open schema.
+    @tool_schema(strict_mode=False)
+    @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
+    def attribute_dimensions(
+        self,
+        metric: str,
+        dimensions: List[str],
+        baseline_start: str,
+        baseline_end: str,
+        current_start: str,
+        current_end: str,
+        where: Optional[str] = None,
+        context_filter: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+        group_by: Optional[List[str]] = None,
+        time_dimension: Optional[str] = None,
+        top_groups: Optional[int] = None,
+    ) -> FuncToolResult:
+        """
+        Explain a metric's change between two periods by the groups of its
+        dimensions: which groups moved it and by how much.
+
+        The result is text: a `status` line, `issue` lines, a line for the
+        metric, then its groups:
+          - <value> | <baseline> → <current> | <effect> (<share>) | <n> below
+        - baseline → current is the metric computed on that group alone; `no own
+          value` for a metric that compares rows, such as a rank.
+        - effect is the group's contribution to the metric's change. The groups
+          under a parent, with its `others` line, add up to the parent's effect.
+        - The tree lists the top_groups largest effects across all levels, with
+          the groups above them; the rest are summed in `others` lines.
+        Several dimensions are one drill-down in the order given: the first
+        dimension, then the second within each of its groups. They are not
+        separate views. The first level's effects are those of a call by its
+        dimension alone; each group's effect is then split among its groups by
+        the next dimension, and the largest effects at any level are listed.
+        Drill down when a group with a large effect, of either sign, has finer
+        categories under it. A filter on that group instead explains the group's
+        own change, not its part of the total. To compare unrelated dimensions,
+        call once per dimension; the calls can run in parallel. Shares from
+        different calls do not add up.
+
+        Args:
+            metric: The metric to explain.
+            dimensions: What to split by, fields as `dataset.field[:grain]` of the datasets
+                get_metric lists under `dimension_datasets`; a field that does not exist is
+                answered with the candidates. Business categories, not ids and not the time field
+                the periods are cut on. When get_metric's attribution says `only by`, only those.
+            baseline_start: Start of the earlier period, YYYY-MM-DD, inclusive.
+            baseline_end: End of the earlier period, exclusive.
+            current_start: Start of the later period, inclusive. Make the two periods the same length.
+            current_end: End of the later period, exclusive.
+            where: As in attribute_metrics.
+            context_filter: As in attribute_metrics.
+            params: As in attribute_metrics.
+            group_by: As in attribute_metrics.
+            time_dimension: As in attribute_metrics.
+            top_groups: How many groups to list in all (default 20, at most 200).
+        """
+        request = self._attribution_request(
+            metric,
+            baseline_start,
+            baseline_end,
+            current_start,
+            current_end,
+            where=where,
+            context_filter=context_filter,
+            params=params,
+            group_by=group_by,
+            time_dimension=time_dimension,
+        )
+        request["dimensions"] = list(dict.fromkeys(_normalize_name_list(dimensions)))
+        if top_groups is not None:
+            request["top_groups"] = top_groups
+        return self._run_attribution("attribute_dimensions", request)
+
+    @staticmethod
+    def _attribution_request(
+        metric: str,
+        baseline_start: str,
+        baseline_end: str,
+        current_start: str,
+        current_end: str,
+        *,
+        where: Optional[str],
+        context_filter: Optional[str],
+        params: Optional[Dict[str, Any]],
+        group_by: Optional[List[str]],
+        time_dimension: Optional[str],
+    ) -> Dict[str, Any]:
+        """The tool's flat arguments as Dosi's request: two periods on one time
+        field, ``group_by`` fields as ``{field, grain}``."""
+        dimension = str(normalize_null(time_dimension) or "").strip() or None
+
+        def period(start: str, end: str) -> Dict[str, Any]:
+            window: Dict[str, Any] = {"start": str(start).strip(), "end": str(end).strip()}
+            if dimension:
+                window["dimension"] = dimension
+            return window
+
+        request: Dict[str, Any] = {
+            "metric": str(normalize_null(metric) or "").strip(),
+            "baseline": period(baseline_start, baseline_end),
+            "current": period(current_start, current_end),
+        }
+        where = normalize_null(where)
+        if where:
+            request["where_sql"] = where
+        context_filter = normalize_null(context_filter)
+        if context_filter:
+            request["context_filter"] = context_filter
+        params = normalize_null(params)
+        if params:
+            request["params"] = params
+        fields = []
+        for text in _normalize_name_list(group_by):
+            field, _, grain = text.partition(":")
+            fields.append({"field": field, "grain": grain} if grain else {"field": field})
+        if fields:
+            request["group_by"] = fields
+        return request
+
+    async def _attribute(self, runtime: DosiRuntime, tool_name: str, request: Dict[str, Any]) -> Dict[str, Any]:
+        return await getattr(runtime, tool_name)(request)
+
+    def _run_attribution(self, tool_name: str, request: Dict[str, Any]) -> FuncToolResult:
+        """Run one attribution tool and answer with its text. A result is a
+        success whatever its status: an unsupported metric is an answer, said by
+        the status and issue lines. Only a refused request or a failed call is a
+        failure."""
+        authorized_scope = None
+        if self._enforce_metric_scope:
+            try:
+                authorized_scope = self._query_cache_scope(self._policy_cache_scope())
+            except Exception as exc:
+                logger.warning("Could not capture configured metric scope: %s", exc)
+                return FuncToolResult(success=0, error="Configured metric scope could not be verified.")
+        scope_error = self._check_metric_scope([request["metric"]])
+        if scope_error is not None:
+            return scope_error
+        runtime, error = self._require_runtime(tool_name)
         if error:
             return error
         assert runtime is not None
-
         try:
-            request = AttributionRequest(
-                metric=metric_name,
-                dimensions=candidate_dimensions,
-                baseline=AttributionWindow(start=baseline_start, end=baseline_end),
-                current=AttributionWindow(start=current_start, end=current_end),
-                where_sql=where,
-                time_dimension=time_dimension,
-                max_values_per_dimension=max_dimension_values,
-                top_n_dimensions=max_selected_dimensions,
-                top_n_values=top_n_values,
-                params=params or {},
-            )
-            result = _run_async(self._attribute(runtime, request))
-
-            return FuncToolResult(
-                success=1,
-                result=result.model_dump(exclude_none=True),
-            )
-
-        except Exception as e:
+            result = _run_async(self._attribute(runtime, tool_name, request))
+        except Exception as e:  # noqa: BLE001 - reported to the model below
             payload = getattr(e, "payload", None)
             if payload is not None and getattr(payload, "error_type", None) == "semantic_validation_error":
                 data = payload.model_dump() if hasattr(payload, "model_dump") else dict(payload)
-                logger.debug("attribution validation rejection: code=%s", data.get("code"))
+                logger.debug("%s rejected the request: code=%s", tool_name, data.get("code"))
                 return FuncToolResult(
                     success=0,
-                    error=getattr(payload, "message", "") or "attribution validation failed",
+                    error=f"{data.get('code')}: {getattr(payload, 'message', '') or 'invalid request'}",
                     result=data,
                 )
-            logger.error(f"Error in attribution analysis: {e}")
+            logger.error(f"{tool_name} failed: {e}")
+            info = getattr(e, "execution_info", None)
             return FuncToolResult(
                 success=0,
-                error=f"Failed to analyze attribution: {str(e)}",
-                result={"execution_info": e.execution_info} if getattr(e, "execution_info", None) else None,
+                error=f"{tool_name} failed: {e}",
+                result={"execution_info": info} if info else None,
             )
+        # As query_metrics: a scope the host narrowed while the call ran wins,
+        # and one that cannot be read again is not assumed unchanged.
+        if authorized_scope is not None:
+            try:
+                current_scope = self._query_cache_scope(self._policy_cache_scope())
+            except Exception as exc:
+                logger.warning("Could not verify configured metric scope after %s: %s", tool_name, exc)
+                return FuncToolResult(success=0, error="Configured metric scope could not be verified.")
+        if authorized_scope is not None and current_scope != authorized_scope:
+            return FuncToolResult(
+                success=0,
+                error="Configured metric scope changed while the attribution was running; retry in the current scope.",
+            )
+        scope_error = self._check_metric_scope([request["metric"]])
+        if scope_error is not None:
+            return scope_error
+        notes = _period_length_notes(request["baseline"], request["current"])
+        return FuncToolResult(success=1, result=render_attribution(result, notes))

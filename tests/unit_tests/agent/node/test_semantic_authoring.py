@@ -40,10 +40,7 @@ def _write_osi_model(tmp_path, filename, model_name, datasets):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
         yaml.safe_dump(
-            {
-                "version": "0.2.0.dev0",
-                "semantic_model": [{"name": model_name, "datasets": datasets}],
-            },
+            {"version": "0.2.0.dev0", "name": model_name, "datasets": datasets},
             sort_keys=False,
         ),
         encoding="utf-8",
@@ -250,7 +247,7 @@ def test_osi_target_refuses_to_overwrite_an_unparseable_target_file(tmp_path):
     config = _osi_config(tmp_path)
     target_path = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_text("semantic_model: [\n", encoding="utf-8")
+    target_path.write_text("datasets: [\n", encoding="utf-8")
 
     target = plan_osi_semantic_model_target(config, semantic_model_name="sales")
 
@@ -348,7 +345,7 @@ async def test_semantic_authoring_base_rolls_back_terminal_failure(monkeypatch):
     node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
     node.agent_config = _agent_config()
     node.result = SimpleNamespace(success=False)
-    node.filesystem_func_tool = SimpleNamespace(
+    node.semantic_model_workspace = SimpleNamespace(
         rollback_failed_authoring=lambda: rolled_back.append(True) or True,
     )
 

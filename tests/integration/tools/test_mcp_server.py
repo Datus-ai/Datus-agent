@@ -23,6 +23,7 @@ import json
 import os
 import socket
 import sys
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -31,12 +32,13 @@ import pytest_asyncio
 import uvicorn
 from mcp import ClientSession
 from mcp.client.sse import sse_client
-from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.stdio import StdioServerParameters
 from mcp.client.streamable_http import streamablehttp_client
 from sse_starlette.sse import AppStatus
 
 from datus.mcp_server import DatusMCPServer, create_dynamic_app, create_server
 from datus.utils.loggings import get_logger
+from tests.helpers.mcp_stdio import StdioTestServer
 
 logger = get_logger(__name__)
 
@@ -165,15 +167,6 @@ async def mcp_sse_session(url: str):
             yield session
 
 
-@asynccontextmanager
-async def mcp_stdio_session(server_params: StdioServerParameters):
-    """Context manager that yields an initialized MCP ClientSession over stdio."""
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            yield session
-
-
 def parse_tool_result(result) -> dict:
     """Parse a CallToolResult into a dict with success/error/result keys."""
     assert not result.isError, f"Tool call returned error: {result}"
@@ -215,6 +208,39 @@ class StaticModeTestBase:
             tables_text = str(data["result"]).lower()
             assert "lineorder" in tables_text
             assert "customer" in tables_text
+
+    async def test_catalog_pagination_preserves_legacy_calls_and_continuation(self):
+        """Exercise optional pagination through the actual MCP client/server stack."""
+        async with self._session() as session:
+            legacy = parse_tool_result(await session.call_tool("list_tables", {}))
+            assert legacy["success"] == 1, legacy
+            assert isinstance(legacy["result"], list)
+            assert len(legacy["result"]) > 2
+            first = parse_tool_result(await session.call_tool("list_tables", {"page_size": 2}))
+            assert first["success"] == 1, first
+            page = first["result"]
+            assert len(page["items"]) == 2
+            assert page["total"] == len(legacy["result"])
+            assert page["has_more"] is True
+            items = list(page["items"])
+            snapshot_id = page["extra"]["snapshot_id"]
+            while page["has_more"]:
+                assert page["extra"]["next_offset"] == len(items)
+                result = parse_tool_result(
+                    await session.call_tool(
+                        "list_tables",
+                        {"snapshot_id": snapshot_id, "offset": page["extra"]["next_offset"], "page_size": 2},
+                    )
+                )
+                assert result["success"] == 1, result
+                page = result["result"]
+                assert page["extra"]["snapshot_id"] == snapshot_id
+                assert 0 < len(page["items"]) <= 2
+                items.extend(page["items"])
+            assert sorted(items, key=lambda item: item["qualified_name"]) == sorted(
+                legacy["result"], key=lambda item: item["qualified_name"]
+            )
+            assert page["extra"]["next_offset"] is None
 
     async def test_describe_table(self):
         """Verify describe_table returns column information for the customer table."""
@@ -411,6 +437,7 @@ class TestStaticModeSSE(StaticModeTestBase):
 
 @pytest.mark.asyncio
 @pytest.mark.nightly
+@pytest.mark.timeout(90)
 class TestStaticModeStdio(StaticModeTestBase):
     """Test DatusMCPServer in static mode using stdio transport."""
 
@@ -433,17 +460,17 @@ class TestStaticModeStdio(StaticModeTestBase):
         )
 
     @pytest_asyncio.fixture(autouse=True)
-    async def verify_subprocess(self):
-        """Pre-flight check: verify stdio reaches the MCP initialized state."""
-        try:
-            async with mcp_stdio_session(self._server_params()) as session:
-                result = await session.list_tools()
-                assert result.tools, "MCP stdio readiness probe returned no tools"
-        except Exception as exc:
-            pytest.fail(f"MCP stdio readiness probe failed: {exc!r}")
+    async def verify_subprocess(self, request):
+        """Keep the initialized pre-flight process alive for this test only."""
+        root = Path(request.config.rootpath) / "test-results" / "mcp"
+        root.mkdir(parents=True, exist_ok=True)
+        diagnostics = Path(tempfile.mkdtemp(prefix=f"{request.node.name}-", dir=root))
+        self._stdio_server = StdioTestServer(self._server_params(), diagnostics)
+        async with self._stdio_server.running():
+            yield
 
     def _session(self):
-        return mcp_stdio_session(self._server_params())
+        return self._stdio_server.session()
 
 
 # =============================================================================

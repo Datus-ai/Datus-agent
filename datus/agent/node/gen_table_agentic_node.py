@@ -12,6 +12,7 @@ tool set (the unified ``execute_sql`` tool via the standard DB tools) and the
 permission profile category map.
 """
 
+import json
 from typing import ClassVar, Optional
 
 from datus.agent.node.deliverable_node import DeliverableAgenticNode
@@ -37,6 +38,30 @@ class GenTableAgenticNode(DeliverableAgenticNode):
     PROMPT_TEMPLATE: ClassVar[str] = "gen_table_system"
     ACTION_TYPE: ClassVar[str] = "gen_table_response"
     DEFAULT_MAX_TURNS: ClassVar[int] = 100
+
+    def continuation_target_error(self) -> Optional[str]:
+        """Reject a resume that would silently rebind writes to another target."""
+        from datus.schemas.database_context import (
+            EXECUTION_CONTEXT_META_KEY,
+            DatabaseExecutionContext,
+            execution_context_for_node,
+        )
+
+        saved = self.session_manager.load_session_meta(self.session_id, EXECUTION_CONTEXT_META_KEY)
+        try:
+            previous = DatabaseExecutionContext.from_mapping(json.loads(saved)) if saved else None
+        except (TypeError, ValueError, AttributeError):
+            previous = None
+        if previous is None or not previous.datasource:
+            return "The original table's execution target is unavailable. Establish its exact datasource and database before continuing in a new specialist session."
+        current = execution_context_for_node(self.agent_config, self.input)
+        if previous != current:
+            return (
+                f"The table session is bound to {previous.identity}, but this turn targets {current.identity}. "
+                "No continuation was executed. Restore the original execution target, or obtain an explicit "
+                "decision about the different target before starting a new specialist session."
+            )
+        return None
 
     def _setup_domain_tools(self) -> None:
         """Standard DB tools, including the unified ``execute_sql`` tool. No transfer.

@@ -18,6 +18,26 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+
+async def drain_to_thread(function, /, *args, **kwargs):
+    """Defer cancellation until a worker has stopped using borrowed resources."""
+    worker = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        # Retrieve a worker exception even when cancellation wins the request.
+        if not worker.cancelled():
+            worker.exception()
+        raise
+
+
 # Thread-local storage for tracking nested calls and loop ownership
 _local = threading.local()
 

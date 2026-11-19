@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Set, Union
 
+from datus.configuration.legacy_tool_names import expand_replaced_tools
 from datus.configuration.logging_config import LoggingConfig
 from datus.configuration.project_config import PluginActivation
 from datus.observability.config import ObservabilityConfig
@@ -296,6 +297,8 @@ class KbSearchConfig:
 
 @dataclass
 class DbConfig:
+    # Stable datasource identity supplied by the host; never a runtime/KB namespace.
+    datasource_id: str = ""
     path_pattern: str = field(default="", init=True)
     type: str = field(default="", init=True)
     uri: str = field(default="", init=True)
@@ -315,7 +318,8 @@ class DbConfig:
     extra: Optional[Dict] = field(default=None, init=True)  # Adapter-specific fields stored here
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        # Artifact routing metadata is not a database adapter option.
+        return {key: value for key, value in asdict(self).items() if key != "datasource_id"}
 
     @staticmethod
     def filter_kwargs(cls, kwargs) -> "DbConfig":
@@ -433,8 +437,11 @@ class ModelConfig:
     context_length: Optional[int] = None
     max_tokens: Optional[int] = None
     tokenizer_ref: Optional[str] = None
+    supports_image_input: Optional[bool] = None
 
     def __post_init__(self) -> None:
+        if self.supports_image_input is not None and not isinstance(self.supports_image_input, bool):
+            raise ValueError("supports_image_input must be a boolean")
         for name in ("context_length", "max_tokens"):
             value = getattr(self, name)
             if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value <= 0):
@@ -694,7 +701,7 @@ logger = get_logger(__name__)
 
 def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
     uri = resolve_env(str(db_config["uri"]))
-    known_fields = {"uri", "name", "type", "schema", "default"}
+    known_fields = {"uri", "name", "type", "schema", "default", "datasource_id"}
     extra = {
         key: _resolve_nested_value(value)
         for key, value in db_config.items()
@@ -709,6 +716,7 @@ def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
     if not uri.startswith(dialect):
         uri = f"{dialect}:///{os.path.expanduser(uri)}"
     return DbConfig(
+        datasource_id=resolve_env(str(db_config.get("datasource_id") or "")),
         type=dialect,
         uri=uri,
         database=db_name,
@@ -783,6 +791,7 @@ class AgentConfig:
     logging: LoggingConfig
     observability: ObservabilityConfig
     mcp_tool_execution: Dict[str, int]
+    bulk_query: Dict[str, int]
 
     def __init__(self, nodes: Dict[str, NodeConfig], **kwargs):
         """
@@ -797,6 +806,11 @@ class AgentConfig:
             )
         # Resolve home early so dependent helpers can use a stable path manager.
         self.home = kwargs.get("home", "~/.datus")
+        from datus.tools.db_tools.query_spool import QueryLimits
+
+        bulk_query = kwargs.get("bulk_query")
+        QueryLimits.from_dict(bulk_query)
+        self.bulk_query = dict(bulk_query or {})
         mcp_execution_raw = kwargs.get("mcp_tool_execution")
         if mcp_execution_raw is not None and not isinstance(mcp_execution_raw, Mapping):
             logger.warning(
@@ -820,6 +834,10 @@ class AgentConfig:
         else:
             self._project_name = _normalize_project_name(str(resolved_project_root))
         self._project_root = resolved_project_root
+        # Artifact output can be separate from the immutable context/KB root.
+        self.artifact_output_root = kwargs.get("artifact_output_root")
+        self.session_dir_scoped = kwargs.get("session_dir_scoped", False)
+        self.artifact_slug_factory = kwargs.get("artifact_slug_factory")
         self._set_path_manager(self.home)
 
         # Runtime override for prompt-template resolution, honored by
@@ -1074,6 +1092,8 @@ class AgentConfig:
                 )
             if not raw_config.get("system_prompt"):
                 raw_config["system_prompt"] = name
+            if "tools" in raw_config:
+                raw_config["tools"] = expand_replaced_tools(name, raw_config["tools"])
 
         self.benchmark_configs: Dict[str, BenchmarkConfig] = {}
         self.schema_linking_rate = kwargs.get("schema_linking_rate", "fast")
@@ -1455,6 +1475,10 @@ class AgentConfig:
                     db_config = _parse_single_file_db(db_config_dict, db_type)
                     db_config.default = is_default
                     self.services.datasources[db_name] = db_config
+                if db_name in self.services.datasources:
+                    self.services.datasources[db_name].datasource_id = resolve_env(
+                        str(db_config_dict.get("datasource_id") or "")
+                    )
             else:
                 db_config = DbConfig.filter_kwargs(DbConfig, db_config_dict)
                 db_config.default = is_default
@@ -2932,6 +2956,15 @@ def _db_config_to_dosi_profile(db_config: Optional[DbConfig]) -> Optional[Dict[s
             if value is None or value == "":
                 continue
             dosi_db_config.setdefault(key, value)
+    if dosi_db_config.get("type") in {"greenplum", "spark"}:
+        from datus.tools.semantic_tools.dosi.dialects import normalize_dialect
+
+        dosi_db_config["type"] = normalize_dialect(dosi_db_config["type"])
+    schema_name = dosi_db_config.pop("schema_name", None)
+    if "schema" not in dosi_db_config and schema_name:
+        dosi_db_config["schema"] = schema_name
+    if dosi_db_config.get("type") == "oracle" and dosi_db_config.get("service_name"):
+        dosi_db_config["database"] = dosi_db_config["service_name"]
     return dosi_db_config
 
 
@@ -3106,6 +3139,7 @@ def load_model_config(data: dict) -> ModelConfig:
         context_length=data.get("context_length"),
         max_tokens=data.get("max_tokens"),
         tokenizer_ref=data.get("tokenizer_ref"),
+        supports_image_input=data.get("supports_image_input"),
     )
 
 

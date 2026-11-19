@@ -159,6 +159,64 @@ def extract_table_names(sql, dialect="snowflake", ignore_empty=False) -> List[st
     return _table_names_from_expression(parsed, dialect=dialect, ignore_empty=ignore_empty)
 
 
+def extract_table_names_for_scope(sql: str, dialect: str) -> List[str]:
+    """Physical SQL identifiers with their component boundaries preserved.
+
+    Display-oriented extraction drops quotes and can turn a literal dot into a
+    namespace separator. Scope checks also need lexical CTE resolution: a CTE
+    named ``orders`` must not hide a physical ``private.orders`` reference.
+    """
+    analyzer = _registry_hook("get_sql_analyzer", dialect)
+    if analyzer is not None:
+        return list(analyzer(sql).require_complete().tables)
+    from sqlglot.optimizer.scope import Scope, traverse_scope
+
+    read_dialect = parse_read_dialect(dialect)
+    parsed = sqlglot.parse_one(sql, read=read_dialect, error_level=sqlglot.ErrorLevel.RAISE)
+    if parsed is None:
+        raise ValueError("SQL parser returned no expression")
+    original_tables = {
+        id(table): ".".join(part.sql(dialect=read_dialect) for part in table.parts) for table in parsed.find_all(Table)
+    }
+    # Scope dictionaries use strings, so construct them from dialect identities:
+    # PostgreSQL Foo == foo, but "Foo" != foo; Snowflake folds the other way.
+    # Normalize identifiers directly: SQL comments must not opt out through
+    # sqlglot's case_sensitive metadata. Keep original spellings for table ACLs.
+    sql_dialect = sqlglot.Dialect.get_or_raise(read_dialect)
+    for identifier in parsed.find_all(expressions.Identifier):
+        sql_dialect.normalize_identifier(identifier)
+    if read_dialect in {"sqlite", "tsql", "snowflake", "oracle"}:
+        # These engines allow recursive CTEs without the RECURSIVE keyword.
+        # This affects lexical analysis only; the submitted SQL is unchanged.
+        for with_clause in parsed.find_all(expressions.With):
+            with_clause.set("recursive", True)
+    # Exclude only references resolved to a virtual source in their own scope.
+    # Scopes enumerate query sources, not DML/DDL targets: starting with all
+    # Table nodes also keeps UPDATE/INSERT/DELETE targets with subqueries checked.
+    virtual_references = set()
+    for scope in traverse_scope(parsed):
+        # selected_sources omits SEMI/ANTI join relations. Relation-root scopes
+        # (e.g. UPDATE ... FROM cte) expose the reference as the expression.
+        references = list(scope.tables)
+        if isinstance(scope.expression, Table):
+            references.append(scope.expression)
+        for table in references:
+            source = scope.sources.get(table.alias_or_name)
+            # An alias/name can be shared by a CTE and a physical table in the
+            # same scope. Only an unqualified reference to that exact CTE may
+            # be excluded; qualification always denotes a physical relation.
+            # SELECT INTO targets are in scope.tables too, but are never CTE reads.
+            if (
+                not isinstance(table.parent, expressions.Into)
+                and not table.db
+                and not table.catalog
+                and isinstance(source, Scope)
+                and scope.cte_sources.get(table.name) is source
+            ):
+                virtual_references.add(id(table))
+    return sorted({name for identity, name in original_tables.items() if identity not in virtual_references})
+
+
 def extract_table_names_strict(sql, dialect="snowflake", ignore_empty=False) -> List[str]:
     """Extract table names and raise when sqlglot cannot parse the SQL."""
     analyzer = _registry_hook("get_sql_analyzer", dialect)
@@ -696,7 +754,7 @@ def looks_like_sql_file_ref(text: str) -> bool:
     return bool(s) and s.endswith(".sql") and not any(char.isspace() for char in s)
 
 
-def read_workspace_sql_file(file_path: str, workspace_root: str) -> str:
+def read_workspace_sql_file(file_path: str, workspace_root: str, *, path_allowed=None) -> str:
     """Read a workspace-relative ``.sql`` file, rejecting unsafe paths.
 
     Shared by ``DBFuncTool._read_sql_from_file`` (execution) and
@@ -713,10 +771,17 @@ def read_workspace_sql_file(file_path: str, workspace_root: str) -> str:
     if ".." in file_path:
         raise ValueError(f"Invalid SQL file path: {file_path}")
     root = os.path.expanduser(workspace_root or ".")
+    if path_allowed is not None and os.name == "posix":
+        from datus.utils.project_files import ProjectFiles
+
+        with ProjectFiles(Path(root)) as project:
+            return project.read_sql(file_path, None, path_allowed=path_allowed)[0]
     full_path = (Path(root) / file_path).resolve()
     root_resolved = Path(root).resolve()
     if not str(full_path).startswith(str(root_resolved) + os.sep) and full_path != root_resolved:
         raise ValueError(f"SQL file path escapes workspace: {file_path}")
+    if path_allowed is not None and not path_allowed(full_path):
+        raise ValueError("SQL file is outside scoped_context.project_files.")
     if not full_path.exists():
         raise FileNotFoundError(file_path)
     return full_path.read_text(encoding="utf-8")
@@ -1047,12 +1112,10 @@ _DDL_KIND_KEYWORDS: Dict[str, str] = {
 def deployment_read_only_refusal(agent_config: Any, sql: str, dialect: str) -> Optional[str]:
     """Refusal message when ``agent.sql_read_only`` forbids ``sql``, else ``None``.
 
-    For the paths that reach a connector directly instead of going through
-    ``DBFuncTool`` — the workflow ``execute_sql`` node and the output tool's
-    revised-SQL check. Those bypass every tool-layer gate, so without this the
-    deployment-wide switch simply does not apply to them, and the promise in
-    ``docs/configuration/sql_policy.md`` that no entry point may run a non-read
-    statement is false.
+    For paths that reach a connector directly instead of going through
+    ``DBFuncTool``, including manual CLI SQL, the workflow ``execute_sql`` node
+    and the output tool's revised-SQL check. Check the effective SQL at each
+    execution boundary so the deployment switch also covers these callers.
 
     Lives here, next to the checks themselves, so the next direct-connector
     caller has one obvious thing to call rather than a fourth hand-rolled copy
@@ -1069,7 +1132,7 @@ def deployment_read_only_refusal(agent_config: Any, sql: str, dialect: str) -> O
     if not violation:
         return None
     logger.warning(
-        "workflow SQL rejected by read-only policy",
+        "SQL rejected by deployment read-only mode",
         sql_type=sql_type.value,
         source="deployment",
         rule=violation,

@@ -13,7 +13,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Iterator, Mapping, Optional, Sequence
+from typing import Any, Callable, ContextManager, Iterator, Mapping, Optional, Sequence
 
 _CURRENT_TRACE_CONTEXT: contextvars.ContextVar[Optional["TraceContext"]] = contextvars.ContextVar(
     "datus_trace_context",
@@ -33,6 +33,48 @@ TRACE_IDENTITY_ATTRIBUTE_PREFIX = "datus.identity."
 TraceIdentityProvider = Any  # Callable[[], Mapping[str, Any]]
 
 _TRACE_IDENTITY_PROVIDER: Optional[TraceIdentityProvider] = None
+
+TraceRunScopeProvider = Callable[[], ContextManager[Any]]
+_TRACE_RUN_SCOPE_PROVIDER: Optional[TraceRunScopeProvider] = None
+
+
+def set_trace_run_scope_provider(provider: Optional[TraceRunScopeProvider]) -> None:
+    """Register a host-owned scope spanning each logical Agent run.
+
+    Hosts can pin immutable tracing settings here without putting credentials
+    or deployment policy in AgentConfig. The synchronous scope is entered in
+    the run's context, so ContextVars propagate to child tasks and worker
+    threads. Nested contexts which reuse the current trace do not enter again.
+    Passing ``None`` restores standalone Agent behavior. Scope failures never
+    change a run's result or replace its exception.
+    """
+    global _TRACE_RUN_SCOPE_PROVIDER
+    _TRACE_RUN_SCOPE_PROVIDER = provider
+
+
+@contextlib.contextmanager
+def _host_trace_run_scope() -> Iterator[None]:
+    """Keep host policy entered for the run without changing business failures.
+
+    Host setup and cleanup errors are isolated. Closing without the body's
+    exception prevents a host context manager from suppressing that exception.
+    """
+    stack = contextlib.ExitStack()
+    try:
+        if _TRACE_RUN_SCOPE_PROVIDER is not None:
+            stack.enter_context(_TRACE_RUN_SCOPE_PROVIDER())
+    except Exception:
+        # Host telemetry is best effort; errors may contain private settings.
+        pass
+    try:
+        yield
+    finally:
+        try:
+            # Close outside the business exception path so a host scope cannot
+            # suppress a run failure or substitute its own cleanup exception.
+            stack.close()
+        except Exception:
+            pass
 
 
 def set_trace_identity_provider(provider: Optional[TraceIdentityProvider]) -> None:
@@ -182,6 +224,12 @@ def reset_trace_context(token: contextvars.Token[Optional[TraceContext]]) -> Non
 
 @contextlib.contextmanager
 def trace_context(ctx: Optional[TraceContext], *, replace: bool = False) -> Iterator[None]:
+    """Bind identity, model-call attribution, and host policy for a logical run.
+
+    Nested contexts reuse the current run unless ``replace=True``. An entered
+    scope spans the body's entire lifetime, including generator yields, and
+    restores the previous identity and logging context on exit or failure.
+    """
     if ctx is None or (get_trace_context() is not None and not replace):
         yield
         return
@@ -193,7 +241,10 @@ def trace_context(ctx: Optional[TraceContext], *, replace: bool = False) -> Iter
     token = set_trace_context(ctx)
     log_tokens = structlog.contextvars.bind_contextvars(session_id=ctx.session_id, operation=ctx.name)
     try:
-        with observation_run(run_id=ctx.metadata.get("run_id") or ctx.metadata.get("benchmark_run_id")):
+        with (
+            _host_trace_run_scope(),
+            observation_run(run_id=ctx.metadata.get("run_id") or ctx.metadata.get("benchmark_run_id")),
+        ):
             yield
     finally:
         structlog.contextvars.reset_contextvars(**log_tokens)

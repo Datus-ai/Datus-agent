@@ -3,6 +3,8 @@
 
 """Unit tests for datus.gateway.bridge.ChannelBridge."""
 
+import asyncio
+import itertools
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -29,6 +31,7 @@ from datus.gateway.models import (
     ReactionEvent,
     Verbose,
 )
+from datus.models.session_manager import SessionManager
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -218,6 +221,89 @@ class TestChannelBridge:
         sid = bridge.build_session_id(msg)
         assert sid == "gateway_ch1--conv1--t42"
 
+    def test_session_keys_are_injective_and_validator_safe(self, setup):
+        bridge, _, _ = setup
+        combinations = list(
+            itertools.product(
+                ["ch1", "a--b", "a-", "a", "用户"],
+                ["conv1", "b--c", "-b", "b", "c", "chat@tenant"],
+                [None, "", "scope", "b--c"],
+                [None, "", "scope", "b--c"],
+            )
+        )
+        messages = [
+            _make_inbound().model_copy(
+                update=dict(zip(["channel_id", "conversation_id", "thread_id", "session_scope"], values))
+            )
+            for values in combinations
+        ]
+        assert len({bridge._conversation_key(msg) for msg in messages}) == len(combinations)
+        ids = [bridge.build_session_id(msg) for msg in messages]
+        assert len(set(ids)) == len(combinations)
+        assert all(SessionManager._validate_session_id(session_id) == session_id for session_id in ids)
+
+    @pytest.mark.parametrize("conversation", ["user@tenant", "讨论组", "folder/name", "path\\name"])
+    def test_invalid_legacy_session_id_uses_bounded_digest(self, setup, conversation):
+        bridge, _, _ = setup
+        msg = _make_inbound().model_copy(update={"conversation_id": conversation})
+        session_id = bridge.build_session_id(msg)
+        assert not session_id.startswith("gateway_")
+        assert SessionManager._validate_session_id(session_id) == session_id
+        assert len(session_id) <= 80
+
+    def test_long_scoped_session_creates_a_real_file(self, setup, tmp_path):
+        bridge, _, _ = setup
+        msg = _make_inbound().model_copy(update={"conversation_id": "讨论组" * 200, "session_scope": "user" * 200})
+        session_id = bridge.build_session_id(msg)
+        manager = SessionManager(session_dir=str(tmp_path))
+        session = manager.create_session(session_id)
+        try:
+            assert (tmp_path / f"{session_id}.db").is_file()
+        finally:
+            session.close()
+
+    @pytest.mark.asyncio
+    async def test_legacy_thread_requires_verified_conversation_mapping(self, setup):
+        bridge, adapter, task_manager = setup
+        msg = _make_inbound(thread_id="1700000000.123456", chat_type="group").model_copy(
+            update={"channel_id": "team--slack"}
+        )
+        legacy = "gateway_team--slack--conv1--1700000000.123456"
+        manager = SessionManager(session_dir=bridge._agent_config.session_dir)
+        session = manager.create_session(legacy)
+        try:
+            await session.add_items([{"role": "user", "content": "existing Slack history"}])
+            assert bridge.build_session_id(msg) != legacy
+            owner = '["team--slack","conv1","1700000000.123456",null]'
+            manager.save_session_meta(legacy, "gateway_conversation_key", owner)
+            assert bridge.build_session_id(msg) == legacy
+            task_manager.start_chat = AsyncMock(return_value=MagicMock())
+
+            async def consume_events(task):
+                yield _make_sse_message("continued")
+
+            task_manager.consume_events = consume_events
+            await bridge.handle_message(msg, adapter)
+            assert task_manager.start_chat.call_args.args[1].session_id == legacy
+            other = msg.model_copy(update={"channel_id": "team", "conversation_id": "slack--conv1"})
+            assert bridge.build_session_id(other) != legacy
+            task_manager.start_chat.reset_mock()
+            await bridge.handle_message(other, adapter)
+            task_manager.start_chat.assert_not_awaited()
+        finally:
+            session.close()
+
+    def test_verified_legacy_owner_also_blocks_an_ordinary_colliding_tuple(self, setup):
+        bridge, _, _ = setup
+        manager = SessionManager(session_dir=bridge._agent_config.session_dir)
+        session = manager.create_session("gateway_a--b--c")
+        try:
+            manager.save_session_meta("gateway_a--b--c", "gateway_conversation_key", '["a--b","c",null,null]')
+            msg = _make_inbound(thread_id="c").model_copy(update={"channel_id": "a", "conversation_id": "b"})
+            assert bridge.build_session_id(msg) != "gateway_a--b--c"
+        finally:
+            session.close()
+
     @pytest.mark.asyncio
     async def test_streams_each_event(self, setup):
         """Each SSE message event should produce a separate outbound message.
@@ -272,6 +358,71 @@ class TestChannelBridge:
 
         assert len(adapter.sent) == 1
         assert "still being processed" in adapter.sent[0].text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("repeat_count", [0, 40], ids=["single-cancel", "repeated-cancel"])
+    async def test_cancelled_chat_cleanup_has_a_fixed_deadline(self, setup, monkeypatch, caplog, repeat_count):
+        bridge, adapter, task_manager = setup
+        caplog.set_level("WARNING")
+        monkeypatch.setattr("datus.gateway.bridge._CHAT_CLEANUP_TIMEOUT", 0.05, raising=False)
+        consuming = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+
+        async def model_work():
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup_started.set()
+                await release_cleanup.wait()
+
+        model_task = asyncio.create_task(model_work())
+        chat_task = MagicMock(session_id="cancelled-session", asyncio_task=model_task)
+        task_manager.start_chat = AsyncMock(return_value=chat_task)
+        task_manager.stop_task = AsyncMock(side_effect=lambda session_id: model_task.cancel())
+
+        async def consume_events(task):
+            consuming.set()
+            await asyncio.Event().wait()
+            yield _make_sse_end()
+
+        task_manager.consume_events = consume_events
+        adapter.finalize_stream = AsyncMock()
+        handler = asyncio.create_task(bridge.handle_message(_make_inbound(), adapter))
+
+        async def repeat_cancellation():
+            for _ in range(repeat_count):
+                await asyncio.sleep(0.01)
+                handler.cancel()
+
+        repeater = None
+        try:
+            await asyncio.wait_for(consuming.wait(), 1)
+            handler.cancel()
+            await asyncio.wait_for(cleanup_started.wait(), 1)
+            repeater = asyncio.create_task(repeat_cancellation())
+            await asyncio.wait({handler}, timeout=0.3)
+            assert handler.done()
+            assert handler.cancelled()
+            assert not model_task.done()
+            # Abandon only the wait; do not interrupt model cleanup a second time.
+            assert model_task.cancelling() == 1
+            task_manager.stop_task.assert_awaited_once_with("cancelled-session")
+            adapter.finalize_stream.assert_awaited_once()
+            assert adapter.reactions_removed
+            assert adapter.reactions_added[-1][2] == ERROR_EMOJI
+            assert "Chat cleanup timed out" in caplog.text
+        finally:
+            if repeater is not None:
+                repeater.cancel()
+                await asyncio.gather(repeater, return_exceptions=True)
+            release_cleanup.set()
+            # Setup failures may leave a task before its cleanup checkpoint.
+            if not handler.done():
+                handler.cancel()
+            if not model_task.done() and not cleanup_started.is_set():
+                model_task.cancel()
+            await asyncio.gather(handler, model_task, return_exceptions=True)
 
     @pytest.mark.asyncio
     async def test_no_response_fallback(self, setup):
@@ -375,6 +526,7 @@ class TestChannelBridge:
         with patch("datus.gateway.bridge.SessionManager") as mock_sm_cls:
             mock_sm = MagicMock()
             mock_sm.session_exists.return_value = True
+            mock_sm.load_session_meta.return_value = None
             mock_sm_cls.return_value = mock_sm
             await bridge.handle_message(_make_inbound("/new", message_id="m2"), adapter)
             mock_sm.clear_session.assert_called_once_with(first_session)

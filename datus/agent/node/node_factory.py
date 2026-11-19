@@ -8,13 +8,50 @@ Shared factory functions for creating interactive agentic nodes and their inputs
 Used by CLI print mode and interactive REPL to avoid duplicating node creation logic.
 """
 
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Callable, Literal, Optional
 
 from datus.schemas.at_context import apply_at_context
+from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
+from datus.utils.loggings import get_logger
 from datus.utils.node_utils import validate_node_class
 
 if TYPE_CHECKING:
     from datus.configuration.agent_config import AgentConfig
+
+
+logger = get_logger(__name__)
+
+
+def _configured_agentic_node_names(agent_config: "AgentConfig") -> frozenset[str]:
+    agentic_nodes = getattr(agent_config, "agentic_nodes", None)
+    if not agentic_nodes or not hasattr(agentic_nodes, "keys"):
+        return frozenset()
+    return frozenset(str(name) for name in agentic_nodes.keys())
+
+
+def _visible_subagent_names(agent_config: "AgentConfig") -> frozenset[str]:
+    visible_names = set(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS)
+    agentic_nodes = getattr(agent_config, "agentic_nodes", None)
+    if not agentic_nodes or not hasattr(agentic_nodes, "items"):
+        return frozenset(visible_names)
+
+    current_db = getattr(agent_config, "current_datasource", None)
+    for name, sub_config in agentic_nodes.items():
+        name = str(name)
+        if name in SYS_SUB_AGENTS or name == "chat":
+            continue
+        if hasattr(sub_config, "model_dump"):
+            sub_config = sub_config.model_dump()
+        if isinstance(sub_config, dict):
+            scoped_context = sub_config.get("scoped_context") or {}
+            if hasattr(scoped_context, "model_dump"):
+                scoped_context = scoped_context.model_dump()
+            if isinstance(scoped_context, dict):
+                scoped_datasource = scoped_context.get("datasource")
+                if scoped_datasource and scoped_datasource != current_db:
+                    continue
+        visible_names.add(name)
+    return frozenset(visible_names)
 
 
 def create_interactive_node(
@@ -26,6 +63,7 @@ def create_interactive_node(
     execution_mode: Literal["interactive", "workflow"] = "interactive",
     node_id: Optional[str] = None,
     session_id: Optional[str] = None,
+    on_warning: Optional[Callable[[str], None]] = None,
 ):
     """Create an interactive agentic node based on subagent_name.
 
@@ -44,10 +82,47 @@ def create_interactive_node(
             before the first turn, rehydrating persisted plan-mode fields. When
             omitted, the node eagerly generates a fresh ``session_id`` in its
             ``__init__``.
+        on_warning: Optional callback for warnings the caller should show its
+            user. The CLI logs to file only, so a logged warning alone never
+            reaches the terminal or the print-mode JSON stream.
     """
     if subagent_name:
+        from datus.agent.agent_registry import resolve_configurable_agent
+
+        definition = resolve_configurable_agent(subagent_name, agent_config)
+        if definition is not None:
+            from datus.agent.node.configurable_agentic_node import ConfigurableAgenticNode
+
+            return ConfigurableAgenticNode(
+                node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
+                description=definition.spec.description,
+                agent_config=agent_config,
+                node_name=subagent_name,
+                execution_mode=execution_mode,
+                scope=scope,
+                session_id=session_id,
+            )
         node_class_type = _resolve_node_class_type(subagent_name, agent_config)
         validate_node_class(node_class_type, subagent_name)
+
+        kind = node_class_type or subagent_name
+        if kind in {"analytics_explorer", "analytics_builder"}:
+            from datus.agent.node.analytics_agentic_node import (
+                AnalyticsBuilderAgenticNode,
+                AnalyticsExplorerAgenticNode,
+            )
+
+            cls = AnalyticsBuilderAgenticNode if kind == "analytics_builder" else AnalyticsExplorerAgenticNode
+            return cls(
+                node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
+                description=f"Analytics node for {subagent_name}",
+                node_type=kind,
+                agent_config=agent_config,
+                node_name=subagent_name,
+                scope=scope,
+                execution_mode=execution_mode,
+                session_id=session_id,
+            )
 
         if subagent_name == "semantic_modeling":
             from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
@@ -239,6 +314,19 @@ def create_interactive_node(
             )
 
         else:
+            # A configured agent scoped to another datasource is not available here,
+            # so recognize only the names visible for the current datasource.
+            visible_names = _visible_subagent_names(agent_config)
+            if subagent_name not in SYS_SUB_AGENTS and subagent_name not in visible_names:
+                available_names = ", ".join(sorted(visible_names))
+                warning = (
+                    f"Unknown subagent {subagent_name!r}; falling back to gen_sql. "
+                    f"Available subagents: {available_names}"
+                )
+                logger.warning(warning)
+                if on_warning is not None:
+                    on_warning(warning)
+
             from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
             return GenSQLAgenticNode(
@@ -342,6 +430,19 @@ def _build_typed_node_input(
     source_session_id: Optional[str] = None,
 ):
     """Construct the node-type-specific input object (no @-context wiring)."""
+    from datus.agent.node.configurable_agentic_node import ConfigurableAgenticNode
+
+    if isinstance(node, ConfigurableAgenticNode):
+        from datus.schemas.configurable_agentic_node_models import ConfigurableNodeInput
+
+        return ConfigurableNodeInput(
+            user_message=user_message,
+            catalog=catalog,
+            database=database,
+            db_schema=db_schema,
+            prompt_language=prompt_language,
+            plan_mode=plan_mode,
+        )
     from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
     from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
     from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode

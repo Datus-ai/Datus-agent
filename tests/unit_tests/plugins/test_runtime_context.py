@@ -715,3 +715,32 @@ def test_concurrent_tenants_keep_profiles_isolated_on_redirect_path(monkeypatch,
         "tenant-b-secret",
     ]
     assert runtime_context.RUNTIME_CONTEXT_ENV not in os.environ
+
+
+def test_parent_logging_reaches_managed_command_and_delegate(monkeypatch, tmp_path):
+    """Authoritative redaction survives the existing command-scoped and delegate bridges."""
+    from datus.configuration.logging_config import LoggingConfig
+
+    plugin_dir = tmp_path / "hello"
+    plugin_dir.mkdir()
+    monkeypatch.setattr(runtime_context, "_resolve_plugin_path", lambda config, name: plugin_dir)
+    config = _Config()
+    config.logging = LoggingConfig(redact={"enabled": True, "fields": ["tenant_secret"], "patterns": ["TENANT_[A-Z]+"]})
+    prepared = runtime_context.prepare_plugin_invocation("datus hello status", config)
+    primary = runtime_context.PluginRuntimeContext.decode(prepared.env[_CTX], expected_plugin="hello")
+    assert primary.logging == {"level": "INFO", "redact": config.logging.redact}
+    composed = runtime_context.PluginRuntimeContext(
+        "hello", {}, delegates={"other": runtime_context.PluginRuntimeTarget({})}, logging=primary.logging
+    )
+    delegate = runtime_context.PluginRuntimeContext.decode(composed.encode(), expected_plugin="other")
+    assert delegate.logging == primary.logging
+    assert delegate.delegates == {}
+
+
+@pytest.mark.parametrize("settings", [{"redact": "private-value"}, {"level": "private-value"}, []])
+def test_invalid_managed_logging_has_a_payload_free_error(settings):
+    """Malformed settings never expose the encoded context or offending value."""
+    encoded = runtime_context.PluginRuntimeContext("hello", {}, logging=settings).encode()
+    with pytest.raises(runtime_context.PluginRuntimeContextError, match="logging settings are invalid") as error:
+        runtime_context.PluginRuntimeContext.decode(encoded)
+    assert "private-value" not in str(error.value)

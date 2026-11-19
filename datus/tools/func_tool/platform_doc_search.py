@@ -8,6 +8,7 @@ from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 
@@ -90,6 +91,7 @@ class PlatformDocSearchTool:
         return tools
 
     @mcp_tool(availability_check="has_indexed_docs")
+    @tool_contract(access="read", direct_call=True)
     def list_document_nav(
         self,
         platform: str,
@@ -136,6 +138,7 @@ class PlatformDocSearchTool:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool(availability_check="has_indexed_docs")
+    @tool_contract(access="read", direct_call=True)
     def get_document(
         self,
         platform: str,
@@ -195,6 +198,7 @@ class PlatformDocSearchTool:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool(availability_check="has_indexed_docs")
+    @tool_contract(access="read", direct_call=True)
     def search_document(
         self,
         platform: str,

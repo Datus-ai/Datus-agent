@@ -171,7 +171,7 @@ New files are written under the active project and datasource:
 subject/semantic_models/<datasource>/<semantic_model>.yml
 ```
 
-Each authored file contains one object in the root `semantic_model` list. Group related fact and dimension datasets by business domain, such as `sales.yml` or `marketing.yml`. Choose physical or query-backed sources according to the source-selection rules above.
+Each authored file defines one model at the document root. Group related fact and dimension datasets by business domain, such as `sales.yml` or `marketing.yml`. Choose physical or query-backed sources according to the source-selection rules above.
 
 ## YAML contract
 
@@ -187,7 +187,7 @@ The principal fields are:
 
 | Object | Required or important fields | Meaning |
 | --- | --- | --- |
-| Root | `version`, `semantic_model` | OSI version and model list |
+| Root | `version`, `name`, `datasets` | Ossie version and model definition |
 | Semantic model | `name`, `datasets`; optional `description`, `ai_context`, `relationships`, `metrics`, `custom_extensions` | One business domain |
 | Dataset | `name`, `source`; optional `primary_key`, `unique_keys`, `fields`, descriptions and extensions | A physical table or reusable query |
 | Field | `name`, `expression`; optional `dimension`, `label`, descriptions and extensions | A source column or expression; dimension policy controls grouping availability |
@@ -203,73 +203,72 @@ The following model reflects that manual REPL output and passed native Dosi vali
 
 ```yaml
 version: 0.2.0.dev0
-semantic_model:
+name: bank_failures
+datasets:
   - name: bank_failures
-    datasets:
-      - name: bank_failures
-        source: main.bank_failures
-        description: Each row records one bank failure, its date, and assets at failure.
-        ai_context: Analyze bank failure counts and failed assets by time and state.
-        fields:
-          - name: bank
-            expression:
-              dialects:
-                - dialect: DUCKDB
-                  expression: Bank
-            description: Name of the failed bank.
-          - name: state
-            expression:
-              dialects:
-                - dialect: DUCKDB
-                  expression: State
-            description: US state code for the bank.
-          - name: date
-            expression:
-              dialects:
-                - dialect: DUCKDB
-                  expression: Date
-            dimension:
-              is_time: true
-            description: Date of the bank failure.
-            custom_extensions:
-              - vendor_name: DATUS
-                data: '{"v":"1.4","time_granularity":"day"}'
-          - name: assets_million
-            expression:
-              dialects:
-                - dialect: DUCKDB
-                  expression: '"Assets ($mil.)"'
-            label: Assets ($mil.)
-            description: Bank assets at failure, in millions of US dollars.
-        custom_extensions:
-          - vendor_name: DATUS
-            data: '{"v":"1.4","time_dimension":"date"}'
-
-    relationships: []
-    metrics:
-      - name: bank_failure_count
+    source: main.bank_failures
+    description: Each row records one bank failure, its date, and assets at failure.
+    ai_context: Analyze bank failure counts and failed assets by time and state.
+    fields:
+      - name: bank
         expression:
           dialects:
             - dialect: DUCKDB
-              expression: COUNT(*)
-        description: Number of bank failure events.
-        ai_context:
-          instructions: Use date as business time; group by state or time granularity when requested.
-        custom_extensions:
-          - vendor_name: DATUS
-            data: '{"v":"1.4","dataset":"bank_failures","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","count"],"unit":"banks"}'
-
-      - name: failed_assets_million
+              expression: Bank
+        description: Name of the failed bank.
+      - name: state
         expression:
           dialects:
             - dialect: DUCKDB
-              expression: SUM(bank_failures.assets_million)
-        description: Total assets of failed banks, in millions of US dollars.
-        ai_context:
-          instructions: Use date as business time and sum assets at failure.
+              expression: State
+        description: US state code for the bank.
+      - name: date
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: Date
+        dimension:
+          is_time: true
+        description: Date of the bank failure.
         custom_extensions:
           - vendor_name: DATUS
-            data: '{"v":"1.4","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","assets"],"unit":"USD million"}'
+            data: '{"v":"1.4","time_granularity":"day"}'
+      - name: assets_million
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: '"Assets ($mil.)"'
+        label: Assets ($mil.)
+        description: Bank assets at failure, in millions of US dollars.
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"v":"1.4","time_dimension":"date"}'
+
+relationships: []
+metrics:
+  - name: bank_failure_count
+    expression:
+      dialects:
+        - dialect: DUCKDB
+          expression: COUNT(*)
+    description: Number of bank failure events.
+    ai_context:
+      instructions: Use date as business time; group by state or time granularity when requested.
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"v":"1.4","dataset":"bank_failures","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","count"],"unit":"banks"}'
+
+  - name: failed_assets_million
+    expression:
+      dialects:
+        - dialect: DUCKDB
+          expression: SUM(bank_failures.assets_million)
+    description: Total assets of failed banks, in millions of US dollars.
+    ai_context:
+      instructions: Use date as business time and sum assets at failure.
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"v":"1.4","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","assets"],"unit":"USD million"}'
 ```
 
 This output comes from live schema and data checks rather than a prewritten template. It models only the four fields requested in the prompt and does not declare a key. DuckDB resolves the simple identifiers `Bank`, `State`, and `Date` without quotes; the physical name `Assets ($mil.)` requires double quotes because it contains spaces and punctuation.

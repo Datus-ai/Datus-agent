@@ -342,7 +342,7 @@ class TestGenSQLBuildSuccessResultFallback:
         # ``result.sql`` and a preview is generated.
         node = _bare_node(GenSQLAgenticNode, agent_config=None, filesystem_func_tool=None, node_config={})
         sample_sql = "SELECT 1\nFROM t\nLIMIT 1;"
-        node._collect_final_response = lambda _ahm: ("queries/q.sql", "queries/q.sql")  # type: ignore[assignment]
+        node._collect_final_response = lambda _ahm, start=0: ("queries/q.sql", "queries/q.sql")  # type: ignore[assignment]
         node._read_existing_sql_file = lambda _p: sample_sql  # type: ignore[assignment]
         ctx = _ctx()
         result = node._build_success_result(ctx)
@@ -352,7 +352,7 @@ class TestGenSQLBuildSuccessResultFallback:
 
     def test_no_file_read_when_response_inline_sql(self):
         node = _bare_node(GenSQLAgenticNode, agent_config=None, filesystem_func_tool=None, node_config={})
-        node._collect_final_response = lambda _ahm: ("hi", "SELECT 2;")  # type: ignore[assignment]
+        node._collect_final_response = lambda _ahm, start=0: ("hi", "SELECT 2;")  # type: ignore[assignment]
         ctx = _ctx()
         result = node._build_success_result(ctx)
         assert result.sql == "SELECT 2;"
@@ -361,7 +361,7 @@ class TestGenSQLBuildSuccessResultFallback:
     def test_no_file_read_when_read_returns_none(self):
         # Filesystem read fails (path missing) — keep the raw SQL string.
         node = _bare_node(GenSQLAgenticNode, agent_config=None, filesystem_func_tool=None, node_config={})
-        node._collect_final_response = lambda _ahm: ("missing.sql", "missing.sql")  # type: ignore[assignment]
+        node._collect_final_response = lambda _ahm, start=0: ("missing.sql", "missing.sql")  # type: ignore[assignment]
         node._read_existing_sql_file = lambda _p: None  # type: ignore[assignment]
         ctx = _ctx()
         result = node._build_success_result(ctx)

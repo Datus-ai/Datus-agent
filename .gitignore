@@ -1,6 +1,7 @@
 .DS_Store
 /.env
 /.venv
+/test-results/mcp/
 /.idea
 /.vscode
 /.cursor

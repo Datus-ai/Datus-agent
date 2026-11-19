@@ -312,6 +312,10 @@ function summarizeTraceDiagnostics(processDiagnostics) {
   };
 }
 
+function nightlyStatus(testExitCode, policyResult) {
+  return String(testExitCode) === '0' && policyResult === 'success' ? 'PASSED' : 'FAILED';
+}
+
 function buildNightlyFeishuMessage({
   status,
   runNumber,
@@ -424,6 +428,7 @@ function buildNightlyFeishuMessage({
 }
 
 module.exports = {
+  nightlyStatus,
   buildNightlyFeishuMessage,
   findLatestNightlyLog,
   readFailureClassification,

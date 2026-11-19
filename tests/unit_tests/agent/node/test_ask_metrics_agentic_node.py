@@ -4,14 +4,104 @@
 
 import inspect
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
+from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.node_type import NodeType
+from datus.schemas.base import BaseInput
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.query_result_text import parse_query_result_text
+
+
+@pytest.mark.parametrize("mode", ["interactive", "workflow"])
+@pytest.mark.parametrize("is_subagent", [False, True])
+def test_real_query_node_keeps_the_interaction_channel_on_rebuild(
+    real_agent_config, mock_llm_create, mode, is_subagent
+):
+    """Real query-node assembly mounts session channels independently of resource selections."""
+    from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+
+    node = AskMetricsAgenticNode(
+        node_id="interaction_reader",
+        description="Reader interaction regression",
+        node_type="ask_metrics",
+        node_name="ask_metrics",
+        agent_config=real_agent_config,
+        execution_mode=mode,
+        is_subagent=is_subagent,
+    )
+    for _ in range(2):
+        captured_tools = node.tools
+        node._compose_hooks()
+        assert captured_tools is node.tools
+        assert sum(tool.name == "ask_user" for tool in captured_tools) == int(mode == "interactive")
+        node.setup_tools()
+
+
+@pytest.mark.parametrize("mode", ["interactive", "workflow"])
+def test_custom_delegation_preserves_parent_execution_and_profile(real_agent_config, mock_llm_create, mode):
+    """The real custom-node factory preserves interactive channels and the parent's profile."""
+    from types import SimpleNamespace
+
+    from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
+    from datus.tools.permission.permission_manager import PermissionManager
+
+    real_agent_config.agentic_nodes["custom_reader"] = {"node_class": "ask_metrics", "tools": "semantic_tools.*"}
+    tool = SubAgentTaskTool(agent_config=real_agent_config)
+    tool._parent_node = SimpleNamespace(
+        execution_mode=mode, permission_manager=PermissionManager(active_profile="auto")
+    )
+    node = tool._create_node("custom_reader")
+    assert node.execution_mode == mode
+    assert node.permission_manager.active_profile == ("auto" if mode == "interactive" else "dangerous")
+    node._compose_hooks()
+    assert sum(t.name == "ask_user" for t in node.tools) == int(mode == "interactive")
+
+
+@pytest.mark.asyncio
+async def test_late_custom_question_reaches_the_already_listening_parent(real_agent_config, mock_llm_create):
+    """Mounting a child question channel must retain the parent's active collector queue."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from datus.cli.execution_state import InteractionBroker
+    from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
+    from datus.tools.permission.permission_manager import PermissionManager
+
+    real_agent_config.agentic_nodes["custom_reader"] = {"node_class": "ask_metrics", "tools": "semantic_tools.*"}
+    task = SubAgentTaskTool(agent_config=real_agent_config)
+    task._parent_node = SimpleNamespace(
+        execution_mode="interactive", permission_manager=PermissionManager(active_profile="auto")
+    )
+    node = task._create_node("custom_reader")
+    broker = InteractionBroker()
+    task._inject_broker(node, broker)
+    stream = broker.fetch()
+    received = asyncio.create_task(anext(stream))
+    question = None
+    await asyncio.sleep(0)
+    try:
+        node._compose_hooks()
+        question = asyncio.create_task(
+            node.ask_user_tool.ask_user([{"question": "Continue reading?", "options": ["Proceed", "Cancel"]}])
+        )
+        action = await asyncio.wait_for(received, timeout=1)
+        assert await broker.submit(action.action_id, [["1"]])
+        result = await asyncio.wait_for(question, timeout=1)
+        assert result.success == 1
+        assert json.loads(result.result)[0]["answer"] == "Proceed"
+    finally:
+        broker.close()
+        await asyncio.sleep(0)
+        pending = [received, *([question] if question is not None else [])]
+        for future in pending:
+            future.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        await stream.aclose()
 
 
 def _query_action(text, *, action_type="query_metrics", **extra):
@@ -39,7 +129,8 @@ def _semantic_tools():
         "get_dataset",
         "query_metrics",
         "validate_semantic",
-        "attribution_analyze",
+        "attribute_metrics",
+        "attribute_dimensions",
     ):
         setattr(tools, name, Mock(name=name))
     tools.available_tools.return_value = [
@@ -48,7 +139,8 @@ def _semantic_tools():
         _fake_function_tool(tools.get_dataset),
         _fake_function_tool(tools.query_metrics),
         _fake_function_tool(tools.validate_semantic),
-        _fake_function_tool(tools.attribution_analyze),
+        _fake_function_tool(tools.attribute_metrics),
+        _fake_function_tool(tools.attribute_dimensions),
     ]
     return tools
 
@@ -103,7 +195,8 @@ class TestAskMetricsAgenticNode:
                     "get_dataset",
                     "query_metrics",
                     "validate_semantic",
-                    "attribution_analyze",
+                    "attribute_metrics",
+                    "attribute_dimensions",
                 },
             ),
         ],
@@ -171,7 +264,11 @@ class TestAskMetricsAgenticNode:
             "get_metric",
             "get_dataset",
             "query_metrics",
-            "attribution_analyze",
+            "attribute_metrics",
+            "attribute_dimensions",
+            "read_file",
+            "glob",
+            "grep",
         ]
         assert node.subject_tree_mode == "full"
         assert node.subject_tree_metric_entries == [
@@ -194,14 +291,15 @@ class TestAskMetricsAgenticNode:
         assert "do not call `search_metrics` for metrics that match these entries directly" in prompt
         assert "When the subject tree gives a direct metric/path match" in prompt
         assert "dedicated catalog metric" in prompt
-        assert "## Attribution Playbook" in prompt
-        assert "reuse its `drill_down.where_sql`" in prompt
-        assert "Read detailed contributions from `per_dimension" in prompt
+        assert "## Explaining a Change" in prompt
+        assert "call `attribute_metrics` first, then `attribute_dimensions` on the nodes" in prompt
+        assert "Compare candidate dimensions in parallel calls" in prompt
+        assert "look inside the groups with the largest effects, of either sign" in prompt
+        assert "When the status is not complete, say so and give the reason" in prompt
         assert "`query_metrics.time_end` is inclusive" not in prompt
-        assert "If `strategy` is `unsupported`" in prompt
-        assert "`non_additive` or `truncated`" in prompt
-        assert "failed, was non-additive, or was truncated" in prompt
-        assert "`dimension_analysis_failed`" in prompt
+        # How to read a result is the tools' own description, not the prompt's.
+        for absent in ("drill_down", "per_dimension", "strategy", "non_additive", "dimension_analysis_failed"):
+            assert absent not in prompt, absent
         assert "Do not invent helper metrics" in prompt
         assert "do not add a `where` filter that enumerates dimension values" in prompt
         assert "Never pass empty JSON values" in prompt
@@ -229,7 +327,7 @@ class TestAskMetricsAgenticNode:
         for rule, tool in (
             ("Do not pass limit just to preview data", "query_metrics"),
             ("also pass order_by", "query_metrics"),
-            ("full result is cached", "query_metrics"),
+            ("Full rows are cached", "query_metrics"),
             ("never the same start and end", "query_metrics"),
             ("never repeated in `where`", "query_metrics"),
             ("follow its `suggested_retry`", "query_metrics"),
@@ -468,7 +566,11 @@ class TestAskMetricsAgenticNode:
             "get_metric",
             "get_dataset",
             "query_metrics",
-            "attribution_analyze",
+            "attribute_metrics",
+            "attribute_dimensions",
+            "read_file",
+            "glob",
+            "grep",
         ]
 
     def test_update_context_defaults_to_last_query_metrics_result(
@@ -695,7 +797,11 @@ class TestAskMetricsAgenticNode:
             "get_metric",
             "get_dataset",
             "query_metrics",
-            "attribution_analyze",
+            "attribute_metrics",
+            "attribute_dimensions",
+            "read_file",
+            "glob",
+            "grep",
         ]
 
     def test_setup_tools_handles_semantic_setup_failure(self, real_agent_config, mock_llm_create):
@@ -796,7 +902,8 @@ class TestAskMetricsAgenticNode:
             )
 
         result = node._build_success_result(
-            Mock(
+            StreamRunContext(
+                user_input=BaseInput(),
                 response_content="done",
                 last_successful_output=None,
                 action_history_manager=action_history_manager,
@@ -811,7 +918,8 @@ class TestAskMetricsAgenticNode:
         node, _, _ = _make_node(real_agent_config, tree={})
 
         result = node._build_success_result(
-            Mock(
+            StreamRunContext(
+                user_input=BaseInput(),
                 response_content="",
                 last_successful_output={"response": {"value": 10}},
                 action_history_manager=ActionHistoryManager(),
@@ -836,9 +944,86 @@ class TestAskMetricsAgenticNode:
             "get_metric",
             "get_dataset",
             "query_metrics",
-            "attribution_analyze",
+            "attribute_metrics",
+            "attribute_dimensions",
             "search_metrics",
+            "read_file",
+            "glob",
+            "grep",
         }
+
+    @pytest.mark.asyncio
+    async def test_default_file_tools_read_project_knowledge_without_write_tools(
+        self, real_agent_config, mock_llm_create
+    ):
+        from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+
+        knowledge_dir = Path(real_agent_config.project_root) / "knowledge"
+        knowledge_dir.mkdir()
+        source = knowledge_dir / "business.md"
+        source.write_text("Business context: the campaign targets managed accounts.\n", encoding="utf-8")
+        node = AskMetricsAgenticNode(
+            node_id="ask_metrics_business_files",
+            description="Read project business context",
+            node_type=NodeType.TYPE_ASK_METRICS,
+            agent_config=real_agent_config,
+            node_name="ask_metrics",
+        )
+        tools = {tool.name: tool for tool in node.tools}
+
+        assert {
+            "read_file",
+            "glob",
+            "grep",
+            "query_metrics",
+            "attribute_metrics",
+            "attribute_dimensions",
+        } <= tools.keys()
+        assert not {"write_file", "edit_file", "delete_file", "bash", "execute_sql"} & tools.keys()
+        for name, args, expected in (
+            ("glob", {"pattern": "*.md", "path": "knowledge"}, "business.md"),
+            ("grep", {"pattern": "managed accounts", "path": "knowledge"}, "business.md"),
+            ("read_file", {"path": "knowledge/business.md"}, "the campaign targets managed accounts"),
+        ):
+            result = await tools[name].on_invoke_tool(None, json.dumps(args))
+            assert result["success"] == 1, result
+            assert expected in str(result["result"])
+            assert node.tool_registry.get(name) == "filesystem_tools"
+        assert source.read_text(encoding="utf-8") == "Business context: the campaign targets managed accounts.\n"
+
+    @pytest.mark.parametrize("file_tool", [None, "read_file", "glob", "grep"])
+    def test_explicit_tool_config_controls_file_access_and_prompt(self, real_agent_config, mock_llm_create, file_tool):
+        patterns = [
+            "semantic_tools.list_metrics",
+            "semantic_tools.get_metric",
+            "semantic_tools.query_metrics",
+            "semantic_tools.attribute_metrics",
+            "semantic_tools.attribute_dimensions",
+        ]
+        if file_tool:
+            patterns.append(f"filesystem_tools.{file_tool}")
+        node, _, _ = _make_node(real_agent_config, tree={}, node_config={"tools": ",".join(patterns)})
+        names = {tool.name for tool in node.tools}
+        assert names & {"read_file", "glob", "grep"} == ({file_tool} if file_tool else set())
+
+        prompt = node._get_system_prompt()
+        if file_tool is None:
+            assert "## Project Business Knowledge" not in prompt
+            assert "consider a targeted project-file lookup" not in prompt
+        else:
+            context = prompt.split("## Project Business Knowledge", 1)[1].split("## Explaining a Change", 1)[0]
+            for name in ("read_file", "glob", "grep"):
+                assert (f"Use `{name}`" in context) == (name == file_tool)
+            assert (
+                "When they are sufficient, answer through the metric workflow without a file-discovery preflight"
+                in context
+            )
+            assert "File exploration is optional for any question" in context
+            assert "identify a specific missing fact" in context
+            assert "no need to re-read supplied background merely to repeat it" in context
+            assert ("skip clearly unrelated files" in context) == (file_tool == "glob")
+            assert "Stop once there is enough evidence to proceed" in context
+            assert "Attribution says how much each part contributed, not why" in prompt
 
     @pytest.mark.parametrize("synced", [True, False])
     def test_semantic_object_search_is_mounted_only_with_objects_to_search(
@@ -939,6 +1124,17 @@ class TestUpdateContext:
         assert ctx.row_count == 21
         # The text leaves the SQL out; the cached metadata keeps it for the workflow context.
         assert ctx.sql_query.startswith("SELECT DATE_TRUNC")
+
+    def test_rejected_scope_does_not_fall_back_to_the_action_preview(self):
+        actions = [_query_action("result_id: query_metrics:1\nrows: 1\n\nrevenue\n100")]
+        node = self._make_node_with_result(actions)
+        node.semantic_tools = MagicMock()
+        node.semantic_tools.get_cached_query_metrics_result.return_value = None
+        node.semantic_tools.can_use_query_metrics_preview.return_value = False
+        workflow = MagicMock()
+        workflow.context.sql_contexts = []
+        assert node.update_context(workflow)["success"] is False
+        assert workflow.context.sql_contexts == []
 
     def test_captures_zero_row_result(self):
         actions = [_query_action("result_id: query_metrics:1\nrows: 0\n\nmetric_time__month,order_count")]

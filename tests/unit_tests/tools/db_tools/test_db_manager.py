@@ -1,15 +1,18 @@
 """Unit tests for db_manager.py — gen_uri, _resolve_connection_context, helpers, and DBManager."""
 
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import duckdb
 import pytest
-from datus_db_core import BaseSqlConnector, DatusDbException
+from datus_db_core import BaseSqlConnector, DatusDbException, connector_registry
 from datus_db_core import ErrorCode as DbErrorCode
 
 from datus.configuration.agent_config import DbConfig
 from datus.schemas.database_context import DatabaseExecutionContext
+from datus.tools.db_tools import db_manager as db_manager_module
 from datus.tools.db_tools.config import DuckDBConfig, SQLiteConfig
 from datus.tools.db_tools.db_manager import (
     DBManager,
@@ -26,6 +29,132 @@ from datus.tools.db_tools.db_manager import (
 )
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException
+
+
+class _TrackedConnector:
+    def __init__(self):
+        self.close_count = 0
+
+    def close(self):
+        self.close_count += 1
+
+    def connect(self):
+        assert self.close_count == 0
+
+
+def test_concurrent_first_use_returns_one_connector(monkeypatch):
+    """The actual manager must publish one initialized connector for a cold key."""
+    manager = DBManager({"source": DbConfig(type="postgresql", database="db")})
+    created = []
+    start = threading.Barrier(4)
+    constructing = threading.Barrier(4)
+
+    class WaitingFuture(Future):
+        def result(self, timeout=None):
+            constructing.wait(timeout=5)
+            return super().result(timeout)
+
+    monkeypatch.setattr(db_manager_module, "Future", WaitingFuture, raising=False)
+
+    def build(config):
+        connector = _TrackedConnector()
+        created.append(connector)
+        constructing.wait(timeout=5)
+        return connector
+
+    monkeypatch.setattr(manager, "_build_conn", build)
+
+    def get(_):
+        start.wait(timeout=5)
+        return manager.get_conn("source", "db")
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        connectors = list(pool.map(get, range(4)))
+    assert len(created) == 1
+    assert all(connector is connectors[0] for connector in connectors)
+    manager.close()
+    assert created[0].close_count == 1
+
+
+def test_failed_connection_initialization_retries(monkeypatch):
+    """A construction failure leaves no cached connector or permanently blocked key."""
+    manager = DBManager({"source": DbConfig(type="postgresql", database="db")})
+    connector = _TrackedConnector()
+    build = Mock(side_effect=[RuntimeError("injected failure"), connector])
+    monkeypatch.setattr(manager, "_build_conn", build)
+    with pytest.raises(RuntimeError, match="injected failure"):
+        manager.get_conn("source", "db")
+    assert manager.get_conn("source", "db") is connector
+    assert build.call_count == 2
+    manager.close()
+
+
+def test_managed_eviction_closes_idle_connections_but_keeps_active_leases(monkeypatch):
+    """Capacity is enforced by the owner after drain; active borrowers remain usable."""
+    manager = DBManager({"source": DbConfig(type="postgresql")}, max_connections=2)
+    created = []
+
+    def build(config):
+        connector = _TrackedConnector()
+        created.append(connector)
+        return connector
+
+    monkeypatch.setattr(manager, "_build_conn", build)
+    active = manager.acquire_conn("source", "active")
+    shared = manager.acquire_conn("source", "active")
+    assert shared.connector is active.connector
+    active.release()
+    for name in ("one", "two", "three"):
+        with manager.acquire_conn("source", name) as connector:
+            connector.connect()
+    assert len(manager._conn_dict["source"]) == 2
+    assert active.connector.close_count == 0
+    assert sum(conn.close_count for conn in created) == 2
+    shared.release()
+    shared.release()
+    manager.close()
+    manager.close()
+    assert all(conn.close_count == 1 for conn in created)
+
+
+def test_close_waits_for_managed_borrowers_and_allows_later_reconnect(monkeypatch):
+    """Shutdown cannot close a leased connector; close retains legacy reopen semantics."""
+    manager = DBManager({"source": DbConfig(type="postgresql")})
+    monkeypatch.setattr(manager, "_build_conn", lambda _: _TrackedConnector())
+    lease = manager.acquire_conn("source", "db")
+    closing = threading.Event()
+
+    def close():
+        closing.set()
+        manager.close()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        finished = pool.submit(close)
+        try:
+            assert closing.wait(timeout=5)
+            assert not finished.done()
+            assert lease.connector.close_count == 0
+            with manager.acquire_conn("source", "nested") as nested:
+                nested.connect()
+                assert not finished.done()
+        finally:
+            lease.release()
+        finished.result(timeout=5)
+    assert lease.connector.close_count == 1
+    assert manager.get_conn("source", "db") is not lease.connector
+    manager.close()
+
+
+def test_legacy_connections_are_not_automatically_evicted(monkeypatch):
+    """A naked legacy connector may be retained by unknown callers."""
+    manager = DBManager({"source": DbConfig(type="postgresql")}, max_connections=1)
+    monkeypatch.setattr(manager, "_build_conn", lambda _: _TrackedConnector())
+    legacy = manager.get_conn("source", "legacy")
+    with manager.acquire_conn("source", "other"):
+        pass
+    assert legacy.close_count == 0
+    assert manager.get_conn("source", "legacy") is legacy
+    manager.close()
 
 
 def _cfg(**kwargs):
@@ -1029,6 +1158,68 @@ def test_changed_catalog_does_not_reintroduce_the_old_catalog_database_default()
         manager.get_conn("warehouse", context=context)
 
 
+@pytest.mark.parametrize("engine", ["mysql", "starrocks", "postgresql"])
+def test_resolved_context_without_a_default_database_keeps_an_unselected_connection(engine):
+    configured = DbConfig(type=engine, catalog="catalog_a")
+    manager = DBManager({"warehouse": configured})
+    manager._build_conn = Mock(
+        side_effect=lambda cfg: SimpleNamespace(database=cfg.database, catalog=cfg.catalog, schema=cfg.schema)
+    )
+    legacy = manager.get_conn("warehouse")
+    selected = manager.get_conn(
+        "warehouse", context=DatabaseExecutionContext(datasource="warehouse", catalog="catalog_a", database="selected")
+    )
+    context = DatabaseExecutionContext(datasource="warehouse", catalog="catalog_b")
+
+    unselected = manager.get_conn("warehouse", context=context)
+
+    assert (unselected.database, unselected.catalog) == ("", "catalog_b")
+    assert unselected is not selected
+    assert unselected is not legacy
+    assert manager.get_conn("warehouse", context=context) is unselected
+    assert (configured.database, configured.catalog) == ("", "catalog_a")
+    assert manager._build_conn.call_count == 3
+
+
+@pytest.mark.parametrize("engine", ["mysql", "starrocks", "postgresql"])
+def test_resolved_empty_database_cannot_restore_a_database_from_a_connection_uri(engine):
+    manager = DBManager({"warehouse": DbConfig(type=engine, uri=f"{engine}://localhost/configured")})
+    manager._build_conn = Mock()
+
+    with pytest.raises(ValueError, match="Select a database explicitly"):
+        manager.get_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse"))
+
+    manager._build_conn.assert_not_called()
+
+
+@pytest.mark.parametrize("target", [{"database": "old_database"}, {"uri": "postgresql://localhost/old_database"}])
+def test_resolved_empty_database_cannot_restore_an_extra_target(monkeypatch, target):
+    manager = DBManager({"warehouse": DbConfig(type="postgresql", username="review_user", extra=target)})
+    factory = Mock(return_value=SimpleNamespace(database_name="old_database"))
+    monkeypatch.setattr(connector_registry, "is_registered", lambda db_type: True)
+    monkeypatch.setattr(connector_registry, "create_connector", factory)
+
+    with pytest.raises(ValueError, match="Select a database explicitly"):
+        manager.get_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse"))
+
+    factory.assert_not_called()
+    assert not manager._conn_dict
+
+
+@pytest.mark.parametrize("database", [None, ""])
+def test_resolved_empty_database_allows_empty_extra_database(monkeypatch, database):
+    manager = DBManager(
+        {"warehouse": DbConfig(type="postgresql", username="review_user", extra={"database": database})}
+    )
+    connector = SimpleNamespace(database_name="")
+    factory = Mock(return_value=connector)
+    monkeypatch.setattr(connector_registry, "is_registered", lambda db_type: True)
+    monkeypatch.setattr(connector_registry, "create_connector", factory)
+
+    assert manager.get_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse")) is connector
+    assert factory.call_args.args[1]["database"] == database
+
+
 @pytest.mark.parametrize("engine", ["postgresql", "mysql", "starrocks", "sqlite", "duckdb"])
 def test_resolved_empty_database_cannot_reuse_a_configured_or_cached_database(engine):
     configured = DbConfig(type=engine, catalog="cat_a", database="analytics", schema="tenant_a")
@@ -1148,49 +1339,81 @@ def test_duckdb_fixed_uri_can_bind_a_database_actually_attached_to_the_file(tmp_
         manager.close()
 
 
-@pytest.mark.parametrize("service_field", ["database", "service_name"])
-def test_schema_only_adapter_replays_its_captured_execution_context(service_field):
-    configured = DbConfig(
-        type="oracle",
-        database="BAASSYS" if service_field == "database" else "",
-        schema="ORIGINAL",
-        extra={"service_name": "BAASSYS"} if service_field == "service_name" else {},
-    )
+@pytest.mark.parametrize(
+    "target",
+    [
+        {"database": "BAASSYS"},
+        {"extra": {"service_name": "BAASSYS"}},
+        {"uri": "oracle://localhost/BAASSYS"},
+        {"extra": {"database": "BAASSYS"}},
+        {"extra": {"uri": "oracle://localhost/BAASSYS"}},
+    ],
+    ids=["database-alias", "service-name", "uri", "extra-database-alias", "extra-uri"],
+)
+def test_schema_only_adapter_replays_its_captured_execution_context(target):
+    configured = DbConfig(type="oracle", schema="ORIGINAL", **target)
     manager = DBManager({"warehouse": configured})
     built = []
 
     def build(config):
         built.append(config)
-        return SimpleNamespace(database_name="", catalog_name="", schema_name=config.schema)
+        connector = _TrackedConnector()
+        connector.database_name = ""
+        connector.schema_name = config.schema
+        return connector
 
     manager._build_conn = build
     with (
         patch("datus.tools.db_tools.db_manager.connector_registry.has_capabilities", return_value=True),
         patch("datus.tools.db_tools.db_manager.connector_registry.support_database", return_value=False),
     ):
-        selected = DatabaseExecutionContext(datasource="warehouse", database=configured.database, schema="TPCDS")
-        original = manager.get_conn("warehouse", context=selected)
-        assert original.database_name == ""
-        # Oracle artifact context captured by the producer: service/PDB is not a SQL database namespace.
-        captured = {"datasource": "warehouse", "catalog": "", "database": "", "schema": "TPCDS"}
-        replayed = manager.get_conn("warehouse", context=DatabaseExecutionContext.from_mapping(captured))
-        assert replayed.schema_name == "TPCDS"
-        assert built[-1].database == configured.database
-        assert built[-1].extra == configured.extra
-        assert configured.schema == "ORIGINAL"
-        other = manager.get_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse", schema="OTHER"))
-        assert other.schema_name == "OTHER"
-        assert other is not replayed
+        try:
+            selected = DatabaseExecutionContext(datasource="warehouse", database=configured.database, schema="TPCDS")
+            original = manager.get_conn("warehouse", context=selected)
+            assert original.database_name == ""
+            # Oracle artifact context captured by the producer: service/PDB is not a SQL database namespace.
+            captured = {"datasource": "warehouse", "catalog": "", "database": "", "schema": "TPCDS"}
+            replayed = manager.get_conn("warehouse", context=DatabaseExecutionContext.from_mapping(captured))
+            assert replayed.schema_name == "TPCDS"
+            assert built[-1].database == configured.database
+            assert built[-1].uri == configured.uri
+            assert built[-1].extra == configured.extra
+            assert configured.schema == "ORIGINAL"
+            other = manager.get_conn(
+                "warehouse", context=DatabaseExecutionContext(datasource="warehouse", schema="OTHER")
+            )
+            assert other.schema_name == "OTHER"
+            assert other is not replayed
+            assert manager.get_conn("warehouse", context=DatabaseExecutionContext.from_mapping(captured)) is replayed
+        finally:
+            manager.close()
 
 
 @pytest.mark.parametrize(
     "engine, has_metadata, supports_database",
-    [("unknown_adapter", False, False), ("postgresql", True, True), ("sqlite", True, False)],
+    [
+        ("unknown_adapter", False, False),
+        ("oracle", False, False),
+        ("postgresql", True, True),
+        ("sqlite", True, False),
+        ("duckdb", True, False),
+    ],
+)
+@pytest.mark.parametrize(
+    "target",
+    [
+        {"database": "configured"},
+        {"uri": "adapter://localhost/configured"},
+        {"extra": {"database": "configured"}},
+        {"extra": {"uri": "adapter://localhost/configured"}},
+        {"path_pattern": "*.db"},
+    ],
+    ids=["database", "uri", "extra-database", "extra-uri", "file-glob"],
 )
 def test_empty_database_requires_explicit_adapter_metadata_without_a_database_namespace(
-    engine, has_metadata, supports_database
+    engine, has_metadata, supports_database, target
 ):
-    manager = DBManager({"warehouse": DbConfig(type=engine, database="configured")})
+    manager = DBManager({"warehouse": DbConfig(type=engine, **target)})
     manager._build_conn = Mock()
     with (
         patch("datus.tools.db_tools.db_manager.connector_registry.has_capabilities", return_value=has_metadata),
@@ -1199,3 +1422,48 @@ def test_empty_database_requires_explicit_adapter_metadata_without_a_database_na
     ):
         manager.get_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse"))
     manager._build_conn.assert_not_called()
+
+
+def test_schema_only_metadata_cannot_select_an_implicit_file_from_a_glob():
+    manager = DBManager({"warehouse": DbConfig(type="oracle", path_pattern="*.db")})
+    manager._build_conn = Mock()
+    with (
+        patch("datus.tools.db_tools.db_manager.connector_registry.has_capabilities", return_value=True),
+        patch("datus.tools.db_tools.db_manager.connector_registry.support_database", return_value=False),
+        pytest.raises(ValueError, match="Select a database explicitly"),
+    ):
+        manager.acquire_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse"))
+    manager._build_conn.assert_not_called()
+
+
+def test_schema_only_replay_preserves_connection_leases_and_schema_isolation():
+    configured = DbConfig(type="oracle", database="BAASSYS", schema="ORIGINAL")
+    manager = DBManager({"warehouse": configured}, max_connections=1)
+
+    def build(config):
+        connector = _TrackedConnector()
+        connector.schema_name = config.schema
+        return connector
+
+    manager._build_conn = build
+    context = DatabaseExecutionContext(datasource="warehouse", schema="TPCDS")
+    other_context = DatabaseExecutionContext(datasource="warehouse", schema="OTHER")
+    with (
+        patch("datus.tools.db_tools.db_manager.connector_registry.has_capabilities", return_value=True),
+        patch("datus.tools.db_tools.db_manager.connector_registry.support_database", return_value=False),
+    ):
+        try:
+            with manager.acquire_conn("warehouse", context=context) as first:
+                with manager.acquire_conn("warehouse", context=context) as shared:
+                    assert shared is first
+                    with manager.acquire_conn("warehouse", context=other_context) as other:
+                        assert other is not first
+                        assert (first.schema_name, other.schema_name) == ("TPCDS", "OTHER")
+                    assert other.close_count == 1
+                    assert first.close_count == 0
+                assert first.close_count == 0
+            assert first.close_count == 0
+            assert configured.schema == "ORIGINAL"
+        finally:
+            manager.close()
+    assert first.close_count == 1

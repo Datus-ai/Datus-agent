@@ -263,6 +263,14 @@ class StagedEntry:
         if self.content is not None:
             return self.content if cap is None else self.content[:cap]
         assert self.source is not None
+        if self.arcname.startswith("subject/semantic_models/") and self.source.suffix.lower() in {
+            ".yaml",
+            ".yml",
+            ".json",
+        }:
+            from datus.tools.semantic_tools.dosi.files import file_engine
+
+            file_engine(self.source, allow_invalid=True)
         with open(self.source, "rb") as fh:
             return fh.read() if cap is None else fh.read(cap)
 

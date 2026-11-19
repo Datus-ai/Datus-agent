@@ -11,7 +11,7 @@ apply a scope filter at query time against the shared global storage.
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from datus_storage_base.conditions import Node, and_, eq, like, or_
 
@@ -80,6 +80,10 @@ class ScopedFilterBuilder:
         if not tokens:
             return None
 
+        # Backends can provide a fresh snapshot matcher so every token and its
+        # name fallback share one tree read, rather than reloading per match.
+        snapshot_factory = getattr(type(subject_tree), "snapshot_matcher", None)
+        matcher = subject_tree.snapshot_matcher() if callable(snapshot_factory) else None
         token_conditions: List[Node] = []
         for token in tokens:
             # Normalize '/' separators to '.' before parsing so paths like
@@ -89,7 +93,7 @@ class ScopedFilterBuilder:
             if not parts:
                 continue
 
-            cond = _subject_condition_for_parts(parts, subject_tree)
+            cond = _subject_condition_for_parts(parts, subject_tree, matcher)
             if cond is not None:
                 token_conditions.append(cond)
 
@@ -120,7 +124,9 @@ def _build_id_condition(ids: List[int]) -> Node:
     return or_(*[eq("subject_node_id", sid) for sid in unique_ids])
 
 
-def _subject_condition_for_parts(parts: List[str], subject_tree) -> Optional[Node]:
+def _subject_condition_for_parts(
+    parts: List[str], subject_tree, matcher: Optional[Callable[[List[str], bool], Optional[List[int]]]] = None
+) -> Optional[Node]:
     """Build a filter for a single subject token using two-pass resolution.
 
     Pass 1: treat all *parts* as a full subject path (descendant=True).
@@ -128,14 +134,15 @@ def _subject_condition_for_parts(parts: List[str], subject_tree) -> Optional[Nod
             treat parts[:-1] as the path and parts[-1] as the item name.
     """
     # Pass 1 - full path
-    matched_ids = subject_tree.get_matched_children_id(parts, True)
+    match = matcher or subject_tree.get_matched_children_id
+    matched_ids = match(parts, True)
     if matched_ids:
         return _build_id_condition(matched_ids)
 
     # Pass 2 - last component might be a name
     if len(parts) > 1:
         path, name = parts[:-1], parts[-1]
-        matched_ids = subject_tree.get_matched_children_id(path, False)
+        matched_ids = match(path, False)
         if matched_ids:
             return and_(_build_id_condition(matched_ids), _value_condition("name", name))
 

@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 ArtifactKind = Literal["report", "dashboard"]
 
@@ -88,13 +88,22 @@ class ArtifactManifest(BaseModel):
             "introduced deserialize cleanly with ``None``."
         ),
     )
+    datasource_ids: List[str] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def serialize_sources(self, handler):
+        result = handler(self)
+        if not self.datasources:
+            result.pop("datasources", None)
+        return result
+
     datasources: List[str] = Field(
         default_factory=list,
         description=(
-            "Distinct datasource labels referenced by this artifact's queries, populated "
-            "incrementally as ``save_query`` / ``save_query_template`` is called. Used by "
+            "Distinct datasource labels derived from the current saved query metadata at "
+            "finalize and rebuilt from the publication snapshot before publishing. Used by "
             "the subagent that gets spawned for follow-up questions to know which "
-            "connectors to bind. Stable order = first-seen order so diffs stay readable."
+            "connectors to bind. Stable order follows the saved query file order."
         ),
     )
     key_tables: List[str] = Field(

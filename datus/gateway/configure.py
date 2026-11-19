@@ -36,10 +36,15 @@ console = Console()
 ADAPTER_DEPS: Dict[str, List[str]] = {
     "feishu": ["lark-oapi"],
     "slack": ["slack-sdk[socket_mode]"],
+    "wecom": ["aiohttp"],
 }
 
 # (field_name, prompt_text, is_secret, required)
 ADAPTER_FIELDS: Dict[str, List[Tuple[str, str, bool, bool]]] = {
+    "wecom": [
+        ("bot_id", "WeCom Bot ID", False, True),
+        ("secret", "WeCom Bot Secret", True, True),
+    ],
     "feishu": [
         ("app_id", "Feishu App ID (cli_...)", False, True),
         ("app_secret", "Feishu App Secret", True, True),

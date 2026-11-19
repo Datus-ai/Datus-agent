@@ -46,7 +46,7 @@ This flow assumes the metrics already exist on the active datasource. If no exis
 
 ## Current metric YAML
 
-The following excerpt is the `semantic_model[0].metrics` section from the `bank_failures.yml` file generated against Datus's sample DuckDB database. It uses the dataset and fields shown in [Semantic Models](semantic_model.md). The leading indentation is intentional: this block belongs inside a semantic model and is not a standalone YAML document.
+The following excerpt is the `metrics` section from the `bank_failures.yml` file generated against Datus's sample DuckDB database. It uses the dataset and fields shown in [Semantic Models](semantic_model.md). The leading indentation is intentional: this block belongs inside a semantic model and is not a standalone YAML document.
 
 ```yaml
     metrics:

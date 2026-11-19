@@ -47,7 +47,7 @@
     <line x1="52" y1="192" x2="708" y2="192" stroke="#343a4c" stroke-width="1"/>
     <text x="52" y="220"><tspan class="k">Connects</tspan><tspan class="v" x="248">15 databases &#183; 10+ LLM providers &#183; MCP server &amp; client</tspan></text>
     <text x="52" y="246"><tspan class="k">Extends</tspan><tspan class="v" x="248">Superset &#183; Grafana &#183; Airflow &#183; in-house tools via plugins</tspan></text>
-    <text class="ttl" x="52" y="272">governed: SQL policy with AI pre-review &#183; OS-level sandbox &#183; OTLP traces</text>
+    <text class="ttl" x="52" y="272">governed: SQL checks with AI pre-review &#183; OS-level sandbox &#183; OTLP traces</text>
   </g>
 
   <g class="s4">

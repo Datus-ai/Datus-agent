@@ -31,6 +31,7 @@ from agents import Tool
 from datus.tools.func_tool import bash_sandbox
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.permission.bash_rules import contains_shell_metachars, split_pipeline
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 from datus.utils.tool_archive import build_archived_marker, make_single_line_preview
 
@@ -175,6 +176,7 @@ class BashTool:
         """Set tool context (called by framework before tool invocation)."""
         self._tool_context = ctx
 
+    @tool_contract(access="restricted", direct_call=False)
     def bash(self, command: str, timeout: Optional[int] = None) -> FuncToolResult:
         """Run a shell command and return its output.
 
@@ -185,6 +187,10 @@ class BashTool:
         use absolute paths instead of relying on ``cd``. Commands cannot read
         stdin (it is closed), so interactive prompts / ``read`` return EOF
         immediately rather than hanging.
+
+        Use ``python`` for Python checks: it uses the same interpreter as Datus,
+        including its installed packages. ``python3`` resolves through PATH and
+        may use a different environment.
 
         Prefer the dedicated tools when they fit — they are safer (scoped to
         the project via the filesystem policy) and produce cleaner, reviewable

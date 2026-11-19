@@ -329,6 +329,9 @@ def load_osi_document(path: str, semantic_model_name: str) -> OsiDocument:
             message=f"OSI publication artifact is not a file: {path!r}",
         )
 
+    from datus.tools.semantic_tools.dosi.files import file_engine
+
+    file_engine(model_file, allow_invalid=True)
     matches: list[dict[str, Any]] = []
     available: set[str] = set()
     try:

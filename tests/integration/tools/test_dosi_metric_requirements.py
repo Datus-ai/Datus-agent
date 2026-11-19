@@ -25,25 +25,25 @@ BASE_MODEL = Path(__file__).parents[2] / "data" / "semantic_models" / "window_fi
 
 # A period-over-period window, and a compose over it that has no window of its own.
 EXTRA_METRICS = """
-      - name: score_prev_day
-        description: Total score one day earlier
-        expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: SUM(scores.score)
-        custom_extensions:
-          - vendor_name: DATUS
-            data: '{"v": "1.2", "window": {"type": "pop", "offset": "1 day"}}'
+  - name: score_prev_day
+    description: Total score one day earlier
+    expression:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: SUM(scores.score)
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"v": "1.2", "window": {"type": "pop", "offset": "1 day"}}'
 
-      - name: score_change
-        description: Day-over-day change of the total score
-        expression:
-          dialects:
-            - dialect: ANSI_SQL
-              expression: SUM(scores.score) - SUM(scores.score)
-        custom_extensions:
-          - vendor_name: DATUS
-            data: '{"v": "1.4", "derive": {"type": "compose", "expr": "score_total - score_prev_day"}}'
+  - name: score_change
+    description: Day-over-day change of the total score
+    expression:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: SUM(scores.score) - SUM(scores.score)
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"v": "1.4", "derive": {"type": "compose", "expr": "score_total - score_prev_day"}}'
 """
 
 

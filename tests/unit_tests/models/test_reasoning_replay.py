@@ -73,18 +73,55 @@ class TestProviderDetection:
         assert is_reasoning_echo_provider(name) is False
 
 
-def _context(model, origin_model=None, provider_data=None):
+def _context(model, origin_model=None, provider_data=None, item=None):
     base_url = "https://models.example.test/v1"
     if provider_data is None:
         provider_data = {"datus_reasoning_endpoint": reasoning_endpoint_identity(base_url)}
     return SimpleNamespace(
         model=model,
         base_url=base_url,
-        reasoning=SimpleNamespace(item={}, origin_model=origin_model, provider_data=provider_data),
+        reasoning=SimpleNamespace(item=item or {}, origin_model=origin_model, provider_data=provider_data),
     )
 
 
 class TestShouldReplayReasoningContent:
+    @pytest.mark.parametrize("model", ["openai/glm-5.3", "openai/z-ai/yumcode-pro", "openai/private-deployment"])
+    def test_observed_reasoning_content_replays_without_catalogue_support(self, model):
+        item = {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Check the source."}]}
+        assert should_replay_reasoning_content(_context(model, model, item=item)) is True
+
+    @pytest.mark.parametrize(
+        "changes",
+        [
+            {"origin_model": "openai/another-deployment"},
+            {"origin_model": None},
+            {"base_url": "https://another.example.test/v1"},
+            {"base_url": None},
+            {"provider_data": {}},
+        ],
+    )
+    def test_observed_reasoning_still_requires_same_model_and_endpoint(self, changes):
+        model = "openai/z-ai/yumcode-pro"
+        item = {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Check the source."}]}
+        context = _context(model, model, item=item)
+        for key, value in changes.items():
+            setattr(context.reasoning if key in {"origin_model", "provider_data"} else context, key, value)
+        assert should_replay_reasoning_content(context) is False
+
+    @pytest.mark.parametrize(
+        "fields",
+        [
+            {"summary": []},
+            {"summary": [{"type": "summary_text", "text": ""}]},
+            {"encrypted_content": "signed-reasoning"},
+            {"content": [{"type": "reasoning_text", "text": "Provider-specific thinking."}]},
+        ],
+    )
+    def test_other_reasoning_formats_do_not_enable_generic_replay(self, fields):
+        item = {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Check the source."}], **fields}
+        model = "openai/private-deployment"
+        assert should_replay_reasoning_content(_context(model, model, item=item)) is False
+
     def test_deepseek_target_with_deepseek_origin(self):
         assert should_replay_reasoning_content(_context("deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-pro")) is True
 

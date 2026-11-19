@@ -4,7 +4,9 @@
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StrictStr, ValidationInfo, field_validator
+
+from datus.configuration.legacy_tool_names import expand_replaced_tools
 
 
 class ScopedContextLists(BaseModel):
@@ -19,12 +21,33 @@ class ScopedContextLists(BaseModel):
 class ScopedContext(BaseModel):
     datasource: Optional[str] = Field(default_factory=str, description="The datasource identifier")
     tables: Optional[str] = Field(default=None, init=True, description="Tables to be used by sub-agents")
+    tables_by_datasource: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Per-datasource table scopes; when set, unlisted datasources are inaccessible",
+    )
     metrics: Optional[str] = Field(default=None, init=True, description="Metrics to be used by sub-agents")
     sqls: Optional[str] = Field(default=None, init=True, description="Reference SQL to be used by sub-agents")
+    project_files: Optional[List[StrictStr]] = Field(default=None, description="Project-relative file paths or globs")
+
+    @field_validator("project_files")
+    @classmethod
+    def validate_project_files(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        """Normalize explicit file selections without changing legacy KB-scope semantics."""
+        if value is None:
+            return None
+        result = []
+        for item in value:
+            item = item.strip()
+            if not item:
+                raise ValueError("Project file selections must not be empty")
+            if item not in result:
+                result.append(item)
+        return result
 
     @property
     def is_empty(self) -> bool:
-        return not self.tables and not self.metrics and not self.sqls
+        """Whether no table, grouped datasource, metric, or SQL scope is configured."""
+        return self.tables_by_datasource is None and not self.tables and not self.metrics and not self.sqls
 
     def as_lists(self) -> ScopedContextLists:
         def _split(value: Optional[str]) -> List[str]:
@@ -59,6 +82,8 @@ def merge_scoped_contexts(parent: Optional[ScopedContext], child: Optional[Scope
 
 
 class SubAgentConfig(BaseModel):
+    db_read_only: Optional[bool] = None
+    workspace_root: Optional[str] = None
     system_prompt: str = Field("", init=True, description="Name of sub agent")
     agent_description: Optional[str] = Field(default=None, init=True, description="Description of sub agent")
     node_class: Optional[str] = Field(
@@ -67,6 +92,17 @@ class SubAgentConfig(BaseModel):
         description="Node class type for custom subagents: 'gen_sql' (default) or 'gen_visual_report'",
     )
     tools: str = Field(default="", init=True, description="Native tools to be used by sub-agents")
+
+    @field_validator("tools", mode="before")
+    @classmethod
+    def normalize_tools(cls, value, info: ValidationInfo):
+        # A replaced tool name (sub-agents built by the API, the editor or a
+        # parent agent) becomes its successors here, as agent.yml's do on load.
+        value = expand_replaced_tools(str(info.data.get("system_prompt") or ""), value)
+        if isinstance(value, (list, tuple)) and all(isinstance(item, str) for item in value):
+            return ",".join(item.strip() for item in value if item.strip())
+        return value
+
     mcp: str = Field(default="", init=True, description="MCP tools to be used by sub-agents")
     scoped_context: Optional[ScopedContext] = Field(
         default=None, init=True, description="Scoped context for sub-agents"
@@ -122,7 +158,12 @@ class SubAgentConfig(BaseModel):
         return False
 
     def is_in_datasource(self, datasource: str) -> bool:
-        return self.has_scoped_context() and datasource == self.scoped_context.datasource
+        """Check membership in grouped sources, or the legacy single datasource."""
+        if not self.has_scoped_context():
+            return False
+        if self.scoped_context.tables_by_datasource is not None:
+            return datasource in self.scoped_context.tables_by_datasource
+        return datasource == self.scoped_context.datasource
 
     def with_effective_scoped_context(self, parent_sc: Optional[ScopedContext]) -> "SubAgentConfig":
         merged = merge_scoped_contexts(parent_sc, self.scoped_context)

@@ -113,9 +113,9 @@ def prepare_metric_definitions(
     """Expand affected compose definitions atomically and validate the candidate."""
     try:
         document = yaml.safe_load(model_text)
-        models = document.get("semantic_model") if isinstance(document, dict) else None
+        models = [document] if isinstance(document, dict) and "datasets" in document else None
         if not isinstance(models, list) or len(models) != 1:
-            raise ValueError("The editor requires exactly one semantic_model")
+            raise ValueError("The editor requires one root model with datasets")
         metrics = models[0].get("metrics", [])
         by_name = {metric["name"]: metric for metric in metrics}
         if len(by_name) != len(metrics):

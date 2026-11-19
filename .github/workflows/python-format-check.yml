@@ -1,9 +1,16 @@
 name: "Python Format Check"
 on:
   workflow_call:
+    inputs:
+      reuse_validation:
+        type: boolean
+        default: false
 
 jobs:
   format-check:
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -12,21 +19,36 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
           persist-credentials: false
 
+      - name: Reuse verified validation
+        id: reuse
+        if: inputs.reuse_validation
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { reuseValidation } = require('./ci/reuse-pr-validation.js');
+            const result = await reuseValidation({ github, context, core, checkName: 'format-check / format-check' });
+            core.setOutput('reused', result.state === 'success');
+
       - name: Debug - Show current commit
+        if: ${{ steps.reuse.outputs.reused != 'true' }}
         run: |
           echo "Current HEAD: $(git rev-parse HEAD)"
           echo "Expected head: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}"
 
       - name: Set up python
+        if: ${{ steps.reuse.outputs.reused != 'true' }}
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Install ruff
+        if: ${{ steps.reuse.outputs.reused != 'true' }}
         run: pip install "ruff==0.15.6"
 
       - name: Check formatting with ruff
+        if: ${{ steps.reuse.outputs.reused != 'true' }}
         run: ruff format --check datus/ tests/
 
       - name: Lint with ruff
+        if: ${{ steps.reuse.outputs.reused != 'true' }}
         run: ruff check datus/ tests/

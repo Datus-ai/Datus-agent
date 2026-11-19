@@ -50,8 +50,6 @@ SQLite and DuckDB are built into Datus. Every other datasource is provided by an
 | [MaxCompute](datasources/maxcompute.md) | `maxcompute` | `datus-maxcompute` | project → optional schema → table |
 | [Oracle](datasources/oracle.md) | `oracle` | `datus-oracle` | schema → table |
 | [SAP HANA](datasources/hana.md) | `hana` | `datus-hana` | schema → table; tenant is the connection target |
-| [GaussDB / openGauss](datasources/gaussdb.md) | `gaussdb` | `datus-gaussdb` | database → schema → table |
-| [GaussDB(DWS)](datasources/dws.md) | `dws` | `datus-dws` | database → schema → table |
 
 Athena and HANA currently require the source-install commands on their pages. Install them before adding the datasource; automatic package installation cannot fetch an unpublished adapter. Aurora reuses the MySQL or PostgreSQL type and package.
 
@@ -124,6 +122,6 @@ default_datasource: analytics
 ## Related documentation
 
 - [Database adapter architecture](../adapters/db_adapters.md)
-- [SQL policy and deployment-wide read-only mode](sql_policy.md)
+- [Deployment-wide SQL read-only mode](agent.md#sql-read-only)
 - [Plugin system](../plugin/introduction.md)
 - [CLI reference](../cli/reference.md)

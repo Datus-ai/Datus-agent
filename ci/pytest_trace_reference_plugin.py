@@ -7,8 +7,10 @@ back to pytest nodeids after the run.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import tempfile
 import warnings
 from datetime import UTC, datetime
 from pathlib import Path
@@ -51,10 +53,60 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]):
         "trace_expected": trace_expected,
         "recorded_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
+    case = item.stash.get(_bi_case_key, {})
+    if case:
+        from ci.bi_diagnostics import trace_rows
+
+        case["outcome"] = report.outcome
+        path = _write_bi_case(case)
+        captured = trace_rows(case)
+        row["trace_expected"] = trace_expected and bool(case.get("runs"))
+        if captured:
+            for reference in captured:
+                _append_jsonl(Path(output_file), {**row, **reference, "evidence_file": str(path)})
+            return
+        row["evidence_file"] = str(path)
     if has_new_trace and current:
         row.update(current)
-
     _append_jsonl(Path(output_file), row)
+
+
+_bi_case_key: pytest.StashKey[dict] = pytest.StashKey()
+
+
+@pytest.fixture(autouse=True)
+def _capture_bi_execution(request, monkeypatch):
+    if not os.environ.get("DATUS_NIGHTLY_BI_EVIDENCE_DIR") or not any(
+        name in request.node.nodeid for name in ("test_gen_dashboard_agentic.py", "test_bi_chart_lifecycle.py")
+    ):
+        return
+    from ci.bi_diagnostics import install_capture
+
+    case = {
+        "nodeid": request.node.nodeid,
+        "suite": os.environ.get("DATUS_NIGHTLY_SUITE_NAME", ""),
+        "outcome": "running",
+    }
+    request.node.stash[_bi_case_key] = case
+    install_capture(monkeypatch, case, checkpoint=lambda: _write_bi_case(case))
+    _write_bi_case(case)
+
+
+def _write_bi_case(case: dict) -> Path:
+    directory = Path(os.environ["DATUS_NIGHTLY_BI_EVIDENCE_DIR"])
+    path = directory / (hashlib.sha256(case["nodeid"].encode()).hexdigest()[:16] + ".json")
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        data = json.dumps(case, indent=2) + "\n"
+        with tempfile.NamedTemporaryFile(
+            mode="w", dir=directory, prefix=path.stem, suffix=".tmp", delete=False
+        ) as output:
+            temporary = Path(output.name)
+            output.write(data)
+        temporary.replace(path)
+    except (OSError, RuntimeError) as exc:
+        warnings.warn(f"Failed to write BI execution evidence: {exc}", RuntimeWarning, stacklevel=2)
+    return path
 
 
 _trace_before_key: pytest.StashKey[dict[str, str] | None] = pytest.StashKey()

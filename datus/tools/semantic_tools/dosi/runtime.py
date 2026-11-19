@@ -20,10 +20,11 @@ import asyncio
 import hashlib
 import threading
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import yaml
 
+from datus.storage.semantic_model.artifact_file import semantic_bundle_read_lock
 from datus.tools.semantic_tools.authoring import MetricMutationResult, MetricSource
 from datus.tools.semantic_tools.dosi.authoring import dosi_validation_text_payload
 from datus.tools.semantic_tools.dosi.config import DosiConfig
@@ -48,8 +49,6 @@ from datus.tools.semantic_tools.dosi.model import (
 )
 from datus.tools.semantic_tools.exceptions import SemanticCoreException
 from datus.tools.semantic_tools.models import (
-    AttributionRequest,
-    AttributionResult,
     DimensionInfo,
     MetricDefinition,
     QueryResult,
@@ -58,6 +57,9 @@ from datus.tools.semantic_tools.models import (
     ValidationIssue,
     ValidationResult,
 )
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 
 def _echo(compiled: Dict[str, Any]) -> Dict[str, Any]:
@@ -80,16 +82,49 @@ def _lod_definition(row: Dict[str, Any]) -> Optional[str]:
 class DosiRuntime:
     """Agent's model catalog, query, validation, and editor boundary for Dosi."""
 
-    def __init__(self, config: DosiConfig):
+    def __init__(self, config: DosiConfig, *, read_policy_provider: Optional[Callable[[], Any]] = None):
+        self._read_policy_provider = read_policy_provider
         self.service_type = "dosi"
         self.datasource = config.datasource
         self.config: DosiConfig = config
         self._registry = EngineRegistry(config)
         self._catalog_lock = threading.Lock()
-        self._catalog_signature: tuple[tuple[str, int, int], ...] = ()
+        self._catalog_signature: tuple[tuple[str, int, int, int, int, int], ...] = ()
         self._catalog_handles: tuple[tuple[str, EngineHandle], ...] = ()
         self._metric_to_path: Dict[str, str] = {}
         self._model_to_path: Dict[str, str] = {}
+
+    def _policy_kwargs(self) -> dict:
+        provider = getattr(self, "_read_policy_provider", None)
+        policy = provider() if provider is not None else None
+        return {"policy": policy, "policy_required": True} if policy is not None else {}
+
+    @staticmethod
+    def _policy_scope(kwargs: dict) -> str:
+        policy = kwargs.get("policy")
+        if policy is None:
+            return "unprotected"
+        return hashlib.sha256((policy.snapshot_json + policy.context_json).encode()).hexdigest()
+
+    def initialize(self) -> dict[str, str]:
+        """Load existing files independently; absent/broken models keep authoring usable."""
+        self.model_errors: dict[str, str] = {}
+        try:
+            _, handles = self._registry.snapshot()
+        except SemanticCoreException as exc:
+            self.model_errors["<catalog>"] = str(exc)
+            return self.model_errors
+        for path, handle in handles:
+            try:
+                handle.get()
+            except SemanticCoreException as exc:
+                self.model_errors[path] = str(exc)
+        return dict(self.model_errors)
+
+    def load_model(self, path: str, *, allow_invalid: bool = False):
+        from datus.tools.semantic_tools.dosi.files import file_engine
+
+        return file_engine(path, config=self.config, allow_invalid=allow_invalid)
 
     # ==================== Semantic Model Interface ====================
 
@@ -146,6 +181,11 @@ class DosiRuntime:
 
     # ==================== Metrics Interface ====================
 
+    def _metric_snapshot(self, model_path: str, handle: EngineHandle):
+        with semantic_bundle_read_lock(model_path, self.config.ontology_dir):
+            engine = handle.get()
+            return engine.metrics(), engine.datasets(), engine.dimensions(), self._metric_payloads(model_path)
+
     async def list_metrics(
         self,
         path: Optional[List[str]] = None,
@@ -156,11 +196,9 @@ class DosiRuntime:
         handles, _, _ = await asyncio.to_thread(self._catalog)
         metrics = []
         for model_path, handle in handles:
-            engine = await asyncio.to_thread(handle.get)
-            rows = await asyncio.to_thread(engine.metrics)
-            dataset_rows = await asyncio.to_thread(engine.datasets)
-            dimension_rows = await asyncio.to_thread(engine.dimensions)
-            payloads = await asyncio.to_thread(self._metric_payloads, model_path)
+            rows, dataset_rows, dimension_rows, payloads = await asyncio.to_thread(
+                self._metric_snapshot, model_path, handle
+            )
             for row in rows:
                 hints = payloads.get(str(row.get("name") or ""), {})
                 metric_path = (
@@ -454,6 +492,17 @@ class DosiRuntime:
             "datasource": self.datasource or handle.profile_name or "default",
         }
 
+    async def compile_for_sql_execution(self, **arguments: Any) -> QueryResult:
+        """Compile for a host that applies policies at its final SQL boundary.
+
+        Artifact execution uses DBFuncTool to protect the complete SQL once.
+        This request-local compiler cannot execute rows or change the provider
+        on this runtime or its shared engine handles.
+        """
+        if arguments.get("dry_run") is not True:
+            raise ValueError("external SQL execution requires compile-only dry_run")
+        return await DosiRuntime(self.config).query_metrics(**arguments)
+
     async def query_metrics(
         self,
         metrics: List[str],
@@ -469,6 +518,7 @@ class DosiRuntime:
         params: Optional[Dict[str, Any]] = None,
         context_filter: Optional[str] = None,
     ) -> QueryResult:
+        policy_kwargs = await asyncio.to_thread(self._policy_kwargs)
         binding = await asyncio.to_thread(load_binding)
         handle = await asyncio.to_thread(self._handle_for_metrics, metrics)
         engine = await asyncio.to_thread(handle.get)
@@ -511,6 +561,7 @@ class DosiRuntime:
                 engine.compile,
                 self._dry_run_dialect(binding, connection),
                 connection,
+                policy_kwargs,
             )
         try:
             if dry_run:
@@ -522,7 +573,9 @@ class DosiRuntime:
                     # Dry-run SQL is read by humans and LLM callers, never fed
                     # to a driver, so hand back the formatted form.
                     pretty=True,
+                    **policy_kwargs,
                 )
+                self._log_query_sql(compiled, event="sql.dosi.compile", operation="metrics", connection=connection)
                 return QueryResult(
                     columns=["sql"],
                     data=[{"sql": compiled["sql"]}],
@@ -536,7 +589,7 @@ class DosiRuntime:
                         **_echo(compiled),
                     },
                 )
-            result = await self._execute_query(binding, engine, query, connection)
+            result = await self._execute_query(binding, engine, query, connection, policy_kwargs)
             columns, rows = list(result["columns"]), list(result["rows"])
             if handle.has_ontology:
                 columns, rows = self._label_requested_columns(result, dataset_names)
@@ -544,6 +597,7 @@ class DosiRuntime:
                 columns=columns,
                 data=rows,
                 metadata={
+                    "_policy_scope": self._policy_scope(policy_kwargs),
                     "sql": result["sql"],
                     "dialect": result["dialect"],
                     "row_count": result["row_count"],
@@ -664,6 +718,7 @@ class DosiRuntime:
         compile_fn: Any,
         dialect: Optional[str],
         connection: Optional[str],
+        policy_kwargs: Optional[dict] = None,
     ) -> Dict[str, Any]:
         """Rewrite ``order_by`` keys that name a requested concept path to its output column.
 
@@ -680,7 +735,7 @@ class DosiRuntime:
             return query
         probe = {key: value for key, value in query.items() if key not in ("order_by", "limit")}
         try:
-            compiled = compile_fn(probe, dialect=dialect, connection=connection)
+            compiled = compile_fn(probe, dialect=dialect, connection=connection, **(policy_kwargs or {}))
         except Exception:  # noqa: BLE001 - the real call reports it
             return query
         columns = {
@@ -755,6 +810,7 @@ class DosiRuntime:
         limit: Optional[int] = None,
     ) -> QueryResult:
         """Record-level (detail) query rooted on one concept; fields may be concept paths."""
+        policy_kwargs = await asyncio.to_thread(self._policy_kwargs)
         binding = await asyncio.to_thread(load_binding)
         _, handle = await asyncio.to_thread(self._first_answer, lambda engine: engine.describe(from_concept))
         engine = await asyncio.to_thread(handle.get)
@@ -776,6 +832,7 @@ class DosiRuntime:
             engine.compile_select,
             self._dry_run_dialect(binding, connection),
             connection,
+            policy_kwargs,
         )
         try:
             result = await asyncio.to_thread(
@@ -783,11 +840,14 @@ class DosiRuntime:
                 query,
                 connection=connection,
                 timeout_secs=float(self.config.timeout_seconds),
+                **policy_kwargs,
             )
+            self._log_query_sql(result, event="sql.dosi.execute", operation="select", connection=connection)
         except Exception as exc:  # noqa: BLE001 - mapped to typed errors below
             raise_mapped(exc, binding, requested_dimensions=list(fields))
             raise  # unreachable; raise_mapped always raises
         metadata: Dict[str, Any] = {
+            "_policy_scope": self._policy_scope(policy_kwargs),
             "sql": result["sql"],
             "dialect": result["dialect"],
             "row_count": result["row_count"],
@@ -800,39 +860,43 @@ class DosiRuntime:
         columns, rows = self._label_requested_columns(result, dataset_names)
         return QueryResult(columns=columns, data=rows, metadata=metadata)
 
-    async def attribute(self, request: AttributionRequest) -> AttributionResult:
-        """Delegate attribution to the native engine that owns the metric."""
-        dimensions = list(dict.fromkeys(dimension.strip() for dimension in request.dimensions if dimension.strip()))
-        if not dimensions:
-            raise SemanticValidationException(
-                SemanticValidationError(
-                    code="dimensions_required",
-                    metrics=[request.metric],
-                    message=(
-                        "Attribution requires at least one candidate dimension; "
-                        "call get_dimensions and retry with the selected dimensions."
-                    ),
-                )
-            )
+    async def attribute_metrics(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Explain a metric's change over its formula (Dosi ``Engine.attribute_metrics``).
+
+        ``request`` is Dosi's: the metric query's fields with two periods,
+        ``baseline`` and ``current``, in place of one. The result is Dosi's
+        ``schema_version: 3`` result, returned as is: a metric that cannot be
+        attributed still has one, with a status and the issues that say why.
+        """
+        return await self._attribute("attribute_metrics", request)
+
+    async def attribute_dimensions(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Explain a metric's change by the groups of its ``dimensions``
+        (Dosi ``Engine.attribute_dimensions``); otherwise as ``attribute_metrics``."""
+        return await self._attribute("attribute_dimensions", request)
+
+    async def _attribute(self, method: str, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Run one of Dosi's two attribution tools on the engine owning the metric,
+        under the same read policy and timeout as a query."""
+        metric = str(request.get("metric") or "")
+        policy_kwargs = await asyncio.to_thread(self._policy_kwargs)
         binding = await asyncio.to_thread(load_binding)
-        handle = await asyncio.to_thread(self._handle_for_metric, request.metric)
+        handle = await asyncio.to_thread(self._handle_for_metric, metric)
         engine = await asyncio.to_thread(handle.get)
-        native_request = request.model_dump(mode="python", exclude_none=True)
-        native_request["dimensions"] = dimensions
         try:
-            result = await asyncio.to_thread(
-                engine.attribute,
-                native_request,
+            return await asyncio.to_thread(
+                getattr(engine, method),
+                dict(request),
                 connection=handle.profile_name,
                 timeout_secs=float(self.config.timeout_seconds),
+                **policy_kwargs,
             )
-            return AttributionResult.model_validate({**result, "implementation": "dosi"})
         except Exception as exc:  # noqa: BLE001 - mapped to typed errors below
             raise_mapped(
                 exc,
                 binding,
-                requested_metrics=[request.metric],
-                requested_dimensions=dimensions,
+                requested_metrics=[metric],
+                requested_dimensions=[str(d) for d in request.get("dimensions") or []],
             )
             raise  # unreachable; raise_mapped always raises
 
@@ -1083,7 +1147,10 @@ class DosiRuntime:
     def _author(self) -> Any:
         from datus.tools.semantic_tools.dosi.authoring import DosiMetricAuthor
 
-        return DosiMetricAuthor(self._authoring_root())
+        self.initialize()
+        return DosiMetricAuthor(
+            self._authoring_root(), load_model=lambda path: self.load_model(path, allow_invalid=True)
+        )
 
     def read_metric_source(
         self,
@@ -1115,7 +1182,10 @@ class DosiRuntime:
         """Restore a deleted metric to its original model file."""
         from datus.tools.semantic_tools.dosi.authoring import DosiMetricAuthor
 
-        return DosiMetricAuthor(source.file_path).write(source.name, source.text, create=True)
+        self.load_model(source.file_path, allow_invalid=True)
+        return DosiMetricAuthor(
+            source.file_path, load_model=lambda path: self.load_model(path, allow_invalid=True)
+        ).write(source.name, source.text, create=True)
 
     # ==================== Internals ====================
 
@@ -1208,15 +1278,33 @@ class DosiRuntime:
         with self._catalog_lock:
             signature, handles = self._registry.snapshot()
             if signature == self._catalog_signature:
-                return (
-                    self._catalog_handles,
-                    dict(self._metric_to_path),
-                    dict(self._model_to_path),
-                )
+                # External dependencies can change availability without changing the registry signature.
+                available_paths = {path for path, _ in self._catalog_handles}
+                for model_path, handle in handles:
+                    try:
+                        handle.get()
+                    except SemanticCoreException:
+                        if model_path in available_paths:
+                            break
+                        continue
+                    if model_path not in available_paths:
+                        break
+                else:
+                    return (
+                        self._catalog_handles,
+                        dict(self._metric_to_path),
+                        dict(self._model_to_path),
+                    )
 
             metric_to_path: Dict[str, str] = {}
             model_to_path: Dict[str, str] = {}
+            available_handles = []
             for model_path, handle in handles:
+                try:
+                    engine = handle.get()
+                except SemanticCoreException as exc:
+                    logger.warning("Model %s is unavailable: %s", model_path, exc)
+                    continue
                 try:
                     model_names = self._document_model_names(model_path)
                 except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
@@ -1228,7 +1316,8 @@ class DosiRuntime:
                             f"semantic model {model_name!r} is declared in {owner!r} and {model_path!r}"
                         )
                     model_to_path[model_name] = model_path
-                for row in handle.get().metrics():
+                available_handles.append((model_path, handle))
+                for row in engine.metrics():
                     metric_name = str(row.get("name") or "").strip()
                     if not metric_name:
                         continue
@@ -1241,6 +1330,7 @@ class DosiRuntime:
                         )
                     metric_to_path[metric_name] = model_path
 
+            handles = tuple(available_handles)
             self._catalog_signature = signature
             self._catalog_handles = handles
             self._metric_to_path = metric_to_path
@@ -1256,6 +1346,7 @@ class DosiRuntime:
         handles, metric_to_path, _ = self._catalog()
         model_path = metric_to_path.get(metric_name)
         if model_path is None:
+            self._raise_for_unavailable_metrics([metric_name])
             candidates = ", ".join(sorted(metric_to_path))
             raise SemanticValidationException(
                 SemanticValidationError(
@@ -1265,6 +1356,56 @@ class DosiRuntime:
                 )
             )
         return dict(handles)[model_path]
+
+    def _raise_for_unavailable_metrics(self, metrics: List[str]) -> None:
+        """Distinguish metrics in failed models from genuinely unknown names.
+
+        Only inspect failed models on a catalog miss. Raw declarations identify
+        the affected metrics; they never make an invalid model queryable. Using
+        the live handles also picks up repaired files and dependency changes.
+        """
+        _, handles = self._registry.snapshot()
+        affected: set[str] = set()
+        errors: Dict[str, str] = {}
+        for model_path, handle in handles:
+            try:
+                handle.get()
+            except SemanticCoreException as exc:
+                error = str(exc)
+            else:
+                continue
+            try:
+                document = load_document(model_path)
+            except (OSError, TypeError, ValueError, yaml.YAMLError):
+                # An unreadable declaration cannot establish metric ownership.
+                continue
+            ref = document.get("semantic_model_ref")
+            if isinstance(ref, dict) and isinstance(ref.get("document"), dict):
+                document = ref["document"]
+            declared = {
+                str(metric.get("name") or "").strip()
+                for model in iter_semantic_models(document)
+                for metric in model.get("metrics") or []
+                if isinstance(metric, dict)
+            }
+            matching = declared.intersection(metrics)
+            if matching:
+                affected.update(matching)
+                errors[model_path] = error
+        if errors:
+            names = [name for name in dict.fromkeys(metrics) if name in affected]
+            raise SemanticValidationException(
+                SemanticValidationError(
+                    code="model_load_error",
+                    metrics=names,
+                    message=(
+                        f"Cannot load semantic model for metric(s) {', '.join(names)}:\n"
+                        + "\n".join(f"{path}: {error}" for path, error in errors.items())
+                    ),
+                    hint="Repair the semantic model definition and retry.",
+                    detail={"model_errors": errors},
+                )
+            )
 
     @staticmethod
     def _field_names_among(names: List[str], handles: tuple[tuple[str, EngineHandle], ...]) -> List[str]:
@@ -1290,6 +1431,7 @@ class DosiRuntime:
         handles, metric_to_path, model_to_path = self._catalog()
         unknown = [name for name in dict.fromkeys(metrics) if name not in metric_to_path]
         if unknown:
+            self._raise_for_unavailable_metrics(unknown)
             fields = self._field_names_among(unknown, handles)
             message = f"unknown metric(s): {', '.join(unknown)}"
             if fields:
@@ -1433,15 +1575,29 @@ class DosiRuntime:
         except ValueError as exc:
             raise SemanticCoreException(str(exc)) from exc
 
-    async def _execute_query(self, binding, engine, query, connection):
+    def _log_query_sql(self, result: Dict[str, Any], *, event: str, operation: str, connection: Optional[str]) -> None:
+        """Log the SQL returned by the actual native call without recompiling."""
+        logger.debug(
+            event,
+            datasource=self.config.datasource,
+            connection=connection,
+            operation=operation,
+            dialect=result.get("dialect"),
+            sql=result.get("sql"),
+        )
+
+    async def _execute_query(self, binding, engine, query, connection, policy_kwargs=None):
         """Propagate asyncio cancellation into request-local native execution."""
         token_type = getattr(binding, "CancellationToken", None)
         token = token_type() if token_type is not None else None
         kwargs = {"connection": connection, "timeout_secs": float(self.config.timeout_seconds)}
+        kwargs.update(policy_kwargs if policy_kwargs is not None else await asyncio.to_thread(self._policy_kwargs))
         if token is not None:
             kwargs["cancellation"] = token
         try:
-            return await asyncio.to_thread(engine.execute, query, **kwargs)
+            result = await asyncio.to_thread(engine.execute, query, **kwargs)
+            self._log_query_sql(result, event="sql.dosi.execute", operation="metrics", connection=connection)
+            return result
         except asyncio.CancelledError:
             if token is not None:
                 token.cancel()

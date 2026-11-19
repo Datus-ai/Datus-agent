@@ -3,6 +3,8 @@
 
 """Real local Dosi/SQL execution with fake host policy decisions; no external services."""
 
+import asyncio
+import warnings
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -15,7 +17,40 @@ from datus.tools.semantic_tools.models import AttributionRequest, AttributionWin
 from datus.tools.semantic_tools.policy_executor import PolicyMetricExecutor
 from datus.utils.exceptions import DatusException
 
-MODEL = 'version: 0.2.0.dev0\nsemantic_model:\n  - name: sales\n    datasets:\n      - name: orders\n        source: orders\n        fields:\n          - name: day\n            datatype: Date\n            dimension:\n              is_time: true\n            expression:\n              dialects:\n                - dialect: DUCKDB\n                  expression: day\n          - name: region\n            expression:\n              dialects:\n                - dialect: DUCKDB\n                  expression: region\n          - name: amount\n            expression:\n              dialects:\n                - dialect: DUCKDB\n                  expression: amount\n    metrics:\n      - name: revenue\n        expression:\n          dialects:\n            - dialect: DUCKDB\n              expression: SUM(amount)\n        custom_extensions:\n          - vendor_name: DATUS\n            data: \'{"uid":"metric","dataset":"orders","time_dimension":"day"}\'\n'
+MODEL = """version: 0.2.0.dev0
+name: sales
+datasets:
+  - name: orders
+    source: orders
+    fields:
+      - name: day
+        datatype: Date
+        dimension:
+          is_time: true
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: day
+      - name: region
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: region
+      - name: amount
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: amount
+metrics:
+  - name: revenue
+    expression:
+      dialects:
+        - dialect: DUCKDB
+          expression: SUM(amount)
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{\"uid\":\"metric\",\"dataset\":\"orders\",\"time_dimension\":\"day\"}'
+"""
 
 
 @pytest.fixture
@@ -57,6 +92,24 @@ def attribution():
     )
 
 
+def native_request(**extra):
+    """Dosi's request for ``attribute_metrics`` / ``attribute_dimensions``, adjacent daily periods."""
+    return {
+        "metric": "revenue",
+        "baseline": {"start": "2026-11-02", "end": "2026-11-03"},
+        "current": {"start": "2026-11-03", "end": "2026-11-04"},
+        **extra,
+    }
+
+
+async def attribute_by(executor, method, region):
+    """One attribution through the executor, by the shipped method or one of the two tools."""
+    if method == "attribute":
+        return await executor.attribute(attribution(), policy_context={"region": region})
+    request = native_request(dimensions=["orders.region"]) if method == "attribute_dimensions" else native_request()
+    return await getattr(executor, method)(request, policy_context={"region": region})
+
+
 def install_policy(monkeypatch, *, kind="metric", deny=None):
     """Install observable policy hooks for scoped execution and independent denial tests."""
     calls = []
@@ -84,6 +137,7 @@ def install_policy(monkeypatch, *, kind="metric", deny=None):
             from sqlglot import exp, parse_one
 
             calls.append(("sql", kwargs))
+            assert kwargs["connector"].dialect == "duckdb"
             if kind == "sql":
                 tree = parse_one(sql)
                 for table in list(tree.find_all(exp.Table)):
@@ -112,6 +166,9 @@ async def test_query_and_attribution_share_scope_and_do_not_mutate_shared_model(
     """Real query and attribution results obey each region scope without model mutation."""
     _, executor, model = execution
     calls = install_policy(monkeypatch, kind=kind)
+    # Engine startup may migrate legacy authored YAML to the current root-model
+    # format. Policy execution must preserve the initialized shared model.
+    await asyncio.to_thread(executor.runtime._handle_for_metric, "revenue")
     original = model.read_bytes()
     for region, expected, baseline in [("west", 8, 10), ("east", 200, 100)]:
         result = await executor.query_metrics(
@@ -127,6 +184,13 @@ async def test_query_and_attribution_share_scope_and_do_not_mutate_shared_model(
         explained = await executor.attribute(attribution(), policy_context={"region": region})
         assert explained.total_change.current_value == expected
         assert explained.total_change.baseline_value == baseline
+        by_formula = await attribute_by(executor, "attribute_metrics", region)
+        assert by_formula["status"] == "complete"
+        assert (by_formula["tree"]["baseline"], by_formula["tree"]["current"]) == (baseline, expected)
+        by_region = await attribute_by(executor, "attribute_dimensions", region)
+        assert by_region["status"] == "complete"
+        assert [group["label"] for group in by_region["tree"]["children"]] == [region]
+        assert by_region["tree"]["children"][0]["effect"] == expected - baseline
     assert {call[0] for call in calls} == {"validate", "metric", "sql", "result"}
     assert model.read_bytes() == original
 
@@ -142,13 +206,41 @@ async def test_query_denial_never_returns_rows(execution, monkeypatch, denied):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["attribute", "attribute_metrics", "attribute_dimensions"])
 @pytest.mark.parametrize("denied", ["context", "metric", "sql"])
-async def test_attribution_denial_never_returns_evidence(execution, monkeypatch, denied):
+async def test_attribution_denial_never_returns_evidence(execution, monkeypatch, denied, method):
     """Each supported attribution policy stage fails closed when denied."""
     _, executor, _ = execution
     install_policy(monkeypatch, deny=denied)
     with pytest.raises(DatusException):
-        await executor.attribute(attribution(), policy_context={"region": "west"})
+        await attribute_by(executor, method, "west")
+
+
+@pytest.mark.asyncio
+async def test_the_request_where_goes_through_the_metric_policy(execution, monkeypatch):
+    """The caller's where reaches the metric policy, whose condition is what the engine runs, as for the shipped method.
+
+    The caller's condition would drop east's baseline row (100): the values show it did not run beside the policy's."""
+    _, executor, _ = execution
+    calls = install_policy(monkeypatch, kind="metric")
+    result = await executor.attribute_metrics(
+        native_request(where_sql="orders.amount > 150"), policy_context={"region": "east"}
+    )
+    metric_calls = [kwargs for stage, kwargs in calls if stage == "metric"]
+    assert metric_calls[0]["where"] == "orders.amount > 150"
+    assert (result["tree"]["baseline"], result["tree"]["current"]) == (100, 200)
+
+
+@pytest.mark.asyncio
+async def test_the_shipped_method_is_deprecated(execution, monkeypatch):
+    _, executor, _ = execution
+    install_policy(monkeypatch, kind="metric")
+    # The request models warn too; build the request first so only the executor's warning is checked.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        request = attribution()
+    with pytest.warns(DeprecationWarning, match="PolicyMetricExecutor.attribute is deprecated"):
+        await executor.attribute(request, policy_context={"region": "west"})
 
 
 @pytest.mark.parametrize(
@@ -190,7 +282,7 @@ async def test_dry_run_and_missing_dataset_are_denied_before_execution(execution
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["query", "attribute"])
+@pytest.mark.parametrize("operation", ["query", "attribute", "attribute_metrics"])
 @pytest.mark.parametrize("selection", ["datasource", "database", "default_database"])
 async def test_policy_reads_use_runtime_connection_scope(execution, tmp_path, monkeypatch, operation, selection):
     """Native execution, SQL-policy evaluation and connectors use the same selected scope."""
@@ -227,10 +319,13 @@ async def test_policy_reads_use_runtime_connection_scope(execution, tmp_path, mo
             "revenue", policy_context={"region": "west"}, time_start="2026-11-03", time_end="2026-11-04"
         )
         assert result.data[0]["revenue"] == 8
-    else:
+    elif operation == "attribute":
         result = await executor.attribute(attribution(), policy_context={"region": "west"})
         assert result.total_change.current_value == 8
         assert result.total_change.baseline_value == 10
+    else:
+        result = await executor.attribute_metrics(native_request(), policy_context={"region": "west"})
+        assert (result["tree"]["baseline"], result["tree"]["current"]) == (10, 8)
     assert connectors and set(connectors) == {("warehouse", "local")}
     sql_calls = [kwargs for stage, kwargs in calls if stage == "sql"]
     assert sql_calls and all(kwargs["datasource"] == "warehouse" for kwargs in sql_calls)

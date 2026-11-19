@@ -21,7 +21,11 @@ from datus.storage.semantic_model.semantic_model_init import (
 
 
 def _config() -> MagicMock:
-    return MagicMock()
+    config = MagicMock()
+    config.current_datasource = "warehouse"
+    config.runtime_db_context.return_value = {}
+    config.current_db_config.return_value = None
+    return config
 
 
 @pytest.mark.asyncio
@@ -59,7 +63,7 @@ def test_semantic_yaml_import_reports_missing_file(tmp_path):
 
 def test_semantic_yaml_import_syncs_osi_documents(tmp_path):
     yaml_path = tmp_path / "semantic.yml"
-    yaml_path.write_text("semantic_model:\n  - name: orders\n    datasets: []\n", encoding="utf-8")
+    yaml_path.write_text("name: orders\ndatasets: []\n", encoding="utf-8")
     config = _config()
 
     with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
@@ -76,7 +80,7 @@ def test_semantic_yaml_import_syncs_osi_documents(tmp_path):
 
 def test_semantic_yaml_import_surfaces_sync_failure(tmp_path):
     yaml_path = tmp_path / "semantic.yml"
-    yaml_path.write_text("semantic_model:\n  - name: orders\n    datasets: []\n", encoding="utf-8")
+    yaml_path.write_text("name: orders\ndatasets: []\n", encoding="utf-8")
 
     with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
         tools_cls.return_value.sync_osi_to_db.return_value = {"success": False, "error": "invalid YAML"}
@@ -102,7 +106,7 @@ def test_semantic_yaml_import_rejects_legacy_documents(tmp_path):
 
 def test_reject_helper_accepts_osi_documents_in_dosi_project(tmp_path):
     yaml_path = tmp_path / "semantic.yml"
-    yaml_path.write_text("semantic_model:\n  - name: orders\n    datasets: []\n", encoding="utf-8")
+    yaml_path.write_text("name: orders\ndatasets: []\n", encoding="utf-8")
 
     assert reject_non_dosi_semantic_yaml(str(yaml_path), _config()) is None
 
@@ -131,7 +135,7 @@ def test_profile_description_refresh_preserves_yaml_and_syncs_projection(tmp_pat
     semantic_dir.mkdir()
     yaml_path = semantic_dir / "semantic.yml"
     yaml_path.write_text(
-        "semantic_model:\n  - name: orders\n    datasets:\n      - name: orders\n        source: public.orders\n",
+        "name: orders\ndatasets:\n  - name: orders\n    source: public.orders\n",
         encoding="utf-8",
     )
     config = _config()
@@ -181,8 +185,7 @@ def test_profile_description_refresh_rejects_legacy_yaml(tmp_path):
 
 def _write_model(path, name: str) -> None:
     path.write_text(
-        f"version: 0.2.0.dev0\nsemantic_model:\n  - name: {name}\n"
-        f"    datasets:\n      - name: {name}\n        source: public.{name}\n",
+        f"version: 0.2.0.dev0\nname: {name}\ndatasets:\n  - name: {name}\n    source: public.{name}\n",
         encoding="utf-8",
     )
 
@@ -284,7 +287,7 @@ def test_sync_semantic_yaml_tree_drops_rows_whose_file_is_gone(tmp_path, real_ag
                 }
             ]
         )
-    kept.write_text("version: 0.2.0.dev0\nsemantic_model: []\n")  # removed.yml intentionally absent
+    kept.write_text("version: 0.2.0.dev0\nname: model\ndatasets: []\n")  # removed.yml intentionally absent
 
     tools = MagicMock()
     tools.sync_osi_to_db.return_value = {"success": True}

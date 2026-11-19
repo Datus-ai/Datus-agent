@@ -16,6 +16,7 @@ from datus.agent.node import semantic_authoring
 from datus.schemas.action_history import ActionHistoryManager
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from tests.unit_tests.mock_llm_model import build_simple_response
+from tests.unit_tests.semantic_plan_support import plan_writer
 
 
 @pytest.fixture(autouse=True)
@@ -157,6 +158,13 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
     assert '<required_skill name="dosi-semantic-authoring">' in prompt
     node._populate_tool_registry()
     assert node.tool_registry.get("verify_semantic_outputs") == "semantic_tools"
+    from datus.tools.registry.contracts import tool_definition
+
+    for name in ("upsert_osi_metrics", "delete_osi_metrics", "upsert_osi_datasets", "delete_osi_datasets"):
+        mounted = next(tool for tool in node.tools if tool.name == name)
+        assert tool_definition(mounted).tool_id == f"semantic_tools.{name}"
+        assert node.tool_registry.get(name) == "semantic_tools"
+
     assert "## OSI Core reference shapes" in prompt
     assert "## Active DATUS capability directory" in prompt
     assert "ensure_metric_uids" not in tool_names
@@ -182,6 +190,7 @@ def test_plan_file_tool_available_with_default_and_wildcard_configs(real_agent_c
 
 def test_plan_file_uses_project_root_for_vscode_source(real_agent_config, mock_llm_create, tmp_path, monkeypatch):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+    from tests.unit_tests.semantic_plan_support import select_plan_model
 
     daemon_cwd = tmp_path / "daemon"
     daemon_cwd.mkdir()
@@ -197,6 +206,8 @@ def test_plan_file_uses_project_root_for_vscode_source(real_agent_config, mock_l
     node._populate_tool_registry()
     assert node.tool_registry.get("write_semantic_model_plan_file") == "semantic_tools"
 
+    model_path = Path(real_agent_config.project_root) / "subject/semantic_models/sales_model.yaml"
+    select_plan_model(node.osi_target_state, model_path, "sales_model")
     result = node.semantic_plan_file_tool.write_semantic_model_plan_file("sales_model", '{"summary":"plan"}')
 
     assert result.success == 1
@@ -318,17 +329,15 @@ def test_datasets_only_scope_rolls_back_metric_changes_made_through_edit_file(
     model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
     model_dir.mkdir(parents=True, exist_ok=True)
     target = model_dir / "orders.yml"
-    original = (
-        "version: 0.2.0.dev0\n"
-        "semantic_model:\n"
-        "  - name: orders_model\n"
-        "    datasets: []\n"
-        "    relationships: []\n"
-        "    metrics:\n"
-        "      - name: order_count\n"
-        "        expression:\n"
-        "          dialects: [{dialect: SQLITE, expression: 'COUNT(*)'}]\n"
-    )
+    original = """version: 0.2.0.dev0
+name: orders_model
+datasets: []
+relationships: []
+metrics:
+  - name: order_count
+    expression:
+      dialects: [{dialect: SQLITE, expression: 'COUNT(*)'}]
+"""
     target.write_text(original, encoding="utf-8")
     node = SemanticModelingAgenticNode(
         agent_config=real_agent_config,
@@ -401,15 +410,15 @@ def test_unified_dosi_selects_existing_model_once_for_dataset_and_metric_changes
     model_dir.mkdir(parents=True, exist_ok=True)
     target = model_dir / "commerce.yml"
     target.write_text(
-        "version: 0.2.0.dev0\n"
-        "semantic_model:\n"
-        "  - name: commerce\n"
-        "    datasets:\n"
-        "      - name: orders\n"
-        "        source: analytics.orders\n"
-        "        fields: []\n"
-        "    relationships: []\n"
-        "    metrics: []\n",
+        """version: 0.2.0.dev0
+name: commerce
+datasets:
+  - name: orders
+    source: analytics.orders
+    fields: []
+relationships: []
+metrics: []
+""",
         encoding="utf-8",
     )
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
@@ -432,7 +441,7 @@ def test_unified_dosi_selects_existing_model_once_for_dataset_and_metric_changes
             }
         ],
     }
-    updated = node.filesystem_func_tool.upsert_osi_datasets(str(target), json.dumps([dataset]))
+    updated = node.semantic_model_editing_tools.upsert_osi_datasets(str(target), json.dumps([dataset]))
     assert updated.success == 1
     assert node.osi_target_state.target_mutated is True
 
@@ -443,7 +452,7 @@ def test_unified_dosi_selects_existing_model_once_for_dataset_and_metric_changes
         "name": "order_count",
         "expression": {"dialects": [{"dialect": "STARROCKS", "expression": "COUNT(*)"}]},
     }
-    metric_result = node.filesystem_func_tool.upsert_osi_metrics(str(target), json.dumps([metric]))
+    metric_result = node.semantic_model_editing_tools.upsert_osi_metrics(str(target), json.dumps([metric]))
     assert metric_result.success == 1
     assert node.osi_target_state.touched_metric_names == ["order_count"]
 
@@ -466,7 +475,7 @@ def test_unified_dosi_plans_new_model_once_for_dataset_and_metric_changes(
     model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
     assert target == str((model_dir / "commerce.yml").resolve())
 
-    dataset_result = node.filesystem_func_tool.upsert_osi_datasets(
+    dataset_result = node.semantic_model_editing_tools.upsert_osi_datasets(
         target,
         json.dumps(
             [
@@ -483,7 +492,7 @@ def test_unified_dosi_plans_new_model_once_for_dataset_and_metric_changes(
             ]
         ),
     )
-    metric_result = node.filesystem_func_tool.upsert_osi_metrics(
+    metric_result = node.semantic_model_editing_tools.upsert_osi_metrics(
         target,
         json.dumps(
             [
@@ -545,6 +554,36 @@ def test_generated_result_uses_selected_artifact_finalizer(real_agent_config, mo
     assert result.status == "generated"
     assert result.semantic_models == ["subject/semantic_models/warehouse/orders.yml"]
     assert result.business_validation == []
+    assert not (Path(real_agent_config.project_root) / ".datus/semantic-model-plans").exists()
+
+
+@pytest.mark.asyncio
+async def test_closing_stream_finishes_parent_cleanup_before_recording_outcome(
+    real_agent_config, mock_llm_create, tmp_path, monkeypatch
+):
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+    node.semantic_plan_file_tool = plan_writer(tmp_path)
+    saved = node.semantic_plan_file_tool.write_semantic_model_plan_file("sales", {"summary": "Accepted plan"})
+    target = tmp_path / saved.result["path"]
+    outcomes_at_parent_close = []
+    action = ActionHistoryManager()
+
+    async def parent_stream(_node, _manager):
+        try:
+            yield action
+        finally:
+            outcomes_at_parent_close.append(json.loads(target.read_text())["plan"].get("execution"))
+
+    monkeypatch.setattr(SemanticAuthoringAgenticNode, "execute_stream", parent_stream)
+    stream = node.execute_stream()
+    assert await anext(stream) is action
+    await stream.aclose()
+
+    assert outcomes_at_parent_close == [None]
+    assert json.loads(target.read_text())["plan"]["execution"] == "not_applied"
 
 
 @pytest.mark.asyncio
@@ -670,12 +709,12 @@ def test_unified_result_can_skip_when_no_semantic_change_is_needed(real_agent_co
 @pytest.mark.parametrize(
     ("metrics_yaml", "expected_scope", "touched_metrics"),
     [
-        ("    metrics: []\n", "semantic_model", []),
+        ("metrics: []\n", "semantic_model", []),
         (
-            "    metrics:\n"
-            "      - name: order_count\n"
-            "        expression:\n"
-            "          dialects: [{dialect: STARROCKS, expression: 'COUNT(*)'}]\n",
+            "metrics:\n"
+            "  - name: order_count\n"
+            "    expression:\n"
+            "      dialects: [{dialect: STARROCKS, expression: 'COUNT(*)'}]\n",
             "all",
             ["order_count"],
         ),
@@ -695,14 +734,8 @@ def test_host_finalizer_validates_and_reconciles_complete_selected_yaml(
     model_dir.mkdir(parents=True, exist_ok=True)
     target = model_dir / "orders.yml"
     target.write_text(
-        "version: 0.2.0.dev0\n"
-        "semantic_model:\n"
-        "  - name: orders_model\n"
-        "    datasets:\n"
-        "      - name: orders\n"
-        "        source: orders\n"
-        "        fields: []\n"
-        "    relationships: []\n" + metrics_yaml,
+        "version: 0.2.0.dev0\nname: orders_model\ndatasets:\n  - name: orders\n    source: orders\n    fields: []\nrelationships: []\n"
+        + metrics_yaml,
         encoding="utf-8",
     )
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
@@ -776,7 +809,7 @@ def test_host_finalizer_reports_unavailable_semantic_validation(real_agent_confi
     model_dir.mkdir(parents=True, exist_ok=True)
     target = model_dir / "orders.yml"
     target.write_text(
-        "version: 0.2.0.dev0\nsemantic_model:\n  - name: orders_model\n    datasets: []\n    metrics: []\n",
+        "version: 0.2.0.dev0\nname: orders_model\ndatasets: []\nmetrics: []\n",
         encoding="utf-8",
     )
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
@@ -827,9 +860,9 @@ def test_finalizer_fills_legacy_uids_and_reconciles_existing_kb_identities(
         yaml.safe_dump(
             {
                 "version": "0.2.0.dev0",
-                "semantic_model": [
-                    {"name": "uid_model", "datasets": [{"name": "orders", "source": "orders"}], "metrics": metrics}
-                ],
+                "name": "uid_model",
+                "datasets": [{"name": "orders", "source": "orders"}],
+                "metrics": metrics,
             },
             sort_keys=False,
         )
@@ -853,7 +886,7 @@ def test_finalizer_fills_legacy_uids_and_reconciles_existing_kb_identities(
     node.generation_evidence.record_semantic_artifact_validation("uid_model", target, validation_scope="all")
 
     def validate_current(**kwargs):
-        current = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"]
+        current = yaml.safe_load(target.read_bytes())["metrics"]
         assert all(metric_uid(metric) for metric in current)
         assert {metric["name"] for metric in current} == set(node._semantic_validation_metric_names())
         _record_current_compiled_evidence(node, target)
@@ -868,7 +901,7 @@ def test_finalizer_fills_legacy_uids_and_reconciles_existing_kb_identities(
     result = node._build_success_result(ctx)
     assert result.success is True
     assert result.status == "generated"
-    current = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"]
+    current = yaml.safe_load(target.read_bytes())["metrics"]
     identities = {metric["name"]: metric_uid(metric) for metric in current}
     assert identities["retained"] == retained_uid
     assert len(identities["legacy"]) == 24
@@ -897,29 +930,19 @@ def test_finalizer_enforces_kb_name_uniqueness_before_uid_or_kb_writes(real_agen
     target = model_dir / "uid_name_validation.yml"
     document = {
         "version": "0.2.0.dev0",
-        "semantic_model": [
+        "name": "uid_name_validation",
+        "datasets": [
             {
-                "name": "uid_name_validation",
-                "datasets": [
-                    {
-                        "name": "orders",
-                        "source": "orders",
-                        "fields": [
-                            {
-                                "name": "amount",
-                                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "amount"}]},
-                            }
-                        ],
-                    }
-                ],
-                "metrics": [
-                    {
-                        "name": name,
-                        "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(orders.amount)"}]},
-                    }
-                    for name in ("revenue", second_name)
+                "name": "orders",
+                "source": "orders",
+                "fields": [
+                    {"name": "amount", "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "amount"}]}}
                 ],
             }
+        ],
+        "metrics": [
+            {"name": name, "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(orders.amount)"}]}}
+            for name in ("revenue", second_name)
         ],
     }
     # Native Dosi accepts both names; the host also needs the KB's uniqueness rule.
@@ -946,7 +969,7 @@ def test_finalizer_enforces_kb_name_uniqueness_before_uid_or_kb_writes(real_agen
         assert not node.generation_tools.metric_rag.list_artifact_rows(str(target))
     else:
         assert node._finalize_selected_osi_artifact() == str(target)
-        metrics = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"]
+        metrics = yaml.safe_load(target.read_bytes())["metrics"]
         identities = {metric["name"]: metric_uid(metric) for metric in metrics}
         assert len(set(identities.values())) == 2
         assert all(identities.values())

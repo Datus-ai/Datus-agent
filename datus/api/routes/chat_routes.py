@@ -34,6 +34,7 @@ from datus.api.models.chat_models import (
     StopChatInput,
     ToolResultData,
     ToolResultInput,
+    UpdatePermissionModeInput,
 )
 from datus.api.models.cli_models import (
     ChatHistoryData,
@@ -48,6 +49,7 @@ from datus.api.models.cli_models import (
     UserInteractionInput,
 )
 from datus.api.services.background_drain import track_background_task
+from datus.api.utils.service_stream import ServiceStreamingResponse
 from datus.api.utils.stream_errors import humanize_stream_error
 from datus.tools.policy_runtime import PolicyRuntime
 from datus.utils.exceptions import DatusException
@@ -172,7 +174,7 @@ async def stream_chat(
         ):
             yield chunk
 
-    return StreamingResponse(generate_sse(), media_type="text/event-stream", headers=_sse_headers())
+    return ServiceStreamingResponse(generate_sse(), service=svc, media_type="text/event-stream", headers=_sse_headers())
 
 
 # ========== Reaction-triggered Feedback ==========
@@ -226,7 +228,7 @@ async def stream_chat_feedback(
         ):
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
 
-    return StreamingResponse(generate_sse(), media_type="text/event-stream", headers=_sse_headers())
+    return ServiceStreamingResponse(generate_sse(), service=svc, media_type="text/event-stream", headers=_sse_headers())
 
 
 # ========== Resume Chat ==========
@@ -242,6 +244,7 @@ async def resume_chat(
     svc: ServiceDep,
     ctx: AppContextDep,
 ):
+    """Resume an owned task, reserving completed-turn diff replay for explicit cursors."""
     task_manager = svc.task_manager
     task = task_manager.get_task(request.session_id)
     if task is not None and task.user_id != ctx.user_id:
@@ -253,11 +256,29 @@ async def resume_chat(
             errorMessage="Task not found or already completed. Use the history API to retrieve messages.",
         )
 
+    # A fresh history viewer must not replay completed-turn notifications. A
+    # cursor reconnect still needs the final diff when its transport dropped.
+    include_semantic_diff = task.status == "running" or request.from_event_id is not None
+
     async def generate_sse():
+        """Serialize buffered events while omitting transient diffs on ordinary session entry."""
+        # A resumed stream can begin after the original session frame.
+        llm_session_id = task.llm_session_id or (task.node.session_id if task.node is not None else None)
+        if llm_session_id is not None:
+            from datus.api.models.cli_models import SSESessionData
+
+            session = SSESessionData(session_id=task.session_id, llm_session_id=llm_session_id, run_id=task.run_id)
+            yield f"event: session\ndata: {session.model_dump_json()}\n\n"
         async for event in task_manager.consume_events(task, start_from=request.from_event_id):
+            if (
+                not include_semantic_diff
+                and event.event == "message"
+                and any(part.type == "semantic-model-diff" for part in event.data.payload.content)
+            ):
+                continue
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
 
-    return StreamingResponse(generate_sse(), media_type="text/event-stream", headers=_sse_headers())
+    return ServiceStreamingResponse(generate_sse(), service=svc, media_type="text/event-stream", headers=_sse_headers())
 
 
 # ========== Stop Chat ==========
@@ -874,3 +895,31 @@ async def _safe_post_chat(
         await hooks.post_chat(http_request, request, ctx)
     except Exception as exc:  # pragma: no cover — defensive
         logger.error("post_chat hook raised: %s", exc, exc_info=True)
+
+
+@router.post("/permission_mode", response_model=Result[dict], summary="Update a running turn's permission mode")
+async def update_permission_mode(
+    request: UpdatePermissionModeInput, svc: ServiceDep, ctx: AppContextDep
+) -> Result[dict]:
+    task = svc.task_manager.get_task(request.session_id)
+    if task is None or task.user_id != ctx.user_id:
+        return Result(success=False, errorCode="SESSION_NOT_FOUND", errorMessage="Chat task not found")
+    if task.status != "running" or task.run_id != request.run_id:
+        return Result(success=False, errorCode="SESSION_NOT_RUNNING", errorMessage="This turn is no longer running")
+    if task.live_permission_profile is None:
+        return Result(success=False, errorCode="TASK_INITIALIZING", errorMessage="Chat task is still initializing")
+    try:
+        task.live_permission_profile.switch(request.permission_mode)
+    except Exception:
+        logger.exception("Failed to switch permission mode for session=%s", request.session_id)
+        return Result(
+            success=False, errorCode="PERMISSION_SWITCH_FAILED", errorMessage="Failed to switch permission mode"
+        )
+    return Result(
+        success=True,
+        data={
+            "session_id": task.session_id,
+            "run_id": task.run_id,
+            "permission_mode": task.live_permission_profile.profile,
+        },
+    )

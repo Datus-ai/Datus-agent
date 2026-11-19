@@ -13,6 +13,25 @@ from datus.schemas.agent_models import ScopedContext, SubAgentConfig, merge_scop
 
 
 @pytest.mark.ci
+class TestToolPatternsNormalization:
+    @pytest.mark.parametrize(
+        "tools",
+        [
+            [" semantic_tools.query_metrics ", "", "semantic_tools.get_metric"],
+            ("semantic_tools.query_metrics", "semantic_tools.get_metric"),
+        ],
+    )
+    def test_tool_list_is_usable_by_scoped_storage(self, tools):
+        cfg = SubAgentConfig(tools=tools)
+        assert cfg.tools == "semantic_tools.query_metrics,semantic_tools.get_metric"
+
+    def test_invalid_tool_list_is_rejected(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            SubAgentConfig(tools=[1])
+
+
 class TestSubAgentsFieldNormalization:
     """Tests for the ``subagents`` field validator / normalizer."""
 
@@ -181,3 +200,19 @@ class TestSubAgentConfigEffectiveScopedContext:
         child = SubAgentConfig(system_prompt="x", scoped_context=child_sc)
         effective = child.with_effective_scoped_context(None)
         assert effective.scoped_context.tables == "public.users"
+
+
+@pytest.mark.ci
+@pytest.mark.parametrize("source", ["sr", "mysql", "pg"])
+def test_grouped_scope_survives_payload_and_inheritance(source):
+    """Preserve per-source table scopes through serialization and sub-agent inheritance."""
+    scopes = {"sr": "default_catalog.analytics.*", "mysql": "sales.*", "pg": "warehouse.reporting.*"}
+    parent = ScopedContext(datasource=source, tables_by_datasource=scopes)
+    inherited = SubAgentConfig(system_prompt="ask").with_effective_scoped_context(parent)
+    assert inherited.has_scoped_context()
+    for name in scopes:
+        assert inherited.is_in_datasource(name)
+    assert not inherited.is_in_datasource("unrelated")
+    payload = inherited.as_payload(datasource=source)
+    restored = SubAgentConfig.model_validate(payload)
+    assert restored.scoped_context.tables_by_datasource == scopes

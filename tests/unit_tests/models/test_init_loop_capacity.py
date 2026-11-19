@@ -14,6 +14,7 @@ from datus.cli.init_context import InitContext
 from datus.configuration.agent_config import ModelConfig
 from datus.models.openai_model import OpenAIModel
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 from tests.unit_tests.cli.test_chat_commands import _make_chat_commands
 from tests.unit_tests.models.conftest import RecordingScriptedModel
 
@@ -41,6 +42,7 @@ class InitScript(RecordingScriptedModel):
 async def test_same_sdk_run_compacts_repeatedly_and_preserves_task(
     real_agent_config, mock_llm_create, tmp_path, exhaust_budget, custom_model
 ):
+    """Preserve the task, todos and user corrections through repeated SDK compaction."""
     chat = _make_chat_commands(real_agent_config)
     node = chat.get_or_create_node()
     session = node._get_or_create_session()
@@ -51,9 +53,11 @@ async def test_same_sdk_run_compacts_repeatedly_and_preserves_task(
         else ModelConfig(type="openai", model="gpt-4o", api_key="test", context_length=16384, max_tokens=1024)
     )
     node.model = OpenAIModel(config)
-    # Trigger multiple rewrites with bounded fixtures even when the model uses
-    # the larger fallback window. Capacity defaults themselves stay unchanged.
-    node._compact_cfg.major.token_threshold = 15360 / node.model.context_length() if custom_model else 0.65
+    # Keep the same input headroom while reserving the model's actual output
+    # budget, so bounded fixtures trigger multiple rewrites for custom models.
+    node._compact_cfg.major.token_threshold = (
+        (node.model.max_tokens() + 7168) / node.model.context_length() if custom_model else 0.65
+    )
     node._compact_cfg.minor.enabled = False
     # Only the summary model is stubbed; splitting, archival, session rewrite
     # and all SDK model-input filters execute their production implementations.
@@ -74,6 +78,7 @@ async def test_same_sdk_run_compacts_repeatedly_and_preserves_task(
     pending = tmp_path / "knowledge/pending-questions.md"
     pending.write_text("Unconfirmed: what is a customer account?")
 
+    @tool_contract(access="read", direct_call=True, category="filesystem_tools")
     def read_file(path: str) -> FuncToolResult:
         """Read one scoped source document."""
         read_paths.append(path)
@@ -83,6 +88,7 @@ async def test_same_sdk_run_compacts_repeatedly_and_preserves_task(
             run.record_user_updates([correction])
         return FuncToolResult(result={"content": (tmp_path / path).read_text()})
 
+    @tool_contract(access="session", direct_call=False, category="tools")
     def ask_user(questions: list[str]) -> FuncToolResult:
         """Clarify the current task with the user."""
         return FuncToolResult(result=[{"question": "Customer scope?", "answer": "Keep customer guidance separate"}])

@@ -323,8 +323,7 @@ async def test_stream_bi_metrics_skips_when_no_sqls(agent_config, state) -> None
     assert state.metrics == []
 
 
-@pytest.mark.parametrize("single_mapping", [False, True])
-def test_collects_dosi_metric_identifiers(agent_config, tmp_path: Path, single_mapping: bool) -> None:
+def test_collects_dosi_metric_identifiers(agent_config, tmp_path: Path) -> None:
     semantic_dir = tmp_path / "subject" / "semantic_models" / "metrics"
     semantic_dir.mkdir(parents=True)
     yaml_file = semantic_dir / "orders.yml"
@@ -348,7 +347,7 @@ def test_collects_dosi_metric_identifiers(agent_config, tmp_path: Path, single_m
         yaml.safe_dump(
             {
                 "version": "0.2.0.dev0",
-                "semantic_model": semantic_model if single_mapping else [semantic_model],
+                **semantic_model,
             }
         ),
         encoding="utf-8",

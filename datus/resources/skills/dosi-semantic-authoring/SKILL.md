@@ -19,7 +19,7 @@ Use this skill for modeling decisions. The node prompt owns request scope, targe
 
 ## Read the active contract
 
-The appended OSI shapes retain all core members and enums; they are reference shapes, not a complete model to paste. Required members are root `version`/`semantic_model`, model `name`/`datasets`, dataset `name`/`source`, field and metric `name`/`expression`, and relationship `name`/`from`/`to`/`from_columns`/`to_columns`. An expression contains `dialects` entries with `dialect` and `expression`. Use the datasource's OSI dialect and reject unknown core keys.
+The appended OSI shapes retain all core members and enums; they are reference shapes, not a complete model to paste. Required members are root `version`/`name`/`datasets`, dataset `name`/`source`, field and metric `name`/`expression`, and relationship `name`/`from`/`to`/`from_columns`/`to_columns`. An expression contains `dialects` entries with `dialect` and `expression`. Use the datasource's OSI dialect and reject unknown core keys.
 
 The appended DATUS directory lists every active capability, its carriers and when to use it. Before authoring a capability with `schema_ref`, use `read_file` to read its full rules and examples from the generated authoring reference directory below. The directory entry gives its filename, such as `capability-window.yaml` or `capability-derive.yaml`; referenced definitions are included. Follow `related_references` when combining capabilities, such as windows with parameters. Read `osi-core.yaml` for full core details or `datus.yaml` for the complete extension contract when needed. An unread definition is not an unsupported capability.
 
@@ -59,49 +59,48 @@ The following complete model shows the base → composition → ranking → scor
 
 ```yaml
 version: 0.2.0.dev0
-semantic_model:
-  - name: sales_patterns
-    datasets:
-      - name: orders
-        source: analytics.orders
-        fields:
-          - name: month
-            expression: {dialects: [{dialect: <osi_dialect>, expression: month}]}
-            dimension: {is_time: true}
-            custom_extensions:
-              - vendor_name: DATUS
-                data: '{"v":"<datus_extension_version>","requires":["time"],"time":{"format":"%Y-%m","storage":"string","granularity":"month"}}'
-          - name: market
-            expression: {dialects: [{dialect: <osi_dialect>, expression: market}]}
-          - name: order_id
-            expression: {dialects: [{dialect: <osi_dialect>, expression: order_id}]}
-          - name: amount
-            expression: {dialects: [{dialect: <osi_dialect>, expression: amount}]}
-    metrics:
-      - name: revenue
-        expression: {dialects: [{dialect: <osi_dialect>, expression: SUM(orders.amount)}]}
-      - name: order_count
-        expression: {dialects: [{dialect: <osi_dialect>, expression: COUNT(DISTINCT orders.order_id)}]}
-      - name: average_order_value
-        expression: {dialects: [{dialect: <osi_dialect>, expression: SUM(orders.amount) / COUNT(DISTINCT orders.order_id)}]}
+name: sales_patterns
+datasets:
+  - name: orders
+    source: analytics.orders
+    fields:
+      - name: month
+        expression: {dialects: [{dialect: <osi_dialect>, expression: month}]}
+        dimension: {is_time: true}
         custom_extensions:
           - vendor_name: DATUS
-            data: '{"v":"<datus_extension_version>","derive":{"type":"compose","expr":"revenue / order_count"}}'
-      - name: revenue_rank
-        expression: {dialects: [{dialect: <osi_dialect>, expression: SUM(orders.amount)}]}
-        custom_extensions:
-          - vendor_name: DATUS
-            data: '{"v":"<datus_extension_version>","window":{"base":"revenue","rank":{"function":"rank","order":{"by":"value","direction":"desc"},"partition":{"mode":"query_dimensions_except","exclude":["orders.market"]}}}}'
-      - name: market_count
-        expression: {dialects: [{dialect: <osi_dialect>, expression: SUM(orders.amount)}]}
-        custom_extensions:
-          - vendor_name: DATUS
-            data: '{"v":"<datus_extension_version>","window":{"base":"revenue","frame":{"function":"count","scope":"partition","partition":{"mode":"query_dimensions_except","exclude":["orders.market"]}}}}'
-      - name: revenue_score
-        expression: {dialects: [{dialect: <osi_dialect>, expression: "CASE WHEN SUM(orders.amount) <= 3 THEN 90 WHEN SUM(orders.amount) >= SUM(orders.amount) - 2 THEN 0 ELSE 40 END"}]}
-        custom_extensions:
-          - vendor_name: DATUS
-            data: '{"v":"<datus_extension_version>","derive":{"type":"compose","expr":"CASE WHEN revenue_rank <= 3 THEN 90 WHEN revenue_rank >= market_count - 2 THEN 0 ELSE 40 END"}}'
+            data: '{"v":"<datus_extension_version>","requires":["time"],"time":{"format":"%Y-%m","storage":"string","granularity":"month"}}'
+      - name: market
+        expression: {dialects: [{dialect: <osi_dialect>, expression: market}]}
+      - name: order_id
+        expression: {dialects: [{dialect: <osi_dialect>, expression: order_id}]}
+      - name: amount
+        expression: {dialects: [{dialect: <osi_dialect>, expression: amount}]}
+metrics:
+  - name: revenue
+    expression: {dialects: [{dialect: <osi_dialect>, expression: SUM(orders.amount)}]}
+  - name: order_count
+    expression: {dialects: [{dialect: <osi_dialect>, expression: COUNT(DISTINCT orders.order_id)}]}
+  - name: average_order_value
+    expression: {dialects: [{dialect: <osi_dialect>, expression: SUM(orders.amount) / COUNT(DISTINCT orders.order_id)}]}
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"v":"<datus_extension_version>","derive":{"type":"compose","expr":"revenue / order_count"}}'
+  - name: revenue_rank
+    expression: {dialects: [{dialect: <osi_dialect>, expression: SUM(orders.amount)}]}
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"v":"<datus_extension_version>","window":{"base":"revenue","rank":{"function":"rank","order":{"by":"value","direction":"desc"},"partition":{"mode":"query_dimensions_except","exclude":["orders.market"]}}}}'
+  - name: market_count
+    expression: {dialects: [{dialect: <osi_dialect>, expression: SUM(orders.amount)}]}
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"v":"<datus_extension_version>","window":{"base":"revenue","frame":{"function":"count","scope":"partition","partition":{"mode":"query_dimensions_except","exclude":["orders.market"]}}}}'
+  - name: revenue_score
+    expression: {dialects: [{dialect: <osi_dialect>, expression: "CASE WHEN SUM(orders.amount) <= 3 THEN 90 WHEN SUM(orders.amount) >= SUM(orders.amount) - 2 THEN 0 ELSE 40 END"}]}
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"v":"<datus_extension_version>","derive":{"type":"compose","expr":"CASE WHEN revenue_rank <= 3 THEN 90 WHEN revenue_rank >= market_count - 2 THEN 0 ELSE 40 END"}}'
 ```
 
 The score's basic SQL is the mechanical expansion required by validation: `SUM(orders.amount) >= SUM(orders.amount) - 2` does not encode ranking. Runtime ranking and scoring come from `derive.expr` and its referenced windows.
@@ -116,22 +115,21 @@ The score's basic SQL is the mechanical expansion required by validation: `SUM(o
 
 ```yaml
 version: 0.2.0.dev0
-semantic_model:
-  - name: sales
-    datasets:
-      - name: orders
-        source: analytics.orders
-        fields:
-          - name: amount
-            expression:
-              dialects: [{dialect: <osi_dialect>, expression: amount}]
-    metrics:
-      - name: revenue
-        description: Total order revenue
-        ai_context: {instructions: Sum order amounts at the requested grouping.}
+name: sales
+datasets:
+  - name: orders
+    source: analytics.orders
+    fields:
+      - name: amount
         expression:
-          dialects: [{dialect: <osi_dialect>, expression: SUM(orders.amount)}]
-        custom_extensions:
-          - vendor_name: DATUS
-            data: '{"v":"<datus_extension_version>","subject_path":["sales","revenue","total"],"unit":"USD"}'
+          dialects: [{dialect: <osi_dialect>, expression: amount}]
+metrics:
+  - name: revenue
+    description: Total order revenue
+    ai_context: {instructions: Sum order amounts at the requested grouping.}
+    expression:
+      dialects: [{dialect: <osi_dialect>, expression: SUM(orders.amount)}]
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"v":"<datus_extension_version>","subject_path":["sales","revenue","total"],"unit":"USD"}'
 ```

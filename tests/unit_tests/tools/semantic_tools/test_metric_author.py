@@ -1,4 +1,4 @@
-"""Metric source authoring accepts the same document envelopes as OSI sync."""
+"""Metric source authoring and OSI sync share the flat document contract."""
 
 import copy
 import json
@@ -10,12 +10,17 @@ from datus.tools.semantic_tools.metric_author import MetricAuthor
 from datus.tools.semantic_tools.osi_document import load_osi_document
 
 
-@pytest.mark.parametrize("shape", ["flat", "mapping", "list"])
 @pytest.mark.parametrize("suffix", ["yaml", "json"])
-def test_synced_metrics_can_be_read_and_mutated_without_rewrapping(tmp_path, shape, suffix):
+def test_synced_metrics_can_be_read_and_mutated_without_rewrapping(tmp_path, suffix):
     model = {
         "name": "shop",
-        "datasets": [{"name": "customers", "source": "crm.customers"}],
+        "datasets": [
+            {
+                "name": "customers",
+                "source": "crm.customers",
+                "fields": [{"name": "id", "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "id"}]}}],
+            }
+        ],
         "metrics": [
             {
                 "name": "customer_count",
@@ -23,7 +28,7 @@ def test_synced_metrics_can_be_read_and_mutated_without_rewrapping(tmp_path, sha
             }
         ],
     }
-    document = model if shape == "flat" else {"semantic_model": model if shape == "mapping" else [model]}
+    document = model
     document["version"] = "0.2.0.dev0"
     original = copy.deepcopy(document)
     path = tmp_path / f"model.{suffix}"
@@ -47,12 +52,5 @@ def test_synced_metrics_can_be_read_and_mutated_without_rewrapping(tmp_path, sha
     author.delete("customer_count")
     author.delete("new_count")
     expected = copy.deepcopy(original)
-    expected_model = (
-        expected
-        if shape == "flat"
-        else expected["semantic_model"]
-        if shape == "mapping"
-        else expected["semantic_model"][0]
-    )
-    expected_model["metrics"] = []
+    expected["metrics"] = []
     assert yaml.safe_load(path.read_text()) == expected

@@ -43,7 +43,7 @@ The diagram reads top to bottom: who uses Datus, what the agent is made of, and 
 
 - **Automated semantic modeling**: the agent reads your database schema and SQL history, then generates [OSI](https://dosi.datus.ai/) semantic models and metric definitions, with no hand-written YAML.
 - **[Dosi](https://dosi.datus.ai/) execution engine**: compiles one semantic model into SQL for 13+ database dialects, and ships as an independent program you can also run as a CLI, REST server, or MCP server.
-- **Metric Q&A and attribution**: [AskMetrics](https://docs.datus.ai/latest/subagent/ask_metrics/) answers business questions from metric definitions instead of improvising SQL, and when a metric moves, dimension attribution locates which dimension drove the change.
+- **Metric Q&A and attribution**: [AskMetrics](https://docs.datus.ai/latest/subagent/ask_metrics/) answers business questions from metric definitions instead of improvising SQL, and when a metric moves, attribution splits the change over the inputs of its formula and over the groups of its dimensions.
 
 ### Agent and context
 
@@ -57,7 +57,7 @@ The diagram reads top to bottom: who uses Datus, what the agent is made of, and 
 - **Open ecosystem**: adapters for [21 databases](https://docs.datus.ai/latest/adapters/db_adapters/), 10+ LLM providers, and an [MCP](https://docs.datus.ai/latest/integration/mcp/) server and client.
 - **External integrations**: the [plugin](https://docs.datus.ai/latest/plugin/introduction/) framework connects third-party platforms and in-house tools to the agent; one `datus-plugin.yml` manifest declares CLI commands, skills, and prompt context, with per-project activation.
 - **[Skills](https://docs.datus.ai/latest/skills/introduction/)**: packaged tools following the agentskills.io convention, installable from a marketplace.
-- **Enterprise governance**: tiered permission profiles, statement-level [SQL authorization](https://docs.datus.ai/latest/configuration/sql_policy/) with AI pre-review, bash confined to an OS-level sandbox, and [traces](https://docs.datus.ai/latest/develop/observability/) exportable to any OTLP platform.
+- **Enterprise governance**: tiered permission profiles, statement-level [SQL authorization](https://docs.datus.ai/latest/cli/execution_command/) with AI pre-review, bash confined to an OS-level sandbox, and [traces](https://docs.datus.ai/latest/develop/observability/) exportable to any OTLP platform.
 
 ## Quickstart
 

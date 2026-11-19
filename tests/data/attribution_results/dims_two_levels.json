@@ -1,0 +1,176 @@
+{
+ "schema_version": 3,
+ "status": "complete",
+ "metric": "store_sales_vs_channel_average",
+ "dimensions": [
+  "item.i_category",
+  "item.i_class"
+ ],
+ "algorithm": "hybrid_exact_sampling",
+ "accuracy": "mixed",
+ "tree": {
+  "label": "store_sales_vs_channel_average",
+  "metric": "store_sales_vs_channel_average",
+  "expression": "store_sales_amount / channel_average_sales_amount * 100",
+  "baseline": 144.2383451295328,
+  "current": 145.31383905656213,
+  "delta": 1.0754939270293278,
+  "effect": 1.0754939270293278,
+  "share": 1.0,
+  "groups_total": 10,
+  "others": {
+   "group_count": 3,
+   "effect": 0.07826668532431053,
+   "share": 0.07277278221411683
+  },
+  "children": [
+   {
+    "label": "Home",
+    "key": {
+     "i_category": "Home"
+    },
+    "baseline": 143.42805063593806,
+    "current": 145.88814665113605,
+    "delta": 2.4600960151979905,
+    "effect": 0.24893656062354244,
+    "share": 0.2314625442015668,
+    "groups_total": 16,
+    "others": {
+     "group_count": 16,
+     "effect": 0.24893656062354244,
+     "share": 0.2314625442015668
+    },
+    "children": []
+   },
+   {
+    "label": "Music",
+    "key": {
+     "i_category": "Music"
+    },
+    "baseline": 144.10783715733382,
+    "current": 145.80136840913266,
+    "delta": 1.693531251798845,
+    "effect": 0.17489043575784893,
+    "share": 0.16261406165344142,
+    "groups_total": 4,
+    "others": {
+     "group_count": 4,
+     "effect": 0.1748904357578411,
+     "share": 0.16261406165343414
+    },
+    "children": []
+   },
+   {
+    "label": "Jewelry",
+    "key": {
+     "i_category": "Jewelry"
+    },
+    "baseline": 144.59992981724335,
+    "current": 146.21699458513095,
+    "delta": 1.617064767887598,
+    "effect": 0.15266689670902509,
+    "share": 0.1419504962996058,
+    "groups_total": 16,
+    "others": {
+     "group_count": 16,
+     "effect": 0.15266689670902509,
+     "share": 0.1419504962996058
+    },
+    "children": []
+   },
+   {
+    "label": "Electronics",
+    "key": {
+     "i_category": "Electronics"
+    },
+    "baseline": 144.0571721091683,
+    "current": 145.2197714536897,
+    "delta": 1.1625993445213965,
+    "effect": 0.11865252662635359,
+    "share": 0.11032375324897398,
+    "groups_total": 16,
+    "others": {
+     "group_count": 16,
+     "effect": 0.11865252662635355,
+     "share": 0.11032375324897395
+    },
+    "children": []
+   },
+   {
+    "label": "Sports",
+    "key": {
+     "i_category": "Sports"
+    },
+    "baseline": 144.65650477658508,
+    "current": 145.7390462218029,
+    "delta": 1.082541445217828,
+    "effect": 0.10740537924285126,
+    "share": 0.09986609551531425,
+    "groups_total": 16,
+    "others": {
+     "group_count": 16,
+     "effect": 0.10740537924285123,
+     "share": 0.09986609551531422
+    },
+    "children": []
+   },
+   {
+    "label": "Children",
+    "key": {
+     "i_category": "Children"
+    },
+    "baseline": 143.82376201274442,
+    "current": 144.89994734326302,
+    "delta": 1.076185330518598,
+    "effect": 0.10578198116193424,
+    "share": 0.09835665130543286,
+    "groups_total": 4,
+    "others": {
+     "group_count": 3,
+     "effect": 0.004075068493048475,
+     "share": 0.003789020459003811
+    },
+    "children": [
+     {
+      "label": "infants",
+      "key": {
+       "i_category": "Children",
+       "i_class": "infants"
+      },
+      "baseline": 142.75245820994712,
+      "current": 147.01498451360177,
+      "delta": 4.262526303654653,
+      "effect": 0.10170691266888326,
+      "share": 0.09456763084642672
+     }
+    ]
+   },
+   {
+    "label": "Books",
+    "key": {
+     "i_category": "Books"
+    },
+    "baseline": 145.03730965163365,
+    "current": 145.95927943559525,
+    "delta": 0.9219697839616003,
+    "effect": 0.08889346158346152,
+    "share": 0.08265361556154792,
+    "groups_total": 16,
+    "others": {
+     "group_count": 16,
+     "effect": 0.08889346158346154,
+     "share": 0.08265361556154793
+    },
+    "children": []
+   }
+  ]
+ },
+ "issues": [],
+ "execution": {
+  "queries_executed": 4,
+  "rows_fetched": 202,
+  "evaluations_executed": 34102,
+  "elapsed_ms": 97,
+  "budget_exhausted": []
+ }
+}

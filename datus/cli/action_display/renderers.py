@@ -48,6 +48,23 @@ def _truncate_middle(text: str, max_len: int = 120) -> str:
     return text[:keep] + " ... " + text[-keep:]
 
 
+def is_provisional_model_response(action: ActionHistory) -> bool:
+    """Identify model text that the node's final response can replace."""
+    return (
+        action.depth == 0
+        and action.role == ActionRole.ASSISTANT
+        and action.status == ActionStatus.SUCCESS
+        and (
+            action.action_type == "final_response"
+            or (
+                action.action_type == "response"
+                and isinstance(action.output, dict)
+                and action.output.get("is_thinking") is False
+            )
+        )
+    )
+
+
 def resolve_assistant_body(action: ActionHistory) -> str:
     """Return the user-facing body carried by an ASSISTANT action's ``output``.
 

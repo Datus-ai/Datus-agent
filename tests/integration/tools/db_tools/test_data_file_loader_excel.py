@@ -372,6 +372,33 @@ class TestLegacyXls:
 
 
 class TestInspectSpreadsheet:
+    @pytest.mark.parametrize("materialize", [False, True])
+    def test_mixed_cells_remain_queryable_after_numeric_summary_row(self, tmp_path, excel_connection, materialize):
+        """Preserve mixed cell values and report fallback typing for views and tables."""
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+        worksheet.append(["project", "amount"])
+        worksheet.append([123, 100])
+        worksheet.append(["A project", "not applicable"])
+        source = tmp_path / "mixed.xlsx"
+        workbook.save(source)
+
+        loaded, skipped = load_file(
+            source,
+            "mixed.xlsx",
+            connection=excel_connection,
+            conversion_cache_dir=tmp_path,
+            header_row=1,
+            materialize=materialize,
+        )
+
+        assert skipped == []
+        table = loaded[0]
+        rows = excel_connection.execute(f'SELECT * FROM "{table.table}"').fetchall()
+        assert rows == [("123", "100"), ("A project", "not applicable")]
+        assert table.row_count == 2
+        assert table.to_dict()["warnings"]
+
     def test_returns_the_unparsed_grid(self, tmp_path, excel_connection):
         source = _write_workbook(tmp_path / "s.xlsx")
 

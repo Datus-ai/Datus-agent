@@ -127,7 +127,7 @@ class TestGenDashboardAgenticExecution:
             _items_from_adapter_result,
         )
 
-        assert os.environ.get("DEEPSEEK_API_KEY"), "P0 BI creation requires DEEPSEEK_API_KEY"
+        assert os.environ.get("DEEPSEEK_API_KEY"), "BI creation requires DEEPSEEK_API_KEY"
         config = dashboard_agent_config
         adapter = _create_adapter(
             BootstrapBiPicker(config, Console(log_path=False, force_terminal=False)),

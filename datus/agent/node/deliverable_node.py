@@ -343,7 +343,7 @@ class DeliverableAgenticNode(AgenticNode):
 
         tokens_used = 0
         if self.execution_mode == "interactive":
-            tokens_used = self._extract_total_tokens(ctx.action_history_manager.get_actions())
+            tokens_used = self._extract_total_tokens(ctx.get_run_actions())
 
         # ``ctx.extras`` populated by ``_run_stream_loop`` above.
         validation_report = ctx.extras.get("validation_report")
@@ -365,6 +365,7 @@ class DeliverableAgenticNode(AgenticNode):
         return self._make_error_result(
             error=self._format_execution_error(exc),
             action_history_manager=ctx.action_history_manager,
+            action_start=ctx.action_start,
         )
 
     # ── result construction hooks ─────────────────────────────────────
@@ -399,6 +400,7 @@ class DeliverableAgenticNode(AgenticNode):
         *,
         error: str,
         action_history_manager: ActionHistoryManager,
+        action_start: int = 0,
     ) -> Any:
         """Build the ``NodeResult`` returned when the stream raises."""
         return SemanticNodeResult(

@@ -1,15 +1,18 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-
 # -*- coding: utf-8 -*-
 import asyncio
 import csv
+import hashlib
 import io
+import ipaddress
 import json
 import os
 import re
+import threading
 from collections import OrderedDict
+from copy import deepcopy
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -30,6 +33,7 @@ from datus.tools.db_tools.capabilities import (
     get_effective_capabilities,
     supports_namespace,
 )
+from datus.tools.db_tools.connection_scope import borrow_connector, connection_scope, drain_connections
 from datus.tools.db_tools.data_file_loader import (
     LOCAL_FILES_DATASOURCE,
     DataFileError,
@@ -50,12 +54,15 @@ from datus.tools.db_tools.datasource_plan import DatasourcePlanError, plan_from_
 from datus.tools.db_tools.datasource_quality import QualityChecker, summarize
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.bulk_query_tools import BulkQueryTools
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.compress_utils import DataCompressor
 from datus.utils.config_utils import coerce_bool
 from datus.utils.constants import DBType, SQLType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
+from datus.utils.result_pagination import SnapshotStore, list_page, native_pagination, validate_page
 from datus.utils.sql_utils import parse_dialect, parse_table_name_parts
 
 logger = get_logger(__name__)
@@ -137,7 +144,7 @@ def _pattern_matches(pattern: str, value: str) -> bool:
     name="db_tool",
     availability_property="has_db_tools",
 )
-class DBFuncTool:
+class DBFuncTool(BulkQueryTools):
     """
     Database function tool that supports dynamic connector switching.
 
@@ -193,8 +200,9 @@ class DBFuncTool:
             default_database: Physical database name. Metadata only (the connector targets the database
                               configured for its datasource); defaults to the datasource config's ``database``.
             sub_agent_name: Optional sub-agent name for scoped context
-            scoped_tables: Optional explicit table scope patterns
-            connector_cache_size: Max connectors to cache (LRU eviction), default 8
+            scoped_tables: Optional explicit table scope patterns. Cannot be combined with
+                           ``scoped_context.tables_by_datasource``; conflicting scopes are rejected.
+            connector_cache_size: Max lookup entries (LRU), default 8; DBManager owns connection limits
             filesystem_root: Root that ``load_file_as_table`` resolves relative paths
                        against. Pass the node's own workspace root: a node configured
                        with ``node_config["workspace_root"]`` anchors its filesystem
@@ -216,10 +224,38 @@ class DBFuncTool:
                        passing False does not make the tool writable on a
                        hardened deployment.
         """
+        # A grouped scope declares its own default independently of the
+        # project's current connection. Keep the live policy config unchanged.
+        storage_config = agent_config
+        if agent_config is not None and sub_agent_name:
+            self.agent_config = agent_config
+            sub_config = self._load_sub_agent_config(sub_agent_name)
+            scope = sub_config.scoped_context if sub_config else None
+            if scoped_tables and scope is not None and scope.tables_by_datasource is not None:
+                raise DatusException(
+                    ErrorCode.COMMON_VALIDATION_FAILED,
+                    message="Cannot combine scoped_tables with tables_by_datasource; refusing to widen the run scope.",
+                )
+            if scope is not None and scope.tables_by_datasource is not None and scope.datasource:
+                from copy import copy
+
+                default_datasource = default_datasource or scope.datasource
+                if default_datasource not in scope.tables_by_datasource:
+                    raise DatusException(
+                        ErrorCode.COMMON_VALIDATION_FAILED,
+                        message=f"Datasource '{default_datasource}' is outside the scoped context.",
+                    )
+                storage_config = copy(agent_config)
+                storage_config.current_datasource = default_datasource
+
         if connector_or_manager is None:
             if not agent_config:
                 raise ValueError("agent_config is required when connector_or_manager is not provided")
             connector_or_manager = db_manager_instance(agent_config.datasource_configs)
+
+        self._connection_lock = threading.RLock()
+        self._borrowed_connections = {}
+        self._connector_datasources: Dict[int, str] = {}
 
         # Determine mode based on input type
         if isinstance(connector_or_manager, DBManager):
@@ -252,17 +288,26 @@ class DBFuncTool:
         # posture, before the deployment-wide switch is ORed in.
         self._read_only = read_only
         self._filesystem_root = filesystem_root
-        if agent_config and metadata_fts_enabled(agent_config):
-            self.schema_rag = create_metadata_rag(agent_config, sub_agent_name)
+        if storage_config and metadata_fts_enabled(storage_config):
+            self.schema_rag = create_metadata_rag(storage_config, sub_agent_name)
         else:
-            self.schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name) if agent_config else None
+            self.schema_rag = SchemaWithValueRAG(storage_config, sub_agent_name) if storage_config else None
         self._field_order = self._determine_field_order()
         self._scoped_patterns = self._load_scoped_patterns(scoped_tables)
+        self._tables_by_datasource = None
+        if sub_agent_name:
+            sub_config = self._load_sub_agent_config(sub_agent_name)
+            if sub_config and sub_config.scoped_context:
+                self._tables_by_datasource = sub_config.scoped_context.tables_by_datasource
+        if self._tables_by_datasource is not None:
+            self._require_scoped_datasource(self._default_datasource)
+            self._datasources = [name for name in self._datasources if name in self._tables_by_datasource]
+            self._scoped_patterns = self._patterns_for_connector(self._primary_connector)
 
         self._semantic_datasets = None
         if agent_config and isinstance(getattr(agent_config, "project_name", ""), str):
             try:
-                self._semantic_datasets = SemanticDatasetRAG(agent_config, sub_agent_name)
+                self._semantic_datasets = SemanticDatasetRAG(storage_config, sub_agent_name)
             except Exception as exc:
                 logger.debug(f"Failed to initialize semantic dataset storage: {exc}")
         self.has_schema = self._has_schema_storage()
@@ -508,6 +553,17 @@ class DBFuncTool:
             result["sample_rows"] = sample_rows
         return result
 
+    def close(self):
+        """Return tool-owned borrows without closing a shared DBManager."""
+        drain_connections(self)
+        with getattr(self, "_connection_lock", threading.RLock()):
+            leases = list(getattr(self, "_borrowed_connections", {}).values())
+            self.__dict__.setdefault("_borrowed_connections", {}).clear()
+            getattr(self, "_connector_cache", {}).clear()
+            self._primary_connector = None
+        for lease in leases:
+            lease.release()
+
     def _init_single_db_connector(self, connector: BaseSqlConnector):
         # Legacy single connector mode
         self._db_manager = None
@@ -527,6 +583,7 @@ class DBFuncTool:
         """Get the primary/default connector (for backward compatibility)."""
         return self._primary_connector
 
+    @connection_scope
     def get_sql_generation_context(self, datasource: Optional[str] = None, database: str = "") -> Dict[str, Any]:
         """Resolve non-secret SQL hints from the same connector used by DB tools."""
         # A reminder naming the bound datasource is not a per-tool override:
@@ -542,6 +599,7 @@ class DBFuncTool:
         context["database"] = database or self._active_database_of(connector)
         return context
 
+    @connection_scope
     def quote_sql_identifier(
         self,
         name: str,
@@ -559,13 +617,17 @@ class DBFuncTool:
         coordinates = DatabaseExecutionContext.from_mapping(context)
         if self._db_manager is None:
             return self.connector
-        return self._db_manager.get_conn(coordinates.datasource, coordinates.database, context=coordinates)
+        self._require_scoped_datasource(coordinates.datasource)
+        connector = borrow_connector(self, coordinates.datasource, coordinates.database, context=coordinates)
+        return self._track_connector(connector, coordinates.datasource)
 
     def connector_for_datasource_default(self, datasource: Optional[str] = None):
         """Replay legacy queries using configured defaults, independent of the turn."""
         if self._db_manager is None:
             return self.connector
-        return self._db_manager.get_conn(datasource or self._default_datasource)
+        source = datasource or self._default_datasource
+        self._require_scoped_datasource(source)
+        return self._track_connector(borrow_connector(self, source, ""), source)
 
     def execution_context(self, connector, datasource: Optional[str] = "") -> Dict[str, str]:
         from datus.schemas.database_context import DatabaseExecutionContext
@@ -585,10 +647,55 @@ class DBFuncTool:
         if context.get("datasource") == datasource and context.get("database", "") == database:
             from datus.schemas.database_context import DatabaseExecutionContext
 
-            return self._db_manager.get_conn(
-                datasource, database, context=DatabaseExecutionContext.from_mapping(context)
+            connector = borrow_connector(
+                self, datasource, database, context=DatabaseExecutionContext.from_mapping(context)
             )
-        return self._db_manager.get_conn(datasource, database)
+        else:
+            connector = borrow_connector(self, datasource, database)
+        return self._track_connector(connector, datasource)
+
+    def _require_scoped_datasource(self, datasource: str) -> None:
+        """Reject sources absent from an explicitly configured grouped scope."""
+        scopes = getattr(self, "_tables_by_datasource", None)
+        if scopes is not None and datasource not in scopes:
+            raise DatusException(
+                ErrorCode.COMMON_VALIDATION_FAILED,
+                message=f"Datasource '{datasource}' is outside the scoped context.",
+            )
+
+    def _track_connector(self, connector: BaseSqlConnector, datasource: str) -> BaseSqlConnector:
+        """Remember the source that owns a connector for dialect-specific scope checks."""
+        if not hasattr(self, "_connector_datasources"):
+            self._connector_datasources = {}
+        self._connector_datasources[id(connector)] = datasource
+        return connector
+
+    def _patterns_for_connector(self, connector: Optional[BaseSqlConnector] = None) -> List[ScopedTablePattern]:
+        """Resolve table patterns for the routed source, rejecting empty grouped scopes."""
+        scopes = getattr(self, "_tables_by_datasource", None)
+        if scopes is None:
+            return self._scoped_patterns
+        connector = connector or self._primary_connector
+        source = self._connector_datasources.get(id(connector))
+        if source is None:
+            raise DatusException(ErrorCode.COMMON_VALIDATION_FAILED, message="Unbound connector in scoped context.")
+        self._require_scoped_datasource(source)
+        if not hasattr(self, "_datasource_pattern_cache"):
+            self._datasource_pattern_cache = {}
+        key = (source, connector.dialect, scopes[source])
+        if key not in self._datasource_pattern_cache:
+            patterns = [
+                pattern
+                for token in scopes[source].replace("\n", ",").split(",")
+                if (pattern := self._parse_scope_token(token, connector)) is not None
+            ]
+            if not patterns:
+                raise DatusException(
+                    ErrorCode.COMMON_VALIDATION_FAILED,
+                    message=f"Datasource '{source}' has no valid table scope; use '*' to explicitly allow all tables.",
+                )
+            self._datasource_pattern_cache[key] = patterns
+        return self._datasource_pattern_cache[key]
 
     def _get_connector(self, datasource: Optional[str] = None, database: str = "") -> BaseSqlConnector:
         """
@@ -613,14 +720,17 @@ class DBFuncTool:
         # Multi-connector mode: route by (datasource, database). DBManager.get_conn binds
         # the connector to the database (selects the file for a glob datasource).
         ds = datasource or self._default_datasource
+        self._require_scoped_datasource(ds)
         db = database or (self._default_database if ds == self._default_datasource else "")
         key = (ds, db)
 
-        # Check cache
-        if key in self._connector_cache:
-            # Move to end (most recently used)
-            self._connector_cache.move_to_end(key)
-            return self._connector_cache[key]
+        # Managed lookups must re-borrow: an idle connector may have been evicted
+        # by its owner even though the tool's lookup entry is still present.
+        cache_lock = getattr(self, "_connection_lock", threading.RLock())
+        with cache_lock:
+            if key in self._connector_cache and not callable(getattr(type(self._db_manager), "acquire_conn", None)):
+                self._connector_cache.move_to_end(key)
+                return self._connector_cache[key]
 
         try:
             connector = self._resolve_connector(ds, db)
@@ -639,12 +749,16 @@ class DBFuncTool:
             connector.connect()
 
         # Add to cache with LRU eviction
-        if self._connector_cache_size > 0 and len(self._connector_cache) >= self._connector_cache_size:
-            # Evict least recently used (first item)
-            evicted_name, _ = self._connector_cache.popitem(last=False)
-            logger.debug(f"LRU evicting connector: {evicted_name}")
-
-        self._connector_cache[key] = connector
+        with cache_lock:
+            if (
+                key not in self._connector_cache
+                and self._connector_cache_size > 0
+                and len(self._connector_cache) >= self._connector_cache_size
+            ):
+                evicted_name, _ = self._connector_cache.popitem(last=False)
+                logger.debug(f"LRU evicting connector: {evicted_name}")
+            self._connector_cache[key] = connector
+            self._connector_cache.move_to_end(key)
         return connector
 
     def _reset_database_for_rag(self, datasource: Optional[str] = "") -> str:
@@ -664,9 +778,11 @@ class DBFuncTool:
         val = getattr(connector, "database_name", None)
         return val if isinstance(val, str) else ""
 
-    def _determine_field_order(self) -> Sequence[str]:
-        dialect = getattr(self._primary_connector, "dialect", "") or ""
-        capabilities = get_effective_capabilities(self._primary_connector, dialect)
+    def _determine_field_order(self, connector: Optional[BaseSqlConnector] = None) -> Sequence[str]:
+        """Return namespace fields supported by the selected connector dialect."""
+        connector = connector or self._primary_connector
+        dialect = getattr(connector, "dialect", "") or ""
+        capabilities = get_effective_capabilities(connector, dialect)
         fields: List[str] = []
         if "catalog" in capabilities:
             fields.append("catalog")
@@ -704,6 +820,7 @@ class DBFuncTool:
         return scoped_entries
 
     def _load_sub_agent_config(self, sub_agent_name: str) -> Optional[SubAgentConfig]:
+        """Load validated sub-agent configuration without silently discarding malformed grouped scopes."""
         if not self.agent_config:
             return None
         try:
@@ -718,14 +835,23 @@ class DBFuncTool:
 
         try:
             return SubAgentConfig.model_validate(config)
-        except Exception:
+        except Exception as exc:
+            raw_scope = config.get("scoped_context") if isinstance(config, dict) else None
+            if isinstance(raw_scope, dict) and "tables_by_datasource" in raw_scope:
+                raise DatusException(
+                    ErrorCode.COMMON_VALIDATION_FAILED,
+                    message="Malformed datasource table scopes; refusing unscoped database access.",
+                ) from exc
             return None
 
-    def _parse_scope_token(self, token: str) -> Optional[ScopedTablePattern]:
+    def _parse_scope_token(
+        self, token: str, connector: Optional[BaseSqlConnector] = None
+    ) -> Optional[ScopedTablePattern]:
+        """Parse one table-scope token using the selected connector dialect."""
         token = (token or "").strip()
         if not token:
             return None
-        dialect = getattr(self._primary_connector, "dialect", "") or ""
+        dialect = getattr(connector or self._primary_connector, "dialect", "") or ""
         parsed = parse_table_name_parts(token, dialect)
         if not parsed.get("table_name"):
             return None
@@ -1000,8 +1126,12 @@ class DBFuncTool:
         """
         from datus.utils.sql_utils import read_workspace_sql_file
 
+        workspace_root = self._resolve_workspace_root()
+        path_allowed = getattr(self, "sql_file_allowed", None)
         try:
-            return read_workspace_sql_file(file_path, self._resolve_workspace_root())
+            if path_allowed is not None:
+                return read_workspace_sql_file(file_path, workspace_root, path_allowed=path_allowed)
+            return read_workspace_sql_file(file_path, workspace_root)
         except FileNotFoundError:
             raise DatusException(
                 ErrorCode.COMMON_FILE_NOT_FOUND,
@@ -1029,7 +1159,8 @@ class DBFuncTool:
         explicit: Optional[str],
         connector: Optional[BaseSqlConnector] = None,
     ) -> str:
-        if field not in self._field_order:
+        """Resolve a namespace field from explicit input or supported connector defaults."""
+        if field not in (self._determine_field_order(connector) if connector is not None else self._field_order):
             return ""
         if explicit:
             return self._normalize_identifier_part(explicit)
@@ -1106,10 +1237,10 @@ class DBFuncTool:
                 setattr(coordinate, field, self._normalize_identifier_part(parsed[parsed_field]))
         return coordinate
 
-    def _table_matches_scope(self, coordinate: TableCoordinate) -> bool:
-        if not self._scoped_patterns:
-            return True
-        return any(pattern.matches(coordinate) for pattern in self._scoped_patterns)
+    def _table_matches_scope(self, coordinate: TableCoordinate, connector: Optional[BaseSqlConnector] = None) -> bool:
+        """Check a table coordinate against the selected connector's table scope."""
+        patterns = self._patterns_for_connector(connector)
+        return not patterns or any(pattern.matches(coordinate) for pattern in patterns)
 
     def _filter_table_entries(
         self,
@@ -1119,7 +1250,8 @@ class DBFuncTool:
         schema: Optional[str],
         connector: BaseSqlConnector,
     ) -> List[Dict[str, Any]]:
-        if not self._scoped_patterns:
+        """Keep metadata entries permitted by the routed connector's table scope."""
+        if not self._patterns_for_connector(connector):
             return list(entries)
 
         filtered: List[Dict[str, Any]] = []
@@ -1131,7 +1263,7 @@ class DBFuncTool:
                 schema=schema,
                 connector=connector,
             )
-            if self._table_matches_scope(coordinate):
+            if self._table_matches_scope(coordinate, connector):
                 filtered.append(entry)
         return filtered
 
@@ -1142,14 +1274,18 @@ class DBFuncTool:
             return False
         return True
 
-    def _database_matches_scope(self, catalog: Optional[str], database: str) -> bool:
-        if not self._scoped_patterns:
+    def _database_matches_scope(
+        self, catalog: Optional[str], database: str, connector: Optional[BaseSqlConnector] = None
+    ) -> bool:
+        """Check database visibility against the selected connector's table scope."""
+        patterns = self._patterns_for_connector(connector)
+        if not patterns:
             return True
-        catalog_value = self._default_field_value("catalog", catalog or "")
-        database_value = self._default_field_value("database", database or "")
+        catalog_value = self._default_field_value("catalog", catalog or "", connector)
+        database_value = self._default_field_value("database", database or "", connector)
 
         wildcard_allowed = False
-        for pattern in self._scoped_patterns:
+        for pattern in patterns:
             if not self._matches_catalog_database(pattern, catalog_value, database_value):
                 continue
             if pattern.database:
@@ -1159,15 +1295,23 @@ class DBFuncTool:
             wildcard_allowed = True
         return wildcard_allowed
 
-    def _schema_matches_scope(self, catalog: Optional[str], database: Optional[str], schema: str) -> bool:
-        if not self._scoped_patterns:
+    def _schema_matches_scope(
+        self,
+        catalog: Optional[str],
+        database: Optional[str],
+        schema: str,
+        connector: Optional[BaseSqlConnector] = None,
+    ) -> bool:
+        """Check schema visibility against the selected connector's table scope."""
+        patterns = self._patterns_for_connector(connector)
+        if not patterns:
             return True
-        catalog_value = self._default_field_value("catalog", catalog or "")
-        database_value = self._default_field_value("database", database or "")
-        schema_value = self._default_field_value("schema", schema or "")
+        catalog_value = self._default_field_value("catalog", catalog or "", connector)
+        database_value = self._default_field_value("database", database or "", connector)
+        schema_value = self._default_field_value("schema", schema or "", connector)
 
         wildcard_allowed = False
-        for pattern in self._scoped_patterns:
+        for pattern in patterns:
             if not self._matches_catalog_database(pattern, catalog_value, database_value):
                 continue
             if pattern.schema:
@@ -1179,24 +1323,27 @@ class DBFuncTool:
 
     def _check_sql_table_scope(self, sql: str, connector: Optional[BaseSqlConnector] = None) -> List[str]:
         """Return table names from *sql* that fall outside the scoped context."""
-        if not self._scoped_patterns:
-            return []
-        from datus.utils.sql_utils import extract_table_names
-
         routed_connector = connector or self._primary_connector
+        patterns = self._patterns_for_connector(routed_connector)
+        if not patterns:
+            return []
+        from datus.utils.sql_utils import extract_table_names_for_scope
+
         dialect = getattr(routed_connector, "dialect", "") or ""
-        table_names = extract_table_names(sql, dialect=dialect, ignore_empty=True)
+        table_names = extract_table_names_for_scope(sql, dialect=dialect)
         if not table_names:
-            return []  # can't parse → allow (SHOW/DESCRIBE/EXPLAIN have no tables)
+            return []  # Table-free statements such as SHOW have no table scope to check.
         out_of_scope: List[str] = []
         analyzer_getter = getattr(connector_registry, "get_sql_analyzer", None)
         native_analysis = callable(analyzer_getter) and analyzer_getter(dialect) is not None
         for name in table_names:
             coordinate = self._build_table_coordinate(raw_name=name, connector=routed_connector)
             if native_analysis:
-                candidates = [pattern for pattern in self._scoped_patterns if pattern.matches(coordinate)]
+                candidates = [pattern for pattern in patterns if pattern.matches(coordinate)]
                 unresolved = [
-                    field for field in self._field_order if field != "table" and not getattr(coordinate, field)
+                    field
+                    for field in self._determine_field_order(routed_connector)
+                    if field != "table" and not getattr(coordinate, field)
                 ]
                 if candidates and not any(
                     all(getattr(pattern, field) in ("", "*", "%") for field in unresolved) for pattern in candidates
@@ -1209,7 +1356,7 @@ class DBFuncTool:
                     raise ValueError(
                         f"Unresolved {field} in SQL scope analysis; qualify the table or configure context"
                     )
-            if not self._table_matches_scope(coordinate):
+            if not self._table_matches_scope(coordinate, routed_connector):
                 out_of_scope.append(name)
         return out_of_scope
 
@@ -1217,7 +1364,9 @@ class DBFuncTool:
     # agent-facing tool surface. ``to_function_tool`` converts a bound method into
     # a Tool; ``available_tools`` assembles the runtime list. Neither is a tool
     # itself. Mirrors ``FilesystemFuncTool._BASE_TOOL_FRAMEWORK_METHODS``.
-    _FRAMEWORK_METHODS: frozenset = frozenset({"available_tools", "to_function_tool", "get_sql_generation_context"})
+    _FRAMEWORK_METHODS: frozenset = frozenset(
+        {"available_tools", "to_function_tool", "get_sql_generation_context", "close"}
+    )
 
     # Internal statement-dispatch targets of the unified ``execute_sql`` entry
     # point. ``execute_sql`` detects the statement type and routes to these by
@@ -1351,6 +1500,9 @@ class DBFuncTool:
             methods_to_convert.append(self.search_table)
 
         methods_to_convert.append(self.execute_sql)
+        methods_to_convert.append(self.export_query)
+        if self.agent_config is not None:
+            methods_to_convert.append(self.get_datasource_identity)
 
         # Only mount the uploads loader where there is a catalog to load into.
         # Without the datasource every call would fail with "not configured", so
@@ -1377,7 +1529,125 @@ class DBFuncTool:
             bound_tools.append(self.to_function_tool(bound_method))
         return bound_tools
 
+    @staticmethod
+    def _identity_host_is_valid(value: str) -> bool:
+        """Accept DNS names and IP literals, never credential-like colon pairs."""
+        candidate = value
+        if candidate.startswith("[") and candidate.endswith("]"):
+            candidate = candidate[1:-1]
+            try:
+                return ipaddress.ip_address(candidate).version == 6
+            except ValueError:
+                return False
+        try:
+            ipaddress.ip_address(candidate)
+            return True
+        except ValueError:
+            if ":" in candidate:
+                return False
+        try:
+            candidate = candidate.encode("idna").decode("ascii")
+        except UnicodeError:
+            return False
+        if len(candidate) > 253 or not candidate:
+            return False
+        labels = candidate.rstrip(".").split(".")
+        if len(labels) > 1 and all(label.isdigit() for label in labels):
+            return False
+        return all(re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label) for label in labels)
+
+    @staticmethod
+    def _public_identity_fields(config: Any) -> Dict[str, Any]:
+        """Project only public coordinates; never serialize a connection object."""
+        identity = {}
+        for field in ("type", "host", "port", "database", "catalog", "schema", "account"):
+            value = config.get(field) if isinstance(config, dict) else getattr(config, field, None)
+            if not isinstance(value, (str, int)) or isinstance(value, bool) or value == "":
+                continue
+            if field == "host" and not DBFuncTool._identity_host_is_valid(str(value)):
+                continue
+            if field == "port" and (not str(value).isdigit() or not 0 < int(value) <= 65535):
+                continue
+            identity[field] = value
+        return identity
+
+    @tool_contract(access="read", direct_call=True)
+    @connection_scope
+    def get_datasource_identity(self, datasource: str = "") -> FuncToolResult:
+        """Inspect public coordinates of the effective runtime connection used by child tasks.
+
+        ``configured_identity`` is diagnostic only: URI, adapter extras and selected
+        databases can override it. Match BI evidence only to ``identity`` when its
+        ``identity_status`` is resolved. File paths come from native database
+        metadata, including the selected glob file or attached DuckDB database.
+        Missing inspector coordinates remain unresolved. Credentials, connection
+        URIs and adapter extras are never returned or read from local config files.
+        """
+        source = datasource or self._default_datasource
+        if self.agent_config is None:
+            return FuncToolResult(success=0, error="Configured datasource identity is unavailable")
+        try:
+            configs = self.agent_config.current_db_configs()
+        except Exception:
+            return FuncToolResult(success=0, error="Configured datasource identity is unavailable")
+        if not isinstance(configs, dict) or source not in configs:
+            return FuncToolResult(success=0, error="Requested datasource is not configured")
+        configured = self._public_identity_fields(configs[source])
+        identity, context = {}, {}
+        try:
+            connector = self._get_connector(source)
+            context = self.execution_context(connector, source)
+            dialect = self._dialect_name(getattr(connector, "dialect", ""))
+            # These are the adapter's constructed connection coordinates, after
+            # URI/default/extra resolution, rather than AgentConfig defaults.
+            coordinates = self._public_identity_fields(getattr(connector, "config", None))
+            coordinates.update(self._public_identity_fields(connector))
+            coordinates["type"] = dialect
+            for key in ("database", "catalog", "schema"):
+                if context.get(key):
+                    coordinates[key] = context[key]
+            identity = self._public_identity_fields(coordinates)
+            if dialect in {"sqlite", "duckdb"}:
+                query = (
+                    "PRAGMA database_list"
+                    if dialect == "sqlite"
+                    else "SELECT database_name AS name, path AS file FROM duckdb_databases()"
+                )
+                result = connector.execute_query(query, result_format="list")
+                if result.success:
+                    selected = "main" if dialect == "sqlite" else context.get("database")
+                    rows = [row for row in result.sql_return if row.get("name") == selected]
+                    if len(rows) == 1 and isinstance(rows[0].get("file"), str) and rows[0]["file"]:
+                        identity["path"] = str(Path(rows[0]["file"]).expanduser().resolve())
+        except Exception:
+            # Neither exceptions nor a configured fallback establish the endpoint.
+            # They may contain a private URI, so do not return their text.
+            identity, context = {}, {}
+        kind = identity.get("type")
+        resolved = bool(
+            kind
+            and (
+                identity.get("path")
+                if kind in {"sqlite", "duckdb"}
+                else (identity.get("database") or identity.get("catalog"))
+                and (
+                    (identity.get("host") and identity.get("port")) or (kind == "snowflake" and identity.get("account"))
+                )
+            )
+        )
+        return FuncToolResult(
+            result={
+                "datasource": source,
+                "configured_identity": configured,
+                "identity": identity,
+                "identity_status": "resolved" if resolved else "unresolved",
+                "execution_context": context,
+            }
+        )
+
+    @connection_scope
     @mcp_tool(availability_check="has_schema")
+    @tool_contract(access="read", direct_call=True)
     def search_table(
         self,
         query_text: str,
@@ -1478,9 +1748,61 @@ class DBFuncTool:
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
+    def _catalog_snapshot_scope(self) -> dict:
+        return {
+            "datasource": self._default_datasource,
+            "database": self._default_database,
+            "policy": self.policy_context,
+            "tables": [vars(pattern) for pattern in self._scoped_patterns],
+            "grouped_tables": getattr(self, "_tables_by_datasource", None),
+            "context": getattr(self, "_execution_context", {}),
+        }
+
+    def _catalog_snapshot_store(self) -> SnapshotStore:
+        if "_catalog_pages" not in self.__dict__:
+            self._catalog_pages = SnapshotStore()
+        return self._catalog_pages
+
+    def _catalog_page(
+        self,
+        name: str,
+        items: Optional[list],
+        page_size: Optional[int],
+        offset: int,
+        snapshot_id: Optional[str],
+        query: dict,
+    ) -> FuncToolResult:
+        if page_size is None and snapshot_id is None and offset == 0:
+            return FuncToolResult(result=items)
+        size = 200 if page_size is None else page_size
+        validate_page(size, offset)
+        store = self._catalog_snapshot_store()
+        scope = self._catalog_snapshot_scope()
+        if snapshot_id:
+            items = store.read(snapshot_id, name, scope, query)
+        else:
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with snapshot_id")
+            items = sorted(
+                items, key=lambda x: (x.get("type", ""), x.get("qualified_name", "")) if isinstance(x, dict) else x
+            )
+            snapshot_id = store.save(name, items, scope, query)
+        rows = [{"name": item} if isinstance(item, str) else item for item in items]
+        page = list_page(rows, snapshot_id, size, offset)
+        return FuncToolResult(result=deepcopy(page))
+
+    @connection_scope
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
+    @native_pagination()
     def list_databases(
-        self, catalog: Optional[str] = "", datasource: Optional[str] = "", include_sys: Optional[bool] = False
+        self,
+        catalog: Optional[str] = "",
+        datasource: Optional[str] = "",
+        include_sys: Optional[bool] = None,
+        page_size: Optional[int] = None,
+        offset: int = 0,
+        snapshot_id: Optional[str] = None,
     ) -> FuncToolResult:
         """
         Enumerate databases accessible through the current connection.
@@ -1492,11 +1814,28 @@ class DBFuncTool:
             datasource: Optional datasource to route the query to. Defaults to the current datasource.
             include_sys: Set True to include system databases; defaults to False.
 
+        Pagination:
+            Agent calls default to 200 records. Use page_size, offset and the returned
+            snapshot_id to continue without another catalog read. No page-size hard cap.
+            Direct calls without pagination arguments retain the complete list.
+
         Returns:
             FuncToolResult with result as a list of database names ordered by the connector. On failure success=0 with
             an explanatory error message.
         """
-        catalog, _, _ = self._normalize_namespace_args(catalog, "", "", datasource)
+        query = {"catalog": catalog, "datasource": datasource, "include_sys": include_sys}
+        try:
+            if page_size is not None:
+                validate_page(page_size, offset)
+            if snapshot_id:
+                return self._catalog_page("list_databases", None, page_size, offset, snapshot_id, query)
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with snapshot_id")
+        except (OSError, ValueError, TypeError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+        include_sys = False if include_sys is None else include_sys
+        query["include_sys"] = include_sys
+
         if self._is_multi_connector and datasource and datasource not in self._datasources:
             return FuncToolResult(
                 success=0, error=f"Datasource '{datasource}' not found. Available: {list(self._datasources)}"
@@ -1504,30 +1843,41 @@ class DBFuncTool:
         source = datasource or self._default_datasource
         # A glob/multi-database file datasource: enumerate its configured databases (one file per db),
         # since each connector only sees its own single file.
-        if self.agent_config:
-            try:
-                cfg = self.agent_config.current_db_config(source)
-            except Exception:
-                cfg = None
-            if cfg is not None and getattr(cfg, "path_pattern", ""):
-                databases = self.agent_config.list_databases(source)
-                filtered = [db for db in databases if self._database_matches_scope(catalog, db)]
-                return FuncToolResult(result=filtered)
         try:
+            if self.agent_config:
+                try:
+                    cfg = self.agent_config.current_db_config(source)
+                except Exception:
+                    cfg = None
+                if cfg is not None and getattr(cfg, "path_pattern", ""):
+                    databases = self.agent_config.list_databases(source)
+                    if getattr(self, "_tables_by_datasource", None) is None:
+                        return self._catalog_page("list_databases", databases, page_size, offset, None, query)
+                    catalog, _, _ = self._normalize_namespace_args(catalog, "", "", datasource)
+                    connector = self._get_connector(source)
+                    filtered = [db for db in databases if self._database_matches_scope(catalog, db, connector)]
+                    return self._catalog_page("list_databases", filtered, page_size, offset, None, query)
+            catalog, _, _ = self._normalize_namespace_args(catalog, "", "", datasource)
             connector = self._get_connector(source)
             databases = connector.get_databases(catalog, include_sys=include_sys)
-            filtered = [db for db in databases if self._database_matches_scope(catalog, db)]
-            return FuncToolResult(result=filtered)
+            filtered = [db for db in databases if self._database_matches_scope(catalog, db, connector)]
+            return self._catalog_page("list_databases", filtered, page_size, offset, None, query)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
+    @connection_scope
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
+    @native_pagination()
     def list_schemas(
         self,
         catalog: Optional[str] = "",
         database: Optional[str] = "",
         datasource: Optional[str] = "",
-        include_sys: bool = False,
+        include_sys: Optional[bool] = None,
+        page_size: Optional[int] = None,
+        offset: int = 0,
+        snapshot_id: Optional[str] = None,
     ) -> FuncToolResult:
         """
         List schema names under the supplied catalog/database coordinate.
@@ -1540,28 +1890,54 @@ class DBFuncTool:
             datasource: Optional datasource to route the query to. Defaults to the current datasource.
             include_sys: Set True to include system schemas; defaults to False.
 
+        Pagination:
+            Agent calls default to 200 records. Use page_size, offset and the returned
+            snapshot_id to continue without another catalog read. No page-size hard cap.
+            Direct calls without pagination arguments retain the complete list.
+
         Returns:
             FuncToolResult with result holding the schema name list. On failure success=0 with an explanatory message.
         """
+        query = {"catalog": catalog, "database": database, "datasource": datasource, "include_sys": include_sys}
+        try:
+            if page_size is not None:
+                validate_page(page_size, offset)
+            if snapshot_id:
+                return self._catalog_page("list_schemas", None, page_size, offset, snapshot_id, query)
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with snapshot_id")
+        except (OSError, ValueError, TypeError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+        include_sys = False if include_sys is None else include_sys
+        query["include_sys"] = include_sys
+
         try:
             catalog, database, _ = self._normalize_namespace_args(catalog, database, "", datasource)
-            if database and not self._database_matches_scope(catalog, database):
-                return FuncToolResult(result=[])
             connector = self._get_connector(datasource, database)
+            if database and not self._database_matches_scope(catalog, database, connector):
+                return self._catalog_page("list_schemas", [], page_size, offset, None, query)
             schemas = connector.get_schemas(catalog, database, include_sys=include_sys)
-            filtered = [schema for schema in schemas if self._schema_matches_scope(catalog, database, schema)]
-            return FuncToolResult(result=filtered)
+            filtered = [
+                schema for schema in schemas if self._schema_matches_scope(catalog, database, schema, connector)
+            ]
+            return self._catalog_page("list_schemas", filtered, page_size, offset, None, query)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
+    @connection_scope
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
+    @native_pagination()
     def list_tables(
         self,
         catalog: Optional[str] = "",
         database: Optional[str] = "",
         schema_name: Optional[str] = "",
         datasource: Optional[str] = "",
-        include_views: Optional[bool] = True,
+        include_views: Optional[bool] = None,
+        page_size: Optional[int] = None,
+        offset: int = 0,
+        snapshot_id: Optional[str] = None,
     ) -> FuncToolResult:
         """
         Return table-like objects (tables, views, materialized views) visible to the connector.
@@ -1573,12 +1949,36 @@ class DBFuncTool:
             datasource: Optional datasource to route the query to. Defaults to the current datasource.
             include_views: When True (default) also include views and materialized views.
 
+        Pagination:
+            Agent calls default to 200 records. Use page_size, offset and the returned
+            snapshot_id to continue without another catalog read. No page-size hard cap.
+            Direct calls without pagination arguments retain the complete list.
+
         Returns:
             FuncToolResult with result=[{"type": "table|view|materialized_view", "qualified_name": str}, ...].
             ``qualified_name`` is ``[db.][schema.]table``, prefixing only the levels the caller did not pass
             (e.g. pass ``database`` but not ``schema`` and each entry carries its resolved ``schema.table``).
             On failure success=0 with an explanatory error message.
         """
+        query = {
+            "catalog": catalog,
+            "database": database,
+            "schema_name": schema_name,
+            "datasource": datasource,
+            "include_views": include_views,
+        }
+        try:
+            if page_size is not None:
+                validate_page(page_size, offset)
+            if snapshot_id:
+                return self._catalog_page("list_tables", None, page_size, offset, snapshot_id, query)
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with snapshot_id")
+        except (OSError, ValueError, TypeError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+        include_views = True if include_views is None else include_views
+        query["include_views"] = include_views
+
         try:
             catalog, database, schema_name = self._normalize_namespace_args(
                 catalog,
@@ -1613,11 +2013,13 @@ class DBFuncTool:
                     logger.debug(f"get_materialized_views unavailable on {connector.dialect}: {e}")
 
             filtered_result = self._filter_table_entries(result, catalog, database, schema_name, connector)
-            return FuncToolResult(result=filtered_result)
+            return self._catalog_page("list_tables", filtered_result, page_size, offset, None, query)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
+    @connection_scope
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def describe_table(
         self,
         table_name: str,
@@ -1686,7 +2088,7 @@ class DBFuncTool:
                 connector=connector,
             )
 
-            if not self._table_matches_scope(coordinate):
+            if not self._table_matches_scope(coordinate, connector):
                 error_msg = f"Table '{table_name}' is outside the scoped context."
                 logger.warning(error_msg)
                 return FuncToolResult(
@@ -1783,7 +2185,9 @@ class DBFuncTool:
 
     # ------------------------------------------------- uploaded data files
 
-    def _reject_unsafe_uploads_sql(self, sql: str, datasource: Optional[str]) -> Optional[FuncToolResult]:
+    def _reject_unsafe_uploads_sql(
+        self, sql: str, datasource: Optional[str], *, connector: Optional[BaseSqlConnector] = None
+    ) -> Optional[FuncToolResult]:
         """Confine model-authored SQL on the uploads catalog to reads of its own tables.
 
         The catalog is a DuckDB datasource with external file access enabled —
@@ -1852,7 +2256,7 @@ class DBFuncTool:
             )
 
         try:
-            registered = list(self._registered_uploads())
+            registered = list(self._registered_uploads() if connector is None else self._registered_uploads(connector))
         except Exception as exc:
             # No catalog reading means no way to authorise a reference, and this
             # gate is the boundary — so refuse rather than skip it.
@@ -1870,7 +2274,7 @@ class DBFuncTool:
             )
         return None
 
-    def _registered_uploads(self) -> Dict[str, Optional[str]]:
+    def _registered_uploads(self, connector: Optional[BaseSqlConnector] = None) -> Dict[str, Optional[str]]:
         """Names the uploads catalog holds, read while holding the connector lock.
 
         The read has to happen *inside* ``exclusive_connection``. Handing the
@@ -1882,7 +2286,8 @@ class DBFuncTool:
         a short read looks like an empty catalog, which this gate then reports
         as "table is not registered" about a table that is registered.
         """
-        connector = self._get_connector(LOCAL_FILES_DATASOURCE, "")
+        if connector is None:
+            connector = self._get_connector(LOCAL_FILES_DATASOURCE, "")
         exclusive = getattr(connector, "exclusive_connection", None)
         if exclusive is None:
             raise DatusException(
@@ -1930,7 +2335,9 @@ class DBFuncTool:
             )
         return resolved
 
+    @connection_scope
     @mcp_tool()
+    @tool_contract(access="restricted", direct_call=True)
     def load_file_as_table(
         self,
         path: str,
@@ -1939,6 +2346,8 @@ class DBFuncTool:
         encoding: Optional[str] = "",
         materialize: bool = False,
         inspect_only: bool = False,
+        range: Optional[str] = "",
+        include: Optional[List[str]] = None,
     ) -> FuncToolResult:
         """
         Register an uploaded data file as queryable SQL table(s).
@@ -1981,6 +2390,14 @@ class DBFuncTool:
             inspect_only: Register nothing; return the sheet list and the raw
                 un-parsed top-left cells. Use it to work out the right
                 ``header_row`` for an awkward layout.
+            range: Inspection only, .xlsx/.xlsm: an A1 cell or rectangle such as
+                CU1:CX10. Requires sheet; at most 4096 cells. Omit to inspect the
+                first 30 rows and 64 columns, then follow has_more_* as needed.
+            include: Inspection only, .xlsx/.xlsm: any of values, formulas,
+                formats, merges. Defaults to values. Returns cell coordinates,
+                cached values (no recalculation), formula text, number formats
+                and intersecting merge ranges as requested. Header detection is
+                a heuristic; interpret the evidence before choosing header_row.
 
         Returns:
             dict: A dictionary with the execution result, containing these keys:
@@ -2021,6 +2438,12 @@ class DBFuncTool:
             if not target.is_file():
                 return FuncToolResult(success=0, error=f"Path is not a file: {resolved.display}")
 
+            if inspect_only and target.suffix.lower() in (".xlsx", ".xlsm"):
+                details = inspect_file(
+                    target, connection=None, sheet=sheet or None, cell_range=range or None, include=include
+                )
+                return FuncToolResult(result=details)
+
             # Legacy single-connector mode returns the primary connector for ANY
             # requested datasource, so without this the CREATE VIEW / COMMENT ON
             # would land in the user's real database. The tool is not mounted in
@@ -2056,8 +2479,17 @@ class DBFuncTool:
 
             with exclusive() as connection:
                 if inspect_only:
-                    details = inspect_file(target, connection=connection, sheet=sheet or None)
+                    details = inspect_file(
+                        target,
+                        connection=connection,
+                        sheet=sheet or None,
+                        cell_range=range or None,
+                        include=include,
+                    )
                     return FuncToolResult(result=details)
+
+                if range or include:
+                    return FuncToolResult(success=0, error="range and include require inspect_only=true.")
 
                 loaded, skipped = load_file(
                     target,
@@ -2111,7 +2543,7 @@ class DBFuncTool:
         # as a whole - one replaces tables, the other enumerates and reports on all of them - so
         # there is no meaningful way to honour the scope, and silently ignoring it would let a
         # scoped agent reach past its boundary. Refuse instead.
-        if self._scoped_patterns:
+        if self._scoped_patterns or getattr(self, "_tables_by_datasource", None) is not None:
             return None, FuncToolResult(
                 success=0,
                 error=(
@@ -2131,7 +2563,9 @@ class DBFuncTool:
             )
         return exclusive, None
 
+    @connection_scope
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def plan_datasource(
         self,
         ddl: str,
@@ -2232,7 +2666,9 @@ class DBFuncTool:
             logger.error(f"plan_datasource failed: {e}", exc_info=True)
             return FuncToolResult(success=0, error=f"Failed to plan the datasource: {e}")
 
+    @connection_scope
     @mcp_tool()
+    @tool_contract(access="write", direct_call=True)
     def import_database_file(
         self,
         path: str,
@@ -2391,20 +2827,14 @@ class DBFuncTool:
             return None
         names = sorted({str((a or {}).get("name") or "") for a in (config.get("assertions") or []) if a})
         names = [n for n in names if n]
-        # Dot-prefixed, like the generator's own `.{stem}.meta.json`: this file lives in the
-        # workspace the project publishes, and a visible `checks.seen.json` would ship with it.
-        cfg = Path(config_file)
-        side = cfg.with_name(f".{cfg.stem}.seen.json")
-        previous = []
-        try:
-            if side.exists():
-                previous = [str(x) for x in (json.loads(side.read_text(encoding="utf-8")) or [])]
-        except Exception:
-            previous = []
-        try:
-            side.write_text(json.dumps(names, ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            pass  # a read-only workspace must not fail the check
+        # Keep drift observations local to this tool instance: a reader must not
+        # create or overwrite a sidecar in the published workspace.
+        snapshots = getattr(self, "_assertion_snapshots", None)
+        if snapshots is None:
+            self._assertion_snapshots = snapshots = {}
+        key = str(Path(config_file).resolve())
+        previous = snapshots.get(key, [])
+        snapshots[key] = names
         if not previous:
             return None
         removed = [n for n in previous if n not in names]
@@ -2413,7 +2843,9 @@ class DBFuncTool:
             return None
         return {"removed": removed, "added": added, "kept": len(names) - len(added)}
 
+    @connection_scope
     @mcp_tool()
+    @tool_contract(access="restricted", direct_call=True)
     def check_datasource_quality(
         self,
         config_path: Optional[str] = "",
@@ -2452,6 +2884,15 @@ class DBFuncTool:
                     status and a one-line explanation.
         """
         try:
+            # QualityChecker uses raw DuckDB queries, not the bound SQL read
+            # surface. Refuse contexts requiring row filters or column masks.
+            from datus.tools.policy_runtime import PolicyRuntime
+
+            if PolicyRuntime(self.agent_config).requires_bound_read(self.policy_context):
+                return FuncToolResult(
+                    success=0,
+                    error="Quality checks are unavailable when a bound SQL read policy is required.",
+                )
             config: Dict[str, Any] = {}
             if config_path:
                 resolved = self._resolve_data_file(config_path)
@@ -2478,6 +2919,10 @@ class DBFuncTool:
                     # _validate_read_sql assumes a string; a number or a list would raise and the
                     # caller would see an opaque "Quality check failed" instead of the real cause.
                     offending.append(f"{name}: 'sql' must be a non-empty string")
+                    continue
+                guard_error = self._reject_unsafe_uploads_sql(sql, datasource)
+                if guard_error is not None:
+                    offending.append(f"{name}: {guard_error.error}")
                     continue
                 # The same validator the read path uses. Classifying the statement kind alone is
                 # not enough: it looks at the FIRST statement only, so `SELECT 1; DROP TABLE t`
@@ -2561,7 +3006,9 @@ class DBFuncTool:
             logger.error(f"check_datasource_quality failed: {e}", exc_info=True)
             return FuncToolResult(success=0, error=f"Quality check failed: {e}")
 
+    @connection_scope
     @mcp_tool()
+    @tool_contract(access="sql", direct_call=True)
     def execute_sql(
         self,
         sql: str,
@@ -2653,7 +3100,7 @@ class DBFuncTool:
             # lands every row the policy just withheld in a table no policy
             # covers — the person who may only SELECT two stores now owns all
             # four. The plugin cannot see it: it hooks reads, and this is a
-            # write. So on a project that has a policy context at all, a write
+            # write. With request or configured read protection, a write
             # that embeds a query is refused before it is dispatched.
             #
             # The permission prompt is not this check. It asks whether the
@@ -2663,11 +3110,15 @@ class DBFuncTool:
             # Ordered after the read-only gate above: a hardened deployment
             # refuses every write outright, so it never needs to reason about
             # what the write reads.
-            if self.policy_context and write_statement_reads_data(sql, connector.dialect):
+            from datus.tools.policy_runtime import PolicyRuntime
+
+            if write_statement_reads_data(sql, connector.dialect) and (
+                self.policy_context or PolicyRuntime(self.agent_config).requires_bound_read(self.policy_context)
+            ):
                 return FuncToolResult(
                     success=0,
                     error=(
-                        "This project has row-level policies, so a write statement that "
+                        "This project has row-level policies or column masking, so a write statement that "
                         "reads from a query is not allowed — it would copy filtered rows "
                         "into a table no policy covers. Create views and derived tables "
                         "on the database side instead."
@@ -2691,6 +3142,7 @@ class DBFuncTool:
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
+    @connection_scope
     def read_query(
         self, sql: str, datasource: Optional[str] = "", database: Optional[str] = "", *, compress: bool = True
     ) -> FuncToolResult:
@@ -2803,6 +3255,7 @@ class DBFuncTool:
                 sql,
                 datasource=effective_datasource,
                 dialect=connector.dialect,
+                connector=connector,
                 policy_context=effective_policy_context,
             )
             if not decision.allowed:
@@ -2831,28 +3284,55 @@ class DBFuncTool:
                     error="Read policy rewrote the reference SQL; complete calculation verification is unavailable.",
                     sql_query=enforced_sql,
                 )
-            analyzer_getter = getattr(connector_registry, "get_sql_analyzer", None)
-            if callable(analyzer_getter) and analyzer_getter(connector.dialect) is not None:
-                return ExecuteSQLResult(
-                    success=False,
-                    error="SQL policy rewriting is unsupported for this adapter's limited SQL analysis path.",
-                    sql_query=sql,
-                )
             # A policy rewrite (e.g. an injected LIMIT) must still be a single
             # read-only statement — re-validate so it can't smuggle in DML/DDL.
             validation_error, _ = self._validate_read_sql(enforced_sql, connector)
             if validation_error:
                 return ExecuteSQLResult(success=False, error=validation_error.error, sql_query=enforced_sql)
-        result = connector.execute_query(enforced_sql, result_format=result_format)
+        verifier = getattr(decision, "verify_context", None)
+        if verifier is not None:
+            try:
+                verifier()
+            except Exception as exc:
+                return ExecuteSQLResult(
+                    success=False, error=f"SQL policy context changed: {exc}", sql_query=enforced_sql
+                )
+        logger.debug(
+            "sql.execute",
+            datasource=effective_datasource,
+            dialect=connector.dialect,
+            sql=enforced_sql,
+        )
+        # CSV and empty row lists lose database type/schema information. Fetch
+        # typed rows once and preserve it for batch-only policy enforcement.
+        typed_policy_result = (
+            result_format in {"csv", "pandas", "list"}
+            and getattr(runtime, "has_batch_only_result_hooks", False) is True
+        )
+        result = connector.execute_query(enforced_sql, result_format="arrow" if typed_policy_result else result_format)
         if not result.success:
             return result
         try:
+            policy_options = {}
+            if typed_policy_result:
+                import pyarrow as pa
+
+                if not isinstance(result.sql_return, pa.Table):
+                    raise DatusException(
+                        ErrorCode.TOOL_INVALID_INPUT, message="Batch-only result policies require typed Arrow results"
+                    )
+                if result_format == "list":
+                    # Whole-result hooks keep their ordinary row-list input.
+                    # An empty list still carries its database schema to batch hooks.
+                    policy_options["batch_schema"] = result.sql_return.schema
+                    result.sql_return = result.sql_return.to_pylist()
             result_decision = runtime.after_read_result(
                 result.sql_return,
                 sql=enforced_sql,
                 datasource=effective_datasource,
                 dialect=connector.dialect,
                 policy_context=effective_policy_context,
+                **policy_options,
             )
             if not result_decision.allowed:
                 raise DatusException(
@@ -2868,6 +3348,22 @@ class DBFuncTool:
                     sql_query=enforced_sql,
                 )
             result.sql_return = result_decision.result
+            if typed_policy_result and result_format in {"csv", "pandas"}:
+                import pandas as pd
+                import pyarrow as pa
+
+                if not isinstance(result.sql_return, pa.Table):
+                    raise DatusException(
+                        ErrorCode.TOOL_INVALID_INPUT,
+                        message="Batch-only result policies must return an Arrow table before serialization",
+                    )
+                # Nullable integer IDs must not pass through pandas float64.
+                frame = result.sql_return.to_pandas(types_mapper=pd.ArrowDtype)
+                result.sql_return = frame.to_csv(index=False) if result_format == "csv" else frame
+            if typed_policy_result:
+                if result_format == "list" and isinstance(result.sql_return, pa.Table):
+                    result.sql_return = result.sql_return.to_pylist()
+                result.result_format = result_format
             if result_decision.applied_policies:
                 logger.info(
                     "Applied result policies",
@@ -2972,6 +3468,7 @@ class DBFuncTool:
         return None
 
     def _validate_read_sql(self, sql: str, connector: BaseSqlConnector) -> tuple[Optional[FuncToolResult], SQLType]:
+        """Return read and scope validation failures with the detected SQL type."""
         from datus.utils.sql_utils import (
             READ_ONLY_MULTI_STATEMENT,
             READ_ONLY_NON_READ,
@@ -3015,7 +3512,7 @@ class DBFuncTool:
 
         try:
             out_of_scope = self._check_sql_table_scope(sql, connector)
-        except ValueError as error:
+        except (ValueError, DatusException) as error:
             return FuncToolResult(success=0, error=str(error)), sql_type
         if out_of_scope:
             return (
@@ -3027,6 +3524,8 @@ class DBFuncTool:
             )
         return None, sql_type
 
+    @tool_contract(access="read", direct_call=False)
+    @connection_scope
     def get_table_ddl(
         self,
         table_name: str,
@@ -3067,7 +3566,7 @@ class DBFuncTool:
                 schema=schema_name,
                 connector=connector,
             )
-            if not self._table_matches_scope(coordinate):
+            if not self._table_matches_scope(coordinate, connector):
                 return FuncToolResult(
                     success=0,
                     error=f"Table '{table_name}' is outside the scoped context.",
@@ -3092,6 +3591,8 @@ class DBFuncTool:
             return FuncToolResult(success=0, error=str(e))
 
     # Regex matching allowed DDL statement prefixes
+    @tool_contract(access="write", direct_call=False)
+    @connection_scope
     def execute_ddl(self, sql: str, datasource: Optional[str] = "", database: Optional[str] = "") -> FuncToolResult:
         """
         Execute a single non-read, non-DML SQL statement (the generic write path).
@@ -3199,6 +3700,7 @@ class DBFuncTool:
         except Exception as e:
             return FuncToolResult(success=0, error=f"DDL execution failed: {str(e)}")
 
+    @connection_scope
     def execute_write(
         self,
         sql: str,
@@ -3355,8 +3857,38 @@ class DBFuncTool:
         except Exception as e:
             return FuncToolResult(success=0, error=f"Write execution failed: {str(e)}")
 
-    # Maximum rows allowed in a single transfer (v1 memory constraint)
     _TRANSFER_MAX_ROWS = 1_000_000
+    _TRANSFER_MAX_BATCH_ROWS = 10_000
+    _TRANSFER_MAX_SQL_BYTES = 1024 * 1024
+
+    def _transfer_insert_batches(self, df, target_table: str, dialect: str, batch_size: int):
+        """Render the existing INSERT format, refusing oversized statements."""
+        columns = ", ".join(self._quote_column_identifier(column, dialect) for column in df.columns)
+        prefix = f"INSERT INTO {target_table} ({columns}) VALUES "
+        for start in range(0, len(df), batch_size):
+            rows = []
+            size = len(prefix.encode("utf-8"))
+            for _, row in df.iloc[start : start + batch_size].iterrows():
+                values = []
+                for value in row:
+                    if value is None:
+                        values.append("NULL")
+                    elif isinstance(value, bool):
+                        values.append("TRUE" if value else "FALSE")
+                    elif isinstance(value, (int, float)):
+                        values.append(str(value))
+                    else:
+                        escaped = str(value).replace("'", "''")
+                        values.append(f"'{escaped}'")
+                literal = f"({', '.join(values)})"
+                size += len(literal.encode("utf-8")) + (2 if rows else 0)
+                if size > self._TRANSFER_MAX_SQL_BYTES:
+                    raise ValueError(
+                        f"Transfer INSERT exceeds the {self._TRANSFER_MAX_SQL_BYTES:,}-byte SQL limit. "
+                        "Reduce batch_size or transfer smaller values."
+                    )
+                rows.append(literal)
+            yield prefix + ", ".join(rows), len(rows)
 
     @staticmethod
     def _identifier_quote_char(dialect: str) -> str:
@@ -3489,7 +4021,46 @@ class DBFuncTool:
 
         return FuncToolResult(result={"sql": create_sql})
 
+    @tool_contract(access="write", direct_call=False)
+    @connection_scope
     def transfer_query_result(
+        self,
+        source_sql: str,
+        source_datasource: Optional[str] = "",
+        target_table: str = "",
+        target_datasource: Optional[str] = "",
+        mode: str = "replace",
+        batch_size: int = 5000,
+    ) -> FuncToolResult:
+        """Transfer query results using the existing datasource write paths.
+
+        Keeps replace/append behavior and the existing one-million-row limit.
+        batch_size must be 1..10000; generated INSERTs must fit within 1 MiB.
+        Returns bounded metadata and short error summaries without echoing
+        full SQL or query result sets.
+        For a file deliverable, use export_query instead.
+        """
+        from datus.utils.bounded_tool_output import bound_data_tool_result
+
+        try:
+            result = self._transfer_query_result(
+                source_sql, source_datasource, target_table, target_datasource, mode, batch_size
+            )
+        except Exception as exc:
+            result = self._bulk_failure(exc)
+        else:
+            if not result.success:
+                result = self._bulk_failure(
+                    RuntimeError(result.error or "Transfer failed"),
+                    **(result.result if isinstance(result.result, dict) else {}),
+                )
+            elif isinstance(result.result, dict):
+                result.result.pop("source_sql", None)
+                result.result.pop("target_table_create_sql", None)
+                result.result["source_sql_sha256"] = hashlib.sha256(source_sql.encode("utf-8")).hexdigest()
+        return FuncToolResult.model_validate(bound_data_tool_result(result.model_dump(mode="json")))
+
+    def _transfer_query_result(
         self,
         source_sql: str,
         source_datasource: Optional[str] = "",
@@ -3526,8 +4097,14 @@ class DBFuncTool:
             return refusal
 
         # Validate batch_size
-        if batch_size <= 0:
-            return FuncToolResult(success=0, error="batch_size must be a positive integer.")
+        if (
+            isinstance(batch_size, bool)
+            or not isinstance(batch_size, int)
+            or not 1 <= batch_size <= self._TRANSFER_MAX_BATCH_ROWS
+        ):
+            return FuncToolResult(
+                success=0, error=f"batch_size must be a positive integer between 1 and {self._TRANSFER_MAX_BATCH_ROWS}."
+            )
 
         # Validate target_table identifier
         if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$", target_table):
@@ -3639,6 +4216,29 @@ class DBFuncTool:
                 "Please add WHERE conditions to transfer in smaller batches.",
             )
 
+        # Keep the existing conversion and writer selection. Validate generated
+        # INSERT sizes before replace can clear any existing target rows.
+        normalized_df = df.where(df.notna(), other=None)
+        normalized_df = normalized_df.astype(object).where(normalized_df.notna(), other=None)
+        dialect = str(getattr(target_conn, "dialect", "") or "").lower()
+        try:
+            if target_operations is None:
+                for _ in self._transfer_insert_batches(normalized_df, target_table, dialect, batch_size):
+                    pass
+            elif row_count:
+                # The registered bound writer uses this quoted-column/named-bind
+                # template. Row values are parameters, not part of the SQL text.
+                columns = ", ".join(target_operations.quote_identifier(column) for column in normalized_df.columns)
+                binds = ", ".join(f":p{index}" for index in range(len(normalized_df.columns)))
+                insert_sql = f"INSERT INTO {target_table} ({columns}) VALUES ({binds})"
+                if len(insert_sql.encode("utf-8")) > self._TRANSFER_MAX_SQL_BYTES:
+                    raise ValueError(
+                        f"Transfer INSERT exceeds the {self._TRANSFER_MAX_SQL_BYTES:,}-byte SQL limit. "
+                        "Use fewer or shorter source column aliases."
+                    )
+        except Exception as exc:
+            return FuncToolResult(success=0, error=str(exc))
+
         # TRUNCATE for replace mode BEFORE empty check - mode="replace" must clear old data.
         # If the target table does not exist yet, create it from the source result schema so
         # first-time transfers do not require a separate hand-written DDL step.
@@ -3706,11 +4306,7 @@ class DBFuncTool:
                 }
             )
 
-        # Convert pandas NaT/NaN to Python None for DBAPI2 compatibility
-        df = df.where(df.notna(), other=None)
-        # Also convert numpy types to native Python types
-        df = df.astype(object).where(df.notna(), other=None)
-
+        df = normalized_df
         rows_written = 0
         try:
             if target_operations is not None:
@@ -3723,37 +4319,14 @@ class DBFuncTool:
                     )
                 )
             else:
-                # Legacy adapters keep the existing inline multi-row INSERT path.
-                columns = list(df.columns)
-                dialect = str(getattr(target_conn, "dialect", "") or "").lower()
-                col_names = ", ".join(self._quote_column_identifier(c, dialect) for c in columns)
-                for batch_start in range(0, row_count, batch_size):
-                    batch_end = min(batch_start + batch_size, row_count)
-                    batch_df = df.iloc[batch_start:batch_end]
-
-                    value_rows = []
-                    for _, row in batch_df.iterrows():
-                        values = []
-                        for val in row:
-                            if val is None:
-                                values.append("NULL")
-                            elif isinstance(val, bool):
-                                values.append("TRUE" if val else "FALSE")
-                            elif isinstance(val, (int, float)):
-                                values.append(str(val))
-                            else:
-                                escaped = str(val).replace("'", "''")
-                                values.append(f"'{escaped}'")
-                        value_rows.append(f"({', '.join(values)})")
-
-                    insert_sql = f"INSERT INTO {target_table} ({col_names}) VALUES {', '.join(value_rows)}"
+                for insert_sql, batch_rows in self._transfer_insert_batches(df, target_table, dialect, batch_size):
                     result = target_conn.execute_insert(insert_sql)
                     if not result.success:
                         return FuncToolResult(
                             success=0,
                             error=f"Transfer failed after writing {rows_written} rows: {result.error}",
                         )
-                    rows_written += len(batch_df)
+                    rows_written += batch_rows
 
                 # Commit the transaction to release locks (critical for SQLAlchemy-based connectors)
                 if hasattr(target_conn, "connection") and hasattr(target_conn.connection, "commit"):
@@ -3856,7 +4429,9 @@ class DBFuncTool:
     # these methods, we return safe fallback values so the migration agent
     # can continue in pure-LLM mode.
 
+    @connection_scope
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def get_migration_capabilities(self, datasource: Optional[str] = "") -> FuncToolResult:
         """
         Get migration target hints (dialect_family, requires, forbids, type_hints,
@@ -3901,7 +4476,9 @@ class DBFuncTool:
             )
         return FuncToolResult(result=capabilities)
 
+    @connection_scope
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def suggest_table_layout(self, datasource: Optional[str] = "", columns_json: str = "[]") -> FuncToolResult:
         """
         Suggest dialect-specific table layout (distribution/partition/order) for
@@ -3941,7 +4518,9 @@ class DBFuncTool:
             return FuncToolResult(result={})
         return FuncToolResult(result=suggestion)
 
+    @connection_scope
     @mcp_tool()
+    @tool_contract(access="write", direct_call=True)
     def validate_ddl(
         self,
         datasource: Optional[str] = "",

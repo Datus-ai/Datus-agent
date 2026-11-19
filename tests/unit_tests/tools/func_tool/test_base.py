@@ -24,9 +24,11 @@ from openai.types.responses import (
 )
 
 from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, tool_schema, trans_to_function_tool
+from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.permission.permission_hooks import PermissionHooks
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.permission.profiles import get_profile
+from datus.tools.registry.contracts import tool_contract
 from datus.tools.registry.tool_registry import ToolRegistry
 
 
@@ -41,6 +43,7 @@ class TestTransToFunctionTool:
     async def test_method_schema_declaration_preserves_dynamic_bindings(self):
         class ParameterTool:
             @tool_schema(strict_mode=False)
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def query(self, params: dict[str, Any]) -> FuncToolResult:
                 return FuncToolResult(result=params)
 
@@ -59,6 +62,7 @@ class TestTransToFunctionTool:
 
     def test_undeclared_methods_keep_strict_schema(self):
         class ParameterTool:
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def query(self, params: dict[str, Any]) -> FuncToolResult:
                 return FuncToolResult(result=params)
 
@@ -68,7 +72,10 @@ class TestTransToFunctionTool:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("encoded", [False, True])
     async def test_declared_array_and_boolean_arguments_execute_and_replay_canonically(self, encoded):
+        """Normalize encoded arrays and booleans before execution and replay."""
+
         class MetadataTool:
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def inspect(self, tables: list[str], include_views: Optional[bool] = None) -> FuncToolResult:
                 return FuncToolResult(result={"tables": tables, "include_views": include_views})
 
@@ -83,8 +90,11 @@ class TestTransToFunctionTool:
 
     @pytest.mark.asyncio
     async def test_text_and_ambiguous_argument_types_preserve_their_values(self):
+        """Preserve strings when the schema does not unambiguously require decoding."""
+
         class TextTool:
             @tool_schema(strict_mode=False)
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def inspect(
                 self, text: str, choice: str | list[str], flag: str | bool, payload: dict[str, Any]
             ) -> FuncToolResult:
@@ -111,9 +121,12 @@ class TestTransToFunctionTool:
         ],
     )
     async def test_encoded_arguments_still_require_strict_validation(self, arguments):
+        """Reject invalid decoded values before invoking the tool implementation."""
+
         class MetadataTool:
             called = False
 
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def inspect(self, tables: list[str], enabled: bool) -> FuncToolResult:
                 self.called = True
                 return FuncToolResult(result=tables)
@@ -126,9 +139,12 @@ class TestTransToFunctionTool:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("value", [[123], "one-id"])
     async def test_wrong_array_types_return_parameter_locations_without_execution(self, value):
+        """Report precise array validation locations without calling the implementation."""
+
         class EvidenceTool:
             called = False
 
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def expand(self, output_ids: list[str]) -> FuncToolResult:
                 self.called = True
                 return FuncToolResult(result=output_ids)
@@ -143,6 +159,7 @@ class TestTransToFunctionTool:
     def test_explicit_schema_mode_overrides_method_declaration(self, declared_strict, override_strict):
         class ParameterTool:
             @tool_schema(strict_mode=declared_strict)
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def query(self, name: str) -> FuncToolResult:
                 return FuncToolResult(result=name)
 
@@ -157,6 +174,7 @@ class TestTransToFunctionTool:
         class FakeTool:
             called = False
 
+            @tool_contract(access="read", direct_call=True, category="db_tools")
             def search_table(self, query_text: str, top_n: int = 5) -> FuncToolResult:
                 self.called = True
                 return FuncToolResult(result={"query_text": query_text, "top_n": top_n})
@@ -179,6 +197,7 @@ class TestTransToFunctionTool:
         """All valid parameters should be passed through correctly."""
 
         class FakeTool:
+            @tool_contract(access="read", direct_call=True, category="db_tools")
             def search_table(self, query_text: str, top_n: int = 5) -> FuncToolResult:
                 return FuncToolResult(result={"query_text": query_text, "top_n": top_n})
 
@@ -197,6 +216,7 @@ class TestTransToFunctionTool:
         """Empty arguments should work without errors."""
 
         class FakeTool:
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def no_args_method(self) -> FuncToolResult:
                 return FuncToolResult(result="ok")
 
@@ -212,6 +232,7 @@ class TestTransToFunctionTool:
         """Invalid JSON should return an error result."""
 
         class FakeTool:
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def some_method(self, x: str) -> FuncToolResult:
                 return FuncToolResult(result=x)
 
@@ -223,6 +244,96 @@ class TestTransToFunctionTool:
         assert "Invalid JSON" in result["error"]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("second_path", ["SKILL.md", "unexpected.md"])
+    async def test_duplicate_paths_do_not_write_either_file(self, tmp_path, second_path):
+        original = tmp_path / "SKILL.md"
+        original.write_text("original", encoding="utf-8")
+        filesystem = FilesystemFuncTool(root_path=str(tmp_path))
+        tool = self._make_tool_from_method(filesystem.write_file)
+        raw_args = f'{{"path":"SKILL.md","content":"replacement","path":"{second_path}"}}'
+        context = SimpleNamespace(tool_arguments=raw_args, tool_call={"arguments": raw_args})
+
+        result = await tool.on_invoke_tool(context, raw_args)
+
+        assert result["success"] == 0
+        assert "Duplicate JSON key 'path'" in result["error"]
+        assert "not executed" in result["error"]
+        assert "Retry" in result["error"]
+        assert original.read_text(encoding="utf-8") == "original"
+        assert not (tmp_path / "unexpected.md").exists()
+        assert context.tool_arguments == "{}"
+        assert context.tool_call["arguments"] == "{}"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("raw_args", "duplicate_key"),
+        [
+            ('{"payload":{"path":"first","path":"second"}}', "path"),
+            ('{"payload":{"items":[{"id":1,"id":2}]}}', "id"),
+            (r'{"payload":{"path":"first","p\u0061th":"second"}}', "path"),
+        ],
+    )
+    async def test_duplicate_nested_keys_do_not_execute(self, raw_args, duplicate_key):
+        class PayloadTool:
+            called = False
+
+            @tool_schema(strict_mode=False)
+            @tool_contract(access="restricted", direct_call=False, category="tools")
+            def inspect(self, payload: dict[str, Any]) -> FuncToolResult:
+                self.called = True
+                return FuncToolResult(result=payload)
+
+        instance = PayloadTool()
+        result = await self._make_tool_from_method(instance.inspect).on_invoke_tool(None, raw_args)
+
+        assert result["success"] == 0
+        assert f"Duplicate JSON key {duplicate_key!r}" in result["error"]
+        assert not instance.called
+
+    @pytest.mark.asyncio
+    async def test_duplicate_keys_in_encoded_array_do_not_execute(self):
+        class RecordsTool:
+            called = False
+
+            @tool_schema(strict_mode=False)
+            @tool_contract(access="restricted", direct_call=False, category="tools")
+            def inspect(self, records: list[dict[str, str]]) -> FuncToolResult:
+                self.called = True
+                return FuncToolResult(result=records)
+
+        instance = RecordsTool()
+        raw_args = json.dumps({"records": '[{"path":"first","path":"second"}]'})
+        context = SimpleNamespace(tool_arguments=raw_args, tool_call={"arguments": raw_args})
+
+        result = await self._make_tool_from_method(instance.inspect).on_invoke_tool(context, raw_args)
+
+        assert result["success"] == 0
+        assert "Duplicate JSON key 'path'" in result["error"]
+        assert not instance.called
+        assert context.tool_arguments == "{}"
+        assert context.tool_call["arguments"] == "{}"
+
+    @pytest.mark.asyncio
+    async def test_repeated_keys_in_separate_objects_and_json_text_are_preserved(self):
+        class PayloadTool:
+            @tool_schema(strict_mode=False)
+            @tool_contract(access="restricted", direct_call=False, category="tools")
+            def inspect(self, payload: dict[str, Any], content: str) -> FuncToolResult:
+                return FuncToolResult(result={"payload": payload, "content": content})
+
+        arguments = {
+            "payload": {"items": [{"path": "first"}, {"path": "second"}]},
+            "content": '{"path":"first","path":"second"}',
+        }
+        raw_args = json.dumps(arguments)
+        context = SimpleNamespace(tool_arguments=raw_args, tool_call={"arguments": raw_args})
+
+        result = await self._make_tool_from_method(PayloadTool().inspect).on_invoke_tool(context, raw_args)
+
+        assert result == {"success": 1, "error": None, "result": arguments}
+        assert context.tool_arguments == raw_args
+
+    @pytest.mark.asyncio
     async def test_repairs_arguments_for_replay_without_executing(self):
         """Repair malformed arguments for replay, then execute only a valid retry."""
 
@@ -230,6 +341,7 @@ class TestTransToFunctionTool:
             def __init__(self):
                 self.received = None
 
+            @tool_contract(access="sql", direct_call=True, category="db_tools")
             def execute_sql(
                 self,
                 sql: str,
@@ -305,6 +417,7 @@ class TestTransToFunctionTool:
         """A valid call should not be rewritten merely to canonicalize formatting."""
 
         class FakeTool:
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def some_method(self, x: str) -> FuncToolResult:
                 return FuncToolResult(result=x)
 
@@ -325,13 +438,21 @@ class TestTransToFunctionTool:
         assert raw_tool_call.arguments == raw_args
 
     @pytest.mark.asyncio
-    async def test_runner_replays_repaired_args_and_executes_only_valid_retry(self):
+    @pytest.mark.parametrize(
+        ("raw_args", "replayed_sql"),
+        [
+            ('{"sql":"SELECT 1","min_rows":,"max_rows":}', "SELECT 1"),
+            ('{"sql":"SELECT 1","sql":"SELECT 2","min_rows":null,"max_rows":null}', None),
+        ],
+    )
+    async def test_runner_replays_rejected_args_and_executes_only_valid_retry(self, raw_args, replayed_sql):
         """Exercise the real Runner turn and session persistence path."""
 
         class FakeTool:
             def __init__(self):
                 self.calls = []
 
+            @tool_contract(access="sql", direct_call=True, category="db_tools")
             def execute_sql(
                 self,
                 sql: str,
@@ -345,6 +466,7 @@ class TestTransToFunctionTool:
             def __init__(self):
                 self.inputs = []
 
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             async def get_response(self, system_instructions, input, *_args, **_kwargs):
                 from agents.items import ModelResponse
 
@@ -353,7 +475,7 @@ class TestTransToFunctionTool:
                 if len(self.inputs) == 1:
                     output = [
                         ResponseFunctionToolCall(
-                            arguments='{"sql":"SELECT 1","min_rows":,"max_rows":}',
+                            arguments=raw_args,
                             call_id="call_malformed",
                             name="execute_sql",
                             type="function_call",
@@ -363,7 +485,16 @@ class TestTransToFunctionTool:
                     replayed_call = next(
                         item for item in input if isinstance(item, dict) and item.get("call_id") == "call_malformed"
                     )
-                    assert json.loads(replayed_call["arguments"])["sql"] == "SELECT 1"
+                    assert json.loads(replayed_call["arguments"]).get("sql") == replayed_sql
+                    rejection = next(
+                        item
+                        for item in input
+                        if isinstance(item, dict)
+                        and item.get("type") == "function_call_output"
+                        and item.get("call_id") == "call_malformed"
+                    )
+                    assert "The tool was not executed." in rejection["output"]
+                    assert "Retry" in rejection["output"]
                     output = [
                         ResponseFunctionToolCall(
                             arguments='{"sql":"SELECT 1","min_rows":null,"max_rows":null}',
@@ -390,6 +521,7 @@ class TestTransToFunctionTool:
                     ]
                 return ModelResponse(output=output, usage=Usage(), response_id=None)
 
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             async def stream_response(self, *_args, **_kwargs):
                 if False:
                     yield None
@@ -442,6 +574,7 @@ class TestTransToFunctionTool:
             def __init__(self):
                 self.called = False
 
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def some_method(self, x: str) -> FuncToolResult:
                 self.called = True
                 return FuncToolResult(result=x)
@@ -469,6 +602,7 @@ class TestTransToFunctionTool:
         """Excluded parameters should be omitted from the function-tool schema."""
 
         class FakeTool:
+            @tool_contract(access="read", direct_call=True, category="db_tools")
             def list_tables(self, catalog: str = "", database: str = "") -> FuncToolResult:
                 return FuncToolResult(result={"catalog": catalog, "database": database})
 
@@ -495,6 +629,7 @@ class TestTransToFunctionTool:
         """
 
         class FakeTool:
+            @tool_contract(access="write", direct_call=False, category="filesystem_tools")
             def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:
                 return FuncToolResult(result="edited")
 
@@ -511,7 +646,10 @@ class TestTransToFunctionTool:
 
     @pytest.mark.asyncio
     async def test_missing_multiple_required_parameters_are_all_reported(self):
+        """Report every missing required parameter in one recoverable tool result."""
+
         class FakeTool:
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def combine(self, a: str, b: str, c: int = 0) -> FuncToolResult:
                 return FuncToolResult(result="ok")
 
@@ -528,6 +666,7 @@ class TestTransToFunctionTool:
         """The guard must not block a well-formed call (no false positives)."""
 
         class FakeTool:
+            @tool_contract(access="write", direct_call=False, category="filesystem_tools")
             def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:
                 return FuncToolResult(result={"path": path})
 
@@ -545,6 +684,7 @@ class TestTransToFunctionTool:
         """Parameters with defaults are not required and may be omitted."""
 
         class FakeTool:
+            @tool_contract(access="read", direct_call=True, category="db_tools")
             def search_table(self, query_text: str, top_n: int = 5) -> FuncToolResult:
                 return FuncToolResult(result={"query_text": query_text, "top_n": top_n})
 
@@ -570,6 +710,7 @@ class TestTransToFunctionTool:
         ran_on: dict = {}
 
         class FakeTool:
+            @tool_contract(access="read", direct_call=True, category="db_tools")
             def list_tables(self) -> FuncToolResult:
                 ran_on["thread_id"] = threading.get_ident()
                 return FuncToolResult(result="ok")
@@ -588,6 +729,7 @@ class TestTransToFunctionTool:
         proceed = threading.Event()
 
         class FakeTool:
+            @tool_contract(access="restricted", direct_call=False, category="tools")
             def slow_io(self) -> FuncToolResult:
                 # Blocks the worker thread until the event loop releases it.
                 proceed.wait(2)
@@ -607,6 +749,46 @@ class TestTransToFunctionTool:
         result = await task
         assert result["success"] == 1
         assert result["result"] == "done"
+
+
+class TestDataToolOutputBounds:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["export_query", "transfer_query_result"])
+    @pytest.mark.parametrize("failure", ["unknown_parameter", "duplicate_parameter", "schema", "method"])
+    async def test_all_data_tool_failure_exits_are_bounded(self, name, failure):
+        from datus.utils.bounded_tool_output import MAX_ERROR_BYTES, MAX_RESULT_BYTES
+
+        class DataTools:
+            calls = 0
+
+            @tool_contract(access="write", direct_call=False, category="db_tools")
+            def export_query(self, sql: str, output_file: str = "") -> FuncToolResult:
+                self.calls += 1
+                raise RuntimeError("driver failed [SQL: INSERT INTO orders VALUES " + "private 数据" * 200_000)
+
+            @tool_contract(access="write", direct_call=False, category="db_tools")
+            def transfer_query_result(self, source_sql: str) -> FuncToolResult:
+                self.calls += 1
+                raise RuntimeError("driver failed [SQL: INSERT INTO orders VALUES " + "private 数据" * 200_000)
+
+        instance = DataTools()
+        tool = trans_to_function_tool(getattr(instance, name))
+        sql_key = "sql" if name == "export_query" else "source_sql"
+        huge_key = "unexpected_" + "数据" * 200_000
+        arguments = {sql_key: "SELECT 1"}
+        if failure == "unknown_parameter":
+            arguments[huge_key] = "ignored"
+        elif failure == "schema":
+            arguments[sql_key] = None
+        raw = json.dumps(arguments, ensure_ascii=False)
+        if failure == "duplicate_parameter":
+            key = json.dumps(huge_key, ensure_ascii=False)
+            raw = "{" + f'{json.dumps(sql_key)}: "SELECT 1", {key}: 1, {key}: 2' + "}"
+        result = await tool.on_invoke_tool(None, raw)
+        assert result["success"] == 0
+        assert len(result["error"].encode()) <= MAX_ERROR_BYTES
+        assert len(json.dumps(result, ensure_ascii=False).encode()) <= MAX_RESULT_BYTES
+        assert instance.calls == (1 if failure == "method" else 0)
 
 
 class TestFuncToolListResult:

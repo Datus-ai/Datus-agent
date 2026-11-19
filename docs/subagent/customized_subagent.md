@@ -1,5 +1,7 @@
 # Customized Subagents
 
+For generic definitions with explicit skills, tools, MCP and `scoped_context`, or private plugin runtimes, see [Configurable subagents](configurable_subagent.md). The TUI workflow below manages existing typed custom agents.
+
 ## Overview
 
 Both `/agent` and `/subagent` open the **unified agent management TUI**. The TUI has two tabs:

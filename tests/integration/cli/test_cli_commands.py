@@ -127,7 +127,7 @@ def test_chat_info(mock_args, capsys):
 
 
 @pytest.mark.acceptance
-def test_save_command(mock_args, capsys, tmp_path):
+def test_save_command(mock_args, tmp_path):
     """Save a real query result through the REPL and production exporter."""
     import json
 
@@ -135,6 +135,9 @@ def test_save_command(mock_args, capsys, tmp_path):
 
     with patch("datus.cli.repl.PromptSession.prompt", side_effect=["/save", EOFError]):
         cli = DatusCLI(args=mock_args)
+        # Record the real Rich output instead of depending on stdout capture
+        # across the exporter's transient status display.
+        cli.console.record = True
         query = "SELECT 42 AS answer"
         result = cli.db_connector.execute_query(query, result_format="list")
         assert result.success, result.error
@@ -147,4 +150,4 @@ def test_save_command(mock_args, capsys, tmp_path):
     saved = json.loads((tmp_path / "query_result.json").read_text())
     assert saved["gen_sql"] == query
     assert json.loads(saved["sql_result"]) == [{"answer": 42}]
-    assert "query_result.json" in capsys.readouterr().out
+    assert "query_result.json" in cli.console.export_text()

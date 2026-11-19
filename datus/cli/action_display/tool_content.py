@@ -1370,6 +1370,10 @@ def _build_list_tables(action: ActionHistory, verbose: bool) -> ToolCallContent:
         if action.output:
             tc.output_lines = _format_result_only_markup(action.output)
     else:
+        data = parse_output_data(action.output)
+        if data and isinstance(data.get("result"), dict) and "items" in data["result"]:
+            tc.compact_result = _summary_from_registry(action, "list_tables")
+            return tc
         items = _get_items_from_output(action.output)
         if isinstance(items, list):
             tc.compact_result = _fmt_count_with_preview(len(items), "table", "tables", items)
@@ -1653,6 +1657,9 @@ def _build_simple_list(action: ActionHistory, verbose: bool, unit: str) -> ToolC
         items = None
         if data:
             result = data.get("result")
+            if isinstance(result, dict) and "items" in result:
+                tc.compact_result = _summary_from_registry(action, tc.label)
+                return tc
             if isinstance(result, list):
                 items = result
         if items is None:
@@ -2153,15 +2160,22 @@ def _build_validate_semantic(action: ActionHistory, verbose: bool) -> ToolCallCo
     return tc
 
 
-def _build_attribution_analyze(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """attribution_analyze: share the canonical partial-result summary."""
+def _build_attribution(action: ActionHistory, verbose: bool) -> ToolCallContent:
+    """attribute_metrics / attribute_dimensions: share the canonical summary.
+
+    A refused request (``success=0``, e.g. ``dimensions_required``) does not
+    raise, so the action stays SUCCESS; the mark still flips to ✗. A result
+    whose status is ``unsupported`` is an answer and keeps its ✓."""
     tc = make_base_content(action)
+    data = parse_output_data(action.output)
+    if data is not None and (data.get("success") == 0 or data.get("error")):
+        tc.status_mark = "\u2717"
     if verbose:
         tc.args_lines = extract_args_markup(action)
         if action.output:
             tc.output_lines = _format_result_only_markup(action.output)
     else:
-        tc.compact_result = _summary_from_registry(action, "attribution_analyze")
+        tc.compact_result = _summary_from_registry(action, "attribute_metrics")
     return tc
 
 
@@ -2693,7 +2707,8 @@ class ToolCallContentBuilder:
         # select_records answers with the same result text.
         self._registry["select_records"] = _build_query_metrics
         self._registry["validate_semantic"] = _build_validate_semantic
-        self._registry["attribution_analyze"] = _build_attribution_analyze
+        self._registry["attribute_metrics"] = _build_attribution
+        self._registry["attribute_dimensions"] = _build_attribution
 
         # Filesystem tools
         self._registry["edit_file"] = _build_edit_file

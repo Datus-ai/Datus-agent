@@ -2,6 +2,13 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import asyncio
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+import pytest
+
+from datus.utils import trace_context as trace_context_module
 from datus.utils.trace_context import (
     TRACE_IDENTITY_ATTRIBUTE_PREFIX,
     build_benchmark_trace_context,
@@ -13,6 +20,114 @@ from datus.utils.trace_context import (
     set_trace_identity_provider,
     trace_context,
 )
+
+
+@pytest.mark.asyncio
+async def test_host_run_scope_pins_snapshot_across_async_tasks_threads_and_nested_context(monkeypatch):
+    snapshot = ContextVar("test_trace_snapshot", default=None)
+    revision = 1
+    entered = []
+    exited = []
+
+    @contextmanager
+    def run_scope():
+        entered.append(revision)
+        token = snapshot.set(revision)
+        try:
+            yield
+        finally:
+            exited.append(snapshot.get())
+            snapshot.reset(token)
+
+    monkeypatch.setattr(trace_context_module, "_TRACE_RUN_SCOPE_PROVIDER", None, raising=False)
+    trace_context_module.set_trace_run_scope_provider(run_scope)
+    first = build_chat_trace_context(session_id="first", node_name="chat")
+    second = build_chat_trace_context(session_id="second", node_name="chat")
+
+    async def read_snapshot():
+        await asyncio.sleep(0)
+        return snapshot.get()
+
+    with trace_context(first):
+        assert snapshot.get() == 1
+        revision = 2
+        with trace_context(second):
+            assert snapshot.get() == 1
+        assert await asyncio.create_task(read_snapshot()) == 1
+        assert await asyncio.to_thread(snapshot.get) == 1
+    assert snapshot.get() is None
+    with trace_context(second):
+        assert snapshot.get() == 2
+    assert snapshot.get() is None
+    assert entered == [1, 2]
+    assert exited == [1, 2]
+
+
+@pytest.mark.parametrize("failure", ["factory", "enter", "exit"])
+def test_broken_host_run_scope_does_not_fail_run_or_replace_business_exception(monkeypatch, failure):
+    @contextmanager
+    def scope():
+        """Inject the selected host failure at context entry or cleanup."""
+        if failure == "enter":
+            raise RuntimeError("private host failure")
+        try:
+            yield
+        finally:
+            if failure == "exit":
+                raise RuntimeError("private host failure")
+
+    def factory():
+        """Fail before context creation or supply the boundary-failing scope."""
+        if failure == "factory":
+            raise RuntimeError("private host failure")
+        return scope()
+
+    monkeypatch.setattr(trace_context_module, "_TRACE_RUN_SCOPE_PROVIDER", None, raising=False)
+    trace_context_module.set_trace_run_scope_provider(factory)
+    ctx = build_chat_trace_context(session_id="run", node_name="chat")
+    with trace_context(ctx):
+        result = "answer"
+    assert result == "answer"
+    error = ValueError("business failure")
+    with pytest.raises(ValueError) as caught, trace_context(ctx):
+        raise error
+    assert caught.value is error
+
+
+@pytest.mark.asyncio
+async def test_host_run_scope_spans_async_generator_until_close(monkeypatch):
+    from datus.utils.traceable_utils import optional_traceable
+
+    active = ContextVar("test_active_scope", default=False)
+    completed = []
+
+    @contextmanager
+    def scope():
+        token = active.set(True)
+        try:
+            yield
+        finally:
+            active.reset(token)
+            completed.append(True)
+
+    monkeypatch.setattr(trace_context_module, "_TRACE_RUN_SCOPE_PROVIDER", None, raising=False)
+    trace_context_module.set_trace_run_scope_provider(scope)
+
+    @optional_traceable(context_builder=lambda: build_chat_trace_context(session_id="stream", node_name="chat"))
+    async def stream():
+        assert active.get() is True
+        yield "first"
+        await asyncio.sleep(0)
+        assert active.get() is True
+        yield "second"
+
+    result = stream()
+    assert await anext(result) == "first"
+    assert completed == []
+    assert await anext(result) == "second"
+    await result.aclose()
+    assert completed == [True]
+    assert active.get() is False
 
 
 def test_benchmark_context_uses_run_id_as_session_group():

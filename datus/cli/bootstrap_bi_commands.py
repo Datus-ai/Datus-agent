@@ -47,11 +47,13 @@ if TYPE_CHECKING:
     from datus.cli.repl import DatusCLI
 
 _DASHBOARD_BOOTSTRAP_PROMPT = (
-    "Bootstrap reference SQL and metrics from a BI dashboard by following the "
+    "Bootstrap the requested BI dashboard outputs by following the "
     "`dashboard-bootstrap` skill. "
     'Call `load_skill(skill_name="dashboard-bootstrap")` first and execute its steps in order. '
     "Use the selected BI plugin for dashboard discovery and SQL export, and use the builtin "
-    "agents named by the skill to build context. Do not use the legacy bootstrap picker, "
+    "agents named by the skill to build only the requested context and/or visual dashboard. "
+    "If outputs are unspecified, default to reference SQL and metrics. "
+    "Complete required metric authoring before visual generation. Do not use the legacy bootstrap picker, "
     "or legacy BI streams. Let the skill decide whether its optional final subagent step is "
     "available."
     "{user_context}"

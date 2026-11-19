@@ -5,7 +5,10 @@
 """ChannelBridge — routes IM messages through ChatTaskManager and sends responses back."""
 
 import asyncio
+import hashlib
+import json
 from collections import OrderedDict
+from pathlib import Path
 from typing import Dict, Optional
 
 from datus.api.models.cli_models import SSEDataType, StreamChatInput
@@ -40,6 +43,9 @@ _MAX_BOT_MSG_MAP = 10000
 # Maximum number of bot messages to remember as already-reacted (dedup for reactions)
 _MAX_REACTED_MSG = 10000
 
+# Fixed grace period for cancelled chat cleanup before releasing an IM handler.
+_CHAT_CLEANUP_TIMEOUT = 5.0
+
 
 class ChannelBridge:
     """Converts InboundMessage -> ChatTaskManager -> OutboundMessage.
@@ -69,14 +75,49 @@ class ChannelBridge:
     def _conversation_key(self, msg: InboundMessage) -> str:
         """Stable key for a conversation (before session suffix)."""
         parts = [msg.channel_id, msg.conversation_id]
-        if msg.thread_id:
+        if msg.thread_id is not None:
             parts.append(msg.thread_id)
-        return "--".join(parts)
+        legacy = "--".join(parts)
+        if (
+            msg.session_scope is None
+            and all(part and "--" not in part and not part.startswith("-") and not part.endswith("-") for part in parts)
+            and SessionManager._SESSION_ID_RE.fullmatch(legacy)
+        ):
+            return legacy
+        # Explicit null slots distinguish scope from thread and empty from absent.
+        # JSON cannot alias the validator-safe legacy keys retained above.
+        return self._structured_conversation_key(msg)
+
+    @staticmethod
+    def _structured_conversation_key(msg: InboundMessage) -> str:
+        return json.dumps(
+            [msg.channel_id, msg.conversation_id, msg.thread_id, msg.session_scope],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
 
     def build_session_id(self, msg: InboundMessage) -> str:
         """Deterministic session id from channel + conversation (+ thread)."""
         conv_key = self._conversation_key(msg)
-        return f"gateway_{conv_key}"
+        legacy = f"gateway_{conv_key}"
+        ordinary = bool(SessionManager._SESSION_ID_RE.fullmatch(legacy))
+        parts = [msg.channel_id, msg.conversation_id]
+        if msg.thread_id is not None:
+            parts.append(msg.thread_id)
+        candidate = "gateway_" + "--".join(parts)
+        structured = self._structured_conversation_key(msg)
+        if msg.session_scope is None and SessionManager._SESSION_ID_RE.fullmatch(candidate):
+            owner = None
+            session_dir = getattr(self._agent_config, "session_dir", None)
+            if isinstance(session_dir, (str, Path)):
+                manager = SessionManager(session_dir=session_dir)
+                owner = manager.load_session_meta(candidate, "gateway_conversation_key")
+            # Ambiguous historical IDs need an explicit, verified owner mapping.
+            # An existing mapping also prevents another ordinary tuple adopting it.
+            if owner == structured or (ordinary and owner is None):
+                return candidate
+        # A disjoint prefix prevents aliasing any historical gateway_ ID.
+        return f"gateway-v3_{hashlib.sha256(structured.encode('utf-8')).hexdigest()}"
 
     def clear_session(self, msg: InboundMessage) -> None:
         """Clear the conversation history for the current session."""
@@ -129,7 +170,7 @@ class ChannelBridge:
 
         # In group chats without an existing thread, use message_id as thread_id
         # so each @bot message gets its own thread (independent session)
-        if msg.chat_type == "group" and not msg.thread_id:
+        if msg.chat_type == "group" and not msg.thread_id and adapter.supports_threads:
             msg = msg.model_copy(update={"thread_id": msg.message_id})
 
         # Handle chat commands (e.g. /new, /reset, /verbose)
@@ -245,6 +286,31 @@ class ChannelBridge:
                 bot_msg_id = await adapter.send_message(fallback)
                 if bot_msg_id:
                     await self._track_bot_message(bot_msg_id, session_id, msg, fallback.text)
+        except asyncio.CancelledError:
+            has_error = True
+            if task is not None:
+                await self._task_manager.stop_task(task.session_id)
+                if task.asyncio_task is not None:
+                    completion = asyncio.gather(task.asyncio_task, return_exceptions=True)
+                    loop = asyncio.get_running_loop()
+                    deadline = loop.time() + _CHAT_CLEANUP_TIMEOUT
+                    while not completion.done():
+                        remaining = deadline - loop.time()
+                        if remaining <= 0:
+                            # Keep the task tracked by its manager and consume late
+                            # errors via gather; do not cancel its cleanup again.
+                            logger.warning(
+                                "Chat cleanup timed out for session %s after %.1fs; abandoning wait",
+                                task.session_id,
+                                _CHAT_CLEANUP_TIMEOUT,
+                            )
+                            break
+                        try:
+                            # wait never forwards cancellation to the model task.
+                            await asyncio.wait({completion}, timeout=remaining)
+                        except asyncio.CancelledError:
+                            pass
+            raise
         except Exception:
             has_error = True
             raise

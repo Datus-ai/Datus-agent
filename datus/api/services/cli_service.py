@@ -32,6 +32,7 @@ from datus.schemas.action_history import (
     ActionStatus,
 )
 from datus.tools.db_tools.db_manager import DBManager
+from datus.utils.async_utils import drain_to_thread
 from datus.utils.config_utils import coerce_positive_seconds
 from datus.utils.exceptions import DatusException
 from datus.utils.exceptions import ErrorCode as DbErrorCode
@@ -72,6 +73,17 @@ _WRITE_SQL_TYPES = frozenset(
 
 class CLIService:
     """Service for handling CLI command operations."""
+
+    def close(self) -> None:
+        """Close this service's exclusively owned database resources."""
+        tool = self._db_tool_cache
+        if tool is not None:
+            tool.close()
+            self._db_tool_cache = None
+        if self.db_manager is not None:
+            self.db_manager.close()
+        self._datasource_connectors.clear()
+        self.current_db_connector = None
 
     def __init__(self, agent_config: Optional[AgentConfig] = None, chat_service: Optional[ChatService] = None):
         """
@@ -421,35 +433,38 @@ class CLIService:
             sql_type = parse_sql_type(request.sql_query, connector.dialect)
             is_write = sql_type in _WRITE_SQL_TYPES and is_single_statement(request.sql_query)
 
-            if is_write and policy_context:
+            from datus.tools.policy_runtime import PolicyRuntime
+
+            if (
+                is_write
+                and write_statement_reads_data(request.sql_query, connector.dialect)
+                and (policy_context or PolicyRuntime(self.agent_config).requires_bound_read(policy_context))
+            ):
                 # A write can carry a read: `CREATE TABLE mine AS SELECT * FROM
                 # orders` copies the rows a policy just filtered into a table no
                 # policy covers. The plugin cannot help — it hooks reads only —
                 # so on a project that has policies at all, a write that embeds
                 # a query is refused here.
-                reads = write_statement_reads_data(request.sql_query, connector.dialect)
-                if reads:
-                    message = (
-                        "This project has row-level policies, so a write statement that "
-                        "reads from a query is not allowed here — it would copy filtered "
-                        "rows into a table no policy covers. Create views and derived "
-                        "tables on the database side instead."
-                    )
-                    # Every other exit from here closes the action it opened;
-                    # returning without doing so leaves it PROCESSING forever
-                    # and the refusal never reaches the history.
-                    actions.update_action_by_id(
-                        sql_action.action_id,
-                        status=ActionStatus.FAILED,
-                        output={"error": message},
-                        messages=f"SQL execution refused: {message}",
-                    )
-                    return Result(
-                        success=False,
-                        errorCode=ErrorCode.SQL_EXECUTION_ERROR,
-                        errorMessage=message,
-                    )
-
+                message = (
+                    "This project has row-level policies or column masking, so a write statement that "
+                    "reads from a query is not allowed here — it would copy filtered "
+                    "rows into a table no policy covers. Create views and derived "
+                    "tables on the database side instead."
+                )
+                # Every other exit from here closes the action it opened;
+                # returning without doing so leaves it PROCESSING forever
+                # and the refusal never reaches the history.
+                actions.update_action_by_id(
+                    sql_action.action_id,
+                    status=ActionStatus.FAILED,
+                    output={"error": message},
+                    messages=f"SQL execution refused: {message}",
+                )
+                return Result(
+                    success=False,
+                    errorCode=ErrorCode.SQL_EXECUTION_ERROR,
+                    errorMessage=message,
+                )
             if is_write:
                 result = connector.execute(
                     input_params={"sql_query": request.sql_query},
@@ -589,7 +604,7 @@ class CLIService:
 
         async def _run() -> Result[ExecuteSQLData]:
             try:
-                return await asyncio.to_thread(self._execute_sql_sync, request, task_id, policy_context, cancelled)
+                return await drain_to_thread(self._execute_sql_sync, request, task_id, policy_context, cancelled)
             except asyncio.CancelledError:
                 logger.info(f"SQL execution task cancelled: {task_id}")
                 return Result(

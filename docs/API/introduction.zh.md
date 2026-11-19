@@ -20,11 +20,6 @@ API 服务与 `datus` CLI、`datus-mcp` MCP 服务共享同一套配置、知识
 X-Datus-User-Id: alice
 ```
 
-启用的 policy plugin 使用单独的执行上下文。通过 `X-Datus-Policy-Context` 传入 JSON object，例如
-`{"row_filter":{"access_mode":"scoped","market_codes":["MKT300"]}}`。认证和鉴权在上游完成；Agent 只转发
-该对象，不把它当作用户身份。`X-Datus-User-Id` 仍只用于会话隔离，不会被合并进 policy context。
-详见 [SQL Policy](../configuration/sql_policy.zh.md)。
-
 Datasource 隔离由 `--datasource` CLI 参数(或 `DATUS_DATASOURCE` 环境变量)单独控制,决定加载 `agent.yml`
 中的哪个 datasource 的数据库与知识库。
 

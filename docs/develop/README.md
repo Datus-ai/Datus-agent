@@ -294,6 +294,36 @@ uv run datus-agent benchmark \
 
 Observability setup and tracing examples now live in the dedicated [Observability](observability.md) guide. It covers local REPL traces, local YAML traces, OpenTelemetry-based external tracing, and adapter configuration for LangSmith, Langfuse, Datadog, Braintrust, and generic OTLP collectors.
 
+## Subagent Tool Policy Checks
+
+`@tool_contract` declarations generate `datus/tools/registry/capabilities.json`.
+Pre-commit and packaging refresh that catalog; CI rejects stale generated data.
+Subagent policies are checked separately against their actual provider inventory
+and the reviewed `subagent_policy_contracts.json` baseline:
+
+```bash
+uv run python -m datus.tools.registry.policy_validation --check
+```
+
+This check runs on code PRs independently of impacted-test selection. It rejects
+missing explicit tools, removed provider tools (including wildcard selections),
+and changes to existing tools' `access` values. Runtime filtering still rejects
+unsupported capabilities, but cannot hide a stale declaration from this check.
+Every selected tool must be recorded, including newly added tools selected by a
+wildcard. An unrecorded tool fails CI even if the policy already permits it:
+authorizing a capability and recording its contract are separate requirements.
+
+When adding a selected tool or intentionally removing/changing one, review the
+affected type policies, then explicitly regenerate and review the baseline diff:
+
+```bash
+uv run python -m datus.tools.registry.policy_validation --update
+```
+
+The baseline is not automatically rewritten by commit or build hooks. This
+command records newly added tools so later deletion/access changes cannot bypass CI.
+`direct_call` describes direct API eligibility and is not an in-agent access rule.
+
 ## Useful References
 
 - [Quickstart](../getting_started/Quickstart.md)

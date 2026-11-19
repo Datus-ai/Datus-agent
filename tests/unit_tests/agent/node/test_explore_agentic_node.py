@@ -234,6 +234,10 @@ class TestExploreAgenticNodeTools:
         assert "`list_subject_tree()`" in prompt
         assert "`search_reference_sql" in prompt
         assert "`get_reference_sql" in prompt
+        assert "only when the required subject path is unknown" in prompt
+        assert "does not require a taxonomy lookup" in prompt
+        assert "Start with `list_subject_tree()`" not in prompt
+        assert "call this first" not in prompt
 
 
 @pytest.mark.component

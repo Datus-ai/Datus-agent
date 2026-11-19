@@ -16,8 +16,6 @@ from datus.tools.func_tool.base import FuncToolResult, normalize_null, trans_to_
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.semantic_tools import SemanticTools, _run_async, render_metric_list
 from datus.tools.semantic_tools.models import (
-    AttributionRequest,
-    AttributionWindow,
     QueryResult,
 )
 from datus.utils.query_result_text import QueryResultText, parse_query_result_text
@@ -102,6 +100,8 @@ def semantic_tools():
         mock_config = Mock()
         mock_config.active_model.return_value.model = "gpt-4o"
         mock_config.current_datasource = "ns1"
+        mock_config.active_plugin_names.return_value = set()
+        mock_config.policy_context = {}
         mock_config.runtime_db_context.return_value = {}
         mock_config.current_db_config.return_value = None
         mock_config.path_manager.semantic_model_path.return_value = "/tmp/models"
@@ -114,6 +114,7 @@ def mock_runtime(semantic_tools):
     """Set up a mock Dosi runtime on the SemanticTools instance."""
     runtime = Mock()
     semantic_tools._runtime = runtime
+    semantic_tools._runtime_context_key = None
     return runtime
 
 
@@ -1270,7 +1271,9 @@ class TestAllToolsName:
         assert "get_metric" in names
         assert "query_metrics" in names
         assert "validate_semantic" in names
-        assert "attribution_analyze" in names
+        assert "attribute_metrics" in names
+        assert "attribute_dimensions" in names
+        assert "attribution_analyze" not in names
 
 
 class TestAvailableTools:
@@ -1295,7 +1298,8 @@ class TestAvailableTools:
             "get_dataset",
             "query_metrics",
             "validate_semantic",
-            "attribution_analyze",
+            "attribute_metrics",
+            "attribute_dimensions",
         ]
         runtime.assert_not_called()
 
@@ -1850,6 +1854,53 @@ class TestRenderMetricDetail:
         assert lines[-1] == "time: none"
         assert not any(line.startswith(("path:", "params")) for line in lines)
 
+    def test_attribution_line_answers_for_both_tools(self):
+        from datus.tools.func_tool.semantic_tools import render_metric_detail
+
+        both = {"metrics": {"supported": True}, "dimensions": {"supported": True}}
+        lines = render_metric_detail({**RETURNING_METRIC, "attribution": both}).splitlines()
+        assert lines[-1] == "attribution: attribute_metrics yes; attribute_dimensions yes"
+
+        distinct = {
+            "metrics": {"supported": True},
+            "dimensions": {"supported": False, "code": "insufficient_state", "message": "counts distinct values"},
+        }
+        lines = render_metric_detail({**RETURNING_METRIC, "attribution": distinct}).splitlines()
+        assert lines[-1] == "attribution: attribute_metrics yes; attribute_dimensions no (insufficient_state)"
+
+        # A distinct count splits only by what its field determines: every
+        # field written out, by dataset.
+        only_by = {
+            "metrics": {"supported": True},
+            "dimensions": {
+                "supported": True,
+                "only_by": [
+                    {"name": "orders", "fields": ["region", "city"]},
+                    {"name": "stores", "fields": ["store_name"]},
+                ],
+            },
+        }
+        lines = render_metric_detail({**RETURNING_METRIC, "attribution": only_by}).splitlines()
+        assert lines[-1] == (
+            "attribution: attribute_metrics yes; attribute_dimensions only by orders(region, city), stores(store_name)"
+        )
+        # An empty list says nothing more than a plain yes.
+        empty = {"metrics": {"supported": True}, "dimensions": {"supported": True, "only_by": []}}
+        lines = render_metric_detail({**RETURNING_METRIC, "attribution": empty}).splitlines()
+        assert lines[-1] == "attribution: attribute_metrics yes; attribute_dimensions yes"
+
+        untimed = {
+            "metrics": {"supported": False, "code": "no_time_dimension", "message": "no time field"},
+            "dimensions": {"supported": False, "code": "no_time_dimension", "message": "no time field"},
+        }
+        lines = render_metric_detail({**RETURNING_METRIC, "attribution": untimed}).splitlines()
+        assert lines[-1] == (
+            "attribution: attribute_metrics no (no_time_dimension); attribute_dimensions no (no_time_dimension)"
+        )
+
+        # A catalog that says nothing about attribution gets no line.
+        assert not any(line.startswith("attribution") for line in render_metric_detail(RETURNING_METRIC).splitlines())
+
 
 class TestRenderDatasetDetail:
     def test_fields_markers_and_relationships(self):
@@ -2041,7 +2092,7 @@ class TestValidateSemantic:
     def test_records_compiled_evidence_without_exposing_descriptions(self, semantic_tools_with_runtime, tmp_path):
         tool, _ = semantic_tools_with_runtime
         artifact = tmp_path / "commerce.yml"
-        artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
+        artifact.write_text("name: commerce\n", encoding="utf-8")
         calls = {}
         evidence = GenerationEvidence()
         tool.generation_evidence = evidence
@@ -2246,7 +2297,7 @@ class TestValidateSemantic:
     def test_records_target_artifact_validation_evidence(self, semantic_tools_with_runtime, tmp_path):
         tool, _ = semantic_tools_with_runtime
         artifact = tmp_path / "commerce.yml"
-        artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
+        artifact.write_text("name: commerce\n", encoding="utf-8")
         evidence = GenerationEvidence()
         tool.generation_evidence = evidence
 
@@ -2280,7 +2331,7 @@ class TestValidateSemantic:
     def test_resolves_target_artifact_validation_evidence(self, semantic_tools_with_runtime, tmp_path):
         tool, _ = semantic_tools_with_runtime
         artifact = tmp_path / "commerce.yml"
-        artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
+        artifact.write_text("name: commerce\n", encoding="utf-8")
 
         with patch(
             "datus.agent.node.semantic_authoring.discover_osi_semantic_models",
@@ -2300,7 +2351,7 @@ class TestValidateSemantic:
     def test_dosi_resolves_osi_target_artifact_evidence(self, semantic_tools_with_runtime, tmp_path):
         tool, _ = semantic_tools_with_runtime
         artifact = tmp_path / "commerce.yml"
-        artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
+        artifact.write_text("name: commerce\n", encoding="utf-8")
 
         with patch(
             "datus.agent.node.semantic_authoring.discover_osi_semantic_models",
@@ -2326,7 +2377,17 @@ class TestValidateSemantic:
         assert "runtime crash" in result.error
 
 
-class TestAttributionAnalyze:
+def _periods(**extra):
+    return dict(
+        baseline_start="2024-01-01",
+        baseline_end="2024-01-08",
+        current_start="2024-01-08",
+        current_end="2024-01-15",
+        **extra,
+    )
+
+
+class TestAttributionTools:
     def test_execution_failure_preserves_warehouse_cancellation_diagnostics(self, semantic_tools_with_runtime):
         from datus.tools.semantic_tools.exceptions import SemanticCoreException
 
@@ -2334,143 +2395,204 @@ class TestAttributionAnalyze:
         info = [{"query_execution_id": "athena-1", "cancellation_requested": True, "cancellation_confirmed": False}]
         tool._attribute = AsyncMock(side_effect=SemanticCoreException("warehouse timeout", execution_info=info))
 
-        result = tool.attribution_analyze(
-            metric_name="revenue",
-            candidate_dimensions=["region"],
-            baseline_start="2024-01-01",
-            baseline_end="2024-01-08",
-            current_start="2024-01-08",
-            current_end="2024-01-15",
-        )
+        result = tool.attribute_dimensions(metric="revenue", dimensions=["region"], **_periods())
 
         assert result.success == 0
         assert result.result == {"execution_info": info}
 
-    def test_tool_schema_exposes_drilldown_guardrail_parameters(self, semantic_tools_with_runtime):
+    def test_schemas_take_the_metric_query_fields_and_no_dry_run(self, semantic_tools_with_runtime):
         tool, _ = semantic_tools_with_runtime
 
-        schema = trans_to_function_tool(tool.attribution_analyze).params_json_schema
+        metrics = trans_to_function_tool(tool.attribute_metrics).params_json_schema
+        dimensions = trans_to_function_tool(tool.attribute_dimensions).params_json_schema
 
-        assert {
+        shared = {
+            "metric",
+            "baseline_start",
+            "baseline_end",
+            "current_start",
+            "current_end",
             "where",
-            "max_dimension_values",
-            "time_dimension",
+            "context_filter",
             "params",
-        }.issubset(schema["properties"])
-        assert "path" not in schema["properties"]
-        assert "anomaly_context" not in schema["properties"]
-        assert "exclusive" in schema["properties"]["baseline_end"]["description"].lower()
-        assert "exclusive" in schema["properties"]["current_end"]["description"].lower()
+            "group_by",
+            "time_dimension",
+        }
+        assert set(metrics["properties"]) == shared
+        assert set(dimensions["properties"]) == shared | {"dimensions", "top_groups"}
+        assert set(metrics["required"]) == {"metric", "baseline_start", "baseline_end", "current_start", "current_end"}
+        assert "dimensions" in dimensions["required"]
+        assert "exclusive" in metrics["properties"]["baseline_end"]["description"].lower()
+        assert "exclusive" in dimensions["properties"]["current_end"]["description"].lower()
 
-    def test_tool_description_is_explicitly_non_causal(self, semantic_tools_with_runtime):
+    def test_descriptions_say_how_to_read_the_text(self, semantic_tools_with_runtime):
         tool, _ = semantic_tools_with_runtime
 
-        description = " ".join(trans_to_function_tool(tool.attribution_analyze).description.lower().split())
+        metrics = " ".join(trans_to_function_tool(tool.attribute_metrics).description.split())
+        dimensions = " ".join(trans_to_function_tool(tool.attribute_dimensions).description.split())
 
-        assert "descriptive dimension analysis" in description
-        assert "do not establish causation" in description
-        assert "root cause analysis" not in description
-        assert "failed, truncated, and non-additive dimensions are excluded" in description
+        assert "A parent's effect is the sum of its children's" in metrics
+        assert "`<input> in all, <n> places | <effect>` then gives its whole effect" in metrics
+        assert "call it on that metric with group_by, and fix the row with where" in metrics
+        assert "can be passed as `metric` to attribute_dimensions" in metrics
+        assert "one drill-down in the order given" in dimensions
+        assert "The first level's effects are those of a call by its dimension alone" in dimensions
+        assert "Drill down when a group with a large effect, of either sign" in dimensions
+        assert "call once per dimension" in dimensions
+        assert "Shares from different calls do not add up" in dimensions
 
-    def test_success_builds_unified_request(self, semantic_tools_with_runtime):
+    def test_flat_arguments_become_dosi_request_and_text(self, semantic_tools_with_runtime):
+        from tests.unit_tests.tools.semantic_tools.dosi_fakes import ATTRIBUTE_DIMENSIONS_RESULT
+
         tool, mock_runtime = semantic_tools_with_runtime
-        mock_result = Mock()
-        mock_result.model_dump.return_value = {
-            "metric": "revenue",
-            "implementation": "dosi",
-            "strategy": "term_wise",
-            "dimension_ranking": [],
-            "selected_dimensions": [],
-            "top_dimension_values": [],
-            "warnings": [{"code": "unequal_windows", "message": "not equal"}],
-        }
-        tool._attribute = AsyncMock(return_value=mock_result)
+        tool._attribute = AsyncMock(return_value=ATTRIBUTE_DIMENSIONS_RESULT)
 
-        result = tool.attribution_analyze(
-            metric_name="revenue",
-            candidate_dimensions=["region"],
-            baseline_start="2024-01-01",
-            baseline_end="2024-01-08",
-            current_start="2024-01-08",
-            current_end="2024-01-15",
-            where="region = 'US'",
-            max_dimension_values=25,
-            time_dimension="orders.order_date",
+        result = tool.attribute_dimensions(
+            metric="revenue",
+            dimensions=["orders.status", " orders.status ", "orders.order_date:month"],
+            where="orders.region = 'US'",
+            context_filter="orders.channel = 'web'",
             params={"currency": "USD"},
+            group_by=["orders.store", "orders.order_date:month"],
+            time_dimension="orders.order_date",
+            top_groups=5,
+            **_periods(),
         )
 
         assert result.success == 1
-        assert result.result["warnings"][0]["code"] == "unequal_windows"
-        called_runtime, request = tool._attribute.await_args.args
+        called_runtime, name, request = tool._attribute.await_args.args
         assert called_runtime is mock_runtime
-        assert request.metric == "revenue"
-        assert request.dimensions == ["region"]
-        assert request.where_sql == "region = 'US'"
-        assert request.max_values_per_dimension == 25
-        assert request.time_dimension == "orders.order_date"
-        assert request.params == {"currency": "USD"}
-        mock_result.model_dump.assert_called_once_with(exclude_none=True)
+        assert name == "attribute_dimensions"
+        assert request == {
+            "metric": "revenue",
+            "baseline": {"start": "2024-01-01", "end": "2024-01-08", "dimension": "orders.order_date"},
+            "current": {"start": "2024-01-08", "end": "2024-01-15", "dimension": "orders.order_date"},
+            "where_sql": "orders.region = 'US'",
+            "context_filter": "orders.channel = 'web'",
+            "params": {"currency": "USD"},
+            "group_by": [{"field": "orders.store"}, {"field": "orders.order_date", "grain": "month"}],
+            "dimensions": ["orders.status", "orders.order_date:month"],
+            "top_groups": 5,
+        }
+        assert result.result.splitlines() == [
+            "status complete",
+            "",
+            "revenue by orders.status | 100 → 150 | change +50",
+            "- paid | 80 → 140 | +60 (120.0%)",
+            "- refunded | 20 → 10 | -10 (-20.0%)",
+        ]
 
-    @pytest.mark.asyncio
-    async def test_attribute_prefers_native_runtime(self, semantic_tools_with_runtime):
-        tool, runtime = semantic_tools_with_runtime
-        native_result = Mock()
-        runtime.attribute = AsyncMock(return_value=native_result)
-        request = AttributionRequest(
-            metric="revenue",
-            dimensions=["region"],
-            baseline=AttributionWindow(start="2024-01-01", end="2024-01-08"),
-            current=AttributionWindow(start="2024-01-08", end="2024-01-15"),
+    def test_metric_tree_omits_what_was_not_given(self, semantic_tools_with_runtime):
+        from tests.unit_tests.tools.semantic_tools.dosi_fakes import ATTRIBUTE_METRICS_RESULT
+
+        tool, _ = semantic_tools_with_runtime
+        tool._attribute = AsyncMock(return_value=ATTRIBUTE_METRICS_RESULT)
+
+        result = tool.attribute_metrics(metric="avg_order_value", where="", params={}, group_by=[], **_periods())
+
+        _, name, request = tool._attribute.await_args.args
+        assert name == "attribute_metrics"
+        assert request == {
+            "metric": "avg_order_value",
+            "baseline": {"start": "2024-01-01", "end": "2024-01-08"},
+            "current": {"start": "2024-01-08", "end": "2024-01-15"},
+        }
+        assert result.result.splitlines()[2:] == [
+            "avg_order_value | 50 → 60 | +10 (100.0%)",
+            "  revenue | 1000 → 1500 | +22.5 (225.0%)",
+            "  order_count | 20 → 25 | -12.5 (-125.0%)",
+        ]
+
+    def test_periods_of_different_length_get_a_note(self, semantic_tools_with_runtime):
+        from tests.unit_tests.tools.semantic_tools.dosi_fakes import ATTRIBUTE_METRICS_RESULT
+
+        tool, _ = semantic_tools_with_runtime
+        tool._attribute = AsyncMock(return_value=ATTRIBUTE_METRICS_RESULT)
+
+        result = tool.attribute_metrics(
+            metric="avg_order_value",
+            baseline_start="2024-02-01",
+            baseline_end="2024-03-01",
+            current_start="2024-03-01",
+            current_end="2024-04-01",
         )
 
-        result = await tool._attribute(runtime, request)
+        assert result.result.splitlines()[1] == (
+            "note the periods differ in length (29 days and 31 days); values are not scaled to one length"
+        )
 
-        assert result is native_result
+    def test_an_unsupported_metric_is_an_answer_not_a_failure(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
+        tool._attribute = AsyncMock(
+            return_value={
+                "schema_version": 3,
+                "status": "unsupported",
+                "metric": "distinct_buyers",
+                "dimensions": ["orders.status"],
+                "algorithm": None,
+                "accuracy": None,
+                "tree": None,
+                "issues": [
+                    {
+                        "code": "insufficient_state",
+                        "severity": "error",
+                        "message": "`COUNT(DISTINCT buyer)` counts distinct values",
+                    }
+                ],
+                "execution": {},
+            }
+        )
+
+        result = tool.attribute_dimensions(metric="distinct_buyers", dimensions=["orders.status"], **_periods())
+
+        assert result.success == 1
+        assert result.result == (
+            "status unsupported\nissue error insufficient_state: `COUNT(DISTINCT buyer)` counts distinct values"
+        )
+
+    @pytest.mark.asyncio
+    async def test_attribute_calls_the_runtime_method_of_the_tool(self, semantic_tools_with_runtime):
+        tool, runtime = semantic_tools_with_runtime
+        runtime.attribute_metrics = AsyncMock(return_value={"status": "complete"})
+
+        result = await tool._attribute(runtime, "attribute_metrics", {"metric": "revenue"})
+
+        assert result == {"status": "complete"}
+        runtime.attribute_metrics.assert_awaited_once_with({"metric": "revenue"})
 
     def test_exception_returns_failure(self, semantic_tools_with_runtime):
         tool, _ = semantic_tools_with_runtime
         tool._attribute = AsyncMock(side_effect=Exception("analysis failed"))
 
-        result = tool.attribution_analyze(
-            metric_name="revenue",
-            candidate_dimensions=["region"],
-            baseline_start="2024-01-01",
-            baseline_end="2024-01-08",
-            current_start="2024-01-08",
-            current_end="2024-01-15",
-        )
+        result = tool.attribute_metrics(metric="revenue", **_periods())
 
         assert result.success == 0
-        assert "analysis failed" in result.error
+        assert result.error == "attribute_metrics failed: analysis failed"
 
-    def test_native_validation_exception_returns_runtime_payload(self, semantic_tools_with_runtime):
+    def test_request_error_is_its_code_and_message(self, semantic_tools_with_runtime):
         tool, _ = semantic_tools_with_runtime
         payload = Mock(
             error_type="semantic_validation_error",
-            code="unknown_metric",
-            message="Unknown metric 'revenues'.",
+            code="dimensions_required",
+            message="name at least one dimension | candidates: orders.status, customers.region",
         )
         payload.model_dump.return_value = {
             "error_type": "semantic_validation_error",
-            "code": "unknown_metric",
-            "message": "Unknown metric 'revenues'.",
+            "code": "dimensions_required",
+            "message": payload.message,
+            "candidates": ["orders.status", "customers.region"],
         }
         error = Exception(payload.message)
         error.payload = payload
         tool._attribute = AsyncMock(side_effect=error)
 
-        result = tool.attribution_analyze(
-            metric_name="revenues",
-            candidate_dimensions=["region"],
-            baseline_start="2024-01-01",
-            baseline_end="2024-01-08",
-            current_start="2024-01-08",
-            current_end="2024-01-15",
-        )
+        result = tool.attribute_dimensions(metric="revenue", dimensions=[], **_periods())
 
         assert result.success == 0
-        assert result.error == "Unknown metric 'revenues'."
-        assert result.result["code"] == "unknown_metric"
+        assert result.error == (
+            "dimensions_required: name at least one dimension | candidates: orders.status, customers.region"
+        )
+        assert result.result["candidates"] == ["orders.status", "customers.region"]
 
 
 class TestExtractDbConfig:
@@ -2671,6 +2793,8 @@ def test_query_metrics_exposes_warehouse_cancellation_diagnostics(semantic_tools
 
 def _ontology_config(tmp_path=None):
     config = Mock()
+    config.active_plugin_names.return_value = set()
+    config.policy_context = {}
     config.active_model.return_value.model = "gpt-4o"
     config.current_datasource = "flights_db"
     config.current_db_config.return_value = None
@@ -2678,6 +2802,219 @@ def _ontology_config(tmp_path=None):
     config.path_manager.semantic_model_path.return_value = "/tmp/models/flights_db"
     config.path_manager.ontology_dir = "/tmp/subject/ontology"
     return config
+
+
+def test_cached_results_are_scoped_to_effective_policy_and_namespace(semantic_tools, monkeypatch):
+    bound = SimpleNamespace(snapshot_json='{"version":"tenant-1"}', context_json='{"database":"sales"}')
+    monkeypatch.setattr(semantic_tools, "_bind_dosi_read", lambda: bound)
+    key = semantic_tools._cache_query_metrics_result(["revenue"], [{"revenue": 100}])
+    assert semantic_tools.get_cached_query_metrics_result(key) is not None
+    bound.snapshot_json = '{"version":"tenant-2"}'
+    assert semantic_tools.get_cached_query_metrics_result(key) is None
+    bound.snapshot_json = '{"version":"tenant-1"}'
+    bound.context_json = '{"database":"other"}'
+    assert semantic_tools.get_cached_query_metrics_result(key) is None
+
+
+def test_cache_uses_execution_scope_without_rebinding(semantic_tools, monkeypatch):
+    def unexpected_rebind():
+        raise AssertionError("execution already supplied the policy scope")
+
+    monkeypatch.setattr(semantic_tools, "_bind_dosi_read", unexpected_rebind)
+    key = semantic_tools._cache_query_metrics_result(
+        ["revenue"], [{"revenue": 100}], {"_policy_scope": "execution-scope"}
+    )
+    assert semantic_tools._query_metrics_result_cache[key]["policy_scope"] == "execution-scope"
+
+
+@pytest.mark.parametrize("failure", ["denied", "namespace"])
+def test_cached_results_expire_when_policy_binding_cannot_be_verified(semantic_tools, monkeypatch, failure):
+    from datus.utils.exceptions import DatusException, ErrorCode
+
+    key = semantic_tools._cache_query_metrics_result(["revenue"], [{"revenue": 100}], {"_policy_scope": "old"})
+
+    def fail_binding():
+        if failure == "denied":
+            raise DatusException(ErrorCode.POLICY_DENIED, message="required connector unavailable")
+        raise ValueError("execution namespace changed")
+
+    monkeypatch.setattr(semantic_tools, "_bind_dosi_read", fail_binding)
+    assert semantic_tools.get_cached_query_metrics_result(key) is None
+    result = semantic_tools.get_query_metrics_result(key)
+    assert not result.success
+    assert "Unknown or expired" in result.error
+
+
+@pytest.mark.parametrize("actual_database", ["selected", "configured_default"])
+def test_dosi_policy_metadata_uses_selected_database_and_rejects_mismatch(semantic_tools, monkeypatch, actual_database):
+    from datus.configuration.agent_config import DbConfig
+
+    bound = SimpleNamespace(context_json=json.dumps({"database": actual_database, "schema": "sales"}))
+    runtime = SimpleNamespace(requires_bound_read=lambda _: True, bind_read=lambda **_: bound)
+    monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda _: runtime)
+    manager = Mock()
+    manager.get_conn.return_value.dialect = "postgres"
+    semantic_tools.agent_config.datasource_configs = {"warehouse": DbConfig(type="postgres", schema="public")}
+    monkeypatch.setattr("datus.tools.db_tools.db_manager.db_manager_instance", lambda _: manager)
+    scoped_configs = []
+    scoped_manager = Mock()
+    monkeypatch.setattr(
+        "datus.tools.db_tools.db_manager.DBManager", lambda configs: scoped_configs.append(configs) or scoped_manager
+    )
+    monkeypatch.setattr(
+        semantic_tools,
+        "_runtime_db_context",
+        lambda: {"datasource": "warehouse", "database": "selected", "schema": "sales"},
+    )
+    if actual_database == "selected":
+        assert semantic_tools._bind_dosi_read() is bound
+    else:
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="does not match the policy metadata connection"):
+            semantic_tools._bind_dosi_read()
+    manager.get_conn.assert_called_once_with("warehouse", "selected")
+    scoped_manager.get_conn.assert_called_once_with("warehouse", "selected")
+    assert scoped_configs[0]["warehouse"].schema == "sales"
+    assert semantic_tools.agent_config.datasource_configs["warehouse"].schema == "public"
+
+
+def test_dosi_policy_uses_trusted_request_context(semantic_tools, monkeypatch):
+    from types import MappingProxyType
+
+    contexts = []
+    runtime = SimpleNamespace(requires_bound_read=lambda value: contexts.append(value) or False)
+    monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda _: runtime)
+    semantic_tools.agent_config.policy_context = {"tenant_id": "configured"}
+    semantic_tools._policy_context_provider = lambda: MappingProxyType(
+        {"tenant_id": "request", "sql_policy": {"version": "v2"}}
+    )
+    assert semantic_tools._bind_dosi_read() is None
+    assert contexts == [{"tenant_id": "request", "sql_policy": {"version": "v2"}}]
+
+
+@pytest.mark.parametrize("context", ["invalid", ["tenant_id", 42]])
+def test_dosi_policy_rejects_invalid_request_context(semantic_tools, context):
+    from datus.utils.exceptions import DatusException
+
+    semantic_tools._policy_context_provider = lambda: context
+    with pytest.raises(DatusException, match="Policy context must be a mapping"):
+        semantic_tools._bind_dosi_read()
+
+
+def test_evicted_preview_requires_its_original_policy_scope(semantic_tools, monkeypatch):
+    scope = ["first"]
+    monkeypatch.setattr(semantic_tools, "_policy_cache_scope", lambda: scope[0])
+    monkeypatch.setattr(semantic_tools, "MAX_QUERY_METRICS_RESULT_CACHE_SIZE", 1)
+    first = semantic_tools._cache_query_metrics_result(["revenue"], [{"revenue": 1}])
+    semantic_tools._cache_query_metrics_result(["revenue"], [{"revenue": 2}])
+    assert semantic_tools.get_cached_query_metrics_result(first) is None
+    assert semantic_tools.can_use_query_metrics_preview(first)
+    scope[0] = "second"
+    assert not semantic_tools.can_use_query_metrics_preview(first)
+    assert not semantic_tools.can_use_query_metrics_preview("unknown")
+
+
+def test_dosi_sqlite_policy_uses_main_namespace_instead_of_file_stem(semantic_tools, monkeypatch):
+    bound = SimpleNamespace(context_json=json.dumps({"database": "main", "catalog": None, "schema": None}))
+    runtime = SimpleNamespace(requires_bound_read=lambda _: True, bind_read=lambda **_: bound)
+    monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda _: runtime)
+    connector = SimpleNamespace(dialect="sqlite")
+    manager = SimpleNamespace(get_conn=lambda *_: connector)
+    monkeypatch.setattr("datus.tools.db_tools.db_manager.db_manager_instance", lambda _: manager)
+    monkeypatch.setattr(
+        semantic_tools, "_runtime_db_context", lambda: {"datasource": "warehouse", "database": "file_stem"}
+    )
+    assert semantic_tools._bind_dosi_read() is bound
+
+
+@pytest.mark.parametrize("schema,allowed", [("MAIN", True), ("main", True), ("sales", False)])
+def test_dosi_duckdb_namespace_comparison_uses_live_identifier_rules(semantic_tools, monkeypatch, schema, allowed):
+    import duckdb
+
+    from datus.utils.exceptions import DatusException
+
+    bound = SimpleNamespace(context_json=json.dumps({"database": "memory", "schema": "main"}))
+    runtime = SimpleNamespace(requires_bound_read=lambda _: True, bind_read=lambda **_: bound)
+    monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda _: runtime)
+    with duckdb.connect() as db:
+        connector = SimpleNamespace(
+            dialect="duckdb",
+            execute_query=lambda sql, **_: SimpleNamespace(
+                success=True, sql_return=db.execute(sql).fetch_arrow_table()
+            ),
+        )
+        manager = SimpleNamespace(get_conn=lambda *_: connector)
+        monkeypatch.setattr("datus.tools.db_tools.db_manager.db_manager_instance", lambda _: manager)
+        monkeypatch.setattr(
+            semantic_tools,
+            "_runtime_db_context",
+            lambda: {"datasource": "warehouse", "database": "memory", "schema": schema},
+        )
+        if allowed:
+            assert semantic_tools._bind_dosi_read() is bound
+        else:
+            with pytest.raises(DatusException, match="does not match the policy metadata connection"):
+                semantic_tools._bind_dosi_read()
+
+
+@pytest.mark.parametrize("service_name", ["FREEPDB1", None])
+@pytest.mark.parametrize("actual_database,allowed", [("FREEPDB1", True), ("OTHERPDB", False)])
+def test_dosi_oracle_namespace_uses_the_configured_service_target(
+    semantic_tools, monkeypatch, service_name, actual_database, allowed
+):
+    from datus.configuration.agent_config import DbConfig
+    from datus.utils.exceptions import DatusException
+
+    database = "legacy_alias" if service_name else "FREEPDB1"
+    config = DbConfig(type="oracle", database=database, extra={"service_name": service_name})
+    semantic_tools.agent_config.current_db_config.return_value = config
+    monkeypatch.setattr(
+        "datus.tools.sql_read_context.SqlReadContext",
+        lambda *_: SimpleNamespace(canonical_name=lambda name: name),
+    )
+    bound = SimpleNamespace(context_json=json.dumps({"database": actual_database}))
+    runtime = SimpleNamespace(requires_bound_read=lambda _: True, bind_read=lambda **_: bound)
+    monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda _: runtime)
+    connector = SimpleNamespace(dialect="oracle")
+    manager = SimpleNamespace(get_conn=lambda *_: connector)
+    monkeypatch.setattr("datus.tools.db_tools.db_manager.db_manager_instance", lambda _: manager)
+    monkeypatch.setattr(
+        semantic_tools,
+        "_runtime_db_context",
+        lambda: {"datasource": "warehouse", "database": database},
+    )
+    if allowed:
+        assert semantic_tools._bind_dosi_read() is bound
+    else:
+        # A genuinely different service is still rejected, without relying
+        # on identifier metadata to equate two different connection targets.
+        with pytest.raises(DatusException, match="Dosi database does not match"):
+            semantic_tools._bind_dosi_read()
+
+
+def test_external_metric_compile_uses_the_single_enforcement_handoff(semantic_tools, monkeypatch):
+    runtime = SimpleNamespace(
+        compile_for_sql_execution=AsyncMock(
+            return_value=QueryResult(
+                columns=[],
+                data=[],
+                metadata={"sql": "SELECT SUM(amount) FROM orders"},
+            )
+        ),
+        query_metrics=AsyncMock(return_value=QueryResult(columns=[], data=[], metadata={"sql": "SELECT protected"})),
+    )
+    monkeypatch.setattr(semantic_tools, "_require_runtime", lambda _: (runtime, None))
+    monkeypatch.setattr(semantic_tools, "_query_execution_context", lambda _: {})
+    semantic_tools._warehouse_dry_run_provider = None
+    result = semantic_tools.compile_metric_for_sql_execution(metrics=["revenue"], dry_run=True)
+    assert result.result["metadata"]["sql"] == "SELECT SUM(amount) FROM orders"
+    runtime.compile_for_sql_execution.assert_awaited_once()
+    runtime.query_metrics.assert_not_awaited()
+    displayed = semantic_tools.query_metrics(metrics=["revenue"], dry_run=True)
+    assert displayed.result["metadata"]["sql"] == "SELECT protected"
+    with pytest.raises(ValueError, match="compile-only"):
+        semantic_tools.compile_metric_for_sql_execution(metrics=["revenue"], dry_run=False)
 
 
 def _validation_exception(**fields):
@@ -2715,7 +3052,7 @@ class TestOntologyToolRegistration:
         models_dir.mkdir(parents=True)
         ontology_dir.mkdir(parents=True)
         if plain_model:
-            (models_dir / "flights.yaml").write_text("version: '0.2.0.dev0'\nsemantic_model:\n  - name: flights\n")
+            (models_dir / "flights.yaml").write_text("version: '0.2.0.dev0'\nname: flights\n")
         (ontology_dir / "flights.mapping.yaml").write_text(
             "version: 0.2.0.dev0\nname: flights_mapping\n"
             "ontology_ref: {name: Flights, document: {version: 0.2.0.dev0, name: Flights, ontology: []}}\n"
@@ -2985,3 +3322,65 @@ def test_query_metrics_reports_the_captured_resolved_runtime_context(
         "database": "analytics",
         "schema": "tenant_a",
     }
+
+
+class TestNativeQueryPagination:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["query_metrics", "select_records"])
+    async def test_continuous_model_pages_reuse_query_and_preserve_limit(self, semantic_tools, mock_runtime, name):
+        import csv
+        import io
+
+        rows = [{"id": i, "value": "x" * 250} for i in range(1600)]
+        result = QueryResult(columns=["id", "value"], data=rows, metadata={})
+        mock_runtime.query_metrics = AsyncMock(return_value=result)
+        mock_runtime.select = AsyncMock(return_value=result)
+        method = getattr(semantic_tools, name)
+        arguments = (
+            {"metrics": ["m"], "limit": 1600}
+            if name == "query_metrics"
+            else {"from_concept": "Order", "fields": ["id", "value"], "limit": 1600}
+        )
+        first = await trans_to_function_tool(method).on_invoke_tool(None, json.dumps(arguments))
+        assert first["success"] == 1, first
+        text = parse_query_result_text(first["result"])
+        page = json.loads(next(line[6:] for line in text.lines if line.startswith("page: ")))
+        assert text.row_count == 1600 and page["returned"] == 200 and page["next_offset"] == 200
+        assert "rows omitted" not in text.csv
+        assert list(csv.DictReader(io.StringIO(text.csv))) == [{"id": str(i), "value": "x" * 250} for i in range(200)]
+        continued = method(result_id=text.result_id, offset=200)
+        assert continued.success == 1, continued.error
+        assert _text(continued).shown_rows == 200
+        second = method(result_id=text.result_id, offset=400, page_size=2000)
+        assert second.success == 1, second.error
+        tail = _text(second)
+        assert len(list(csv.DictReader(io.StringIO(tail.csv)))) == 1200
+        assert '"has_more": false' in second.result
+        called = mock_runtime.query_metrics if name == "query_metrics" else mock_runtime.select
+        called.assert_awaited_once()
+        assert called.await_args.kwargs["limit"] == 1600
+        assert method(result_id=text.result_id, offset=1601).success == 0
+        assert method(result_id=text.result_id, limit=10).success == 0
+        semantic_tools._query_metrics_result_cache.clear()
+        assert method(result_id=text.result_id).success == 0
+
+    def test_default_select_limit_and_legacy_preview_are_preserved(self, semantic_tools, mock_runtime):
+        mock_runtime.select = AsyncMock(
+            return_value=QueryResult(columns=["id"], data=[{"id": i} for i in range(200)], metadata={})
+        )
+        first = semantic_tools.select_records(from_concept="Order", fields=["id"], page_size=100)
+        assert first.success == 1
+        text = _text(first)
+        assert text.row_count == 200 and "200-row cap" in first.result
+        assert mock_runtime.select.await_args.kwargs["limit"] == 200
+        second = semantic_tools.select_records(result_id=text.result_id, offset=100)
+        assert _text(second).shown_rows == 100
+        legacy = semantic_tools.select_records(from_concept="Order", fields=["id"])
+        assert "rows omitted" in legacy.result and "page: " not in legacy.result
+
+    def test_empty_query_page(self, semantic_tools, mock_runtime):
+        mock_runtime.query_metrics = AsyncMock(return_value=QueryResult(columns=["m"], data=[], metadata={}))
+        result = semantic_tools.query_metrics(metrics=["m"], page_size=100)
+        assert result.success == 1, result.error
+        assert _text(result).row_count == 0
+        assert '"returned": 0' in result.result and '"has_more": false' in result.result

@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from datus.configuration.legacy_tool_names import replaced_names
+
 if TYPE_CHECKING:
     from datus.tools.permission.bash_rules import BashCommandRules
 
@@ -128,11 +130,12 @@ class PermissionRule(BaseModel):
         if self.tool != "*" and not fnmatch.fnmatch(tool_category, self.tool):
             return False
 
-        # Check tool name pattern match
-        if self.pattern != "*" and not fnmatch.fnmatch(tool_name, self.pattern):
-            return False
-
-        return True
+        # Check tool name pattern match. A rule written for a replaced tool
+        # applies to its successors too, so a denied tool stays denied.
+        if self.pattern == "*":
+            return True
+        names = (tool_name, *replaced_names(tool_category, tool_name))
+        return any(fnmatch.fnmatch(name, self.pattern) for name in names)
 
 
 # Fine-grained statement kinds (``parse_sql_statement_kind``) mapped to the

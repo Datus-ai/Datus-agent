@@ -28,7 +28,7 @@ Agent 读取数据库 schema 和历史 SQL，自动生成 [OSI](https://dosi.dat
 
 ### 指标问答与归因
 
-[AskMetrics](subagent/ask_metrics.zh.md) 依据指标定义回答业务问题，而不是临时拼 SQL；指标出现波动时，`attribution_analyze` 给出各维度贡献的量化归因。
+[AskMetrics](subagent/ask_metrics.zh.md) 依据指标定义回答业务问题，而不是临时拼 SQL；指标出现波动时，`attribute_metrics` 把变化分给公式里的各个输入，`attribute_dimensions` 把变化分给维度的各个分组。
 
 ![一次指标问答：提问、语义层工具调用、归因结果](assets/metric_qa_session.svg)
 
@@ -170,7 +170,7 @@ curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.s
 
     ---
 
-    数据源、模型、语义层、SQL 策略、存储，以及 `agent.yml` 里的其他设置。
+    数据源、模型、语义层、存储，以及 `agent.yml` 里的其他设置。
 
     [:octicons-arrow-right-24: 配置 Datus](configuration/introduction.zh.md)
 

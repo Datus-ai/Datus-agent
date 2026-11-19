@@ -105,6 +105,24 @@ class TestLiteLLMAdapterInit:
 
 class TestLiteLLMAdapterModelName:
     @pytest.mark.parametrize(
+        "provider,base_url,custom",
+        [
+            ("openai", None, False),
+            ("openai", "https://api.openai.com/v1", False),
+            ("openai", "https://api.openai.com.private.example/v1", True),
+            ("openai", "http://127.0.0.1:8000/v1", True),
+            ("claude", "https://api.anthropic.com", False),
+            ("claude", "https://private.example/anthropic", True),
+            ("deepseek", "https://api.deepseek.com", False),
+            ("qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1", False),
+            ("openrouter", "https://openrouter.ai/api/v1", False),
+        ],
+    )
+    def test_capacity_trust_follows_endpoint_not_model_alias(self, provider, base_url, custom):
+        adapter = LiteLLMAdapter(provider=provider, model="private-deployment", api_key="test", base_url=base_url)
+        assert adapter.is_custom_endpoint is custom
+
+    @pytest.mark.parametrize(
         "provider,model,expected_litellm_name",
         [
             ("openai", "gpt-4o", "gpt-4o"),
@@ -366,6 +384,19 @@ class TestAutoDetectWithBaseUrl:
         )
         assert adapter.provider == "openai"
         assert adapter.litellm_model_name == "openai/Qwen3.5-397B"
+
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [
+            ("z-ai/yumcode-pro", "openai/z-ai/yumcode-pro"),
+            ("my-org/private-model", "openai/my-org/private-model"),
+            ("openai/z-ai/yumcode-pro", "openai/z-ai/yumcode-pro"),
+            ("anthropic/claude-sonnet-4", "anthropic/claude-sonnet-4"),
+        ],
+    )
+    def test_custom_endpoint_distinguishes_deployment_aliases_from_provider_prefixes(self, model, expected):
+        adapter = LiteLLMAdapter(provider="openai", model=model, api_key="key", base_url="https://models.example/v1")
+        assert adapter.litellm_model_name == expected
 
     def test_native_openai_no_extra_prefix(self):
         """type: openai + api.openai.com → no openai/ prefix for native models."""

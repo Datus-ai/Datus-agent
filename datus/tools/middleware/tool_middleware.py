@@ -37,7 +37,6 @@ Transformer contract (duck-typed so plugin packages never import ``datus.*``):
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import inspect
 import json
 from typing import Any, Callable, Dict, List, Optional, Set, Union
@@ -55,6 +54,39 @@ logger = get_logger(__name__)
 # Type alias for readability; transformers are duck-typed callables.
 ToolTransformer = Callable[[str, Dict[str, Any], Dict[str, Any]], Any]
 ContextProvider = Callable[[], Dict[str, Any]]
+
+
+class _TransformerContext(dict):
+    """Resolve the metric catalog on first access, once per tool invocation."""
+
+    def __init__(self, values: dict, metric_provider: Callable):
+        super().__init__(values, metric_datasets=None)
+        self._metric_provider = metric_provider
+
+    def __getitem__(self, key):
+        if key == "metric_datasets" and self._metric_provider is not None:
+            self[key] = self._metric_provider()
+            self._metric_provider = None
+        return super().__getitem__(key)
+
+    def get(self, key, default=None):
+        return self[key] if key in self else default
+
+    def __iter__(self):
+        # Dict consumers must use __getitem__ rather than copy the placeholder.
+        return super().__iter__()
+
+    def items(self):
+        self["metric_datasets"]
+        return super().items()
+
+    def values(self):
+        self["metric_datasets"]
+        return super().values()
+
+    def copy(self):
+        return dict(self)
+
 
 # Marker set on a rebuilt tool's ``on_invoke_tool`` so :func:`apply_tool_transformers`
 # can recognise already-wrapped tools and skip them. Makes wrapping idempotent
@@ -141,7 +173,8 @@ def wrap_tool_with_transformers(
             return await original.on_invoke_tool(tool_ctx, args_str)
 
         try:
-            context = dict(await asyncio.to_thread(context_provider)) if context_provider is not None else {}
+            supplied = await asyncio.to_thread(context_provider) if context_provider is not None else {}
+            context = supplied if isinstance(supplied, _TransformerContext) else dict(supplied)
         except Exception as e:
             logger.warning("Tool middleware context provider failed for '%s': %s", original.name, e)
             context = {}
@@ -191,13 +224,9 @@ def wrap_tool_with_transformers(
     # 0.7.0). Forwarding by field name keeps the wrapper faithful across SDK
     # versions without this module tracking each new field by hand; ``getattr``
     # defaults tolerate SDK-added fields that a test double may not carry.
-    carried = {
-        field.name: getattr(original, field.name, None)
-        for field in dataclasses.fields(FunctionTool)
-        if field.init and field.name != "on_invoke_tool"
-    }
-    carried["on_invoke_tool"] = transforming_invoke
-    return FunctionTool(**carried)
+    from datus.tools.registry.contracts import clone_registered_tool
+
+    return clone_registered_tool(original, on_invoke_tool=transforming_invoke)
 
 
 class ToolTransformDenied(Exception):
@@ -363,12 +392,15 @@ def _metric_datasets(node: Any) -> Optional[Dict[str, List[str]]]:
     return mapping
 
 
-def apply_tool_transformers(node: Any, transformers_by_pattern: Dict[str, List[ToolTransformer]]) -> int:
+def apply_tool_transformers(
+    node: Any, transformers_by_pattern: Dict[str, List[ToolTransformer]], *, tools: Optional[list] = None
+) -> int:
     """Wrap matching tools on ``node`` with the given transformers, in place.
 
     Args:
         node: AgenticNode-like object exposing ``tools``, ``tool_registry``
             and (optionally) ``proxied_tool_names`` / ``db_func_tool``.
+        tools: Optional newly mounted tools to wrap without revisiting init-scoped wrappers.
         transformers_by_pattern: Mapping of tool patterns (proxy syntax:
             ``"execute_sql"``, ``"db_tools.*"``) to transformer lists.
 
@@ -398,24 +430,26 @@ def apply_tool_transformers(node: Any, transformers_by_pattern: Dict[str, List[T
         # therefore never build a DBFuncTool at all (``ask_metrics`` is one).
         agent_config = getattr(node, "agent_config", None)
         policy_context = getattr(agent_config, "policy_context", None)
-        return {
-            "node_name": node_name,
-            "policy_context": dict(policy_context) if isinstance(policy_context, dict) else {},
-            "project_root": getattr(agent_config, "project_root", None),
-            # Live AgentConfig reference so transformers can read their own
-            # plugin profile (``get_plugin_profile``) and datasource metadata.
-            # Duck-typed access only — transformers must not import datus.*.
-            "agent_config": agent_config,
-            # Metric name -> datasets it reads, so transformers enforcing read
-            # policies over metric queries know which physical data is touched.
-            "metric_datasets": _metric_datasets(node),
-        }
+        return _TransformerContext(
+            {
+                "node_name": node_name,
+                "policy_context": dict(policy_context) if isinstance(policy_context, dict) else {},
+                "project_root": getattr(agent_config, "project_root", None),
+                # Live AgentConfig reference so transformers can read their own
+                # plugin profile (``get_plugin_profile``) and datasource metadata.
+                # Duck-typed access only — transformers must not import datus.*.
+                "agent_config": agent_config,
+                # Metric name -> datasets it reads, so transformers enforcing read
+                # policies over metric queries know which physical data is touched.
+            },
+            lambda: _metric_datasets(node),
+        )
 
     parsed_by_pattern = {pattern: parse_tool_patterns([pattern]) for pattern in transformers_by_pattern}
 
     wrapped_count = 0
     new_tools = []
-    existing_tools = getattr(node, "tools", None)
+    existing_tools = tools if tools is not None else getattr(node, "tools", None)
     for tool in existing_tools or []:
         if not isinstance(tool, FunctionTool):
             new_tools.append(tool)

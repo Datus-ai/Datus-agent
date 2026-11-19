@@ -6,11 +6,13 @@
 
 import asyncio
 import hashlib
+import inspect
 import json
 import os
 import threading
 import time
-from contextlib import AsyncExitStack, aclosing, nullcontext
+from contextlib import AsyncExitStack, aclosing, asynccontextmanager, nullcontext
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
@@ -19,9 +21,10 @@ import httpx
 import litellm
 import yaml
 from agents import Agent, ModelSettings, Runner, Tool, WebSearchTool
-from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
+from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError, RunErrorDetails
 from agents.extensions.memory import AdvancedSQLiteSession
 from agents.mcp import MCPServerStdio
+from agents.result import RunResultStreaming
 from litellm.exceptions import MidStreamFallbackError
 from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
 from openai.types.shared.reasoning import Reasoning
@@ -36,6 +39,7 @@ from datus.models.litellm_adapter import (
 )
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
+from datus.models.output_truncation import ModelOutputTruncatedError
 from datus.models.request_capacity import DEFAULT_CONTEXT_LENGTH, DEFAULT_MAX_TOKENS
 from datus.models.tool_result_stream import ToolResultStream
 from datus.observability.manager import get_observability_manager
@@ -106,23 +110,31 @@ configure_litellm_logging()
 
 # Module-level cache for model specs loaded from conf/providers.yml
 _MODEL_SPECS_CACHE: Optional[Dict[str, Dict[str, int]]] = None
+_MODEL_SPECS_DETAILS: Optional[dict] = None
 _MODEL_SPECS_LOCK = threading.Lock()
 
 
 def _load_model_specs() -> Dict[str, Dict[str, int]]:
-    """Load model specifications from conf/providers.yml (cached after first call, thread-safe).
+    """Overlay automatically resolved metadata on the bundled fallback specs.
 
-    Specs from ``providers.yml`` are authoritative. The OpenRouter cache at
-    ``~/.datus/cache/openrouter_models.json`` provides a fallback ``context_length``
-    for slugs the YAML doesn't enumerate — this keeps the status bar and
-    auto-compaction heuristic aware of fresh OpenRouter models without
-    requiring a YAML edit for every new release.
+    Rebuild when the shared catalog resolver refreshes or switches Agent homes.
+    Explicit ModelConfig overrides are applied separately by the model methods.
     """
-    global _MODEL_SPECS_CACHE
-    if _MODEL_SPECS_CACHE is not None:
-        return _MODEL_SPECS_CACHE
+    global _MODEL_SPECS_CACHE, _MODEL_SPECS_DETAILS
+    try:
+        from datus.cli.provider_model_catalog import resolve_model_details
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            details = resolve_model_details()
+        else:
+            details = resolve_model_details(refresh=False)
+    except Exception as e:
+        logger.debug(f"Failed to resolve model catalog, using local specs: {e}")
+        details = None
     with _MODEL_SPECS_LOCK:
-        if _MODEL_SPECS_CACHE is None:
+        if _MODEL_SPECS_CACHE is None or _MODEL_SPECS_DETAILS is not details:
             specs: Dict[str, Dict[str, int]] = {}
             try:
                 text = read_data_file_text("conf/providers.yml")
@@ -135,25 +147,35 @@ def _load_model_specs() -> Dict[str, Dict[str, int]]:
             except Exception as e:
                 logger.warning(f"Failed to load model_specs from providers.yml, using empty specs: {e}")
 
-            # Merge OpenRouter cache: YAML wins on shared keys.
-            try:
-                from datus.cli.provider_model_catalog import load_cached_model_details
-
-                cache_details = load_cached_model_details() or {}
-                for entries in cache_details.values():
+            # Exact catalog metadata supersedes offline defaults, field by field.
+            offline_output_defaults = {name: spec.get("max_tokens") for name, spec in specs.items()}
+            if details:
+                for entries in details.values():
                     for entry in entries:
                         slug = entry.get("id") if isinstance(entry, dict) else None
                         if not isinstance(slug, str) or not slug:
                             continue
-                        ctx_len = entry.get("context_length")
-                        if not isinstance(ctx_len, int):
-                            continue
-                        specs.setdefault(slug, {}).setdefault("context_length", ctx_len)
-            except Exception as e:
-                logger.debug(f"Failed to merge OpenRouter cache into model_specs: {e}")
+                        for field in ("context_length", "max_tokens"):
+                            value = entry.get(field)
+                            if type(value) is int and value > 0:
+                                if field == "max_tokens":
+                                    # Catalog ceilings describe a serving provider;
+                                    # a larger ceiling must not inflate the existing
+                                    # default budget used for ordinary requests.
+                                    known = offline_output_defaults.get(slug)
+                                    lite = litellm.model_cost.get(
+                                        slug, litellm.model_cost.get(f"openrouter/{slug}", {})
+                                    ).get("max_output_tokens")
+                                    baseline = known or lite or DEFAULT_MAX_TOKENS
+                                    model_spec = specs.setdefault(slug, {})
+                                    model_spec["default_max_tokens"] = min(
+                                        model_spec.get("default_max_tokens", baseline), value, baseline
+                                    )
+                                specs.setdefault(slug, {})[field] = value
 
             _MODEL_SPECS_CACHE = specs
-    return _MODEL_SPECS_CACHE
+            _MODEL_SPECS_DETAILS = details
+        return _MODEL_SPECS_CACHE
 
 
 def _set_observability_span_attribute(span: Any, key: str, value: Any) -> None:
@@ -267,6 +289,7 @@ class OpenAICompatibleModel(LLMBaseModel):
     """
 
     def __init__(self, model_config: ModelConfig, **kwargs):
+        """Initialize provider settings, request capacity and optional process-level TLS configuration."""
         super().__init__(model_config, **kwargs)
 
         self.model_config = model_config
@@ -275,20 +298,8 @@ class OpenAICompatibleModel(LLMBaseModel):
         self.base_url = self._get_base_url()
         self.default_headers = dict(self.model_config.default_headers) if self.model_config.default_headers else None
 
-        # Resolve SSL/TLS verification for this endpoint (e.g. a private gateway CA).
-        # When configured, it takes priority over the SSL_VERIFY / SSL_CERT_FILE env
-        # vars (house convention: config first, env fallback). We materialize it into
-        # SSL_VERIFY so litellm honors it across both the agents-SDK LitellmModel path
-        # (whose __init__ accepts no ssl argument) and direct litellm.completion calls.
-        # The native Anthropic client (ClaudeModel) reads self.ssl_verify directly.
-        #
-        # Why a process-level env var and not a per-request kwarg: litellm does NOT
-        # thread a per-call ``ssl_verify`` into the Anthropic provider's HTTP client
-        # (verified — the kwarg is silently ignored), and a scoped set/restore around
-        # each call would break the agents-SDK streaming path (Runner.run_streamed does
-        # its network I/O after returning). A process global is the only mechanism that
-        # works across all paths. Blast radius is limited: ``SSL_VERIFY`` is a
-        # litellm-specific variable that standard libraries (requests/httpx/curl) ignore.
+        # Keep chat's existing process-level TLS setup. Isolated background
+        # callers that opt out of it need a request-local client instead.
         from datus.utils.ssl_utils import (
             is_pem_cert_content,
             materialize_ca_bundle,
@@ -306,12 +317,16 @@ class OpenAICompatibleModel(LLMBaseModel):
             # litellm path only accepts a CA bundle via a file path, so spill inline
             # PEM content to a temp file; bool/path reuse the already-normalized
             # self.ssl_verify (avoids a second normalize + duplicate warning).
-            if is_pem_cert_content(ssl_verify_cfg):
+            if not kwargs.get("configure_ssl_env", True):
+                pass
+            elif is_pem_cert_content(ssl_verify_cfg):
                 os.environ["SSL_VERIFY"] = materialize_ca_bundle(ssl_verify_cfg)
             else:
                 os.environ["SSL_VERIFY"] = ssl_verify_to_env(self.ssl_verify)
         else:
             self.ssl_verify = None
+
+        self._request_ssl_verify = self.ssl_verify if not kwargs.get("configure_ssl_env", True) else None
 
         # Initialize LiteLLM adapter for unified LLM calls
         self.litellm_adapter = LiteLLMAdapter(
@@ -322,6 +337,8 @@ class OpenAICompatibleModel(LLMBaseModel):
             enable_thinking=model_config.enable_thinking,
             reasoning_effort=model_config.reasoning_effort,
             default_headers=self.default_headers,
+            ssl_verify=self._request_ssl_verify,
+            max_retries=0 if model_config.max_retry == 1 else None,
         )
 
         # Context for tracing ToDo: replace it with Context object
@@ -619,8 +636,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 params["top_p"] = 1.0
 
             # Resolve max_tokens / max_completion_tokens.
-            # Priority: kwargs > model_specs.max_tokens. If neither is set, omit
-            # the parameter so the provider's own default applies.
+            # Priority: kwargs > the shared configured/resolved capacity default.
             explicit_max_tokens = kwargs.get("max_tokens")
             explicit_max_completion = kwargs.get("max_completion_tokens")
             if explicit_max_tokens is not None:
@@ -628,15 +644,15 @@ class OpenAICompatibleModel(LLMBaseModel):
             if explicit_max_completion is not None:
                 params["max_completion_tokens"] = explicit_max_completion
             if explicit_max_tokens is None and explicit_max_completion is None:
-                spec_max_tokens = self.max_tokens()
-                if isinstance(spec_max_tokens, int) and spec_max_tokens > 0:
+                default_max_tokens = self.request_capacity().request_output_limit()
+                if isinstance(default_max_tokens, int) and default_max_tokens > 0:
                     uses_completion = (
                         hasattr(self, "_uses_completion_tokens_parameter") and self._uses_completion_tokens_parameter()
                     )
                     if uses_completion:
-                        params["max_completion_tokens"] = spec_max_tokens
+                        params["max_completion_tokens"] = default_max_tokens
                     else:
-                        params["max_tokens"] = spec_max_tokens
+                        params["max_tokens"] = default_max_tokens
 
             # Filter out handled parameters from remaining kwargs
             excluded_params = ["temperature", "top_p", "max_tokens", "max_completion_tokens"]
@@ -900,6 +916,10 @@ class OpenAICompatibleModel(LLMBaseModel):
         Returns:
             Dict with content and sql_contexts
         """
+        # Resolve remote metadata off the event loop before building the agent.
+        from datus.cli.provider_model_catalog import resolve_model_details
+
+        await asyncio.to_thread(resolve_model_details)
         tools = self._maybe_add_builtin_web_search(tools, kwargs)
         # Use the internal method that returns a Dict
         result = await self._generate_with_tools_internal(
@@ -964,6 +984,9 @@ class OpenAICompatibleModel(LLMBaseModel):
         Yields:
             ActionHistory objects for streaming updates
         """
+        from datus.cli.provider_model_catalog import resolve_model_details
+
+        await asyncio.to_thread(resolve_model_details)
         if action_history_manager is None:
             action_history_manager = ActionHistoryManager()
 
@@ -1012,6 +1035,8 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         litellm_model = self.litellm_adapter.get_agents_sdk_model()
         litellm_model._datus_capacity = self.request_capacity()
+        litellm_model.request_ssl_verify = getattr(self, "_request_ssl_verify", None)
+        litellm_model.request_max_retries = 0 if getattr(self.model_config, "max_retry", 3) == 1 else None
 
         # DeepSeek requires "json" keyword in prompt for JSON mode
         final_instruction = instruction
@@ -1042,8 +1067,8 @@ class OpenAICompatibleModel(LLMBaseModel):
         if not suppress_sampling_params and self.model_config.top_p is not None:
             model_settings_kwargs["top_p"] = self.model_config.top_p
 
-        # Send the same resolved output cap that the capacity check reserves.
-        model_settings_kwargs["max_tokens"] = self.request_capacity().output_limit(max_tokens)
+        # Unknown custom endpoints choose their wire default; planning retains the reservation.
+        model_settings_kwargs["max_tokens"] = self.request_capacity().request_output_limit(max_tokens)
 
         if self.default_headers:
             model_settings_kwargs["extra_headers"] = self.default_headers
@@ -1069,6 +1094,11 @@ class OpenAICompatibleModel(LLMBaseModel):
                     effort,
                     self.model_name,
                 )
+
+        if self.litellm_adapter.provider == "deepseek" and effort == "none":
+            # Preserve explicit off after LiteLLM maps it to thinking.disabled,
+            # so gateways cannot inject a contradictory default effort.
+            model_settings_kwargs.setdefault("extra_args", {})["extra_body"] = {"reasoning_effort": "none"}
 
         prompt_cache_retention = self._default_prompt_cache_retention()
         if prompt_cache_retention:
@@ -1121,7 +1151,11 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         async def _tools_operation():
             # Use multiple_mcp_servers context manager with empty dict if no MCP servers
-            async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
+            async with (
+                multiple_mcp_servers(mcp_servers or {}) as connected_servers,
+                AsyncExitStack() as model_clients,
+                self._preserve_truncated_run_result(None, session),
+            ):
                 agent_name = kwargs.get("agent_name", "default_agent")
                 agent = self._build_agent(
                     instruction=instruction,
@@ -1133,6 +1167,8 @@ class OpenAICompatibleModel(LLMBaseModel):
                     agent_name=agent_name,
                     max_tokens=kwargs.get("max_completion_tokens", kwargs.get("max_tokens")),
                 )
+                if inspect.iscoroutinefunction(close := getattr(getattr(agent, "model", None), "aclose", None)):
+                    model_clients.push_async_callback(close)
                 run_config = self._build_run_config(agent_name=agent_name)
 
                 # OpenAI Agents SDK tracing is configured by observability adapters.
@@ -1255,6 +1291,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         self._setup_custom_json_encoder()
 
         async def _stream_operation():
+            nonlocal safe_errors
             # Use multiple_mcp_servers context manager with empty dict if no MCP servers
             async with (
                 multiple_mcp_servers(mcp_servers or {}) as connected_servers,
@@ -1274,6 +1311,8 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                 tool_stream = ToolResultStream(agent.hooks)
                 agent.hooks = tool_stream
+                if inspect.iscoroutinefunction(close := getattr(getattr(agent, "model", None), "aclose", None)):
+                    tool_streams.push_async_callback(close)
 
                 run_config = self._build_run_config(
                     pending_input_queue=pending_input_queue,
@@ -1283,6 +1322,21 @@ class OpenAICompatibleModel(LLMBaseModel):
                     agent_name=agent_name,
                     context_rewriter=context_rewriter,
                 )
+                if requested_config := kwargs.get("run_config"):
+                    # Transport/tracing overrides must retain the callbacks
+                    # responsible for queued input and session compaction.
+                    run_config = replace(
+                        requested_config,
+                        call_model_input_filter=(
+                            getattr(run_config, "call_model_input_filter", None)
+                            or requested_config.call_model_input_filter
+                        ),
+                        session_input_callback=(
+                            getattr(run_config, "session_input_callback", None)
+                            or requested_config.session_input_callback
+                        ),
+                    )
+                safe_errors = not getattr(run_config, "trace_include_sensitive_data", True)
                 try:
                     with _agents_trace_baggage(agent_name):
                         result = Runner.run_streamed(
@@ -1297,6 +1351,10 @@ class OpenAICompatibleModel(LLMBaseModel):
                     raise DatusException(
                         ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}
                     ) from e
+
+                await tool_streams.enter_async_context(
+                    self._preserve_truncated_run_result(result, session, action_history_manager)
+                )
 
                 # Streaming phase: yield progress actions in real-time
                 # After streaming completes, generate final summary report
@@ -1712,6 +1770,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         # Execute the streaming operation with retry logic for connection errors
         max_retries = getattr(self.model_config, "max_retry", 3)
         retry_delay = getattr(self.model_config, "retry_interval", 2.0)
+        safe_errors = not getattr(kwargs.get("run_config"), "trace_include_sensitive_data", True)
 
         # Track already processed action IDs to prevent duplicates across retries
         processed_action_ids = set()
@@ -1743,10 +1802,18 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # LLM hallucinated a non-existent tool or produced malformed output.
                 # Retry since the LLM may behave correctly on the next attempt.
                 if attempt < max_retries - 1:
-                    logger.warning(
-                        f"Model behavior error in stream (attempt {attempt + 1}/{max_retries}): {e}. "
-                        f"Retrying in {retry_delay}s..."
-                    )
+                    if safe_errors:
+                        logger.warning(
+                            "Model behavior error in stream; retrying",
+                            error_type=type(e).__name__,
+                            attempt=attempt + 1,
+                            max_retries=max_retries,
+                        )
+                    else:
+                        logger.warning(
+                            f"Model behavior error in stream (attempt {attempt + 1}/{max_retries}): {e}. "
+                            f"Retrying in {retry_delay}s..."
+                        )
 
                     from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
@@ -1754,7 +1821,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                         role=ActionRole.ASSISTANT,
                         action_type="retry_notification",
                         messages=f"Model behavior error, retrying ({attempt + 2}/{max_retries})...",
-                        input_data={"error": str(e), "attempt": attempt + 1},
+                        input_data={"error": type(e).__name__ if safe_errors else str(e), "attempt": attempt + 1},
                         status=ActionStatus.PROCESSING,
                     )
                     action_history_manager.add_action(retry_action)
@@ -1764,15 +1831,26 @@ class OpenAICompatibleModel(LLMBaseModel):
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 2
                 else:
-                    logger.exception(f"Model behavior error after {max_retries} attempts: {type(e).__name__}: {e}")
+                    if safe_errors:
+                        logger.error("Model behavior error in stream", error_type=type(e).__name__)
+                    else:
+                        logger.exception(f"Model behavior error after {max_retries} attempts: {type(e).__name__}: {e}")
                     raise
 
             except (httpx.RemoteProtocolError, APIConnectionError, APITimeoutError, MidStreamFallbackError) as e:
                 if attempt < max_retries - 1:
-                    logger.warning(
-                        f"Stream connection error (attempt {attempt + 1}/{max_retries}): {type(e).__name__}: {e}. "
-                        f"Retrying in {retry_delay}s..."
-                    )
+                    if safe_errors:
+                        logger.warning(
+                            "Model stream connection error; retrying",
+                            error_type=type(e).__name__,
+                            attempt=attempt + 1,
+                            max_retries=max_retries,
+                        )
+                    else:
+                        logger.warning(
+                            f"Stream connection error (attempt {attempt + 1}/{max_retries}): {type(e).__name__}: {e}. "
+                            f"Retrying in {retry_delay}s..."
+                        )
 
                     # Yield a retry notification action to inform user
                     from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
@@ -1781,7 +1859,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                         role=ActionRole.ASSISTANT,
                         action_type="retry_notification",
                         messages=f"Connection interrupted, retrying ({attempt + 2}/{max_retries})...",
-                        input_data={"error": str(e), "attempt": attempt + 1},
+                        input_data={"error": type(e).__name__ if safe_errors else str(e), "attempt": attempt + 1},
                         status=ActionStatus.PROCESSING,
                     )
                     action_history_manager.add_action(retry_action)
@@ -1792,8 +1870,52 @@ class OpenAICompatibleModel(LLMBaseModel):
                     retry_delay *= 2  # Exponential backoff
                 else:
                     # All retries exhausted
-                    logger.exception(f"Stream failed after {max_retries} attempts: {type(e).__name__}: {e}")
+                    if safe_errors:
+                        logger.error("Model stream failed", error_type=type(e).__name__)
+                    else:
+                        logger.exception(f"Stream failed after {max_retries} attempts: {type(e).__name__}: {e}")
                     raise
+
+    @asynccontextmanager
+    async def _preserve_truncated_run_result(
+        self,
+        result: Optional[RunResultStreaming],
+        session: Optional[AdvancedSQLiteSession],
+        action_history_manager: Optional[ActionHistoryManager] = None,
+    ) -> AsyncGenerator[None, None]:
+        """Retain received text and run usage on output exhaustion, without retrying."""
+        try:
+            yield
+        except ModelOutputTruncatedError as exc:
+            completed = result if result is not None else exc.run_data
+            if completed is not None:
+                await self._preserve_truncated_result(exc, completed, session, action_history_manager)
+            raise
+
+    async def _preserve_truncated_result(
+        self,
+        exc: ModelOutputTruncatedError,
+        result: Union[RunResultStreaming, RunErrorDetails],
+        session: Optional[AdvancedSQLiteSession],
+        action_history_manager: Optional[ActionHistoryManager] = None,
+    ) -> None:
+        """Combine completed rounds and the rejected response for either SDK path."""
+        exc.partial_response = strip_litellm_placeholder(exc.partial_response)
+        usage = result.context_wrapper.usage
+        usage.add(exc.usage)
+        exc.usage = usage
+        if session:
+            try:
+                if exc.partial_response:
+                    # The SDK persists the input and completed tool rounds;
+                    # the rejected response has no executable tool items.
+                    await session.add_items([{"role": "assistant", "content": exc.partial_response}])
+                if hasattr(session, "store_run_usage"):
+                    await session.store_run_usage(result)
+            except Exception:
+                logger.warning("Failed to persist truncated model result", exc_info=True)
+        if action_history_manager is not None:
+            await self._extract_and_distribute_token_usage(result, action_history_manager)
 
     def _extract_usage_info(self, usage) -> dict:
         """Extract standardized usage info from SDK usage object.
@@ -1904,46 +2026,66 @@ class OpenAICompatibleModel(LLMBaseModel):
 
     @property
     def model_specs(self) -> Dict[str, Dict[str, int]]:
-        """Model specifications loaded from conf/providers.yml (cached)."""
+        """Automatically resolved model specifications, with bundled fallbacks."""
         return _load_model_specs()
 
-    def _lookup_spec(self, field: str) -> Optional[int]:
-        """Look up ``field`` in model specs, then the LiteLLM catalogue.
+    def _lookup_litellm_spec(self, field: str) -> Optional[int]:
+        """Read optional registry limits independently of the provider catalog."""
+        try:
+            info = litellm.model_cost.get(
+                self.litellm_adapter.litellm_model_name, litellm.model_cost.get(self.model_name, {})
+            )
+            value = info.get({"context_length": "max_input_tokens", "max_tokens": "max_output_tokens"}.get(field))
+            return value if type(value) is int and value > 0 else None
+        except Exception as exc:
+            logger.debug("Registry metadata unavailable for %s: %s", self.model_name, type(exc).__name__)
+            return None
 
-        Longest-prefix is important when specs declare both a generic family key
-        (e.g. ``gpt-5``) and a more specific variant (e.g. ``gpt-5.3-codex``): the
-        generic key would otherwise bleed into unrelated slugs that happen to
-        share a short prefix. The catalogue fills missing fields, including
-        output limits absent from OpenRouter-cache-only entries. Returns None
-        when neither source knows the field.
-        """
+    def _lookup_spec(self, field: str) -> Optional[int]:
+        """Prefer exact catalog entries, then the longest hyphen-delimited prefix."""
+        from datus.cli.provider_model_catalog import model_spec_prefix_matches
+
         specs = self.model_specs
         exact = specs.get(self.model_name)
         if isinstance(exact, dict) and isinstance(exact.get(field), int):
             return exact[field]
+        value = self._lookup_litellm_spec(field)
+        if value is not None:
+            return value
         best_key: Optional[str] = None
         for spec_model, spec in specs.items():
             if not isinstance(spec, dict) or not isinstance(spec.get(field), int):
                 continue
-            if self.model_name.startswith(spec_model) and (best_key is None or len(spec_model) > len(best_key)):
+            if model_spec_prefix_matches(self.model_name, spec_model) and (
+                best_key is None or len(spec_model) > len(best_key)
+            ):
                 best_key = spec_model
         if best_key is not None:
             return specs[best_key][field]
-        info = litellm.model_cost.get(
-            self.litellm_adapter.litellm_model_name, litellm.model_cost.get(self.model_name, {})
-        )
-        value = info.get({"context_length": "max_input_tokens", "max_tokens": "max_output_tokens"}.get(field))
-        return value if isinstance(value, int) and value > 0 else None
+        return None
 
     def max_tokens(self) -> Optional[int]:
         """Configured output limit or a model default that leaves input headroom."""
-        return self.model_config.max_tokens or self._default_output_limit(
-            self._lookup_spec("max_tokens") or DEFAULT_MAX_TOKENS
-        )
+        if self.model_config.max_tokens:
+            return self.model_config.max_tokens
+        try:
+            default = self.model_specs.get(self.model_name, {}).get("default_max_tokens")
+            limit = default or self._lookup_spec("max_tokens")
+        except Exception as exc:
+            logger.debug("Output metadata unavailable for %s: %s", self.model_name, type(exc).__name__)
+            limit = None
+        return self._default_output_limit(limit or self._lookup_litellm_spec("max_tokens") or DEFAULT_MAX_TOKENS)
 
     def context_length(self) -> Optional[int]:
         """Configured window, known model specification, or the default budget."""
-        return self.model_config.context_length or self._lookup_spec("context_length") or DEFAULT_CONTEXT_LENGTH
+        if self.model_config.context_length:
+            return self.model_config.context_length
+        try:
+            limit = self._lookup_spec("context_length")
+        except Exception as exc:
+            logger.debug("Context metadata unavailable for %s: %s", self.model_name, type(exc).__name__)
+            limit = None
+        return limit or self._lookup_litellm_spec("context_length") or DEFAULT_CONTEXT_LENGTH
 
     def token_count(self, prompt: str) -> int:
         """

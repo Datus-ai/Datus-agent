@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Iterator, Optional
 
 from datus.api.models.cli_models import ChatHistoryPageData
 from datus.models.session_manager import SessionManager, extract_user_input, is_compact_resume_text
+from datus.utils.artifact_output import session_user_scope
 
 if TYPE_CHECKING:
     from datus.api.services.chat_service import ChatService
@@ -281,7 +282,7 @@ def get_history_page(
 ):
     page_size = limit if limit is not None else 10
     inline_limit = inline_chars
-    manager = SessionManager(session_dir=service._session_dir, scope=user_id)
+    manager = SessionManager(session_dir=service._session_dir, scope=session_user_scope(service.agent_config, user_id))
     try:
         window, has_more, next_cursor, total_turns, turns = _window(manager, session_id, page_size, cursor, turn)
     except FileNotFoundError:
@@ -356,7 +357,7 @@ def get_history_content(service: "ChatService", session_id: str, user_id: Option
         raise ValueError("Invalid tool content reference")
     if not 1 <= start <= end or not 0 <= index < 100000:
         raise ValueError("Invalid tool content reference")
-    manager = SessionManager(session_dir=service._session_dir, scope=user_id)
+    manager = SessionManager(session_dir=service._session_dir, scope=session_user_scope(service.agent_config, user_id))
     _db_path(manager, session_id)
     history = service.get_history(session_id, user_id, window=(start, end))
     if not history.success or history.data is None:

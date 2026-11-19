@@ -65,6 +65,24 @@ class GenerationEvidence:
     business_verifications: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     run_id: int = field(default=0, compare=False, repr=False)
 
+    def rebase_artifact(self, source: str, destination: str) -> None:
+        """Rebind evidence only when publication preserves the exact draft bytes."""
+        source, destination = str(Path(source).resolve()), str(Path(destination).resolve())
+        old, new = self._semantic_artifact_state(source), self._semantic_artifact_state(destination)
+        if old is None or new is None or old["sha256"] != new["sha256"]:
+            raise ValueError("Published semantic bytes differ from the validated draft")
+        for value in self.validated_semantic_artifacts.values():
+            if value.get("path") == source:
+                value["path"] = destination
+        if source in self.compiled_artifact_sha256:
+            self.compiled_artifact_sha256[destination] = self.compiled_artifact_sha256.pop(source)
+        if source in self.mutated_artifact_paths:
+            self.mutated_artifact_paths.remove(source)
+            self.mutated_artifact_paths.add(destination)
+        for record in self.business_verifications.values():
+            if record.get("artifact", {}).get("path") == source:
+                record["artifact"]["path"] = destination
+
     def reset(self) -> None:
         """Clear evidence before reusing a node for another request."""
         self.run_id += 1

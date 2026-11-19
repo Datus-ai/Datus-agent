@@ -28,7 +28,7 @@ Execution belongs to the [Dosi](https://dosi.datus.ai/) engine: one semantic mod
 
 ### Metric Q&A and attribution
 
-[AskMetrics](subagent/ask_metrics.md) answers business questions from metric definitions instead of improvising SQL, and when a metric moves, `attribution_analyze` quantifies each dimension's contribution.
+[AskMetrics](subagent/ask_metrics.md) answers business questions from metric definitions instead of improvising SQL, and when a metric moves, `attribute_metrics` splits the change over the inputs of its formula and `attribute_dimensions` over the groups of its dimensions.
 
 ![A metric Q&A session: question, semantic-layer tool calls, attribution result](assets/metric_qa_session.svg)
 
@@ -51,7 +51,7 @@ Curate context, tools, and rules for one business domain and package them as a [
 
 - The [plugin](plugin/introduction.md) framework connects third-party platforms and in-house tools to the agent: one `datus-plugin.yml` manifest declares CLI commands, skills, and prompt context, activated per project.
 - Adapters cover [21 databases](adapters/db_adapters.md) and 10+ LLM providers, and Datus ships both an [MCP](integration/mcp.md) server and client; [skills](skills/introduction.md) follow the agentskills.io convention and install from a marketplace.
-- Governance covers tiered permission profiles, statement-level [SQL authorization](configuration/sql_policy.md) with AI pre-review, bash confined to an OS-level sandbox, and [traces](develop/observability.md) exportable to any OTLP platform.
+- Governance covers tiered permission profiles, statement-level [SQL authorization](cli/execution_command.md) with AI pre-review, bash confined to an OS-level sandbox, and [traces](develop/observability.md) exportable to any OTLP platform.
 
 ![Open ecosystem: install a plugin, connect the stack you already run](assets/ecosystem_plugins.svg)
 
@@ -170,7 +170,7 @@ All six entry points share one agent backend and one body of context: assets bui
 
     ---
 
-    Datasources, models, semantic layer, SQL policy, storage, and everything else in `agent.yml`.
+    Datasources, models, semantic layer, storage, and everything else in `agent.yml`.
 
     [:octicons-arrow-right-24: Configure Datus](configuration/introduction.md)
 

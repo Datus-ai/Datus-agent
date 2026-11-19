@@ -72,7 +72,7 @@ def test_renaming_keeps_identity_and_copying_requires_a_new_identity():
     renamed = _metric()
     renamed["name"] = "net_revenue"
     assert not ensure_metric_uid(renamed)
-    document = {"semantic_model": [{"metrics": [_metric(), renamed]}]}
+    document = {"metrics": [_metric(), renamed]}
     with pytest.raises(ValueError, match="Duplicate metric uid"):
         prepare_metric_uids(document)
     renamed.pop("custom_extensions")
@@ -82,7 +82,7 @@ def test_renaming_keeps_identity_and_copying_requires_a_new_identity():
 
 @pytest.mark.parametrize("names", [("revenue", "REVENUE"), ("Revenue", " revenue "), ("revenue", "revenue")])
 def test_conflicting_names_are_rejected_before_assigning_uids(names):
-    document = {"semantic_model": [{"metrics": [{"name": name} for name in names]}]}
+    document = {"metrics": [{"name": name} for name in names]}
     original = copy.deepcopy(document)
     with pytest.raises(ValueError, match="Metric name conflict"):
         prepare_metric_uids(document)
@@ -91,16 +91,16 @@ def test_conflicting_names_are_rejected_before_assigning_uids(names):
 
 def test_name_uniqueness_matches_kb_lowercase_rules():
     metrics = [{"name": "straße"}, {"name": "strasse"}]
-    document = {"semantic_model": [{"metrics": metrics}]}
+    document = {"metrics": metrics}
     assert prepare_metric_uids(document) == ["straße", "strasse"]
     assert len({metric_uid(metric) for metric in metrics}) == 2
 
 
 def test_case_only_rename_preserves_existing_uid_when_omitted():
-    document = {"semantic_model": [{"metrics": [{"name": "REVENUE"}]}]}
-    previous = {"semantic_model": [{"metrics": [_metric()]}]}
+    document = {"metrics": [{"name": "REVENUE"}]}
+    previous = {"metrics": [_metric()]}
     assert prepare_metric_uids(document, previous) == ["REVENUE"]
-    assert metric_uid(document["semantic_model"][0]["metrics"][0]) == UID
+    assert metric_uid(document["metrics"][0]) == UID
 
 
 @pytest.mark.parametrize("ambiguous_side", ["previous", "candidate"])
@@ -111,8 +111,8 @@ def test_ambiguous_rename_cannot_reuse_prior_identity(ambiguous_side):
         previous_metrics.append({**_metric(), "name": "gross_revenue"})
     else:
         candidates.append({**_metric(), "name": "gross_revenue"})
-    previous = {"semantic_model": [{"metrics": previous_metrics}]}
-    document = {"semantic_model": [{"metrics": candidates}]}
+    previous = {"metrics": previous_metrics}
+    document = {"metrics": candidates}
 
     assert prepare_metric_uids(document, previous) == [metric["name"] for metric in candidates]
     assert [metric_uid(metric) for metric in candidates] == [""] * len(candidates)
@@ -129,24 +129,17 @@ def test_native_dosi_accepts_host_identity_metadata():
     ensure_metric_uid(metric)
     document = {
         "version": "0.2.0.dev0",
-        "semantic_model": [
+        "name": "sales",
+        "datasets": [
             {
-                "name": "sales",
-                "datasets": [
-                    {
-                        "name": "orders",
-                        "source": "orders",
-                        "fields": [
-                            {
-                                "name": "amount",
-                                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "amount"}]},
-                            }
-                        ],
-                    }
+                "name": "orders",
+                "source": "orders",
+                "fields": [
+                    {"name": "amount", "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "amount"}]}}
                 ],
-                "metrics": [metric],
             }
         ],
+        "metrics": [metric],
     }
     result = dosi_engine.validate(json.dumps(document))
     assert result["valid"], result

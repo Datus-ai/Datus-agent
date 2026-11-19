@@ -915,3 +915,16 @@ def test_validate_profile_no_schema_returns_empty(plugin_env):
 def test_validate_profile_unknown_plugin_returns_empty(plugin_env):
     plugin_env("hello", MINIMAL + VALIDATION_SCHEMA)
     assert registry.plugin_validate_profile("mystery", {}) == []
+
+
+def test_sourceless_package_manifest_is_discovered_without_running_initialization(plugin_env):
+    import py_compile
+    import sys
+
+    package = plugin_env("compiled", MINIMAL, init_body="raise AssertionError('plugin initialization ran')")
+    source = package / "__init__.py"
+    py_compile.compile(str(source), cfile=str(package / "__init__.pyc"), doraise=True)
+    source.unlink()
+    manifest = registry.load_plugin_manifest("compiled")
+    assert manifest.package_dir == package
+    assert package.name not in sys.modules

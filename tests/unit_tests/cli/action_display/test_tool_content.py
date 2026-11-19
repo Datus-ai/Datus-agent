@@ -14,7 +14,7 @@ from datus.cli.action_display.tool_content import (
     ToolCallContent,
     ToolCallContentBuilder,
     _build_ask_user,
-    _build_attribution_analyze,
+    _build_attribution,
     _build_bash,
     _build_check_exists,
     _build_describe_table,
@@ -211,16 +211,19 @@ class TestSharedHelpers:
 class TestFormatOutputVerbose:
     def test_empty(self):
         assert format_output_verbose(None) == []
+        assert format_output_verbose("") == []
+        assert format_output_verbose({}) == []
 
-    def test_string_json(self):
-        lines = format_output_verbose('{"k": "v"}')
-        assert any("k: v" in line for line in lines)
+    @pytest.mark.parametrize("payload", ['{"k": "v"}', {"raw_output": '{"k": "v"}'}])
+    def test_string_json(self, payload):
+        assert format_output_verbose(payload) == ["k: v"]
 
     def test_string_invalid(self):
         assert format_output_verbose("bad") == ["output: bad"]
 
     def test_non_dict(self):
         assert format_output_verbose(42) == ["output: 42"]
+        assert format_output_verbose([1, 2, 3]) == ["output: [1, 2, 3]"]
 
     def test_raw_output_invalid_string(self):
         lines = format_output_verbose({"raw_output": "bad"})
@@ -231,15 +234,11 @@ class TestFormatOutputVerbose:
         assert lines == ["output: [1]"]
 
     def test_multiline_value(self):
-        lines = format_output_verbose({"key": "a\nb"})
-        assert any("key:" in line for line in lines)
-        assert any("a" in line for line in lines)
-        assert any("b" in line for line in lines)
+        lines = format_output_verbose({"raw_output": {"sql": "SELECT\n  col\nFROM t"}}, indent=">>")
+        assert lines == [">>sql:", ">>  SELECT", ">>    col", ">>  FROM t"]
 
     def test_non_dict_inner_data(self):
-        # raw_output parses to a list, not dict
-        lines = format_output_verbose({"raw_output": '"just a string"'})
-        assert any("output:" in line for line in lines)
+        assert format_output_verbose({"raw_output": '"just a string"'}) == ["output: just a string"]
 
 
 # ── format_generic_preview ─────────────────────────────────────────
@@ -318,6 +317,16 @@ class TestBuildListTables:
         # Should not contain success/error metadata
         assert not any("success" in line.lower() for line in tc.output_lines)
         assert tc.output_preview == ""
+
+    def test_native_page(self):
+        a = _make(
+            input_data={"function_name": "list_tables"},
+            output_data={
+                "success": 1,
+                "result": {"items": [{"qualified_name": "orders"}], "total": 2000, "has_more": True},
+            },
+        )
+        assert _build_list_tables(a, verbose=False).compact_result == "1/2000 table+"
 
     def test_no_items(self):
         a = _make(input_data={"function_name": "list_tables"}, output_data={"some": "data"})
@@ -1502,20 +1511,48 @@ class TestBuildValidateSemantic:
         assert "relationship_target_not_unique on kpi_cell" in rendered
 
 
+def _attribution_action(name: str, result: dict) -> ActionHistory:
+    return _make(input_data={"function_name": name}, output_data={"raw_output": json.dumps(result)})
+
+
+_FORMULA_TREE = (
+    "status complete\n\nm = a / b | 2 \u2192 3 | +1 (100.0%)\n"
+    "  a | 2 \u2192 4 | +1.5 (150.0%)\n  b | 1 \u2192 1.3333 | -0.5 (-50.0%)"
+)
+_GROUP_TREE = (
+    "status complete\n\nm by region | 2 \u2192 3 | change +1\n"
+    "- east | 1 \u2192 1.8 | +0.8 (80.0%)\n- west | 1 \u2192 1.2 | +0.2 (20.0%)"
+)
+
+
 @pytest.mark.ci
-class TestBuildAttributionAnalyze:
-    def test_compact(self):
-        a = _make(
-            input_data={"function_name": "attribution_analyze"},
-            output_data={
-                "raw_output": '{"success": 1, "result": {'
-                '"implementation": "generic", "strategy": "term_wise", '
-                '"per_dimension": {"d1": {"values": [], "non_additive": false}}, '
-                '"warnings": [{"code": "dimension_analysis_failed", "dimension": "d2"}]}}'
-            },
+class TestBuildAttribution:
+    @pytest.mark.parametrize(
+        "name, text, compact",
+        [
+            ("attribute_metrics", _FORMULA_TREE, "complete · Δ +1 · a +1.5 (150.0%)"),
+            ("attribute_dimensions", _GROUP_TREE, "complete · Δ +1 · east +0.8 (80.0%)"),
+        ],
+    )
+    def test_compact_through_the_builder(self, name, text, compact):
+        tc = ToolCallContentBuilder().build(_attribution_action(name, {"success": 1, "result": text}), verbose=False)
+        assert tc.compact_result == compact
+        assert tc.status_mark == "\u2713"
+
+    def test_unsupported_is_an_answer(self):
+        text = "status unsupported\nissue error insufficient_state: counts distinct values"
+        a = _attribution_action("attribute_dimensions", {"success": 1, "result": text})
+        tc = ToolCallContentBuilder().build(a, verbose=False)
+        assert tc.status_mark == "\u2713"
+        assert tc.compact_result == "unsupported · insufficient_state"
+
+    @pytest.mark.parametrize("verbose", [False, True])
+    def test_a_refused_request_is_marked_failed(self, verbose):
+        a = _attribution_action(
+            "attribute_dimensions", {"success": 0, "error": "dimensions_required: name the fields to split by"}
         )
-        tc = _build_attribution_analyze(a, verbose=False)
-        assert tc.compact_result == "generic term_wise, 1/2 dimensions usable, 1 failed, 1 warning"
+        assert a.status == ActionStatus.SUCCESS
+        assert _build_attribution(a, verbose=verbose).status_mark == "\u2717"
 
 
 # ── Filesystem tools ──────────────────────────────────────────────
@@ -2118,7 +2155,8 @@ class TestAllToolsRegistered:
         "get_metric",
         "query_metrics",
         "validate_semantic",
-        "attribution_analyze",
+        "attribute_metrics",
+        "attribute_dimensions",
         # Filesystem
         "edit_file",
         "write_file",

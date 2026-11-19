@@ -43,13 +43,14 @@ from datus.schemas.gen_visual_dashboard_models import (
     extract_query_slug,
     parse_datus_params_header,
 )
+from datus.tools.db_tools.connection_scope import connection_scope
 from datus.tools.func_tool._artifact_filesystem_base import ArtifactFilesystemFuncTool
 from datus.tools.func_tool._jsx_hooks_lint import format_hook_order_issues
 from datus.tools.func_tool._visual_artifact_cards import scan_render_cards
 from datus.tools.func_tool._visual_artifact_helpers import (
     append_intent_section,
     coerce_uses_arg,
-    upsert_manifest_after_save,
+    touch_manifest_after_save,
     utc_now_iso,
     write_query_brief,
 )
@@ -66,6 +67,8 @@ from datus.tools.func_tool.report_artifact_tools import (
     _normalize_value,
     _resolve_relative_import,
 )
+from datus.tools.registry.contracts import tool_contract
+from datus.utils.artifact_output import artifact_output_root, current_artifact_slug_factory
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -379,7 +382,7 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
         # See ReportArtifactTools.__init__ for the rationale — mirror logic.
         self._user_message = user_message or ""
 
-        project_root = Path(getattr(agent_config, "project_root", "")).resolve()
+        project_root = artifact_output_root(agent_config)
         if not project_root or str(project_root) == ".":
             raise ValueError("agent_config.project_root must be a non-empty directory")
         self._project_root = project_root
@@ -410,6 +413,7 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
 
     # -- intent declaration --------------------------------------------------
 
+    @tool_contract(access="restricted", direct_call=False)
     def start_new_dashboard(self, slug: str, name: str, description: str) -> FuncToolResult:
         """
         Create a fresh dashboard directory at ``dashboards/<slug>/``, write its manifest, and bind it.
@@ -466,6 +470,11 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
                 success=0,
                 error="description must be a non-empty one-paragraph description of what the dashboard covers.",
             )
+        factory = current_artifact_slug_factory(self.agent_config)
+        if factory is not None:
+            slug = factory("dashboard", slug)
+            if not DASHBOARD_SLUG_RE.fullmatch(slug):
+                return FuncToolResult(success=0, error="Host returned an invalid artifact slug")
         candidate = self._project_root / "dashboards" / slug
         if candidate.exists():
             return FuncToolResult(
@@ -487,6 +496,7 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
             return FuncToolResult(success=0, error=f"Manifest validation failed: {exc}")
         return self._activate(slug, mode="new", create_dirs=True, manifest=manifest)
 
+    @tool_contract(access="restricted", direct_call=False)
     def bind_existing_dashboard(self, dashboard_slug: str) -> FuncToolResult:
         """
         Switch the active dashboard to an existing one and bind subsequent saves there.
@@ -619,6 +629,8 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
 
     # -- save_query_template --------------------------------------------------
 
+    @connection_scope(owner_attr="_db_func_tool")
+    @tool_contract(access="restricted", direct_call=False)
     def save_query_template(
         self,
         name: str,
@@ -834,7 +846,10 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
         except Exception as exc:
             return FuncToolResult(success=0, error=f"Failed to resolve datasource {datasource!r}: {exc}")
 
-        ds_label = datasource or getattr(self._db_func_tool, "_default_datasource", "") or "default"
+        ds_label = self._db_func_tool._resolve_effective_datasource(datasource)
+        from datus.utils.artifact_datasource import artifact_identity, saved_artifact_context
+
+        identity = artifact_identity(self._db_func_tool.agent_config, ds_label)
 
         # Pre-flight EXPLAIN row-count guard on the trial-rendered SQL: reject a
         # runaway template (e.g. a cross-join cartesian product) from its
@@ -895,10 +910,12 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
         # new ``goal`` arg — same semantics (one-line research question),
         # but the analysis-artifact contract names it ``goal`` everywhere.
         meta_payload = {
-            "execution_context": self._db_func_tool.execution_context(connector, ds_label),
+            "execution_context": saved_artifact_context(
+                self._db_func_tool.agent_config, ds_label, self._db_func_tool.execution_context(connector, ds_label)
+            ),
             "slug": name,
             "description": goal.strip(),
-            "datasource": ds_label,
+            **identity,
             "params": [p.model_dump() for p in params_decl],
             "columns": columns_meta,
             "sample_params": sample_params,
@@ -947,9 +964,8 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
             return FuncToolResult(success=0, error=brief_err)
         (self.queries_dir / f"{name}.metric.json").unlink(missing_ok=True)
 
-        manifest_warning = upsert_manifest_after_save(
+        manifest_warning = touch_manifest_after_save(
             self.dashboard_dir / "manifest.json",
-            datasource=ds_label,
             timestamp=meta_payload["saved_at"],
         )
 
@@ -974,6 +990,7 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
 
     # -- validate_render -----------------------------------------------------
 
+    @tool_contract(access="restricted", direct_call=False)
     def validate_render(self) -> FuncToolResult:
         """
         Validate the assembled render/ tree. Terminal action of this subagent.

@@ -12,9 +12,12 @@ from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
-from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.generation_tools import GenerationTools
+from datus.tools.func_tool.semantic_model_editing_tools import SemanticModelEditingTools
+from datus.tools.func_tool.semantic_model_filesystem_tools import SemanticModelFilesystemTools
+from datus.tools.func_tool.semantic_model_workspace import SemanticModelWorkspace
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -82,7 +85,9 @@ class SemanticAuthoringAgenticNode(AgenticNode):
 
         # Setup tools
         self.db_func_tool = None
-        self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
+        self.filesystem_func_tool: Optional[SemanticModelFilesystemTools] = None
+        self.semantic_model_workspace: Optional[SemanticModelWorkspace] = None
+        self.semantic_model_editing_tools: Optional[SemanticModelEditingTools] = None
         self.generation_tools: Optional[GenerationTools] = None
         from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetState
 
@@ -115,9 +120,9 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             finally:
                 result = getattr(self, "result", None)
                 if result is not None and not getattr(result, "success", False):
-                    filesystem_tool = getattr(self, "filesystem_func_tool", None)
+                    workspace = getattr(self, "semantic_model_workspace", None)
                     try:
-                        if filesystem_tool is not None and filesystem_tool.rollback_failed_authoring():
+                        if workspace is not None and workspace.rollback_failed_authoring():
                             logger.info("Rolled back authored artifact after terminal generation failure")
                     except Exception:
                         logger.exception("Failed to roll back authored artifact after terminal generation failure")
@@ -135,10 +140,10 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         """Keep semantic authoring on its narrow filesystem surface."""
 
     def _make_filesystem_tool(self, **kwargs):
+        """Build restricted model-file access with request-local authoring state."""
         from datus.configuration.inherited_memory_overrides import get_inherited_memory
-        from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
 
-        filesystem_tool_cls = kwargs.pop("filesystem_tool_cls", MetricFilesystemFuncTool)
+        filesystem_tool_cls = kwargs.pop("filesystem_tool_cls", SemanticModelFilesystemTools)
 
         root_path = kwargs.pop("root_path", None) or self._resolve_workspace_root()
         datus_home = kwargs.pop("datus_home", None)
@@ -190,7 +195,10 @@ class SemanticAuthoringAgenticNode(AgenticNode):
 
         reference_dir = None
         if skill_name == "dosi-semantic-authoring":
-            cache_dir = Path(self.agent_config.path_manager.session_data_dir(self.session_id)) / "semantic_authoring"
+            data_dir = self._resolve_session_data_dir()
+            if not data_dir:
+                raise DatusException(ErrorCode.STORAGE_FAILED, message="Session data directory is unavailable")
+            cache_dir = Path(data_dir) / "semantic_authoring"
             reference_dir = prepare_authoring_references(cache_dir)
 
         return render_required_authoring_skill(
@@ -200,66 +208,9 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             reference_dir=reference_dir,
         )
 
-    def _setup_semantic_tools(self):
-        """Setup semantic tools for metrics querying and exploration."""
-        try:
-            from datus.tools.func_tool.semantic_tools import SemanticTools
-
-            # Initialize semantic func tool
-            self.semantic_tools = SemanticTools(
-                agent_config=self.agent_config,
-                sub_agent_name=self.NODE_NAME,
-                generation_evidence=self.generation_evidence,
-                runtime_db_context_provider=self._semantic_runtime_db_context,
-                warehouse_dry_run_provider=self._warehouse_dry_run_compiled_sql,
-                semantic_model_path_provider=lambda: self.osi_target_state.selected_path,
-                semantic_metric_names_provider=self._semantic_validation_metric_names,
-            )
-
-            # Add all available tools from semantic func tool
-            semantic_tools = [
-                tool
-                for tool in self.semantic_tools.available_tools()
-                if tool.name in {"get_metric", "query_metrics", "validate_semantic"}
-            ]
-            self.tools.extend(semantic_tools)
-
-            tool_names = [tool.name for tool in semantic_tools]
-            logger.info(f"Added Dosi semantic tools: {', '.join(tool_names)}")
-
-        except Exception as e:
-            logger.error(f"Failed to setup semantic tools: {e}")
-
     def _semantic_validation_metric_names(self) -> List[str]:
         """Return present touched metrics for same-pass compile evidence."""
-        state = self.osi_target_state
-        path = state.selected_path
-        if not path or not state.touched_metric_names or not self.generation_tools:
-            return []
-        current_names = self.generation_tools.extract_osi_metric_names(path)
-        present, _ = state.partition_touched_metrics(current_names)
-        return present
-
-    def _setup_db_tools(self, *, expose_tools: bool = True):
-        """Setup the database helper, optionally without exposing LLM tools."""
-        try:
-            from datus.tools.func_tool import DBFuncTool
-
-            self.db_func_tool = DBFuncTool(
-                # Same anchor the filesystem tools use, so a path the model got
-                # from glob resolves identically in load_file_as_table.
-                filesystem_root=self._resolve_workspace_root(),
-                agent_config=self.agent_config,
-                sub_agent_name=self.NODE_NAME,
-                read_only=not expose_tools,
-            )
-            if expose_tools:
-                self.tools.extend(self.db_func_tool.available_tools())
-                logger.debug("Added database tools from DBFuncTool")
-            else:
-                logger.debug("Initialized internal read-only database helper")
-        except Exception as e:
-            logger.error(f"Failed to setup database tools: {e}")
+        return self.authoring_session.validation_metric_names()
 
     def _warehouse_dry_run_compiled_sql(self, sql: str) -> Dict[str, Any]:
         """Validate adapter-compiled SQL with a read-only warehouse EXPLAIN."""

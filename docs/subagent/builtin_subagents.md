@@ -14,7 +14,7 @@ This document covers the core subagents:
 6. **[gen_sql](#gen_sql)** — Specialized SQL generation with deep expertise
 7. **[gen_table](gen_table.md)** — Database table creation via CTAS or natural language
 8. **[gen_job](gen_job.md)** — Data pipeline execution (single-database ETL AND cross-database migration with reconciliation)
-9. **[gen_skill](#gen_skill)** — Skill creation and optimization
+9. **[gen_skill](#gen_skill)** — Skill creation, editing, and review
 10. **[gen_visual_report](gen_visual_report.md)** — Self-contained visual report under `reports/<slug>/`
 11. **[gen_visual_dashboard](gen_visual_dashboard.md)** — Parameterized visual dashboard under `dashboards/<slug>/`
 
@@ -325,14 +325,15 @@ Generate a query to calculate customer lifetime value with cohort analysis. @Age
 
 ### Overview
 
-The `gen_skill` subagent guides users through creating or optimizing Datus skills. It can inspect existing skills, scaffold new skill directories, edit `SKILL.md`, validate the result, and search prior sessions for usage patterns.
+The `gen_skill` subagent creates, edits, and reviews Datus skills using its built-in workflow. It can inspect existing skills, organize supporting resources, verify instructions and examples, validate the result, and search prior sessions for usage patterns. Review-only requests produce findings without modifying files; loading an authoring guide is not required.
 
 ### Key Features
 
 - **Interactive skill authoring**: interview-style workflow with `ask_user`
 - **Scoped filesystem access**: read-only workspace tools plus write access to the configured skills directory
 - **Skill-aware editing**: load existing skills before revising them
-- **Validation support**: built-in `validate_skill` checks before finishing
+- **Content review and verification**: check complete examples with available parsers or focused tests, investigate semantic claims with small synthetic or read-only checks, and distinguish confirmed issues from unverified risks
+- **Format validation**: built-in `validate_skill` checks after authoring; a PASS does not establish content correctness
 
 ### Configuration
 
@@ -343,6 +344,8 @@ agent:
       model: claude
       max_turns: 30
 ```
+
+The default available skill is `create-skill`, an optional Datus format and packaging reference. Its body is not automatically injected; the main prompt provides the core workflow and review requirements. Additional format and configuration details are loaded on demand from its supporting files. An explicitly configured `optimize-skill` entry is ignored with a warning; existing configuration files do not need to change. Other skill patterns are preserved, and the default applies if no patterns remain.
 
 ### Output Format
 
@@ -392,7 +395,7 @@ compatibility only. See [BI Dashboard Node (Legacy)](gen_dashboard.md) and
 | `gen_sql` | Generate optimized SQL | SQL query / SQL file | N/A | Deep SQL expertise, auto-validation, file-based output |
 | `gen_table` | Create tables interactively | DDL + execution result | Database | DDL confirmation, CTAS or natural-language schema creation |
 | `gen_job` | Data pipeline jobs (intra-DB ETL + cross-DB transfer) | Job / transfer result | Source + target databases | DDL/DML execution, cross-dialect type mapping via MigrationTargetMixin, `transfer_query_result`, lightweight reconciliation when source != target |
-| `gen_skill` | Create or optimize skills | Skill path | Skills directory | Interactive authoring, validation, skill loading |
+| `gen_skill` | Create, edit, or review skills | Skill path or review findings | Skills directory | Authoring, content review, verification, skill loading |
 | `gen_visual_report` | Self-contained visual report (narrative, pre-baked queries) | `reports/<slug>/` (executable SQL + executed results + report components) | Project root | Modular section-by-section edits, generate from metrics or your own SQL, CLI auto-opens the report in your browser |
 | `gen_visual_dashboard` | Parameterized visual dashboard | `dashboards/<slug>/` (SQL templates + dashboard components) | Project root | Live filters re-query data through the local `datus --web` backend |
 

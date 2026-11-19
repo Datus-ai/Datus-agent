@@ -8,6 +8,7 @@ dry-run shape, engine lifecycle, and connections wiring."""
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 import threading
@@ -19,7 +20,6 @@ import pytest
 
 from datus.tools.semantic_tools.dosi.errors import SemanticValidationException
 from datus.tools.semantic_tools.exceptions import SemanticCoreException
-from datus.tools.semantic_tools.models import AttributionRequest, AttributionWindow
 from tests.unit_tests.tools.semantic_tools.dosi_fakes import (
     DIMENSION_ROWS,
     METRIC_ROWS,
@@ -42,7 +42,7 @@ def fake_binding(monkeypatch):
 @pytest.fixture
 def model_file(tmp_path):
     path = tmp_path / "model.yaml"
-    path.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n")
+    path.write_text("version: 0.2.0.dev0\nname: model\ndatasets: []\n")
     return path
 
 
@@ -58,10 +58,88 @@ def make_runtime(model_file):
 
 
 def _write_model(path: Path, model_name: str, metric_names: list[str]) -> None:
-    metrics = "\n".join(f"      - name: {name}" for name in metric_names)
-    path.write_text(
-        f"version: '0.2.0.dev0'\nsemantic_model:\n  - name: {model_name}\n    datasets: []\n    metrics:\n{metrics}\n"
-    )
+    metrics = "\n".join(f"  - name: {name}" for name in metric_names)
+    path.write_text(f"version: '0.2.0.dev0'\nname: {model_name}\ndatasets: []\nmetrics:\n{metrics}\n")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("level", [logging.DEBUG, logging.INFO])
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_sql_debug_logging_uses_native_result_without_an_extra_compile(make_runtime, caplog, level, dry_run):
+    runtime = make_runtime(datasource="warehouse")
+    with caplog.at_level(level):
+        result = await runtime.query_metrics(["revenue"], dry_run=dry_run)
+    engine = FakeEngine.instances[-1]
+    assert len(engine.compile_calls) == (1 if dry_run else 0)
+    assert len(engine.execute_calls) == (0 if dry_run else 1)
+    event = "sql.dosi.compile" if dry_run else "sql.dosi.execute"
+    messages = [record.getMessage() for record in caplog.records if event in record.getMessage()]
+    if level == logging.INFO:
+        assert messages == []
+    else:
+        assert len(messages) == 1
+        assert result.metadata["sql"] in messages[0]
+        assert "warehouse" in messages[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["metrics", "dry_run", "attribute_metrics", "attribute_dimensions"])
+async def test_native_read_paths_receive_one_request_local_policy(make_runtime, monkeypatch, operation):
+    runtime = make_runtime()
+    bound = SimpleNamespace(snapshot_json='{"version":"v1"}', context_json='{"datasource":"warehouse"}')
+    bindings, calls = [], []
+
+    def provider():
+        bindings.append(bound)
+        return bound
+
+    runtime._read_policy_provider = provider
+    for name in ("compile", "execute", "attribute_metrics", "attribute_dimensions"):
+        original = getattr(FakeEngine, name)
+
+        def protected(self, *args, _name=name, _original=original, policy=None, policy_required=False, **kwargs):
+            calls.append((_name, policy, policy_required))
+            return _original(self, *args, **kwargs)
+
+        monkeypatch.setattr(FakeEngine, name, protected)
+    if operation.startswith("attribute"):
+        await getattr(runtime, operation)(
+            {
+                "metric": "revenue",
+                "dimensions": ["orders.status"],
+                "baseline": {"start": "2026-01-01", "end": "2026-01-08"},
+                "current": {"start": "2026-01-08", "end": "2026-01-15"},
+            }
+        )
+    else:
+        await runtime.query_metrics(["revenue"], dry_run=operation == "dry_run")
+    assert bindings == [bound]
+    assert calls and all(policy is bound and required for _, policy, required in calls)
+
+
+@pytest.mark.asyncio
+async def test_external_sql_compilation_does_not_bind_or_mutate_native_policy(make_runtime, monkeypatch):
+    runtime = make_runtime()
+    bound = SimpleNamespace(snapshot_json="{}", context_json="{}")
+    provider = MagicMock(return_value=bound)
+    runtime._read_policy_provider = provider
+    calls = []
+    original = FakeEngine.compile
+
+    def compile(self, *args, policy=None, policy_required=False, **kwargs):
+        calls.append((policy, policy_required))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(FakeEngine, "compile", compile)
+    await runtime.compile_for_sql_execution(metrics=["revenue"], dry_run=True)
+    provider.assert_not_called()
+    assert runtime._read_policy_provider is provider
+    assert calls == [(None, False)]
+    await runtime.query_metrics(["revenue"], dry_run=True)
+    provider.assert_called_once()
+    assert calls[-1] == (bound, True)
+    with pytest.raises(ValueError, match="compile-only"):
+        await runtime.compile_for_sql_execution(metrics=["revenue"], dry_run=False)
 
 
 def _install_file_catalog(monkeypatch, metrics_by_stem: dict[str, list[str]]) -> None:
@@ -109,54 +187,65 @@ def _install_file_catalog(monkeypatch, metrics_by_stem: dict[str, list[str]]) ->
 
 
 @pytest.mark.asyncio
-async def test_attribute_delegates_to_native_engine(make_runtime):
+@pytest.mark.parametrize("method", ["attribute_metrics", "attribute_dimensions"])
+async def test_attribution_delegates_to_native_engine(make_runtime, method):
     runtime = make_runtime(connection="warehouse", timeout_seconds=42)
-    request = AttributionRequest(
-        metric="revenue",
-        dimensions=[" orders.status ", "orders.status"],
-        baseline=AttributionWindow(start="2026-01-01", end="2026-01-08"),
-        current=AttributionWindow(start="2026-01-08", end="2026-01-15"),
-        where_sql="orders.status IS NOT NULL",
-        top_n_dimensions=2,
-        top_n_values=5,
-        path=["Finance"],
-    )
+    request = {
+        "metric": "revenue",
+        "dimensions": ["orders.status"],
+        "baseline": {"start": "2026-01-01", "end": "2026-01-08"},
+        "current": {"start": "2026-01-08", "end": "2026-01-15"},
+        "where_sql": "orders.status IS NOT NULL",
+    }
 
-    result = await runtime.attribute(request)
+    result = await getattr(runtime, method)(request)
 
-    assert result.implementation == "dosi"
-    assert result.strategy == "term_wise"
-    assert result.total_change.delta == 50
+    # Dosi's result comes back as is: the tool layer renders it.
+    assert result["schema_version"] == 3
+    assert result["status"] == "complete"
     call = FakeEngine.instances[-1].attribute_calls[-1]
+    assert call["method"] == method
     assert call["connection"] == "warehouse"
     assert call["timeout_secs"] == 42.0
-    assert call["request"]["metric"] == "revenue"
-    assert call["request"]["dimensions"] == ["orders.status"]
-    assert call["request"]["baseline"] == {
-        "start": "2026-01-01",
-        "end": "2026-01-08",
-    }
-    assert "path" not in call["request"]
+    assert call["request"] == request
+    assert call["dry_run"] is False
 
 
 @pytest.mark.asyncio
-async def test_attribute_rejects_missing_dimensions_with_structured_error(
-    make_runtime,
-):
+async def test_attribution_request_error_keeps_code_and_candidates(make_runtime):
     runtime = make_runtime()
-    request = AttributionRequest(
-        metric="revenue",
-        dimensions=["", "  "],
-        baseline=AttributionWindow(start="2026-01-01", end="2026-01-08"),
-        current=AttributionWindow(start="2026-01-08", end="2026-01-15"),
-    )
+    request = {
+        "metric": "revenue",
+        "dimensions": [],
+        "baseline": {"start": "2026-01-01", "end": "2026-01-08"},
+        "current": {"start": "2026-01-08", "end": "2026-01-15"},
+    }
 
     with pytest.raises(SemanticValidationException) as exc_info:
-        await runtime.attribute(request)
+        await runtime.attribute_dimensions(request)
 
-    assert exc_info.value.payload.code == "dimensions_required"
-    assert exc_info.value.payload.metrics == ["revenue"]
-    assert "get_dimensions" in exc_info.value.payload.message
+    payload = exc_info.value.payload
+    assert payload.code == "dimensions_required"
+    assert payload.metrics == ["revenue"]
+    assert payload.candidates == ["orders.status", "customers.region"]
+    assert payload.detail == {"field_path": "dimensions"}
+    assert "candidates: orders.status, customers.region" in payload.message
+
+
+@pytest.mark.asyncio
+async def test_attribution_unknown_metric_is_refused_before_the_engine(make_runtime):
+    runtime = make_runtime()
+
+    with pytest.raises(SemanticValidationException) as exc_info:
+        await runtime.attribute_metrics(
+            {
+                "metric": "nope",
+                "baseline": {"start": "2026-01-01", "end": "2026-01-08"},
+                "current": {"start": "2026-01-08", "end": "2026-01-15"},
+            }
+        )
+
+    assert exc_info.value.payload.code == "unknown_metric"
 
 
 @pytest.mark.asyncio
@@ -214,19 +303,18 @@ async def test_list_metrics_exposes_native_window_metadata(make_runtime, model_f
     model_file.write_text(
         """
 version: 0.2.0.dev0
-semantic_model:
-  - name: orders_model
-    datasets: []
-    metrics:
-      - name: running_revenue
-        expression:
-          dialects: [{dialect: ANSI_SQL, expression: 'SUM(orders.amount)'}]
-        custom_extensions:
-          - vendor_name: DATUS
-            data: >-
-              {"v":"1.2",
-              "window":{"type":"cumulative","function":"sum"},
-              "subject_path":["sales","revenue"],"unit":"USD"}
+name: orders_model
+datasets: []
+metrics:
+  - name: running_revenue
+    expression:
+      dialects: [{dialect: ANSI_SQL, expression: 'SUM(orders.amount)'}]
+    custom_extensions:
+      - vendor_name: DATUS
+        data: >-
+          {\"v\":\"1.2\",
+          \"window\":{\"type\":\"cumulative\",\"function\":\"sum\"},
+          \"subject_path\":[\"sales\",\"revenue\"],\"unit\":\"USD\"}
 """.lstrip()
     )
     metrics = {metric.name: metric for metric in await make_runtime().list_metrics()}
@@ -260,25 +348,24 @@ async def test_list_metrics_exposes_native_window_family_and_axis(make_runtime, 
     model_file.write_text(
         """
 version: 0.2.0.dev0
-semantic_model:
-  - name: orders_model
-    datasets: []
-    metrics:
-      - name: order_rank
-        custom_extensions:
-          - vendor_name: DATUS
-            data: '{"v":"1.3","window":{"rank":{"function":"rank"}}}'
-      - name: first_revenue
-        custom_extensions:
-          - vendor_name: DATUS
-            data: '{"v":"1.3","window":{"value":{"function":"first_value"}}}'
-      - name: revenue_range
-        custom_extensions:
-          - vendor_name: DATUS
-            data: >-
-              {"v":"1.3","window":{"frame":{"function":"count",
-              "preceding":"unbounded","units":"range",
-              "order":{"by":"value","direction":"asc"}}}}
+name: orders_model
+datasets: []
+metrics:
+  - name: order_rank
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{\"v\":\"1.3\",\"window\":{\"rank\":{\"function\":\"rank\"}}}'
+  - name: first_revenue
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{\"v\":\"1.3\",\"window\":{\"value\":{\"function\":\"first_value\"}}}'
+  - name: revenue_range
+    custom_extensions:
+      - vendor_name: DATUS
+        data: >-
+          {\"v\":\"1.3\",\"window\":{\"frame\":{\"function\":\"count\",
+          \"preceding\":\"unbounded\",\"units\":\"range\",
+          \"order\":{\"by\":\"value\",\"direction\":\"asc\"}}}}
 """.lstrip()
     )
     rows = [
@@ -1096,7 +1183,7 @@ async def test_engine_rebuilds_on_model_mtime_change(make_runtime, model_file):
     await runtime.list_metrics()
     assert len(FakeEngine.instances) == 1
 
-    model_file.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n# touched\n")
+    model_file.write_text("version: 0.2.0.dev0\nname: model\ndatasets: []\n")
     os.utime(model_file, (0, 0))  # force a different mtime regardless of clock
     await runtime.list_metrics()
     assert len(FakeEngine.instances) == 2
@@ -1188,7 +1275,7 @@ async def test_validate_semantic_maps_issues(make_runtime, fake_binding):
                 {
                     "severity": "warning",
                     "code": "missing_sql_dialect",
-                    "location": "semantic_model[0]",
+                    "location": "<document>",
                     "message": "field has no SQL dialect",
                 }
             ],
@@ -1208,7 +1295,7 @@ async def test_validate_semantic_maps_issues(make_runtime, fake_binding):
     assert result.valid is False
     assert len(result.issues) == 2
     assert result.issues[0].severity == "warning"
-    assert result.issues[0].location == "semantic_model[0]"
+    assert result.issues[0].location == "<document>"
     assert "unknown_column" in result.issues[1].message
     assert "did you mean amount?" in result.issues[1].message
 
@@ -1246,7 +1333,7 @@ async def test_validate_semantic_rejects_missing_requested_metric(make_runtime):
 
 @pytest.mark.asyncio
 async def test_validate_semantic_returns_structured_invalid_yaml_issue(make_runtime, model_file):
-    model_file.write_text("semantic_model: [\n")
+    model_file.write_text("datasets: [\n")
 
     result = await make_runtime().validate_semantic()
 
@@ -1260,16 +1347,15 @@ async def test_validate_semantic_rejects_legacy_window_hints(make_runtime, model
     model_file.write_text(
         """
 version: 0.2.0.dev0
-semantic_model:
-  - name: orders_model
-    datasets: []
-    metrics:
-      - name: legacy_revenue
-        expression:
-          dialects: [{dialect: ANSI_SQL, expression: 'SUM(orders.amount)'}]
-        custom_extensions:
-          - vendor_name: DATUS
-            data: '{"grain_to_date":"year","window_aggregation":"sum"}'
+name: orders_model
+datasets: []
+metrics:
+  - name: legacy_revenue
+    expression:
+      dialects: [{dialect: ANSI_SQL, expression: 'SUM(orders.amount)'}]
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{\"grain_to_date\":\"year\",\"window_aggregation\":\"sum\"}'
 """.lstrip()
     )
 
@@ -1282,7 +1368,7 @@ semantic_model:
 
 @pytest.mark.asyncio
 async def test_validate_semantic_supports_targeted_single_model(make_runtime, model_file):
-    model_file.write_text("version: '0.2.0.dev0'\nsemantic_model:\n  - name: activity_management\n")
+    model_file.write_text("version: '0.2.0.dev0'\nname: activity_management\n")
     runtime = make_runtime()
 
     matched = await runtime.validate_semantic(
@@ -1303,7 +1389,7 @@ async def test_validate_semantic_supports_targeted_single_model(make_runtime, mo
 
 @pytest.mark.asyncio
 async def test_validate_semantic_preserves_positional_model_name(make_runtime, model_file):
-    model_file.write_text("version: '0.2.0.dev0'\nsemantic_model:\n  - name: activity_management\n")
+    model_file.write_text("version: '0.2.0.dev0'\nname: activity_management\n")
 
     result = await make_runtime().validate_semantic(
         "semantic_model",
@@ -1319,7 +1405,7 @@ async def test_semantic_models_path_directory_single_file(tmp_path):
     from datus.tools.semantic_tools.dosi.config import DosiConfig
     from datus.tools.semantic_tools.dosi.runtime import DosiRuntime
 
-    (tmp_path / "model.yaml").write_text("version: '0.2.0.dev0'\nsemantic_model: []\n")
+    (tmp_path / "model.yaml").write_text("version: 0.2.0.dev0\nname: model\ndatasets: []\n")
     runtime = DosiRuntime(DosiConfig(semantic_models_path=str(tmp_path)))
     await runtime.list_metrics()  # builds the engine
     assert FakeEngine.instances[-1].model_path == str(tmp_path / "model.yaml")
@@ -1453,16 +1539,89 @@ async def test_catalog_wraps_malformed_sibling_document(tmp_path, monkeypatch):
     from datus.tools.semantic_tools.dosi.config import DosiConfig
     from datus.tools.semantic_tools.dosi.runtime import DosiRuntime
 
-    (tmp_path / "broken.yaml").write_text("semantic_model: [\n")
+    (tmp_path / "broken.yaml").write_text("datasets: [\n")
     _write_model(tmp_path / "orders.yaml", "orders_model", ["order_count"])
     _install_file_catalog(monkeypatch, {"orders": ["order_count"]})
     runtime = DosiRuntime(DosiConfig(semantic_models_path=str(tmp_path)))
 
-    with pytest.raises(
-        SemanticCoreException,
-        match=r"cannot read semantic model .*broken\.yaml",
-    ):
-        await runtime.list_metrics()
+    issues = runtime.initialize()
+    assert str(tmp_path / "broken.yaml") in issues
+    metrics = await runtime.list_metrics()
+    assert [metric.name for metric in metrics] == ["order_count"]
+
+
+@pytest.fixture
+def unavailable_model_runtime(tmp_path, monkeypatch, fake_binding):
+    from datus.tools.semantic_tools.dosi.config import DosiConfig
+    from datus.tools.semantic_tools.dosi.runtime import DosiRuntime
+
+    broken = tmp_path / "goods.yaml"
+    _write_model(broken, "goods_model", ["loss_rate", "sales_aum"])
+    broken.write_text(broken.read_text() + "# missing_price\n")
+    _write_model(tmp_path / "orders.yaml", "orders_model", ["order_count"])
+    _install_file_catalog(monkeypatch, {"goods": ["loss_rate", "sales_aum"], "orders": ["order_count"]})
+    original_init = FakeEngine.__init__
+
+    def load(engine, model_path=None, **kwargs):
+        if "missing_price" in Path(model_path).read_text():
+            raise fake_binding.ModelError("UnknownColumn in metric 'sales_aum': missing_price")
+        original_init(engine, model_path=model_path, **kwargs)
+
+    monkeypatch.setattr(FakeEngine, "__init__", load)
+    return DosiRuntime(DosiConfig(semantic_models_path=str(tmp_path))), broken
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["dimensions", "describe", "query"])
+async def test_unavailable_metric_preserves_its_model_load_error(unavailable_model_runtime, operation):
+    runtime, broken = unavailable_model_runtime
+    with pytest.raises(SemanticValidationException) as exc:
+        if operation == "dimensions":
+            await runtime.get_dimensions("loss_rate")
+        elif operation == "describe":
+            await runtime.describe_metric("loss_rate")
+        else:
+            await runtime.query_metrics(["order_count", "loss_rate"], dry_run=True)
+
+    error = exc.value.payload
+    assert error.code == "model_load_error"
+    assert error.metrics == ["loss_rate"]
+    assert "UnknownColumn in metric 'sales_aum': missing_price" in error.message
+    assert str(broken) in error.message
+    assert "missing_price" in error.detail["model_errors"][str(broken)]
+    assert error.suggested_retry is None
+
+
+@pytest.mark.asyncio
+async def test_broken_model_does_not_replace_unrelated_unknown_metric_errors(unavailable_model_runtime):
+    runtime, _ = unavailable_model_runtime
+    assert [metric.name for metric in await runtime.list_metrics()] == ["order_count"]
+    assert (await runtime.query_metrics(["order_count"], dry_run=True)).metadata["sql"]
+    with pytest.raises(SemanticValidationException) as exc:
+        await runtime.get_dimensions("does_not_exist")
+    assert exc.value.payload.code == "unknown_metric"
+    assert "candidates: order_count" in exc.value.payload.message
+
+
+@pytest.mark.asyncio
+async def test_unavailable_metric_diagnostics_refresh_after_repair(unavailable_model_runtime):
+    runtime, broken = unavailable_model_runtime
+    with pytest.raises(SemanticValidationException) as exc:
+        await runtime.get_dimensions("loss_rate")
+    assert exc.value.payload.code == "model_load_error"
+
+    broken.write_text(broken.read_text().replace("missing_price", "unit_price"))
+    assert [metric.name for metric in await runtime.list_metrics()] == ["loss_rate", "sales_aum", "order_count"]
+    assert [dimension.name for dimension in await runtime.get_dimensions("loss_rate")] == [
+        "goods.status",
+        "goods.event_date",
+    ]
+
+    broken.write_text(broken.read_text().replace("unit_price", "missing_price"))
+    with pytest.raises(SemanticValidationException) as exc:
+        await runtime.get_dimensions("loss_rate")
+    assert exc.value.payload.code == "model_load_error"
+    assert "missing_price" in exc.value.payload.message
 
 
 @pytest.mark.asyncio
@@ -1528,7 +1687,7 @@ async def test_validate_semantic_validates_all_files_and_supports_targeting(tmp_
                     {
                         "severity": "error",
                         "code": "invalid_users_model",
-                        "location": "semantic_model[0]",
+                        "location": "<document>",
                         "message": "users model is invalid",
                     }
                 ],

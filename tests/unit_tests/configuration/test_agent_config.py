@@ -41,6 +41,12 @@ from datus.utils.exceptions import DatusException, ErrorCode
 pytestmark = pytest.mark.ci
 
 
+@pytest.mark.parametrize("name, value", [("max_rows", 100_001), ("max_bytes", 100_000_001)])
+def test_agent_config_rejects_export_limits_above_hard_ceilings(name, value):
+    with pytest.raises(ValueError, match=rf"bulk_query\.{name} must not exceed {value - 1}"):
+        AgentConfig(nodes={}, bulk_query={name: value})
+
+
 class TestMCPExecutionConfig:
     @pytest.mark.parametrize("raw", [True, 8, "invalid", [1], [("max_workers", 2)]])
     def test_malformed_mcp_execution_shape_uses_defaults(self, tmp_path, raw):
@@ -114,9 +120,6 @@ class TestResolveEnv:
 
     def test_non_string_returns_as_is(self):
         assert resolve_env(42) == 42
-
-    def test_no_placeholder_unchanged(self):
-        assert resolve_env("plain/path/no/vars") == "plain/path/no/vars"
 
     def test_file_db_extra_resolves_nested_env_values(self, monkeypatch):
         monkeypatch.setenv("ICEBERG_URI", "http://iceberg-rest:8181")
@@ -243,6 +246,45 @@ class TestDbConfigFilterKwargs:
 
 
 class TestDosiDbProfile:
+    @pytest.mark.parametrize("adapter,dialect", [("greenplum", "postgres"), ("spark", "hive")])
+    def test_compatible_wire_profiles_use_the_engine_dialect(self, adapter, dialect):
+        from datus.tools.semantic_tools.dosi.dialects import resolve_profile_dialect
+
+        cfg = DbConfig(type=adapter, host="localhost", database="analytics", extra={"schema_name": "sales"})
+        result = _db_config_to_dosi_profile(cfg)
+        assert result["type"] == dialect
+        assert result["database"] == "analytics"
+        assert result["schema"] == "sales"
+        assert "schema_name" not in result
+        assert resolve_profile_dialect({"type": adapter}, ["postgres", "hive"]) == dialect
+
+    @pytest.mark.parametrize("adapter", ["trino", "gaussdb", "hana"])
+    def test_schema_alias_is_replaced_without_mutating_the_adapter_configuration(self, adapter):
+        cfg = DbConfig(type=adapter, host="localhost", extra={"schema_name": "sales"})
+        result = _db_config_to_dosi_profile(cfg)
+        assert result["schema"] == "sales"
+        assert "schema_name" not in result
+        assert cfg.extra == {"schema_name": "sales"}
+
+    def test_explicit_schema_wins_over_schema_name_alias(self):
+        cfg = DbConfig(type="trino", host="localhost", extra={"schema": "sales", "schema_name": "other"})
+        result = _db_config_to_dosi_profile(cfg)
+        assert result["schema"] == "sales"
+        assert "schema_name" not in result
+
+    @pytest.mark.parametrize("database", [None, "legacy_alias"])
+    def test_oracle_service_name_maps_to_the_engine_connection_database(self, database):
+        cfg = DbConfig(
+            type="oracle",
+            host="localhost",
+            database=database,
+            extra={"service_name": "FREEPDB1", "schema_name": "SALES"},
+        )
+        profile = _db_config_to_dosi_profile(cfg)
+        assert profile["database"] == "FREEPDB1"
+        assert profile["schema"] == "SALES"
+        assert "schema_name" not in profile
+
     @pytest.mark.parametrize("auth", [{"auth_mode": "iam"}, {"secret_ref": "test/database"}])
     def test_aurora_settings_keep_types_and_are_independent(self, monkeypatch, auth):
         monkeypatch.setenv("TEST_AWS_REGION", "us-east-1")
@@ -3205,3 +3247,26 @@ def test_file_database_default_uses_the_real_file_name_without_a_connector(tmp_p
     config.current_db_config = lambda datasource="": profile
     assert config.default_database_name("warehouse") == "analytics"
     assert profile.database == database
+
+
+@pytest.mark.parametrize("dialect", ["sqlite", "duckdb"])
+@pytest.mark.parametrize("source_kind", ["uri", "path_pattern"])
+def test_file_datasource_keeps_artifact_identity_out_of_adapter_options(tmp_path, dialect, source_kind):
+    db = tmp_path / f"warehouse.{dialect}"
+    db.touch()
+    source = {
+        "type": dialect,
+        "datasource_id": "saas-stable",
+        source_kind: str(tmp_path / f"*.{dialect}") if source_kind == "path_pattern" else str(db),
+    }
+    config = AgentConfig(
+        nodes={},
+        home=str(tmp_path),
+        skip_init_dirs=True,
+        services={"datasources": {"warehouse": source}},
+    )
+    entry = config.services.datasources["warehouse"]
+    assert entry.datasource_id == "saas-stable"
+    assert "datasource_id" not in (entry.extra or {})
+    assert "datasource_id" not in entry.to_dict()
+    assert list(config.services.datasources) == ["warehouse"]

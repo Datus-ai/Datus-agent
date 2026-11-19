@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from datus.schemas.artifact_datasource import ArtifactDatasource
 from datus.schemas.at_context import AtContextInput
 from datus.schemas.base import BaseResult
 from datus.schemas.gen_visual_report_models import (  # re-use the cross-artifact primitives
@@ -98,7 +99,7 @@ class TemplateParamDecl(BaseModel):
         return self.type[:-2] if self.is_array else self.type  # type: ignore[return-value]
 
 
-class QueryTemplateMetaFile(BaseModel):
+class QueryTemplateMetaFile(ArtifactDatasource):
     """Schema for ``queries/<slug>.params.json`` files.
 
     Companion to the ``.sql.j2`` template body — declares the params the
@@ -111,7 +112,6 @@ class QueryTemplateMetaFile(BaseModel):
     slug: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
     description: str = Field(default="")
     execution_context: Optional[Dict[str, str]] = None
-    datasource: str
     params: List[TemplateParamDecl] = Field(..., description="Parameters declared by the SQL template")
     columns: List[QueryColumnMeta] = Field(..., min_length=1, description="Inferred from the sample render")
     sample_params: Dict[str, Any] = Field(default_factory=dict, description="Values used for the trial render")
@@ -120,8 +120,6 @@ class QueryTemplateMetaFile(BaseModel):
 
     @model_validator(mode="after")
     def _params_unique(self) -> "QueryTemplateMetaFile":
-        if self.execution_context and self.execution_context.get("datasource") != self.datasource:
-            raise ValueError("query execution context must match its datasource")
         seen: set[str] = set()
         for p in self.params:
             if p.name in seen:

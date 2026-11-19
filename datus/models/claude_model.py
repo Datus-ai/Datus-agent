@@ -773,7 +773,7 @@ class ClaudeModel(OpenAICompatibleModel):
             async with multiple_mcp_servers(mcp_servers) as connected_servers:
                 # Get all tools and build tool-name-to-server mapping once
                 tool_server_map = {}  # tool_name -> connected_server
-                mcp_tool_objs = {}  # tool_name -> SDK tool object (carries .name for hooks)
+                mcp_tool_objs = {}  # tool_name -> (SDK tool object, server name)
                 for server_name, connected_server in connected_servers.items():
                     try:
                         agent = Agent(name="mcp-tools-agent")
@@ -786,7 +786,7 @@ class ClaudeModel(OpenAICompatibleModel):
                                     f"overwriting previous mapping"
                                 )
                             tool_server_map[tool.name] = connected_server
-                            mcp_tool_objs[tool.name] = tool
+                            mcp_tool_objs[tool.name] = (tool, server_name)
                         all_tools.extend(mcp_tools)
                         logger.info(f"Retrieved {len(mcp_tools)} tools from {server_name}")
 
@@ -1304,11 +1304,13 @@ class ClaudeModel(OpenAICompatibleModel):
                                 tool_call_id=block.id,
                                 tool_arguments=tool_args,
                             )
-                            tool_obj = (
-                                func_tool_map.get(block.name)
-                                or mcp_tool_objs.get(block.name)
-                                or SimpleNamespace(name=block.name)
-                            )
+                            tool_obj = func_tool_map.get(block.name)
+                            if tool_obj is None:
+                                tool_obj, server_name = mcp_tool_objs.get(block.name, (None, None))
+                                if server_name is not None:
+                                    tool_ctx._datus_mcp_server_name = server_name
+                            if tool_obj is None:
+                                tool_obj = SimpleNamespace(name=block.name)
                             active_tool_span = start_native_tool_span(
                                 name=block.name,
                                 tool_call_id=block.id,
@@ -1360,7 +1362,7 @@ class ClaudeModel(OpenAICompatibleModel):
                                     logger.error(f"Error executing function tool {block.name}: {str(e)}")
 
                             # Fall back to MCP servers via pre-built mapping
-                            if not tool_executed:
+                            if not tool_executed and block.name not in func_tool_map:
                                 target_server = tool_server_map.get(block.name)
                                 if target_server:
                                     try:

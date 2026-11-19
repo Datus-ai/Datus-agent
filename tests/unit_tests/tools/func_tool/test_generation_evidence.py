@@ -6,6 +6,8 @@
 
 import hashlib
 
+import pytest
+
 from datus.tools.func_tool.generation_evidence import (
     GenerationEvidence,
     _metadata_from_result,
@@ -125,7 +127,7 @@ class TestGenerationEvidence:
 
     def test_reset_clears_all_request_evidence_without_replacing_object(self, tmp_path):
         artifact = tmp_path / "sales.yml"
-        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
+        artifact.write_text("name: sales\n", encoding="utf-8")
         ev = GenerationEvidence(
             validation_passed=True,
             metric_sqls={"revenue": "select 1"},
@@ -142,7 +144,7 @@ class TestGenerationEvidence:
 
     def test_artifact_mutation_invalidates_publish_evidence(self, tmp_path):
         artifact = tmp_path / "sales.yml"
-        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
+        artifact.write_text("name: sales\n", encoding="utf-8")
         ev = GenerationEvidence(
             validation_passed=True,
             metric_sqls={"revenue": "select 1"},
@@ -177,7 +179,7 @@ class TestGenerationEvidence:
 
     def test_semantic_validation_is_bound_to_model_and_file_content(self, tmp_path):
         artifact = tmp_path / "sales.yml"
-        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
+        artifact.write_text("name: sales\n", encoding="utf-8")
         ev = GenerationEvidence()
         ev.record_validation_result(
             {
@@ -193,13 +195,13 @@ class TestGenerationEvidence:
         assert ev.semantic_artifact_validation_passed("sales", artifact)
         assert not ev.semantic_artifact_validation_passed("finance", artifact)
 
-        artifact.write_text("semantic_model: changed\n", encoding="utf-8")
+        artifact.write_text("name: changed\n", encoding="utf-8")
 
         assert not ev.semantic_artifact_validation_passed("sales", artifact)
 
     def test_full_validation_satisfies_both_final_scopes(self, tmp_path):
         artifact = tmp_path / "sales.yml"
-        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
+        artifact.write_text("name: sales\n", encoding="utf-8")
         ev = GenerationEvidence()
         ev.record_semantic_artifact_validation("sales", artifact, validation_scope="all")
 
@@ -208,7 +210,7 @@ class TestGenerationEvidence:
 
     def test_compiled_validation_is_bound_to_artifact_contract_and_metric_set(self, tmp_path):
         artifact = tmp_path / "sales.yml"
-        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
+        artifact.write_text("name: sales\n", encoding="utf-8")
         metric_digest = "sha256:" + hashlib.sha256(b"revenue").hexdigest()
         ev = GenerationEvidence()
 
@@ -225,12 +227,12 @@ class TestGenerationEvidence:
         assert not ev.compiled_validation_passed(artifact, ["revenue", "orders"])
         assert ev.compiled_metric_catalog(["revenue"])["revenue"]["datasets"] == ["orders"]
 
-        artifact.write_text("semantic_model: changed\n", encoding="utf-8")
+        artifact.write_text("name: changed\n", encoding="utf-8")
         assert not ev.compiled_validation_passed(artifact, ["revenue"])
 
     def test_compiled_validation_rejects_incomplete_digest_evidence(self, tmp_path):
         artifact = tmp_path / "sales.yml"
-        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
+        artifact.write_text("name: sales\n", encoding="utf-8")
         ev = GenerationEvidence()
 
         assert not ev.record_compiled_validation(
@@ -278,3 +280,27 @@ class TestGenerationEvidence:
         result = {"success": 1, "result": {"metadata": {"sql": "SELECT 1"}}}
         ev.record_metric_dry_run(["revenue_total"], result)
         assert "revenue_total" in ev.metric_sqls
+
+
+def test_rebase_preserves_exact_validation_and_business_evidence(tmp_path):
+    source, target = tmp_path / "draft.yaml", tmp_path / "published.yaml"
+    for path in (source, target):
+        path.write_text("name: sales\n")
+    before, after = str(source.resolve()), str(target.resolve())
+    evidence = GenerationEvidence(
+        validated_semantic_artifacts={
+            "sales": {"path": before, "sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+        },
+        compiled_artifact_sha256={before: "validated"},
+        mutated_artifact_paths={before},
+        business_verifications={"sales": {"artifact": {"path": before}, "status": "passed"}},
+    )
+    evidence.rebase_artifact(before, after)
+    assert evidence.validated_semantic_artifacts["sales"]["path"] == after
+    assert evidence.compiled_artifact_sha256 == {after: "validated"}
+    assert evidence.mutated_artifact_paths == {after}
+    assert evidence.business_verifications["sales"] == {"artifact": {"path": after}, "status": "passed"}
+    source.write_text("name: different\n")
+    with pytest.raises(ValueError, match="bytes differ"):
+        evidence.rebase_artifact(before, after)
+    assert evidence.validated_semantic_artifacts["sales"]["path"] == after

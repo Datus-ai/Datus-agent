@@ -1,7 +1,6 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-
 import inspect
 import os
 import re
@@ -22,6 +21,7 @@ from datus.tools.func_tool.fs_path_policy import (
     strict_mode_rejection_message,
     whitelist_anchors,
 )
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.exceptions import DatusException
 from datus.utils.image_content import IMAGE_EXTENSIONS, read_image_output
 from datus.utils.loggings import get_logger
@@ -266,7 +266,7 @@ class FilesystemFuncTool(BaseTool):
     # ------------------------------------------------------------------ zones
 
     def _classify(self, path: str) -> ResolvedPath:
-        return classify_path(
+        resolved = classify_path(
             path,
             root_path=self._root_resolved,
             current_node=self._current_node,
@@ -274,6 +274,16 @@ class FilesystemFuncTool(BaseTool):
             session_data_dir=self._session_data_dir,
             allowlist=self.path_allowlist,
         )
+        if (
+            resolved.zone == PathZone.INTERNAL
+            and "semantic_models" in resolved.resolved.parts
+            and resolved.resolved.suffix.lower() in {".yaml", ".yml", ".json"}
+            and resolved.resolved.is_file()
+        ):
+            from datus.tools.semantic_tools.dosi.files import file_engine
+
+            file_engine(resolved.resolved, getattr(self, "agent_config", None), allow_invalid=True)
+        return resolved
 
     def _read_only_reject(self, resolved: ResolvedPath) -> FuncToolResult:
         """Reject writes to a read-only whitelist (e.g. the session compact archive)."""
@@ -325,6 +335,7 @@ class FilesystemFuncTool(BaseTool):
     # ------------------------------------------------------------- read/write
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def read_image(self, path: str) -> list[Any] | FuncToolResult:
         """Read a local image so the current model can inspect it directly.
 
@@ -353,6 +364,7 @@ class FilesystemFuncTool(BaseTool):
             return FuncToolResult(success=0, error=str(exc))
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def read_file(self, path: str, offset: int = 0, limit: int = 0) -> FuncToolResult:
         """
         Read the contents of a file.
@@ -461,6 +473,7 @@ class FilesystemFuncTool(BaseTool):
             logger.error(f"Error reading file {path}: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
+    @tool_contract(access="write", direct_call=False)
     def write_file(self, path: str, content: str, file_type: str = "") -> FuncToolResult:
         """
         Create a new file or overwrite an existing file.
@@ -508,6 +521,7 @@ class FilesystemFuncTool(BaseTool):
             logger.error(f"Error writing file {path}: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
+    @tool_contract(access="write", direct_call=False)
     def delete_file(self, path: str) -> FuncToolResult:
         """
         Delete a single regular file.
@@ -568,6 +582,7 @@ class FilesystemFuncTool(BaseTool):
             logger.error(f"Error deleting file {path}: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
+    @tool_contract(access="write", direct_call=False)
     def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:
         """
         Make a single edit to a file by replacing old_string with new_string.
@@ -855,6 +870,7 @@ class FilesystemFuncTool(BaseTool):
         return pattern, path
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def glob(self, pattern: str, path: str = ".") -> FuncToolResult:
         """
         Find files matching a glob pattern.
@@ -934,6 +950,7 @@ class FilesystemFuncTool(BaseTool):
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def grep(self, pattern: str, path: str = ".", include: str = "", case_sensitive: bool = True) -> FuncToolResult:
         """
         Search file contents using a regular expression pattern.
@@ -973,6 +990,7 @@ class FilesystemFuncTool(BaseTool):
                 report_relative_to = self._root_resolved
 
             def _search_file(file_path: Path, reported_file: str) -> List[dict]:
+                self._classify(str(file_path))
                 try:
                     if file_path.stat().st_size > self.config.max_file_size:
                         return []

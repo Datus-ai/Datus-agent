@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.node_type import NodeType
+from datus.schemas.base import BaseInput
 from datus.tools.func_tool.base import FuncToolResult
 from datus.utils.exceptions import DatusException
 
@@ -44,7 +46,8 @@ def _semantic_tools(runtime):
         "list_metrics",
         "get_metric",
         "query_metrics",
-        "attribution_analyze",
+        "attribute_metrics",
+        "attribute_dimensions",
         "describe_concept",
         "find_concept_paths",
         "select_records",
@@ -106,7 +109,8 @@ class TestSetup:
             "list_metrics",
             "get_metric",
             "query_metrics",
-            "attribution_analyze",
+            "attribute_metrics",
+            "attribute_dimensions",
             "search_metrics",
         ]
         assert factory.call_args.kwargs["ontology_enabled"] is True
@@ -290,9 +294,9 @@ class TestPromptAndResult:
         from datus.schemas.ontology_analyst_agentic_node_models import OntologyAnalystNodeResult
 
         node, _, _ = _make_node(real_agent_config)
-        ctx = Mock()
-        ctx.response_content = "answer"
-        ctx.action_history_manager = ActionHistoryManager()
+        ctx = StreamRunContext(
+            user_input=BaseInput(), action_history_manager=ActionHistoryManager(), response_content="answer"
+        )
         result = node._build_success_result(ctx)
         assert isinstance(result, OntologyAnalystNodeResult)
         assert result.response == "answer"

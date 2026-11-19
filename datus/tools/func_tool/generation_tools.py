@@ -1,7 +1,6 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-
 # -*- coding: utf-8 -*-
 import json
 from collections.abc import Iterable
@@ -34,6 +33,7 @@ from datus.storage.semantic_dataset.store import (
 )
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
+from datus.tools.registry.contracts import tool_contract
 from datus.tools.semantic_tools.dosi.model import document_model_names
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -139,6 +139,7 @@ class GenerationTools:
             )
         ]
 
+    @tool_contract(access="read", direct_call=True)
     def check_semantic_object_exists(
         self,
         name: str = "",
@@ -255,9 +256,12 @@ class GenerationTools:
             )
         path = str(state.bound["absolute_path"])
         try:
+            from datus.tools.semantic_tools.dosi.files import file_engine
+
+            file_engine(path, self.agent_config, allow_invalid=True)
             state.require_current_revision(path)
             document = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-            models = document.get("semantic_model") if isinstance(document, dict) else None
+            models = [document] if isinstance(document, dict) and "datasets" in document else None
             if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
                 raise ValueError("The bound YAML must contain exactly one semantic model.")
             model = models[0]
@@ -370,6 +374,7 @@ class GenerationTools:
             raise ValueError(f"The planned OSI target is {planned_name!r}, but the file declares {model_names[0]!r}.")
         return semantic_model_file, resolved, model_names[0]
 
+    @tool_contract(access="write", direct_call=False)
     def publish_semantic_model(self, semantic_model_files: List[str]) -> FuncToolResult:
         """Validate publication evidence and sync semantic artifacts to storage.
 
@@ -429,6 +434,7 @@ class GenerationTools:
             logger.error(f"Error completing semantic model generation: {e}")
             return FuncToolResult(success=0, error=f"Failed to complete generation: {str(e)}")
 
+    @tool_contract(access="write", direct_call=False)
     def publish_metrics(self, metric_file: str) -> FuncToolResult:
         """Validate publication evidence and sync metric artifacts to storage.
 
@@ -647,13 +653,15 @@ class GenerationTools:
         subject_root = str(get_path_manager(agent_config=self.agent_config).subject_dir)
         return resolve_kb_sandbox_path(path, kind, subject_root) or ""
 
-    @staticmethod
-    def _iter_yaml_docs(path: str) -> List[dict]:
+    def _iter_yaml_docs(self, path: str) -> List[dict]:
         p = Path(path)
         files = sorted(p.rglob("*.yml")) + sorted(p.rglob("*.yaml")) if p.is_dir() else [p]
         docs: List[dict] = []
         for file_path in files:
             try:
+                from datus.tools.semantic_tools.dosi.files import file_engine
+
+                file_engine(file_path, self.agent_config, allow_invalid=True)
                 with open(file_path, "r", encoding="utf-8") as f:
                     loaded = list(yaml.safe_load_all(f))
             except (OSError, yaml.YAMLError):
@@ -665,14 +673,6 @@ class GenerationTools:
         """Return metric names from OSI core documents or compatibility metric docs."""
         names: List[str] = []
         for doc in self._iter_yaml_docs(metric_path):
-            semantic_models = doc.get("semantic_model")
-            if isinstance(semantic_models, list):
-                for model in semantic_models:
-                    if not isinstance(model, dict):
-                        continue
-                    for item in model.get("metrics") or []:
-                        if isinstance(item, dict) and isinstance(item.get("name"), str):
-                            names.append(item["name"])
             metric = doc.get("metric")
             if isinstance(metric, dict) and isinstance(metric.get("name"), str):
                 names.append(metric["name"])
@@ -694,14 +694,6 @@ class GenerationTools:
         """Return dataset names declared in OSI core semantic-model documents."""
         names: List[str] = []
         for doc in self._iter_yaml_docs(semantic_model_path):
-            semantic_models = doc.get("semantic_model")
-            if isinstance(semantic_models, list):
-                for model in semantic_models:
-                    if not isinstance(model, dict):
-                        continue
-                    for item in model.get("datasets") or []:
-                        if isinstance(item, dict) and isinstance(item.get("name"), str):
-                            names.append(item["name"])
             datasets = doc.get("datasets")
             if not isinstance(datasets, list):
                 continue
@@ -1614,6 +1606,7 @@ class GenerationTools:
         existing = {normalize_metric_name(row["name"]): row.get("uid") for row in rows}
         return [name for name, uid in metric_uids.items() if existing.get(normalize_metric_name(name)) != uid]
 
+    @tool_contract(access="write", direct_call=False)
     def sync_osi_to_db(
         self,
         osi_file_path: str,
@@ -1638,8 +1631,10 @@ class GenerationTools:
             if not include_semantic_objects and not include_metrics:
                 return {"success": False, "error": "At least one OSI sync scope must be enabled", "synced": 0}
             from datus.storage.semantic_model.sync_state import file_digest
+            from datus.tools.semantic_tools.dosi.files import file_engine
 
-            # Taken before the load: a write racing the sync then reads as a
+            file_engine(osi_file_path, self.agent_config, allow_invalid=True)
+            # Taken after initial engine loading, before projection: a racing write is a
             # change, costing a re-sync rather than hiding it.
             full_projection = include_semantic_objects and include_metrics and metric_names_to_sync is None
             digest = file_digest(Path(osi_file_path)) if full_projection else None
@@ -1778,6 +1773,7 @@ class GenerationTools:
             logger.error(f"Error syncing OSI document to DB: {e}", exc_info=True)
             return {"success": False, "error": str(e), "synced": 0}
 
+    @tool_contract(access="read", direct_call=True)
     def generate_sql_summary_id(self, sql_query: str, comment: str = "") -> FuncToolResult:
         """
         Generate a unique ID for SQL summary based on SQL query and comment.

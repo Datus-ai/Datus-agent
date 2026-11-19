@@ -158,7 +158,7 @@ def test_web_fetch_parse_error_returns_error():
     tool = WebTool(_cfg())
     html = "<html><body><p>hi</p></body></html>"
     with (
-        patch("datus.tools.func_tool.web_tool.httpx.get", return_value=_resp(html)),
+        patch("datus.tools.func_tool.web_tool.httpx.Client.get", return_value=_resp(html)),
         patch("datus.tools.func_tool.web_tool.BeautifulSoup", side_effect=ValueError("bad parser")),
     ):
         res = tool.web_fetch("https://duckdb.org/x")
@@ -185,7 +185,7 @@ def test_web_fetch_extracts_text_and_strips_noise():
         "<p>Hello world</p><footer>foot</footer></body></html>"
     )
     tool = WebTool(_cfg())
-    with patch("datus.tools.func_tool.web_tool.httpx.get", return_value=_resp(html)):
+    with patch("datus.tools.func_tool.web_tool.httpx.Client.get", return_value=_resp(html)):
         res = tool.web_fetch("http://e.com/page")
     assert res.success == 1
     assert res.result["title"] == "My Page"
@@ -199,7 +199,7 @@ def test_web_fetch_extracts_text_and_strips_noise():
 def test_web_fetch_truncates_long_content():
     html = "<html><body><p>" + ("A" * 500) + "</p></body></html>"
     tool = WebTool(_cfg())
-    with patch("datus.tools.func_tool.web_tool.httpx.get", return_value=_resp(html)):
+    with patch("datus.tools.func_tool.web_tool.httpx.Client.get", return_value=_resp(html)):
         res = tool.web_fetch("http://e.com", max_chars=100)
     assert res.success == 1
     assert len(res.result["content"]) == 100
@@ -210,7 +210,7 @@ def test_web_fetch_http_status_error():
     tool = WebTool(_cfg())
     r = _resp()
     r.raise_for_status.side_effect = httpx.HTTPStatusError("boom", request=Mock(), response=Mock(status_code=404))
-    with patch("datus.tools.func_tool.web_tool.httpx.get", return_value=r):
+    with patch("datus.tools.func_tool.web_tool.httpx.Client.get", return_value=r):
         res = tool.web_fetch("http://e.com/missing")
     assert res.success == 0
     assert "404" in res.error
@@ -218,7 +218,7 @@ def test_web_fetch_http_status_error():
 
 def test_web_fetch_transport_error():
     tool = WebTool(_cfg())
-    with patch("datus.tools.func_tool.web_tool.httpx.get", side_effect=httpx.ConnectError("no route")):
+    with patch("datus.tools.func_tool.web_tool.httpx.Client.get", side_effect=httpx.ConnectError("no route")):
         res = tool.web_fetch("http://e.com")
     assert res.success == 0
     assert "Failed to fetch" in res.error
@@ -226,7 +226,9 @@ def test_web_fetch_transport_error():
 
 def test_web_fetch_rejects_non_html_content_type():
     tool = WebTool(_cfg())
-    with patch("datus.tools.func_tool.web_tool.httpx.get", return_value=_resp("{}", content_type="application/json")):
+    with patch(
+        "datus.tools.func_tool.web_tool.httpx.Client.get", return_value=_resp("{}", content_type="application/json")
+    ):
         res = tool.web_fetch("http://e.com/data.json")
     assert res.success == 0
     assert "content-type" in res.error.lower()
@@ -257,7 +259,7 @@ def test_web_fetch_rejects_ssrf_targets(blocked):
     # Literal-IP hosts are validated directly (no DNS), so the request must be
     # refused before any httpx call is made.
     tool = WebTool(_cfg())
-    with patch("datus.tools.func_tool.web_tool.httpx.get") as m:
+    with patch("datus.tools.func_tool.web_tool.httpx.Client.get") as m:
         res = tool.web_fetch(blocked)
     assert res.success == 0
     assert "SSRF" in res.error
@@ -271,7 +273,7 @@ def test_web_fetch_rejects_ssrf_targets(blocked):
 def test_web_fetch_rejects_internal_hostnames(blocked_host):
     # Internal hostnames are refused without any DNS resolution.
     tool = WebTool(_cfg())
-    with patch("datus.tools.func_tool.web_tool.httpx.get") as m:
+    with patch("datus.tools.func_tool.web_tool.httpx.Client.get") as m:
         res = tool.web_fetch(blocked_host)
     assert res.success == 0
     assert "SSRF" in res.error
@@ -283,7 +285,7 @@ def test_web_fetch_allows_public_hostname():
     # guard) — so the mocked httpx path runs normally.
     html = "<html><head><title>OK</title></head><body><p>hi</p></body></html>"
     tool = WebTool(_cfg())
-    with patch("datus.tools.func_tool.web_tool.httpx.get", return_value=_resp(html)):
+    with patch("datus.tools.func_tool.web_tool.httpx.Client.get", return_value=_resp(html)):
         res = tool.web_fetch("https://duckdb.org/")
     assert res.success == 1
     assert res.result["title"] == "OK"
@@ -292,7 +294,7 @@ def test_web_fetch_allows_public_hostname():
 @pytest.mark.parametrize("bad_max", [0, -1, -100, 3.5, True, "20"])
 def test_web_fetch_rejects_invalid_max_chars(bad_max):
     tool = WebTool(_cfg())
-    with patch("datus.tools.func_tool.web_tool.httpx.get") as m:
+    with patch("datus.tools.func_tool.web_tool.httpx.Client.get") as m:
         res = tool.web_fetch("http://e.com", max_chars=bad_max)
     assert res.success == 0
     assert "max_chars" in res.error
@@ -303,7 +305,81 @@ def test_web_fetch_rejects_oversized_content_length():
     tool = WebTool(_cfg())
     r = _resp("<html><body><p>hi</p></body></html>")
     r.headers = {"content-type": "text/html", "content-length": str(50 * 1024 * 1024)}
-    with patch("datus.tools.func_tool.web_tool.httpx.get", return_value=r):
+    with patch("datus.tools.func_tool.web_tool.httpx.Client.get", return_value=r):
         res = tool.web_fetch("http://e.com/huge")
     assert res.success == 0
     assert "too large" in res.error.lower()
+
+
+@pytest.mark.parametrize("target", ["http://127.0.0.1/secret", "http://169.254.169.254/", "file:///etc/passwd"])
+def test_web_reader_checks_redirect_targets_before_requesting_them(target):
+    """A public starting URL must not turn a read grant into an internal request."""
+    visited = []
+
+    def respond(request):
+        """Record actual HTTP hops without a network connection."""
+        visited.append(str(request.url))
+        if len(visited) == 1:
+            return httpx.Response(302, headers={"location": target})
+        return httpx.Response(200, headers={"content-type": "text/plain"}, text="private data")
+
+    client = httpx.Client(transport=httpx.MockTransport(respond))
+    with patch("datus.tools.func_tool.web_tool.httpx.Client", return_value=client):
+        result = WebTool(_cfg()).web_fetch("https://example.com/start")
+    assert result.success == 0
+    assert visited == ["https://example.com/start"]
+
+
+def test_web_reader_follows_a_public_relative_redirect():
+    """Valid redirects continue to return the destination's actual content."""
+    visited = []
+
+    def respond(request):
+        """Serve a bounded public redirect chain in memory."""
+        visited.append(str(request.url))
+        if len(visited) == 1:
+            return httpx.Response(302, headers={"location": "/destination"})
+        return httpx.Response(200, headers={"content-type": "text/plain"}, text="public destination")
+
+    client = httpx.Client(transport=httpx.MockTransport(respond))
+    with patch("datus.tools.func_tool.web_tool.httpx.Client", return_value=client):
+        result = WebTool(_cfg()).web_fetch("https://example.com/start")
+    assert result.success == 1
+    assert result.result["content"] == "public destination"
+    assert visited == ["https://example.com/start", "https://example.com/destination"]
+
+
+def test_web_reader_bounds_redirect_loops():
+    """An endlessly redirecting public page cannot keep a read running forever."""
+    visited = []
+
+    def respond(request):
+        """Redirect every request without making a real network connection."""
+        visited.append(str(request.url))
+        return httpx.Response(302, headers={"location": "/again"})
+
+    client = httpx.Client(transport=httpx.MockTransport(respond))
+    with patch("datus.tools.func_tool.web_tool.httpx.Client", return_value=client):
+        result = WebTool(_cfg()).web_fetch("https://example.com/start")
+    assert result.success == 0
+    assert "redirect" in result.error.lower()
+    assert 0 < len(visited) < 20
+
+
+def test_web_redirect_preserves_session_cookie():
+    """A validated redirect uses the same real cookie jar as the first request."""
+
+    def respond(request):
+        """Require the cookie issued by the redirect, without network access."""
+        if request.url.path == "/start":
+            return httpx.Response(302, headers={"location": "/target", "set-cookie": "session=valid; Path=/"})
+        assert request.headers.get("cookie") == "session=valid"
+        return httpx.Response(200, headers={"content-type": "text/plain"}, text="cookie authorized")
+
+    client = httpx.Client(transport=httpx.MockTransport(respond))
+    with patch("datus.tools.func_tool.web_tool.httpx.Client", return_value=client) as factory:
+        result = WebTool(_cfg()).web_fetch("https://example.com/start")
+    assert result.success == 1
+    assert result.result["content"] == "cookie authorized"
+    factory.assert_called_once()
+    assert client.is_closed

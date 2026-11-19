@@ -148,6 +148,22 @@ class TestGetSessionSystemPrompt:
         # The expensive builder ran exactly once across both turns.
         assert node.build_count == 1
 
+    def test_collaboration_guidance_change_refreshes_resumed_session(self, session_manager, monkeypatch):
+        from datus.prompts import collaboration_contract
+
+        node = _SnapshotNode(session_manager, _agent_config())
+        assert node._get_session_system_prompt(prompt_version="1.2") == "SYS#1"
+        monkeypatch.setattr(
+            collaboration_contract,
+            "COLLABORATION_CONTRACT",
+            collaboration_contract.COLLABORATION_CONTRACT + "\nUpdated continuation guidance.",
+        )
+
+        assert node._get_session_system_prompt(prompt_version="1.2") == "SYS#2"
+        resumed = _SnapshotNode(session_manager, _agent_config())
+        assert resumed._get_session_system_prompt(prompt_version="1.2") == "SYS#2"
+        assert resumed.build_count == 0
+
     def test_new_node_instance_replays_snapshot(self, session_manager):
         """API per-request nodes and /resume reuse the snapshot of the session."""
         node1 = _SnapshotNode(session_manager, _agent_config())
@@ -1044,22 +1060,38 @@ def test_resolved_api_context_is_authoritative_for_metric_tools(session_manager)
 
 
 @pytest.mark.parametrize(
-    "override,node_version,expected",
-    [(None, "9.9", "9.9"), ("1.0", "9.9", "1.0"), (None, None, "1.2"), ("1.0", None, "1.0")],
+    "override,node_version,agent_version,selected",
+    [
+        (None, "9.9", "1.2", "9.9"),
+        ("1.0", "9.9", "1.2", "1.0"),
+        (None, None, "1.2", "1.2"),
+        ("1.0", None, "1.2", "1.0"),
+        (None, None, None, None),
+    ],
 )
-def test_digest_uses_effective_template_version(session_manager, monkeypatch, override, node_version, expected):
-    """Fingerprint and snapshot metadata honor request > node > agent precedence."""
+def test_digest_and_render_use_the_same_resolved_template_version(
+    session_manager, monkeypatch, override, node_version, agent_version, selected
+):
+    """Fingerprint, snapshot metadata and rendering honor request > node > agent precedence."""
     from unittest.mock import Mock
 
     from datus.prompts import prompt_manager
 
     manager = Mock()
     manager.template_fingerprint.return_value = "selected-template-digest"
+    manager.render_template.return_value = "rendered prompt"
     monkeypatch.setattr(prompt_manager, "get_prompt_manager", lambda **kwargs: manager)
-    node = _SnapshotNode(session_manager, _agent_config(), node_config={"prompt_version": node_version})
+    monkeypatch.setattr("datus.agent.node.agentic_node.get_prompt_manager", lambda **kwargs: manager)
+    config = _agent_config()
+    config.prompt_version = agent_version
+    node = _SnapshotNode(session_manager, config, node_config={"prompt_version": node_version})
+    node._finalize_system_prompt = lambda prompt: prompt
     meta = node._system_prompt_snapshot_meta(override)
-    manager.template_fingerprint.assert_called_once_with(node._system_prompt_template_name(), version=expected)
-    assert meta["prompt_version"] == expected
+    assert AgenticNode._get_system_prompt(node, prompt_version=override) == "rendered prompt"
+    manager.template_fingerprint.assert_called_once_with(node._system_prompt_template_name(), version=selected)
+    assert manager.render_template.call_count == 1
+    assert manager.render_template.call_args.kwargs["version"] == selected
+    assert meta["prompt_version"] == (selected or "")
     assert meta["prompt_template_sha256"] == "selected-template-digest"
 
 

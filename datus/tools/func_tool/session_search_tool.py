@@ -13,9 +13,10 @@ import json
 import os
 import sqlite3
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -31,15 +32,23 @@ class SessionSearchTool:
 
     permission_category: str = "tools"
 
-    def __init__(self, sessions_dir: Optional[str] = None):
+    def __init__(
+        self, sessions_dir: Optional[str] = None, *, sessions_dir_provider: Optional[Callable[[], str]] = None
+    ):
+        """Resolve hosted searches from the node's live, scoped session manager."""
         self.sessions_dir = sessions_dir
+        self._sessions_dir_provider = sessions_dir_provider
 
     def _resolve_sessions_dir(self) -> str:
+        """Use the current owner scope, including relocation into a parent session."""
+        if self._sessions_dir_provider is not None:
+            return self._sessions_dir_provider()
         if self.sessions_dir:
             return os.path.expanduser(self.sessions_dir)
         # Default: ~/.datus/sessions/
         return os.path.expanduser("~/.datus/sessions")
 
+    @tool_contract(access="read", direct_call=False)
     def search_skill_usage(self, skill_name: str, max_sessions: int = 10) -> FuncToolResult:
         """Search session history for usage of a specific skill.
 

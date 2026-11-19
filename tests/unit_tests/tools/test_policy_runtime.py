@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, patch
@@ -7,6 +8,41 @@ import pytest
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.policy_runtime import PolicyRuntime
 from datus.utils.exceptions import DatusException, ErrorCode
+
+
+def test_complete_result_hooks_preserve_order_and_apply_batch_only_hooks():
+    import pyarrow as pa
+
+    runtime = PolicyRuntime(None)
+    calls = []
+
+    def batch_hook(result, **kwargs):
+        calls.append("batch")
+        return SimpleNamespace(
+            allowed=True,
+            result=result.set_column(0, "value", pa.array(["masked"])),
+            applied_policies=["mask"],
+        )
+
+    def whole_hook(result, **kwargs):
+        calls.append("whole")
+        return SimpleNamespace(allowed=True, result=[*result, {"value": "authorized"}], applied_policies=["scope"])
+
+    runtime._runtimes = [
+        ("batch-only", SimpleNamespace(after_read_batch=batch_hook)),
+        ("whole", SimpleNamespace(after_read_result=whole_hook)),
+    ]
+    assert runtime.supports_streaming_results is False
+    result = runtime.after_read_result(
+        [{"value": "private"}],
+        sql="SELECT 1",
+        datasource="warehouse",
+        dialect="duckdb",
+        policy_context={},
+    )
+    assert calls == ["batch", "whole"]
+    assert result.result == [{"value": "masked"}, {"value": "authorized"}]
+    assert result.applied_policies == ["mask", "scope"]
 
 
 class FakeRuntime:
@@ -81,6 +117,101 @@ def runtime_with(fake: Any, monkeypatch: pytest.MonkeyPatch) -> PolicyRuntime:
     return PolicyRuntime(config())
 
 
+@pytest.mark.parametrize("streaming", [False, True])
+def test_batch_only_plugin_factory_initializes_and_enforces_results(monkeypatch, streaming):
+    import pyarrow as pa
+
+    calls = []
+
+    def mask(table, **kwargs):
+        calls.append(table.num_rows)
+        return SimpleNamespace(
+            allowed=True,
+            result=table.set_column(0, "secret", pa.array(["masked"] * table.num_rows)),
+            applied_policies=["mask"],
+        )
+
+    runtime = runtime_with(SimpleNamespace(after_read_batch=mask), monkeypatch)
+    assert runtime.runtime_names == ("sql-policy",)
+    assert runtime.supports_streaming_results is True
+    table = pa.table({"secret": ["private", "private"]})
+    kwargs = dict(sql="SELECT secret FROM orders", datasource="warehouse", dialect="duckdb", policy_context={})
+    result = runtime.after_read_batch(table, **kwargs) if streaming else runtime.after_read_result(table, **kwargs)
+    assert result.allowed is True
+    assert calls == [2]
+    assert result.result.to_pylist() == [{"secret": "masked"}, {"secret": "masked"}]
+    assert result.applied_policies == ["mask"]
+
+
+def test_batch_only_mask_preserves_ordinary_row_format_and_other_value_types(monkeypatch):
+    from datetime import date
+    from decimal import Decimal
+
+    import pyarrow as pa
+
+    rows = [
+        {
+            "id": "0012345678901234567",
+            "secret": "private",
+            "amount": Decimal("123.4500"),
+            "day": date(2026, 1, 1),
+            "absent": None,
+            "tags": ["a", "b"],
+            "details": {"code": "01"},
+        }
+    ]
+
+    def mask(table, **kwargs):
+        return SimpleNamespace(allowed=True, result=table.set_column(1, "secret", pa.array(["masked"])))
+
+    runtime = runtime_with(SimpleNamespace(after_read_batch=mask), monkeypatch)
+    decision = runtime.after_read_result(
+        rows, sql="SELECT * FROM orders", datasource="warehouse", dialect="duckdb", policy_context={}
+    )
+    assert decision.allowed is True
+    assert decision.result == [{**rows[0], "secret": "masked"}]
+    assert str(decision.result[0]["amount"]) == "123.4500"
+    assert rows[0]["secret"] == "private"
+
+
+def test_batch_only_ordinary_rows_preserve_nan(monkeypatch):
+    import math
+
+    def allow(table, **kwargs):
+        return SimpleNamespace(allowed=True, result=table)
+
+    runtime = runtime_with(SimpleNamespace(after_read_batch=allow), monkeypatch)
+    decision = runtime.after_read_result(
+        [{"value": float("nan")}],
+        sql="SELECT * FROM orders",
+        datasource="warehouse",
+        dialect="duckdb",
+        policy_context={},
+    )
+    assert decision.allowed is True
+    assert len(decision.result) == 1
+    assert math.isnan(decision.result[0]["value"])
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [{"id": 1}, {"id": 2, "secret": "private"}],
+        [{"id": 1}, {"id": "private"}],
+        [{"id": 9007199254740993}, {"id": 0.5}],
+        [{"id": 2**64 - 1}],
+    ],
+)
+def test_batch_only_conversion_fails_closed_instead_of_dropping_or_coercing_rows(monkeypatch, rows):
+    hook = Mock()
+    runtime = runtime_with(SimpleNamespace(after_read_batch=hook), monkeypatch)
+    with pytest.raises(DatusException, match="cannot convert query rows to an Arrow batch"):
+        runtime.after_read_result(
+            rows, sql="SELECT * FROM orders", datasource="warehouse", dialect="duckdb", policy_context={}
+        )
+    hook.assert_not_called()
+
+
 def test_no_policy_runtime_is_pass_through(monkeypatch):
     monkeypatch.setattr("datus.tools.policy_runtime.collect_plugin_policy_runtime_factories", lambda active: {})
     runtime = PolicyRuntime(config())
@@ -89,6 +220,111 @@ def test_no_policy_runtime_is_pass_through(monkeypatch):
         runtime.before_sql_read("SELECT 1", datasource="warehouse", dialect="postgres", policy_context={}).sql
         == "SELECT 1"
     )
+
+
+def test_effective_snapshot_without_provider_fails_closed(monkeypatch):
+    monkeypatch.setattr("datus.tools.policy_runtime.collect_plugin_policy_runtime_factories", lambda active: {})
+    runtime = PolicyRuntime(config())
+    with pytest.raises(DatusException, match="no implementation is loaded"):
+        runtime.before_sql_read(
+            "SELECT 1",
+            datasource="warehouse",
+            dialect="duckdb",
+            policy_context={"sql_policy": {"version": "v1", "policies": {}}},
+        )
+
+
+@pytest.mark.parametrize("active_names", [None, {"sql-policy"}])
+def test_configured_but_missing_plugin_fails_closed(monkeypatch, active_names):
+    monkeypatch.setattr("datus.tools.policy_runtime.collect_plugin_policy_runtime_factories", lambda active: {})
+    cfg = config()
+    cfg.active_plugin_names = lambda: active_names
+    cfg.get_plugin_profile = lambda _: {
+        "column_masking": [{"column": "db.main.orders.phone", "mask": "redact", "n": 4}]
+    }
+    with pytest.raises(DatusException, match="Required SQL policy plugin"):
+        PolicyRuntime(cfg)
+
+
+@pytest.mark.parametrize(
+    "profiles", [{"custom/a": []}, {"财务组": [{"column": "orders.phone", "mask": "redact", "n": 4}]}]
+)
+def test_named_profiles_require_the_policy_plugin_even_for_an_empty_ruleset(monkeypatch, profiles):
+    monkeypatch.setattr("datus.tools.policy_runtime.collect_plugin_policy_runtime_factories", lambda _: {})
+    cfg = config()
+    cfg.get_plugin_profile = lambda _: {"policy_revision": "v1", "masking_profiles": profiles}
+    with pytest.raises(DatusException, match="Required SQL policy plugin"):
+        PolicyRuntime(cfg)
+
+
+def test_request_selection_without_a_plugin_is_denied(monkeypatch):
+    monkeypatch.setattr("datus.tools.policy_runtime.collect_plugin_policy_runtime_factories", lambda _: {})
+    runtime = PolicyRuntime(config())
+    with pytest.raises(DatusException, match="no implementation is loaded"):
+        runtime.validate_context({"masking_profile": "custom/a", "policy_revision": "v1"})
+
+
+def test_request_selection_requires_a_native_provider(monkeypatch):
+    runtime = runtime_with(FakeRuntime(), monkeypatch)
+    with pytest.raises(DatusException, match="native source-policy provider"):
+        runtime.validate_context({"masking_profile": "custom/a", "policy_revision": "v1"})
+
+
+@pytest.mark.parametrize("required", [True, False])
+def test_request_context_requirement_is_owned_by_the_plugin(monkeypatch, required):
+    fake = FakeRuntime()
+    fake.requires_request_context = lambda: required
+    runtime = runtime_with(fake, monkeypatch)
+    assert runtime.requires_request_context() is required
+    assert fake.contexts == []
+
+
+def test_request_context_requirement_falls_back_to_existing_validation(monkeypatch):
+    assert runtime_with(FakeRuntime(allowed=False), monkeypatch).requires_request_context()
+    assert not runtime_with(FakeRuntime(allowed=True), monkeypatch).requires_request_context()
+
+
+def test_no_plugin_needs_no_request_context(monkeypatch):
+    monkeypatch.setattr("datus.tools.policy_runtime.collect_plugin_policy_runtime_factories", lambda _: {})
+    assert not PolicyRuntime(config()).requires_request_context()
+
+
+@pytest.mark.parametrize("answer", [None, "yes", 1, {}])
+def test_invalid_plugin_context_requirements_fail_closed(monkeypatch, answer):
+    fake = FakeRuntime()
+    fake.requires_request_context = lambda: answer
+    runtime = runtime_with(fake, monkeypatch)
+    with pytest.raises(DatusException, match="Invalid policy context requirement"):
+        runtime.requires_request_context()
+
+
+def test_empty_legacy_metric_provider_needs_no_connection(monkeypatch):
+    legacy = SimpleNamespace(policies=[], before_metric_read=lambda **kwargs: None)
+    runtime = runtime_with(legacy, monkeypatch)
+    assert not runtime.requires_bound_read({})
+    assert runtime.bind_read(connector=None, datasource="warehouse", policy_context={}) is None
+
+
+@pytest.mark.parametrize("sql", ["SHOW TABLES", "DESCRIBE main.orders"])
+def test_only_plain_metadata_inspection_can_bypass_source_rewrite(sql):
+    from datus.tools.policy_runtime import _plain_metadata_read
+
+    assert _plain_metadata_read(sql, "duckdb")
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DESCRIBE SELECT * FROM orders",
+        "PRAGMA storage_info('orders')",
+        "SHOW TABLES; SELECT * FROM orders",
+        "EXPLAIN ANALYZE SELECT * FROM orders",
+    ],
+)
+def test_query_bodies_cannot_bypass_rewrite_as_metadata(sql):
+    from datus.tools.policy_runtime import _plain_metadata_read
+
+    assert not _plain_metadata_read(sql, "duckdb")
 
 
 def test_runtime_chains_sql_and_result_hooks(monkeypatch):
@@ -156,6 +392,40 @@ def connector():
     return value
 
 
+@pytest.mark.parametrize("allowed", [False, True])
+def test_db_read_cannot_skip_a_batch_only_policy(monkeypatch, allowed):
+    import pyarrow as pa
+
+    received = []
+
+    def hook(table, **kwargs):
+        received.append(table.to_pylist())
+        return SimpleNamespace(
+            allowed=allowed,
+            result=table.set_column(0, "email", pa.array(["masked"] * table.num_rows)),
+            reason="Batch policy denied read",
+            applied_policies=["mask"],
+        )
+
+    monkeypatch.setattr(
+        "datus.tools.policy_runtime.collect_plugin_policy_runtime_factories",
+        lambda active: {"sql-policy": lambda profile: SimpleNamespace(after_read_batch=hook)},
+    )
+    db = connector()
+    db.execute_query.return_value = SimpleNamespace(
+        success=True, sql_return=pa.table({"email": ["a@example.com"]}), error=None, result_format="arrow"
+    )
+    result = make_db_tool(db, config()).execute_read_enforced("SELECT * FROM orders", db)
+    assert received == [[{"email": "a@example.com"}]]
+    if allowed:
+        assert result.success is True
+        assert result.sql_return == [{"email": "masked"}]
+    else:
+        assert result.success is False
+        assert result.error == "Batch policy denied read"
+        assert result.sql_return is None
+
+
 def test_db_read_applies_before_and_after_hooks(monkeypatch):
     fake = FakeRuntime(sql="SELECT * FROM orders WHERE store_id = 1", result=[{"email": "***"}])
     monkeypatch.setattr(
@@ -169,6 +439,32 @@ def test_db_read_applies_before_and_after_hooks(monkeypatch):
     assert db.execute_query.call_args.args[0] == "SELECT * FROM orders WHERE store_id = 1"
     assert result.sql_return == [{"email": "***"}]
     assert fake.contexts[-1] == cfg.policy_context
+
+
+@pytest.mark.parametrize("level", [logging.DEBUG, logging.INFO])
+def test_sql_debug_logs_match_the_statement_sent_to_the_connector(monkeypatch, caplog, level):
+    original = "SELECT * FROM orders"
+    rewritten = "SELECT * FROM orders WHERE store_id = 1"
+    fake = FakeRuntime(sql=rewritten)
+    monkeypatch.setattr(
+        "datus.tools.policy_runtime.collect_plugin_policy_runtime_factories",
+        lambda active: {"sql-policy": lambda profile: fake},
+    )
+    cfg = config({"row_filter": {"access_mode": "scoped", "store_ids": [1]}, "private_marker": "not-for-logs"})
+    db = connector()
+    with caplog.at_level(level):
+        result = make_db_tool(db, cfg).execute_read_enforced(original, db, datasource="warehouse")
+    assert result.success is True
+    db.execute_query.assert_called_once_with(rewritten, result_format="list")
+    messages = [record.getMessage() for record in caplog.records]
+    sql_logs = [message for message in messages if "sql.policy.rewrite" in message or "sql.execute" in message]
+    if level == logging.INFO:
+        assert sql_logs == []
+    else:
+        assert len(sql_logs) == 2
+        assert original in sql_logs[0] and rewritten in sql_logs[0]
+        assert rewritten in sql_logs[1]
+        assert "not-for-logs" not in "\n".join(sql_logs)
 
 
 def test_db_policy_denial_does_not_execute(monkeypatch):

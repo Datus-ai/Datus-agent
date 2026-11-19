@@ -9,8 +9,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from agents import FunctionTool
 
+from datus.tools.func_tool.semantic_model_editing_tools import SemanticModelEditingTools
 from datus.tools.proxy.proxy_tool import (
     _FS_DEPENDENT_NODES,
     _matches,
@@ -20,6 +20,7 @@ from datus.tools.proxy.proxy_tool import (
 )
 from datus.tools.proxy.tool_result_channel import ToolResultChannel
 from datus.tools.registry.tool_registry import ToolRegistry
+from tests.helpers.tool_definitions import registered_test_tool
 
 # ---------------------------------------------------------------------------
 # Tests: _parse_patterns
@@ -102,7 +103,7 @@ class TestCreateProxyTool:
     @pytest.mark.asyncio
     async def test_proxy_tool_waits_for_channel(self):
         channel = ToolResultChannel()
-        original = FunctionTool(
+        original = registered_test_tool(
             name="test_tool",
             description="A test tool",
             params_json_schema={"type": "object", "properties": {}},
@@ -130,7 +131,7 @@ class TestCreateProxyTool:
         """A client that never reports must time out into a failure result."""
         monkeypatch.setattr("datus.tools.proxy.proxy_tool.DEFAULT_RESULT_TIMEOUT", 0.01)
         channel = ToolResultChannel()
-        original = FunctionTool(
+        original = registered_test_tool(
             name="write_file",
             description="A test tool",
             params_json_schema={"type": "object", "properties": {}},
@@ -165,7 +166,7 @@ class TestCreateProxyTool:
     async def test_proxy_tool_returns_error_on_channel_cancel(self):
         """Verify that RuntimeError from channel.cancel_all is caught and returns error dict."""
         channel = ToolResultChannel()
-        original = FunctionTool(
+        original = registered_test_tool(
             name="test_tool",
             description="A test tool",
             params_json_schema={"type": "object", "properties": {}},
@@ -190,7 +191,7 @@ class TestCreateProxyTool:
     @pytest.mark.asyncio
     async def test_proxy_tool_uses_tool_call_id(self):
         channel = ToolResultChannel()
-        original = FunctionTool(
+        original = registered_test_tool(
             name="tool",
             description="Tool",
             params_json_schema={"type": "object"},
@@ -211,7 +212,7 @@ class TestCreateProxyTool:
 
     def test_proxy_tool_preserves_strict_json_schema(self) -> None:
         channel = ToolResultChannel()
-        original = FunctionTool(
+        original = registered_test_tool(
             name="tool",
             description="Tool",
             params_json_schema={"type": "object"},
@@ -233,10 +234,39 @@ class TestCreateProxyTool:
 class TestApplyProxyToolsWithExplicitChannel:
     """Tests for apply_proxy_tools with the optional channel parameter."""
 
+    @pytest.mark.asyncio
+    async def test_partial_refresh_preserves_existing_tools_and_proxy_membership(self):
+        async def local_invoke(ctx, args):
+            raise AssertionError("Newly proxied tools must run on the client")
+
+        read_file, execute_sql, search_metrics = [
+            registered_test_tool(
+                name=name,
+                description=name,
+                params_json_schema={"type": "object"},
+                on_invoke_tool=local_invoke,
+            )
+            for name in ("read_file", "execute_sql", "search_metrics")
+        ]
+        channel = ToolResultChannel()
+        node = SimpleNamespace(tools=[read_file, execute_sql], tool_channel=channel, tool_registry=ToolRegistry())
+        apply_proxy_tools(node, ["read_file"])
+        existing_read = node.tools[0]
+        node.tools.append(search_metrics)
+        apply_proxy_tools(node, ["*"], only_tool_names={"search_metrics"})
+
+        assert node.tools[0] is existing_read
+        assert node.tools[1] is execute_sql
+        assert node.proxied_tool_names == {"read_file", "search_metrics"}
+        client_result = {"success": 1, "result": ["net"]}
+        await channel.publish("new-context", client_result)
+        result = await node.tools[2].on_invoke_tool(SimpleNamespace(tool_call_id="new-context"), "{}")
+        assert result == client_result
+
     def test_uses_explicit_channel(self):
         """When channel is passed, proxy tools use that channel instead of node.tool_channel."""
         original_invoke = MagicMock()
-        tool_a = FunctionTool(
+        tool_a = registered_test_tool(
             name="read_file",
             description="Read a file",
             params_json_schema={"type": "object"},
@@ -260,10 +290,11 @@ class TestApplyProxyToolsWithExplicitChannel:
 
     @pytest.mark.asyncio
     async def test_nested_web_proxies_receive_results_from_the_root_channel(self):
+        """Route nested web proxy results through the root session channel."""
         root_channel = ToolResultChannel()
         parent_channel = root_channel
         for _ in range(3):
-            tool = FunctionTool(
+            tool = registered_test_tool(
                 name="write_file",
                 description="Write a file",
                 params_json_schema={"type": "object"},
@@ -289,7 +320,7 @@ class TestApplyProxyToolsWithExplicitChannel:
     async def test_proxy_tool_receives_from_explicit_channel(self):
         """Proxy tool created with explicit channel can receive results from it."""
         original_invoke = MagicMock()
-        tool_a = FunctionTool(
+        tool_a = registered_test_tool(
             name="read_file",
             description="Read a file",
             params_json_schema={"type": "object"},
@@ -323,7 +354,7 @@ class TestApplyProxyToolsWithExplicitChannel:
     def test_none_channel_falls_back_to_node_channel(self):
         """When channel=None, proxy tools use node.tool_channel (backward compatible)."""
         original_invoke = MagicMock()
-        tool_a = FunctionTool(
+        tool_a = registered_test_tool(
             name="read_file",
             description="Read a file",
             params_json_schema={"type": "object"},
@@ -360,13 +391,13 @@ class TestApplyProxyToolsWithExplicitChannel:
 class TestApplyProxyTools:
     def test_replaces_matching_tools(self):
         original_invoke = MagicMock()
-        tool_a = FunctionTool(
+        tool_a = registered_test_tool(
             name="read_file",
             description="Read a file",
             params_json_schema={"type": "object"},
             on_invoke_tool=original_invoke,
         )
-        tool_b = FunctionTool(
+        tool_b = registered_test_tool(
             name="execute_sql",
             description="Execute SQL",
             params_json_schema={"type": "object"},
@@ -396,7 +427,7 @@ class TestApplyProxyTools:
         original_invoke = MagicMock()
 
         def _fs_tool(name):
-            return FunctionTool(
+            return registered_test_tool(
                 name=name,
                 description=name,
                 params_json_schema={"type": "object"},
@@ -432,7 +463,7 @@ class TestApplyProxyTools:
         non_func_tool = MagicMock(spec=["name"])
         non_func_tool.name = "mcp_tool"
 
-        func_tool = FunctionTool(
+        func_tool = registered_test_tool(
             name="read_file",
             description="Read",
             params_json_schema={"type": "object"},
@@ -466,13 +497,13 @@ class TestFsDependentNodeExclusion:
     def test_filesystem_tools_not_proxied_on_fs_dependent_node(self, node_name):
         """filesystem_tools category tools are NOT proxied on fs-dependent nodes."""
         original_invoke = MagicMock()
-        write_file = FunctionTool(
+        write_file = registered_test_tool(
             name="write_file",
             description="Write a file",
             params_json_schema={"type": "object"},
             on_invoke_tool=original_invoke,
         )
-        read_file = FunctionTool(
+        read_file = registered_test_tool(
             name="read_file",
             description="Read a file",
             params_json_schema={"type": "object"},
@@ -497,13 +528,13 @@ class TestFsDependentNodeExclusion:
     def test_non_filesystem_tools_still_proxied_on_fs_dependent_node(self, node_name):
         """Non-filesystem tools are still proxied on fs-dependent nodes."""
         original_invoke = MagicMock()
-        write_file = FunctionTool(
+        write_file = registered_test_tool(
             name="write_file",
             description="Write a file",
             params_json_schema={"type": "object"},
             on_invoke_tool=original_invoke,
         )
-        execute_sql = FunctionTool(
+        execute_sql = registered_test_tool(
             name="execute_sql",
             description="Execute SQL",
             params_json_schema={"type": "object"},
@@ -528,7 +559,7 @@ class TestFsDependentNodeExclusion:
     def test_filesystem_tools_proxied_on_non_fs_dependent_node(self):
         """On non-fs-dependent nodes, filesystem_tools are proxied normally (regression)."""
         original_invoke = MagicMock()
-        write_file = FunctionTool(
+        write_file = registered_test_tool(
             name="write_file",
             description="Write a file",
             params_json_schema={"type": "object"},
@@ -551,7 +582,7 @@ class TestFsDependentNodeExclusion:
     def test_node_without_get_node_name_proxied_normally(self):
         """Nodes without get_node_name method have all tools proxied normally."""
         original_invoke = MagicMock()
-        write_file = FunctionTool(
+        write_file = registered_test_tool(
             name="write_file",
             description="Write a file",
             params_json_schema={"type": "object"},
@@ -596,13 +627,13 @@ class TestProxiedToolNames:
 
     def test_records_wrapped_tool_names(self):
         original_invoke = MagicMock()
-        read_file = FunctionTool(
+        read_file = registered_test_tool(
             name="read_file",
             description="Read",
             params_json_schema={"type": "object"},
             on_invoke_tool=original_invoke,
         )
-        execute_sql = FunctionTool(
+        execute_sql = registered_test_tool(
             name="execute_sql",
             description="SQL",
             params_json_schema={"type": "object"},
@@ -621,13 +652,13 @@ class TestProxiedToolNames:
 
     def test_excludes_fs_dependent_skipped_tools(self):
         original_invoke = MagicMock()
-        write_file = FunctionTool(
+        write_file = registered_test_tool(
             name="write_file",
             description="Write",
             params_json_schema={"type": "object"},
             on_invoke_tool=original_invoke,
         )
-        execute_sql = FunctionTool(
+        execute_sql = registered_test_tool(
             name="execute_sql",
             description="SQL",
             params_json_schema={"type": "object"},
@@ -649,7 +680,7 @@ class TestProxiedToolNames:
     def test_excludes_non_function_tools(self):
         non_func_tool = MagicMock(spec=["name"])
         non_func_tool.name = "mcp_tool"
-        read_file = FunctionTool(
+        read_file = registered_test_tool(
             name="read_file",
             description="Read",
             params_json_schema={"type": "object"},
@@ -668,13 +699,13 @@ class TestProxiedToolNames:
 
     def test_subsequent_calls_overwrite(self):
         original_invoke = MagicMock()
-        read_file = FunctionTool(
+        read_file = registered_test_tool(
             name="read_file",
             description="Read",
             params_json_schema={"type": "object"},
             on_invoke_tool=original_invoke,
         )
-        execute_sql = FunctionTool(
+        execute_sql = registered_test_tool(
             name="execute_sql",
             description="SQL",
             params_json_schema={"type": "object"},
@@ -698,7 +729,7 @@ class TestProxiedToolNames:
         place so PermissionHooks built earlier still observes the latest names.
         """
         original_invoke = MagicMock()
-        read_file = FunctionTool(
+        read_file = registered_test_tool(
             name="read_file",
             description="Read",
             params_json_schema={"type": "object"},
@@ -716,3 +747,21 @@ class TestProxiedToolNames:
 
         assert node.proxied_tool_names is held_reference
         assert held_reference == {"read_file"}
+
+
+def test_semantic_editors_keep_server_state_when_proxy_patterns_match(tmp_path):
+    """Object edits share local target revisions and must not be sent to the client."""
+    from datus.tools.func_tool.semantic_model_filesystem_tools import SemanticModelFilesystemTools
+
+    tools = SemanticModelEditingTools(SemanticModelFilesystemTools(root_path=str(tmp_path)).workspace).available_tools()
+    registry = ToolRegistry()
+    registry.register_tools("semantic_tools", tools)
+    node = SimpleNamespace(
+        tools=list(tools),
+        tool_channel=ToolResultChannel(),
+        tool_registry=registry,
+        get_node_name=lambda: "semantic_modeling",
+    )
+    apply_proxy_tools(node, ["semantic_tools.*"])
+    assert node.proxied_tool_names == set()
+    assert all(before is after for before, after in zip(tools, node.tools))
