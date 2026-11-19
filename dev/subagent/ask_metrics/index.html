@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/subagent/ask_metrics/">
       
       
         <link rel="prev" href="../semantic_modeling/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/subagent/ask_metrics/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/subagent/ask_metrics/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/subagent/ask_metrics/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/subagent/ask_metrics/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -5201,7 +5195,7 @@
 <li><code>get_dataset</code> is called for every dataset a query reads. Dataset and field descriptions hold conventions every query on it follows, such as a snapshot's version day or what a code value means.</li>
 <li>Grouping and filtering names are <code>dataset.field</code>, with the field name <code>get_dataset</code> shows.</li>
 <li><code>query_metrics</code> is the primary tool for metric values.</li>
-<li><code>attribution_analyze</code> is used for change explanation and contribution questions.</li>
+<li>Change explanation and contribution questions use <code>attribute_metrics</code> to split a change over the inputs of the metric's formula, and <code>attribute_dimensions</code> to split it over the groups of one or more dimensions (one call per dimension to compare dimensions; several dimensions in one call drill down in order).</li>
 <li>Raw SQL tools are not part of the default AskMetrics surface.</li>
 </ul>
 <h2 id="default-tools">Default Tools<a class="headerlink" href="#default-tools" title="Permanent link">&para;</a></h2>
@@ -5238,8 +5232,12 @@
 <td>Query metric values</td>
 </tr>
 <tr>
-<td><code>semantic_tools.attribution_analyze</code></td>
-<td>Explain metric movement across candidate dimensions</td>
+<td><code>semantic_tools.attribute_metrics</code></td>
+<td>Explain a metric's change through its formula: how much each input contributed</td>
+</tr>
+<tr>
+<td><code>semantic_tools.attribute_dimensions</code></td>
+<td>Explain a metric's change by the groups of its dimensions: how much each group contributed</td>
 </tr>
 <tr>
 <td><code>filesystem_tools.read_file</code></td>

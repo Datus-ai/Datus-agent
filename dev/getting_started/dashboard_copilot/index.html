@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/getting_started/dashboard_copilot/">
       
       
         <link rel="prev" href="../data_engineering_quickstart/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/getting_started/dashboard_copilot/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/getting_started/dashboard_copilot/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/getting_started/dashboard_copilot/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/getting_started/dashboard_copilot/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -5943,11 +5937,12 @@
 <p>An attribution report should include:</p>
 <ul>
 <li>the overall population change;</li>
-<li>regional and country-level contributors;</li>
-<li>dimension-level contribution or importance;</li>
+<li>the regions that contributed most, and the countries the tool lists under them;</li>
+<li>each contributor's share of the change;</li>
 <li>the strongest drivers and relevant caveats;</li>
 <li>a conclusion grounded in metric query results.</li>
 </ul>
+<p>A region-then-country split lists at most <code>top_groups</code> groups across both levels, picked by the size of their effect, and shows each country under its region. A region can therefore appear with its country count and no countries named. To see more countries, ask for a larger <code>top_groups</code> (up to 200) rather than a separate call filtered to one region.</p>
 <p>An abbreviated example:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a>World Population Growth: 2003 vs 2013
 </span><span id="__span-30-2"><a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>
