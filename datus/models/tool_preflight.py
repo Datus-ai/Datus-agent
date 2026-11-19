@@ -8,7 +8,7 @@ import json
 from copy import copy
 from typing import Any
 
-from agents import Agent, FunctionTool
+from agents import Agent, FunctionTool, RunContextWrapper, Tool
 from agents.tool_guardrails import ToolGuardrailFunctionOutput, ToolInputGuardrail, ToolInputGuardrailData
 from agents.tracing import get_current_span
 
@@ -36,12 +36,16 @@ async def tool_rejection(hooks: Any, context: Any, agent: Any, tool: Any) -> dic
 class ToolPreflightAgent(Agent):
     """Check the final SDK tool list, including dynamically discovered MCP tools."""
 
-    async def get_all_tools(self, run_context):
-        tools = await super().get_all_tools(run_context)
-        return [self._with_preflight(tool) if isinstance(tool, FunctionTool) else tool for tool in tools]
+    async def get_all_tools(self, run_context: RunContextWrapper[Any]) -> list[Tool]:
+        # The SDK matches discovered tools against agent.tools by identity when rechecking is_enabled.
+        self.tools = [self._with_preflight(tool) for tool in self.tools]
+        return [self._with_preflight(tool) for tool in await super().get_all_tools(run_context)]
 
     @staticmethod
-    def _with_preflight(tool: FunctionTool) -> FunctionTool:
+    def _with_preflight(tool: Tool) -> Tool:
+        if not isinstance(tool, FunctionTool) or getattr(tool, "_datus_preflight_guarded", False) is True:
+            return tool
+
         async def check(data: ToolInputGuardrailData) -> ToolGuardrailFunctionOutput:
             rejection = await tool_rejection(data.agent.hooks, data.context, data.agent, tool)
             if rejection is None:
@@ -55,4 +59,5 @@ class ToolPreflightAgent(Agent):
 
         guarded = copy(tool)
         guarded.tool_input_guardrails = [*(tool.tool_input_guardrails or []), ToolInputGuardrail(check)]
+        guarded._datus_preflight_guarded = True
         return guarded

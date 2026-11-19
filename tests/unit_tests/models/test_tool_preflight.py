@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from agents import RunConfig, Runner, function_tool
+from agents.exceptions import ModelBehaviorError
 from agents.mcp import MCPServerStdio
 from mcp.types import Tool
 
@@ -39,6 +40,49 @@ def _model_results(model, index):
     return {
         item["call_id"]: item["output"] for item in model.inputs[index] if item.get("type") == "function_call_output"
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("remains_enabled", [False, True], ids=["disabled-after-discovery", "still-enabled"])
+async def test_sdk_rechecks_configured_tool_before_execution(scripted_agents_model, remains_enabled):
+    enabled = True
+    executions = []
+
+    def is_enabled(context, agent):
+        return enabled
+
+    async def on_llm_end(context, agent, response):
+        nonlocal enabled
+        enabled = remains_enabled
+
+    @function_tool(is_enabled=is_enabled)
+    def probe_tool() -> str:
+        executions.append("read")
+        return "result"
+
+    original_guardrails = probe_tool.tool_input_guardrails
+    hooks = SimpleNamespace(on_llm_end=on_llm_end, on_tool_start=AsyncMock())
+    script = ("tool", "tool", "final") if remains_enabled else ("tool", "final")
+    model = scripted_agents_model(script=script)
+    run, events = _start_run(model, [probe_tool], hooks)
+
+    async def consume():
+        async with asyncio.timeout(5):
+            async for _ in events:
+                pass
+
+    if remains_enabled:
+        await consume()
+        assert run.final_output == "done"
+        assert executions == ["read", "read"]
+        assert hooks.on_tool_start.await_count == 2
+    else:
+        with pytest.raises(ModelBehaviorError, match="Tool probe_tool is currently disabled"):
+            await consume()
+        assert executions == []
+        hooks.on_tool_start.assert_not_awaited()
+        assert len(model.inputs) == 1
+    assert probe_tool.tool_input_guardrails is original_guardrails
 
 
 @pytest.mark.asyncio
