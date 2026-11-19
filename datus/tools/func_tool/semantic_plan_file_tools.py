@@ -18,7 +18,14 @@ from threading import RLock
 from typing import TYPE_CHECKING, Any
 from uuid import NAMESPACE_URL, uuid5
 
-from datus.storage.semantic_model.artifact_file import atomic_write_text, path_mutation_lock
+from datus.storage.semantic_model.artifact_file import (
+    atomic_write_text,
+    ontology_bundle_lock,
+    ontology_dir_for_model,
+    path_mutation_lock,
+    semantic_artifact_lock,
+    semantic_model_load_lock,
+)
 from datus.tools.func_tool.base import FuncToolResult, tool_schema
 from datus.tools.registry.contracts import tool_contract
 from datus.tools.semantic_tools.exceptions import SemanticCoreException
@@ -304,7 +311,9 @@ def _repair_model_inventory(model_text: bytes, model_name: str, model_file: str)
     """Keep readable declarations visible when the selected model needs repair."""
     import yaml
 
+    from datus.agent.node.semantic_authoring import _is_query_backed_dataset
     from datus.tools.semantic_tools.dosi.model import datus_payload
+    from datus.utils.sql_utils import strip_sql_comments
 
     try:
         document = yaml.safe_load(model_text)
@@ -344,7 +353,17 @@ def _repair_model_inventory(model_text: bytes, model_name: str, model_file: str)
     for dataset in datasets:
         entry = {"name": dataset["name"], "action": "reuse"}
         source = dataset.get("source")
-        if isinstance(source, str) and source.strip() and "source_sql" not in dataset:
+        extensions = dataset.get("custom_extensions")
+        if (
+            "source_sql" in dataset
+            or (isinstance(extensions, (list, dict)) and _is_query_backed_dataset(dataset))
+            or (
+                isinstance(source, str)
+                and re.match(r"\s*(?:\(\s*)*(?:select|with)\s", strip_sql_comments(source), re.IGNORECASE)
+            )
+        ):
+            entry["source_kind"] = "query"
+        elif isinstance(source, str) and source.strip():
             entry.update(source_kind="physical", source=source)
         readable_datasets.append(entry)
 
@@ -511,7 +530,11 @@ def _merge_plan_graph(baseline: dict, proposal: dict) -> dict:
                 raise ValueError(f"Cannot {action} a missing relationship: {edge['name']}")
             if action == "delete":
                 edges.pop(edge_id, None)
-            elif action != "reuse":
+            elif action == "reuse":
+                existing = edges.get(edge_id, edge)
+                if existing["source"] in deleted or existing["target"] in deleted:
+                    raise ValueError(f"Relationship {edge['name']} refers to a dataset planned for deletion")
+            else:
                 previous = edges.get(edge_id)
                 if previous and (edge["source"], edge["target"]) == (previous["source"], previous["target"]):
                     edge = {**edge, "detail": {**previous["detail"], **edge["detail"]}}
@@ -838,6 +861,15 @@ class SemanticPlanFileTools:
                                 success=0, error="Semantic plan path must stay inside the project workspace"
                             )
                         locks.enter_context(_plan_mutation_lock(model_lock))
+                    elif prepared.model_path.parent.is_dir():
+                        locks.enter_context(semantic_artifact_lock(prepared.model_path, load_before_lock=False))
+                    else:
+                        # The project lock also covers the first managed model write without
+                        # creating the model directory just to publish a plan.
+                        locks.enter_context(
+                            ontology_bundle_lock(ontology_dir_for_model(prepared.model_path), create=True)
+                        )
+                        locks.enter_context(semantic_model_load_lock(prepared.model_path))
                     locks.enter_context(_plan_mutation_lock(target))
                     if prepared.model_path is None:
                         accepted_id = self._existing_plan_id(prepared.model_name)

@@ -367,20 +367,23 @@ def test_concurrent_proposals_in_the_same_chat_reject_an_outdated_plan(tmp_path)
 def test_legacy_plan_does_not_become_the_chat_plan(tmp_path):
     from uuid import uuid4
 
-    writer = plan_writer(tmp_path)
-    prepared = writer.prepare("sales", {"summary": "existing"})
+    legacy = SemanticPlanFileTools(tmp_path).prepare("sales", {"summary": "existing"})
     legacy_id = uuid4().hex
     legacy_path = tmp_path / ".datus/semantic-model-plans" / legacy_id / "semantic-model-plan.json"
-    graph = json.loads(prepared.new_text)
+    graph = json.loads(legacy.new_text)
     graph["plan"]["id"] = legacy_id
+    before = json.dumps(graph)
     legacy_path.parent.mkdir(parents=True)
-    legacy_path.write_text(json.dumps(graph))
-    updated = plan_writer(tmp_path).prepare("sales", {"summary": "feedback"})
-    assert updated.path == prepared.path
+    legacy_path.write_text(before)
+
+    writer = plan_writer(tmp_path)
+    updated = writer.prepare("sales", {"summary": "feedback"})
+
+    assert tmp_path / updated.path != legacy_path
     assert updated.old_text is None
     assert updated.revision == 1
     assert writer.commit(updated).success == 1
-    assert json.loads(legacy_path.read_text()) == graph
+    assert legacy_path.read_text() == before
 
 
 def test_different_chats_and_model_files_have_independent_plans(tmp_path):
@@ -438,6 +441,27 @@ def test_explicit_delete_and_stale_model_review(tmp_path, existing_sales):
     assert result.success == 0
     assert "semantic model changed during review" in result.error
     assert not (tmp_path / delete.path).exists()
+
+
+def test_commit_holds_shared_model_lock_until_publication(tmp_path, existing_sales, monkeypatch):
+    from datus.storage.semantic_model.artifact_file import atomic_write_text, model_lock_held
+    from datus.tools.func_tool import semantic_plan_file_tools
+
+    writer = plan_writer(tmp_path, model_path=existing_sales)
+    prepared = writer.prepare("sales", {"summary": "Publish the reviewed plan"})
+    locks_during_publication = []
+
+    def observe_publication(target, content):
+        locks_during_publication.append(model_lock_held(existing_sales))
+        atomic_write_text(target, content)
+
+    monkeypatch.setattr(semantic_plan_file_tools, "atomic_write_text", observe_publication)
+    result = writer.commit(prepared)
+
+    assert result.success == 1
+    assert locks_during_publication == [True]
+    assert (tmp_path / prepared.path).read_text() == prepared.new_text
+    assert existing_sales.read_text() == SALES_YAML
 
 
 @pytest.mark.parametrize(
@@ -606,6 +630,32 @@ def test_rejects_mismatched_join_columns(tmp_path, name, action):
     assert f"Relationship {name} requires matching lengths for from_fields and to_fields" in result.error
 
 
+@pytest.mark.parametrize("to_dataset", ["aircraft", "carriers"])
+def test_rejects_reusing_a_join_whose_existing_endpoint_is_deleted(tmp_path, to_dataset):
+    model = tmp_path / "aviation.yaml"
+    model.write_bytes((MODELS / "aviation/aviation.yaml").read_bytes())
+    writer = plan_writer(tmp_path, "aviation", model_path=model)
+
+    result = writer.write_semantic_model_plan_file(
+        "aviation",
+        {
+            "datasets": [{"name": "aircraft", "action": "delete"}],
+            "relationships": [
+                {
+                    "name": "flights_operated_by",
+                    "from_dataset": "flights",
+                    "to_dataset": to_dataset,
+                    "action": "reuse",
+                }
+            ],
+        },
+    )
+
+    assert result.success == 0
+    assert "Relationship flights_operated_by refers to a dataset planned for deletion" in result.error
+    assert not list(tmp_path.rglob("semantic-model-plan.json"))
+
+
 def test_explicit_repair_uses_readable_baseline_instead_of_requiring_compilation(real_agent_config):
     from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetTools
 
@@ -614,7 +664,24 @@ def test_explicit_repair_uses_readable_baseline_instead_of_requiring_compilation
     model_dir.mkdir(parents=True, exist_ok=True)
     existing = model_dir / "sales.yaml"
     broken = SALES_YAML.replace("    source: main.orders\n", "").replace(
-        "\nmetrics:", "\n  - name: refunds\n    source: main.refunds\nmetrics:"
+        "\nmetrics:",
+        """
+  - name: refunds
+    source: main.refunds
+  - name: from_select
+    source: /* fixture */ SELECT 1 AS select_marker
+    fields:
+      - name: select_marker
+        expression:
+          dialects: [{dialect: ANSI_SQL, expression: select_marker}]
+  - name: from_cte
+    source: (WITH sample AS (SELECT 2 AS cte_marker) SELECT cte_marker FROM sample)
+  - name: from_extension
+    source: VALUES (303)
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"source_type":"query"}'
+metrics:""",
     )
     existing.write_text(broken)
     targets = OsiSemanticModelTargetTools(real_agent_config)
@@ -637,7 +704,22 @@ def test_explicit_repair_uses_readable_baseline_instead_of_requiring_compilation
     assert _graph_nodes(new)["dataset:orders"]["detail"]["source"] == "main.orders"
     assert _graph_nodes(new)["metric:revenue"] == _graph_nodes(old)["metric:revenue"]
     assert "without compiled lineage" in new["plan"]["summary"]
+    old_nodes = _graph_nodes(old)
+    query_names = {"from_select", "from_cte", "from_extension"}
+    assert {node["name"] for node in old_nodes.values() if node["detail"].get("source_kind") == "query"} == query_names
+    assert old_nodes["dataset:from_select"]["detail"]["fields"] == [{"field": "select_marker"}]
+    assert {node["name"] for node in old_nodes.values() if node["kind"] == "physical_table"} == {"main.refunds"}
+    assert {node["name"] for node in _graph_nodes(new).values() if node["kind"] == "physical_table"} == {
+        "main.orders",
+        "main.refunds",
+    }
     assert writer.commit(prepared).success == 1
+    saved = (root / prepared.path).read_text()
+    assert all(
+        sql not in text
+        for text in (prepared.baseline_text, prepared.new_text, saved)
+        for sql in ("SELECT 1 AS select_marker", "WITH sample AS", "VALUES (303)")
+    )
     assert existing.read_text() == broken
 
 
