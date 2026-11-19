@@ -95,6 +95,20 @@ class Node(ABC):
                 is_subagent=is_subagent,
                 session_id=session_id,
             )
+        if node_type == NodeType.TYPE_CONFIGURABLE:
+            from datus.agent.node.configurable_agentic_node import ConfigurableAgenticNode
+
+            return ConfigurableAgenticNode(
+                node_id,
+                description,
+                node_type,
+                input_data,
+                agent_config,
+                node_name=node_name,
+                is_subagent=is_subagent,
+                session_id=session_id,
+                execution_mode=execution_mode,
+            )
         if node_type == NodeType.TYPE_SCHEMA_LINKING:
             return SchemaLinkingNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_EXECUTE_SQL:
@@ -521,6 +535,10 @@ class Node(ABC):
                     NodeType.TYPE_ANALYTICS_BUILDER,
                 }:
                     input_data = ChatNodeInput(**input_data)
+                elif node_dict["type"] == NodeType.TYPE_CONFIGURABLE:
+                    from datus.schemas.configurable_agentic_node_models import ConfigurableNodeInput
+
+                    input_data = ConfigurableNodeInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_SQL:
                     input_data = GenSQLNodeInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_ASK_METRICS:
@@ -554,6 +572,11 @@ class Node(ABC):
             node_type=node_dict["type"],
             input_data=input_data,
             agent_config=agent_config,
+            node_name=(
+                (node_dict.get("metadata") or {}).get("agent_name")
+                if node_dict["type"] == NodeType.TYPE_CONFIGURABLE
+                else None
+            ),
         )
 
         # Convert result data based on node type
@@ -569,6 +592,10 @@ class Node(ABC):
                     result_data = OutputResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_CHAT:
                     result_data = ChatNodeResult(**result_data)
+                elif node_dict["type"] == NodeType.TYPE_CONFIGURABLE:
+                    from datus.schemas.configurable_agentic_node_models import ConfigurableNodeResult
+
+                    result_data = ConfigurableNodeResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_SQL:
                     result_data = GenSQLNodeResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_ASK_METRICS:

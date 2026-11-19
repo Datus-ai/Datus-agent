@@ -138,3 +138,86 @@ def test_windows_locks_the_first_byte_and_keeps_the_file(tmp_path, monkeypatch):
     assert calls == [(msvcrt.LK_LOCK, 1), (msvcrt.LK_UNLCK, 1)]
     # msvcrt locks a byte range, so an empty file gets one byte to lock; the file stays.
     assert lock_path.read_bytes() == b"\0"
+
+
+def test_bundle_reader_lock_does_not_modify_project_files(tmp_path):
+    import os
+
+    import pytest
+
+    from datus.storage.semantic_model.artifact_file import ontology_bundle_lock
+
+    if os.name != "posix":
+        pytest.skip("Directory flock is a POSIX contract")
+    subject = tmp_path / "subject"
+    subject.mkdir()
+    before = sorted(tmp_path.rglob("*"))
+    with ontology_bundle_lock(subject / "ontology"):
+        with ontology_bundle_lock(subject / "ontology"):
+            assert sorted(tmp_path.rglob("*")) == before
+    assert sorted(tmp_path.rglob("*")) == before
+
+
+@pytest.mark.parametrize("lock_explicit_ontology", [False, True])
+def test_bundle_publication_excludes_another_process_reader(tmp_path, lock_explicit_ontology):
+    import os
+    import select
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    import pytest
+
+    from datus.storage.semantic_model.artifact_file import ontology_bundle_lock
+
+    if os.name != "posix":
+        pytest.skip("Directory flock is a POSIX contract")
+    directory = tmp_path / "subject/ontology"
+    external = tmp_path / "external/ontology"
+    external.mkdir(parents=True)
+    model = tmp_path / "subject/semantic_models/warehouse/model.yaml"
+    writer = external if lock_explicit_ontology else directory
+    locked_parent = external.parent if lock_explicit_ontology else tmp_path
+    script = """
+import fcntl
+import os
+import sys
+
+from datus.storage.semantic_model.artifact_file import semantic_bundle_read_lock
+
+project_inode = os.stat(sys.argv[1]).st_ino
+flock = fcntl.flock
+
+def confirm_contention(fd, operation):
+    if operation == fcntl.LOCK_SH and os.fstat(fd).st_ino == project_inode:
+        try:
+            flock(fd, operation | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print('blocked', flush=True)
+        else:
+            print('crossed publication lock', flush=True)
+    flock(fd, operation)
+
+fcntl.flock = confirm_contention
+with semantic_bundle_read_lock(sys.argv[2], sys.argv[3]):
+    print('acquired', flush=True)
+"""
+    process = None
+    try:
+        with ontology_bundle_lock(writer, create=True):
+            process = subprocess.Popen(
+                [sys.executable, "-c", script, str(locked_parent), str(model), str(external)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[4])},
+            )
+            assert select.select([process.stdout], [], [], 10)[0], "Reader did not attempt the project lock"
+            assert process.stdout.readline().strip() == "blocked"
+        output, error = process.communicate(timeout=10)
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.communicate(timeout=5)
+    assert process.returncode == 0, error
+    assert output.strip() == "acquired"

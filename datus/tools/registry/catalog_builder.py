@@ -28,7 +28,9 @@ def _symbol(node: ast.AST) -> str:
     return ""
 
 
-def _imports(tree: ast.Module, module: str, is_package: bool) -> dict[str, str]:
+def _imports(
+    tree: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef, module: str, is_package: bool
+) -> dict[str, str]:
     """Resolve aliases for decorators, constructors and inherited tool classes."""
     names = {}
     package = module if is_package else module.rpartition(".")[0]
@@ -53,6 +55,35 @@ def _resolve(symbol: str, imports: dict[str, str], module: str = "") -> str:
     if first in imports:
         return imports[first] + (f".{rest}" if rest else "")
     return f"{module}.{symbol}" if module else symbol
+
+
+def _same_scope_imports(node: ast.AST):
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        yield node
+    elif not isinstance(node, (*FUNCTIONS, ast.ClassDef, ast.Lambda)):
+        for child in ast.iter_child_nodes(node):
+            yield from _same_scope_imports(child)
+
+
+def _scoped_calls(node: ast.AST, imports: dict[str, str], module: str, is_package: bool):
+    """Resolve imports in the function that owns each call."""
+    if isinstance(node, FUNCTIONS):
+        parameters = {arg.arg for arg in ast.iter_child_nodes(node.args) if isinstance(arg, ast.arg)}
+        local_imports = ast.Module(
+            body=[entry for statement in node.body for entry in _same_scope_imports(statement)], type_ignores=[]
+        )
+        body_imports = {
+            **{name: target for name, target in imports.items() if name not in parameters},
+            **_imports(local_imports, module, is_package),
+        }
+        body_statements = set(node.body)
+        for child in ast.iter_child_nodes(node):
+            yield from _scoped_calls(child, body_imports if child in body_statements else imports, module, is_package)
+        return
+    if isinstance(node, ast.Call):
+        yield node, _resolve(_symbol(node.func), imports)
+    for child in ast.iter_child_nodes(node):
+        yield from _scoped_calls(child, imports, module, is_package)
 
 
 def _decorator(method: ast.AST, name: str, imports: dict[str, str]) -> ast.Call | None:
@@ -324,6 +355,15 @@ def collect_contracts(package_root: Path) -> dict:
                 )
                 if not allowed:
                     errors.append(f"{path}:{call.lineno}: Use registered_function_tool or clone_registered_tool")
+
+        contracts_module = f"{package_root.name}.tools.registry.contracts"
+        if module != contracts_module and not module.startswith(f"{package_root.name}.plugins."):
+            runtime_helpers = {f"{contracts_module}.plugin_function_tool", f"{contracts_module}.plugin_tool_definition"}
+            for call, target in _scoped_calls(tree, imports, module, path.name == "__init__.py"):
+                if target in runtime_helpers:
+                    errors.append(
+                        f"{path}:{call.lineno}: Runtime metadata registration is restricted to the plugin boundary"
+                    )
 
     for tool_id, capability in tools.items():
         owner = capability["companion_of"]

@@ -6,10 +6,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Final, Iterable, List, Literal, Optional
-
-import yaml
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
@@ -18,16 +15,12 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory
 from datus.schemas.semantic_agentic_node_models import SemanticModelingNodeResult, SemanticNodeInput
 from datus.tools.func_tool.base import FuncToolResult
-from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
 _SUPPORTED_SEMANTIC_MODELING_STATUSES: Final[frozenset[str]] = frozenset({"generated", "skipped", "blocked"})
-_SEMANTIC_READ_ONLY_DB_TOOLS: Final[frozenset[str]] = frozenset(
-    {"list_databases", "list_schemas", "list_tables", "search_table", "describe_table", "execute_sql"}
-)
 _SEMANTIC_MODELING_RESULT_RETRY_PROMPT: Final[str] = """Your semantic model changes have been preserved.
 Return only one JSON object with this shape:
 {
@@ -91,7 +84,6 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
                 message_args={"your_value": authoring_scope, "field_name": "authoring_scope"},
             )
         self.authoring_scope = authoring_scope
-        self._existing_models_checked = False
         super().__init__(
             agent_config=agent_config,
             execution_mode=execution_mode,
@@ -101,93 +93,46 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         )
 
     def setup_tools(self):
-        """Compose the existing semantic-model and metric authoring surfaces."""
-        if not self.agent_config:
-            return
+        """Compose shared authoring capabilities and the node's interactive channel."""
+        from datus.agent.semantic_authoring_session import SemanticAuthoringSession
 
-        self.tools = []
-        self._setup_semantic_tools()
-        self._setup_osi_target_tools()
-        self._setup_db_tools(expose_tools=False)
-        if self.db_func_tool is not None:
-            self.tools.extend(
-                tool for tool in self.db_func_tool.available_tools() if tool.name in _SEMANTIC_READ_ONLY_DB_TOOLS
-            )
-        self._setup_generation_tools()
-        self._setup_filesystem_tools()
-        self._setup_semantic_plan_file_tool()
-        if self.authoring_scope == "full":
-            self._setup_semantic_verification_tools()
-        if self.execution_mode == "interactive":
-            self._setup_ask_user_tool()
-
-        logger.info("Setup %s tools for %s: %s", len(self.tools), self.NODE_NAME, [tool.name for tool in self.tools])
-
-    def _setup_semantic_verification_tools(self):
-        from datus.tools.func_tool.semantic_verification_tools import SemanticVerificationTools
-
-        self.semantic_verification_tools = SemanticVerificationTools(
-            self.db_func_tool,
-            self.semantic_tools,
-            self.generation_evidence,
-            lambda: self.osi_target_state.selected_path,
-        )
-        self.tools.extend(self.semantic_verification_tools.available_tools())
-
-    async def _before_stream(self, ctx: StreamRunContext) -> None:
-        await super()._before_stream(ctx)
-        self._existing_models_checked = False
-
-    def _setup_osi_target_tools(self) -> None:
-        """Expose existing-model inspection plus one planner/binder."""
-        from datus.tools.func_tool import OsiSemanticModelTargetTools, trans_to_function_tool
-
-        self.osi_target_tools = OsiSemanticModelTargetTools(
+        self.authoring_session = SemanticAuthoringSession(
             self.agent_config,
+            node_name=self.NODE_NAME,
+            authoring_scope=self.authoring_scope,
             target_state=self.osi_target_state,
             generation_evidence=self.generation_evidence,
         )
-        self.tools.extend(
-            [
-                trans_to_function_tool(self.list_existing_osi_semantic_models),
-                trans_to_function_tool(self.plan_osi_semantic_model_target),
-                trans_to_function_tool(self.bind_osi_semantic_model_target),
-            ]
+        self.authoring_session.setup(
+            filesystem_factory=self._make_filesystem_tool,
+            runtime_db_context=self._semantic_runtime_db_context,
+            filesystem_root=self._resolve_workspace_root(),
         )
+        for name in (
+            "osi_target_tools",
+            "db_func_tool",
+            "semantic_tools",
+            "generation_tools",
+            "filesystem_func_tool",
+            "semantic_model_workspace",
+            "semantic_model_editing_tools",
+            "semantic_plan_file_tool",
+            "semantic_verification_tools",
+        ):
+            setattr(self, name, getattr(self.authoring_session, name))
+        self.tools = self.authoring_session.available_tools()
+        if self.execution_mode == "interactive":
+            self._setup_ask_user_tool()
+        logger.info("Setup %s tools for %s: %s", len(self.tools), self.NODE_NAME, [tool.name for tool in self.tools])
+
+    async def _before_stream(self, ctx: StreamRunContext) -> None:
+        await super()._before_stream(ctx)
+        self.authoring_session.reset_completion()
 
     @tool_contract(access="read", direct_call=True, category="semantic_tools")
     def list_existing_osi_semantic_models(self) -> FuncToolResult:
         """Inspect existing models before selecting an authoring target."""
-        result = self.osi_target_tools.list_existing_osi_semantic_models()
-        if self._tool_succeeded(result):
-            self._existing_models_checked = True
-        return result
-
-    def _existing_models_check_required(self) -> Optional[FuncToolResult]:
-        if self._existing_models_checked:
-            return None
-        return FuncToolResult(
-            success=0,
-            error=(
-                "Inspect subject/semantic_models for the active datasource with "
-                "list_existing_osi_semantic_models before planning or binding a target."
-            ),
-            result={"code": "existing_semantic_models_check_required"},
-        )
-
-    def _target_already_selected(self) -> Optional[FuncToolResult]:
-        selected = self.osi_target_state.selected
-        if selected is None:
-            return None
-        return FuncToolResult(
-            success=0,
-            error=("A semantic-model target is already selected for this run. Continue authoring against that target."),
-            result={
-                "code": "semantic_model_target_already_selected",
-                "semantic_model_name": selected.get("semantic_model_name"),
-                "semantic_model_file": selected.get("semantic_model_file"),
-            },
-        )
+        return self.authoring_session.list_existing_osi_semantic_models()
 
     @tool_contract(access="restricted", direct_call=True, category="semantic_tools")
     def plan_osi_semantic_model_target(
@@ -207,13 +152,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             fact_tables: Physical fact tables needed by the requested outputs.
             dimension_tables: Physical dimension tables needed by the requested outputs.
         """
-        required = self._existing_models_check_required()
-        if required is not None:
-            return required
-        selected = self._target_already_selected()
-        if selected is not None:
-            return selected
-        return self.osi_target_tools.plan_osi_semantic_model_target(
+        return self.authoring_session.plan_osi_semantic_model_target(
             semantic_model_name=semantic_model_name,
             business_domain=business_domain,
             fact_tables=fact_tables,
@@ -232,69 +171,9 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             semantic_model_file: Exact existing model path. Supply this or semantic_model_name.
             semantic_model_name: Exact existing name; when both selectors are supplied they must agree.
         """
-        required = self._existing_models_check_required()
-        if required is not None:
-            return required
-        selected = self._target_already_selected()
-        if selected is not None:
-            return selected
-        return self.osi_target_tools.bind_osi_semantic_model_target(
-            semantic_model_file=semantic_model_file,
-            semantic_model_name=semantic_model_name,
+        return self.authoring_session.bind_osi_semantic_model_target(
+            semantic_model_file=semantic_model_file, semantic_model_name=semantic_model_name
         )
-
-    def _semantic_modeling_mutation_guard(self, path: str):
-        return self.osi_target_state.require_selected_path(path)
-
-    def _record_semantic_modeling_mutation(self, path=None) -> None:
-        self.generation_evidence.record_artifact_mutation(path)
-        self.osi_target_state.record_selected_write()
-
-    def _setup_filesystem_tools(self):
-        """Mount file and object tools against the same authoring workspace."""
-        from datus.tools.func_tool.semantic_model_editing_tools import SemanticModelEditingTools
-
-        try:
-            self.filesystem_func_tool = self._make_filesystem_tool(
-                mutation_guard=self._semantic_modeling_mutation_guard,
-                mutation_callback=self._record_semantic_modeling_mutation,
-            )
-            self.semantic_model_workspace = self.filesystem_func_tool.workspace
-            self.semantic_model_editing_tools = SemanticModelEditingTools(self.semantic_model_workspace)
-            filesystem_tools = [
-                tool
-                for tool in [
-                    *self.filesystem_func_tool.available_tools(),
-                    *self.semantic_model_editing_tools.available_tools(),
-                ]
-                if not (
-                    self.authoring_scope == "datasets" and tool.name in {"upsert_osi_metrics", "delete_osi_metrics"}
-                )
-            ]
-            self.tools.extend(filesystem_tools)
-        except Exception as exc:
-            logger.error("Failed to setup semantic-modeling filesystem tools: %s", exc)
-
-    def _setup_semantic_plan_file_tool(self) -> None:
-        """Expose plan persistence for optional planning workflows."""
-        from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
-
-        # Semantic models are authored under project_root even when a VS Code
-        # request renders "." as its prompt-side workspace hint.
-        self.semantic_plan_file_tool = SemanticPlanFileTools(self.agent_config.project_root)
-        self.tools.extend(self.semantic_plan_file_tool.available_tools())
-
-    def _setup_generation_tools(self):
-        """Prepare deterministic host-side validation and KB reconciliation."""
-        try:
-            self.generation_tools = GenerationTools(
-                self.agent_config,
-                generation_evidence=self.generation_evidence,
-                osi_target_state=self.osi_target_state,
-                require_bound_osi_target=True,
-            )
-        except Exception as exc:
-            logger.error("Failed to setup semantic-modeling generation tools: %s", exc)
 
     def _build_enhanced_message(
         self,
@@ -431,129 +310,16 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         )
 
     def _target_was_mutated(self) -> bool:
-        state = self.osi_target_state
-        return bool(
-            state.target_mutated
-            or state.touched_metric_names
-            or state.touched_dataset_names
-            or state.planned_dataset_names
-            or state.artifact_snapshot_path
-        )
-
-    @staticmethod
-    def _metric_definitions(content: bytes) -> list[Any]:
-        if not content:
-            return []
-        try:
-            document = yaml.safe_load(content.decode("utf-8"))
-        except (UnicodeDecodeError, yaml.YAMLError) as exc:
-            raise RuntimeError(f"Cannot inspect semantic-model metrics for scope enforcement: {exc}") from exc
-        models = [document] if isinstance(document, dict) and "datasets" in document else None
-        if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
-            return []
-        metrics = models[0].get("metrics") or []
-        return metrics if isinstance(metrics, list) else []
+        return self.authoring_session._target_was_mutated()
 
     def _enforce_authoring_scope(self) -> None:
         """Reject and roll back metric mutations made during a datasets-only run."""
-        if self.authoring_scope != "datasets":
-            return
-        state = self.osi_target_state
-        if not state.artifact_snapshot_path or state.artifact_snapshot_content is None:
-            return
-        target_path = state.artifact_snapshot_path
-        try:
-            current_content = Path(target_path).read_bytes()
-        except OSError as exc:
-            raise RuntimeError(f"Cannot inspect the selected semantic model for scope enforcement: {exc}") from exc
-        if self._metric_definitions(state.artifact_snapshot_content) == self._metric_definitions(current_content):
-            return
-        rolled_back = bool(self.semantic_model_workspace and self.semantic_model_workspace.rollback_failed_authoring())
-        rollback_suffix = " The semantic-model YAML was restored." if rolled_back else ""
-        raise RuntimeError(
-            "Datasets-only semantic_modeling cannot create, update, or delete metrics." + rollback_suffix
-        )
+        return self.authoring_session._enforce_authoring_scope()
 
     def _selected_osi_artifact(self) -> tuple[str, str, str]:
-        state = self.osi_target_state
-        selected = state.selected
-        if state.last_error_code:
-            raise RuntimeError("The semantic-model target remains unresolved after a failed selection.")
-        if selected is None:
-            raise RuntimeError("semantic_modeling must plan or bind one exact semantic-model target before completion.")
-
-        semantic_model_file = str(selected.get("semantic_model_file") or "").strip()
-        resolved = str(selected.get("absolute_path") or "").strip()
-        model_name = str(selected.get("semantic_model_name") or "").strip()
-        if not semantic_model_file or not resolved or not model_name:
-            raise RuntimeError("The selected semantic-model target is incomplete.")
-        try:
-            state.require_selected_revision(resolved)
-        except ValueError as exc:
-            raise RuntimeError(str(exc)) from exc
-
-        if not self.generation_tools:
-            raise RuntimeError("Semantic-model generation tools are unavailable.")
-        if self.generation_tools.extract_osi_model_names(resolved) != [model_name]:
-            raise RuntimeError("The selected OSI artifact no longer declares the selected semantic model.")
-        return semantic_model_file, resolved, model_name
+        return self.authoring_session._selected_osi_artifact()
 
     def _finalize_selected_osi_artifact(self) -> str:
-        """Validate and fully reconcile one target YAML before returning success."""
-        semantic_model_file, resolved, model_name = self._selected_osi_artifact()
-        metric_uids = self.semantic_model_workspace.ensure_metric_uids(resolved)
-        uid_sync_names = self.generation_tools.metric_names_needing_uid_sync(resolved, metric_uids)
-        if uid_sync_names:
-            self.osi_target_state.record_metric_touch(resolved, None, uid_sync_names)
-        metric_names = self.generation_tools.extract_osi_metric_names(resolved)
-        present_metrics, _ = self.osi_target_state.partition_touched_metrics(metric_names)
-        validation_scope = "all" if metric_names else "semantic_model"
-
-        artifact_validated = self.generation_evidence.semantic_artifact_validation_passed(
-            model_name,
-            resolved,
-            required_scope=validation_scope,
-        )
-        metrics_compiled = self.generation_evidence.compiled_validation_passed(resolved, present_metrics)
-        if not artifact_validated or (present_metrics and not metrics_compiled):
-            if not getattr(self, "semantic_tools", None):
-                raise RuntimeError(
-                    "The selected semantic model needs validation, but validate_semantic is unavailable."
-                )
-            validation_result = self.semantic_tools.validate_semantic(
-                scope=validation_scope,
-                semantic_model_name=model_name,
-            )
-            self.generation_evidence.record_validation_result(validation_result)
-            if not self._tool_succeeded(validation_result):
-                raise RuntimeError(
-                    f"validate_semantic failed before reconciling the semantic model: {self._tool_error(validation_result)}"
-                )
-            if not self.generation_evidence.record_semantic_artifact_validation(
-                model_name,
-                resolved,
-                validation_scope=validation_scope,
-            ):
-                raise RuntimeError("Cannot bind semantic validation evidence to the planned OSI artifact.")
-
-        if self.osi_target_state.touched_metric_names and not self.generation_evidence.compiled_validation_passed(
-            resolved,
-            present_metrics,
-        ):
-            raise RuntimeError(
-                "validate_semantic did not produce current engine compile evidence for every present touched metric."
-            )
-
-        sync_result = self.generation_tools.sync_osi_to_db(
-            resolved,
-            include_semantic_objects=True,
-            include_metrics=bool(self.osi_target_state.touched_metric_names),
-            metric_names_to_sync=set(present_metrics),
-            compiled_metric_catalog=self.generation_evidence.compiled_metric_catalog(present_metrics),
-        )
-        if not sync_result.get("success"):
-            raise RuntimeError(f"OSI semantic model KB reconcile failed: {sync_result.get('error', 'unknown error')}")
-
-        self.generation_evidence.mark_kb_sync()
-        self.osi_target_state.clear_artifact_snapshot()
-        return semantic_model_file
+        """Validate and reconcile with the same host-owned session used by plugins."""
+        self.authoring_session.semantic_tools = self.semantic_tools
+        return self.authoring_session.finalize()

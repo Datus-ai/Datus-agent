@@ -378,6 +378,7 @@ class PermissionHooks(AgentHooks):
         self.non_interactive = non_interactive
         self.proxied_tool_names = proxied_tool_names
         self.project_root = project_root
+        self.sql_file_allowed = None
         self.config_mutable = bool(config_mutable)
         self.bash_classifier = bash_classifier
         self.auto_reviewer = auto_reviewer
@@ -1092,6 +1093,8 @@ class PermissionHooks(AgentHooks):
 
                     def read_export_sql(path):
                         with ProjectFiles(Path(root)) as files:
+                            if self.sql_file_allowed is not None:
+                                return files.read_sql(path, MAX_SQL_FILE_BYTES, path_allowed=self.sql_file_allowed)[0]
                             return files.read_sql(path, MAX_SQL_FILE_BYTES)[0]
 
                     sql = await asyncio.to_thread(read_export_sql, sql.strip())
@@ -1101,7 +1104,12 @@ class PermissionHooks(AgentHooks):
                         hashlib.sha256(sql.encode("utf-8")).hexdigest(),
                     )
                 else:
-                    sql = read_workspace_sql_file(sql.strip(), self.project_root or ".")
+                    if self.sql_file_allowed is not None:
+                        sql = read_workspace_sql_file(
+                            sql.strip(), self.project_root or ".", path_allowed=self.sql_file_allowed
+                        )
+                    else:
+                        sql = read_workspace_sql_file(sql.strip(), self.project_root or ".")
             except Exception as e:
                 logger.debug("execute_sql gate: could not resolve .sql file (%s); treating as UNKNOWN", e)
         # No dialect available at the hook layer; the keyword fallback in
@@ -1783,6 +1791,9 @@ class PermissionHooks(AgentHooks):
             MCP:     ("mcp.filesystem", "read_file")
             Skills:  ("skills", "deep-analysis")  # skill_name from args
         """
+        mcp_server_name = getattr(context, "_datus_mcp_server_name", None)
+        if isinstance(mcp_server_name, str) and mcp_server_name:
+            return (f"mcp.{mcp_server_name}", tool_name)
         # 1. Skills: load_skill -> extract skill_name as pattern (check BEFORE registry)
         #    This allows permission rules like "skills.admin-*" to match specific skills
         if tool_name == "load_skill":

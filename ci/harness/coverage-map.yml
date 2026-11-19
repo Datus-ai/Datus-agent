@@ -1341,6 +1341,8 @@ execution:
         - tests/integration/tools/db_tools/test_data_file_loader_excel.py
     - id: semantic
       paths:
+        - datus/agent/semantic_authoring_session.py
+        - datus/agent/semantic_authoring_draft.py
         - datus/api/__init__.py
         - datus/api/models/__init__.py
         - datus/api/services/__init__.py
@@ -1800,6 +1802,7 @@ execution:
         - tests/unit_tests/api/
         - tests/unit_tests/cli/
         - tests/unit_tests/tools/
+        - tests/unit_tests/plugins/test_agent_tools.py
     - id: datus-tools-registry
       paths:
         - datus/tools/registry/
@@ -1812,6 +1815,7 @@ execution:
         - tests/unit_tests/test_mcp_server.py
         - tests/unit_tests/tools/
         - tests/unit_tests/utils/test_tool_result_store.py
+        - tests/unit_tests/plugins/test_agent_tools.py
     - id: datus-tools-search_tools
       paths:
         - datus/tools/search_tools/
@@ -2110,6 +2114,7 @@ execution:
       targets:
         - tests/unit_tests/agent/node/test_gen_sql_agentic_node.py
         - tests/unit_tests/api/services/test_cli_service_policy.py
+        - tests/unit_tests/tools/func_tool/test_bulk_query_tools.py
         - tests/unit_tests/tools/func_tool/test_database.py
         - tests/unit_tests/tools/func_tool/test_hana_adapter.py
         - tests/unit_tests/tools/permission/
@@ -2372,6 +2377,7 @@ execution:
         - datus/tools/func_tool/semantic_tools.py
         - datus/tools/func_tool/generation_tools.py
       targets:
+        - tests/unit_tests/agent/test_semantic_authoring_session.py
         - tests/unit_tests/agent/node/
         - tests/unit_tests/api/hooks/test_metric_hooks.py
         - tests/unit_tests/api/services/test_agent_service.py
@@ -2737,10 +2743,15 @@ execution:
     - id: ci-selection
       paths: [ci/, .github/workflows/]
     - id: node-semantic_modeling
-      paths: [datus/agent/node/semantic_modeling_agentic_node.py, tests/integration/agent/test_semantic_modeling_agentic.py]
+      paths:
+        - datus/agent/node/semantic_modeling_agentic_node.py
+        - datus/agent/semantic_authoring_session.py
+        - datus/plugins/semantic_authoring.py
+        - tests/integration/agent/test_semantic_modeling_agentic.py
       live_targets: [tests/integration/agent/test_semantic_modeling_agentic.py]
       required_targets:
         - tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm
+        - tests/integration/agent/test_semantic_modeling_agentic.py::test_private_semantic_runtime_authors_queryable_model_with_real_llm
       nightly_groups: [Semantic Modeling Product Tests]
     - id: node-ask_metrics
       paths: [datus/agent/node/ask_metrics_agentic_node.py, tests/integration/agent/test_ask_metrics_agentic.py]

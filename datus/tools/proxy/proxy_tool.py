@@ -140,6 +140,10 @@ def apply_proxy_tools(
     proxied_names: Set[str] = set()
     previous_proxied = set(getattr(node, "proxied_tool_names", None) or ())
     for tool in node.tools:
+        if getattr(tool, "__datus_tool_local_only__", False) is True:
+            # Runtime callbacks share local business state with prepare/finalize.
+            new_tools.append(tool)
+            continue
         if only_tool_names is not None and getattr(tool, "name", None) not in only_tool_names:
             new_tools.append(tool)
             if getattr(tool, "name", None) in previous_proxied:

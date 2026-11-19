@@ -970,6 +970,11 @@ class _AgentReferenceCompleter(Completer):
 
     def _description_for(self, name: str) -> str:
         """One-line description, suitable for menu rendering."""
+        from datus.agent.agent_registry import resolve_configurable_agent
+
+        definition = resolve_configurable_agent(name, self.agent_config)
+        if definition is not None:
+            return definition.spec.description.strip().replace("\n", " ")[:80]
         builtin = self._load_builtin_descriptions().get(name)
         if builtin:
             text = builtin
@@ -997,6 +1002,9 @@ class _AgentReferenceCompleter(Completer):
                 names = set()
         else:
             names = set((self.agent_config.agentic_nodes or {}).keys())
+            from datus.agent.agent_registry import list_configurable_agents
+
+            names.update(list_configurable_agents(self.agent_config))
         # ``chat`` is the pseudo-default and is not a valid task() type, so
         # never offer it as an @Agent target.
         names.discard("chat")
@@ -1183,6 +1191,9 @@ class AtReferenceCompleter(Completer):
 
         raw_config = self.agent_config.sub_agent_config(first_token)
         if raw_config:
+            from datus.agent.node.configurable_scope import legacy_scope_config
+
+            raw_config = legacy_scope_config(raw_config)
             sub_config = SubAgentConfig.model_validate(raw_config)
             if sub_config.has_scoped_context() and not sub_config.is_in_datasource(
                 self.agent_config.current_datasource

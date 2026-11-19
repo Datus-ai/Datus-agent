@@ -113,6 +113,59 @@ async def test_file_and_object_sdk_edits_share_revision_and_whole_run_rollback(t
     assert workspace.rollback_failed_authoring() is False
 
 
+def test_rollback_preserves_a_concurrent_model_revision(tmp_path):
+    target = tmp_path / "sales.yml"
+    original = b"name: sales\ndatasets: []\n"
+    authored = original + b"description: Authored\n"
+    concurrent = original + b"description: Saved by another editor\n"
+    target.write_bytes(authored)
+    state = OsiSemanticModelTargetState(
+        selected={"absolute_path": str(target)},
+        artifact_sha256=hashlib.sha256(authored).hexdigest(),
+    )
+    state.record_artifact_snapshot(target, original)
+    filesystem = SemanticModelFilesystemTools(root_path=str(tmp_path), strict=True, osi_target_state=state)
+    target.write_bytes(concurrent)
+
+    with pytest.raises(RuntimeError, match="newer contents were preserved"):
+        filesystem.workspace.rollback_failed_authoring()
+    assert target.read_bytes() == concurrent
+
+
+@pytest.mark.parametrize("peer_edit", [False, True])
+def test_uid_write_retains_rollback_revision_when_mutation_notification_fails(tmp_path, peer_edit):
+    target = tmp_path / "sales.yml"
+    original = b"name: sales\nmetrics:\n  - name: revenue\n"
+    target.write_bytes(original)
+    state = OsiSemanticModelTargetState(
+        selected={"absolute_path": str(target)},
+        artifact_sha256=hashlib.sha256(original).hexdigest(),
+    )
+    peer_content = original + b"description: Saved by another editor\n"
+
+    def fail_after_replacement(path):
+        if peer_edit:
+            path.write_bytes(peer_content)
+            state.record_selected_write()
+        raise OSError("mutation notification cannot read the model")
+
+    filesystem = SemanticModelFilesystemTools(
+        root_path=str(tmp_path), osi_target_state=state, mutation_callback=fail_after_replacement
+    )
+    workspace = filesystem.workspace
+
+    with pytest.raises(OSError, match="mutation notification cannot read"):
+        workspace.ensure_metric_uids(str(target))
+    assert target.read_bytes() != original
+    if peer_edit:
+        with pytest.raises(RuntimeError, match="newer contents were preserved"):
+            workspace.rollback_failed_authoring()
+        assert target.read_bytes() == peer_content
+    else:
+        assert workspace.rollback_failed_authoring()
+        assert target.read_bytes() == original
+
+
 def test_workspace_can_use_generic_file_access_without_semantic_filesystem(tmp_path):
     """Object mutations require access policy and state, not a semantic file subclass."""
     filesystem = FilesystemFuncTool(root_path=str(tmp_path), strict=True)

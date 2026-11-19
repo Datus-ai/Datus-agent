@@ -1812,6 +1812,18 @@ class InlineStreamingContext:
             and action.depth == 0
             and action.action_type != "plan_preview"
         )
+        # The refresh tick can drain a newer message before it processes an
+        # older message's terminal action. That older body was already flushed
+        # when the active bucket changed; only remove its bucket here. Flushing
+        # the current tail would split the newer message's open code fence.
+        if (
+            is_main_assistant_success
+            and action.action_id in self._deltas
+            and self._active_message_id not in (None, action.action_id)
+        ):
+            self._markdown_stream_consumed_ids.add(action.action_id)
+            self._drop_bucket(action.action_id)
+            return
         # Drain any trailing deltas in this message's bucket before the
         # terminal-response branches below run. Covers the race where the
         # producer appended the last few deltas and the terminal action

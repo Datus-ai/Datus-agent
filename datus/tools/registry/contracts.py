@@ -185,6 +185,32 @@ def registered_function_tool(*, definition: ToolDefinition, **kwargs: Any) -> An
     return register_tool_definition(FunctionTool(**kwargs), definition)
 
 
+def plugin_tool_definition(tool_id: str, access: Access, direct_call: bool = False) -> ToolDefinition:
+    """Validate runtime metadata without adding it to the build-time native inventory."""
+    from datus.tools.registry.capabilities import DENIED_TOOL_FAMILIES, TOOL_CAPABILITIES
+
+    definition = ToolDefinition(tool_id, access, direct_call)
+    if access == "session":
+        raise ToolDefinitionError("Plugin metadata cannot declare session channels")
+    family_prefix = f"{definition.category}."
+    if definition.category in DENIED_TOOL_FAMILIES or any(
+        identity.startswith(family_prefix) for identity in TOOL_CAPABILITIES
+    ):
+        raise ToolDefinitionError(f"Plugin tool family {definition.category!r} is reserved for host tools")
+    # Skill and MCP calls are classified by name before the tool registry is consulted.
+    if definition.name == "load_skill" or definition.name.startswith("mcp__"):
+        raise ToolDefinitionError(f"Plugin tool name {definition.name!r} is reserved for host tools")
+    return definition
+
+
+def plugin_function_tool(*, definition: ToolDefinition, **kwargs: Any) -> Any:
+    """Host-only registration boundary for installed, metadata-defined plugin tools."""
+    from agents import FunctionTool
+
+    verified = plugin_tool_definition(definition.tool_id, definition.access, definition.direct_call)
+    return register_tool_definition(FunctionTool(**kwargs), verified)
+
+
 def clone_registered_tool(original: Any, **changes: Any) -> Any:
     """Preserve all SDK fields and the contract through proxies and transformers."""
     definition = tool_definition(original)

@@ -98,6 +98,25 @@ def identity_tool(tmp_path, osi_schema_validator):
     return create
 
 
+def test_edit_file_rejects_selected_model_rename_and_preserves_editability(identity_tool):
+    tool, target, state, _ = identity_tool([])
+    before = target.read_bytes()
+
+    rejected = tool.edit_file(str(target), "name: sales\n", "name: Sales\n")
+
+    assert rejected.success == 0
+    assert "must remain 'sales'" in rejected.error
+    assert rejected.result["written"] is False
+    assert target.read_bytes() == before
+    state.require_selected_revision(target)
+
+    accepted = tool.edit_file(str(target), "name: sales\n", "name: sales\ndescription: Sales operations\n")
+
+    assert accepted.success == 1, accepted.error
+    assert yaml.safe_load(target.read_text())["description"] == "Sales operations"
+    state.require_selected_revision(target)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("encoded", [False, True])
 @pytest.mark.parametrize(

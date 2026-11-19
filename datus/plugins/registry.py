@@ -39,6 +39,8 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
+    from datus.configuration.agent_config import AgentConfig
+    from datus.plugins.agents import PluginAgentDefinition
     from datus.tools.permission.bash_rules import BashCommandRules
 
 logger = get_logger(__name__)
@@ -142,7 +144,7 @@ def _package_dir_for_entry_point(ep) -> Optional[Path]:
         return None
     if spec.origin:
         origin = Path(spec.origin)
-        if origin.name == "__init__.py":
+        if spec.submodule_search_locations is not None and origin.name in {"__init__.py", "__init__.pyc"}:
             return origin.parent
         logger.warning(
             "Plugin %r entry point must reference a package containing %s, not module %r; skipping.",
@@ -252,6 +254,94 @@ def _is_active(name: Optional[str], active_names: Optional[Set[str]]) -> bool:
     if active_names is None:
         return True
     return isinstance(name, str) and name in active_names
+
+
+def collect_plugin_agents(
+    agent_config: "AgentConfig", agent_name: str | None = None, *, strict: bool = True
+) -> Dict[str, "PluginAgentDefinition"]:
+    """Discover enabled agents or validate a single requested name without importing code."""
+    if not getattr(agent_config, "plugins_enabled", True):
+        return {}
+    installed = _loaded_manifests()
+    candidates = [
+        (name, manifest)
+        for name, manifest in installed
+        if manifest is not None
+        and (manifest.agents or manifest.agent_errors)
+        and (agent_name is None or agent_name in manifest.agents or agent_name in manifest.agent_errors)
+    ]
+    if not candidates:
+        return {}
+    # Prompt/skill discovery historically tolerates failed activation lookups.
+    # Executable agents must never turn that failure into "all enabled".
+    getter = getattr(agent_config, "active_plugin_names", None)
+    try:
+        active_names = getter() if callable(getter) else None
+        if active_names is not None and (
+            not isinstance(active_names, (set, frozenset, list, tuple))
+            or any(not isinstance(name, str) for name in active_names)
+        ):
+            raise ValueError("Invalid activation whitelist")
+    except Exception:
+        if not strict:
+            logger.warning("Unable to resolve enabled plugin agents for this project.")
+            return {}
+        raise DatusException(
+            ErrorCode.COMMON_CONFIG_ERROR, message="Unable to resolve enabled plugin agents for this project."
+        ) from None
+    ambiguous_plugins = {
+        name
+        for name, _ in candidates
+        if _is_active(name, active_names) and sum(name == installed_name for installed_name, _ in installed) > 1
+    }
+    if ambiguous_plugins and strict:
+        raise DatusException(
+            ErrorCode.COMMON_CONFIG_ERROR,
+            message=f"Multiple installed packages use active plugin names: {sorted(ambiguous_plugins)}.",
+        )
+    agents = {}
+    invalid_names = set()
+    for plugin_name, manifest in candidates:
+        if not _is_active(plugin_name, active_names) or plugin_name in ambiguous_plugins:
+            continue
+        errors = {name: error for name, error in manifest.agent_errors.items() if agent_name in (None, name)}
+        if errors:
+            details = "; ".join(f"{name}: {error}" for name, error in errors.items())
+            message = f"Plugin {plugin_name!r} has invalid agent definitions: {details}"
+            if strict:
+                raise DatusException(ErrorCode.COMMON_CONFIG_ERROR, message=message)
+            logger.warning(message)
+            invalid_names.update(errors)
+        for name, definition in manifest.agents.items():
+            if agent_name is not None and name != agent_name:
+                continue
+            if name in agents:
+                message = f"Agent {name!r} is declared by multiple enabled plugins; select unique names."
+                if strict:
+                    raise DatusException(ErrorCode.COMMON_CONFIG_ERROR, message=message)
+                logger.warning(message)
+                invalid_names.add(name)
+            agents[name] = definition
+    return {name: definition for name, definition in agents.items() if name not in invalid_names}
+
+
+def resolve_agent_runtime_factory(definition: "PluginAgentDefinition", agent_config: "AgentConfig") -> Any:
+    """Load executable code only for a currently enabled, registered definition."""
+    current = collect_plugin_agents(agent_config, definition.spec.name).get(definition.spec.name)
+    if current != definition:
+        raise DatusException(
+            ErrorCode.COMMON_CONFIG_ERROR,
+            message=f"Plugin agent {definition.spec.name!r} is not enabled with this definition.",
+        )
+    if definition.runtime_factory is None:
+        return None
+    factory = resolve_code_ref(definition.runtime_factory, definition.plugin_name)
+    if not callable(factory):
+        raise DatusException(
+            ErrorCode.COMMON_CONFIG_ERROR,
+            message=f"Plugin agent {definition.spec.name!r} runtime_factory could not be loaded.",
+        )
+    return factory
 
 
 def _active_names_from_config(agent_config) -> Optional[Set[str]]:

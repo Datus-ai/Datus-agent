@@ -1126,8 +1126,12 @@ class DBFuncTool(BulkQueryTools):
         """
         from datus.utils.sql_utils import read_workspace_sql_file
 
+        workspace_root = self._resolve_workspace_root()
+        path_allowed = getattr(self, "sql_file_allowed", None)
         try:
-            return read_workspace_sql_file(file_path, self._resolve_workspace_root())
+            if path_allowed is not None:
+                return read_workspace_sql_file(file_path, workspace_root, path_allowed=path_allowed)
+            return read_workspace_sql_file(file_path, workspace_root)
         except FileNotFoundError:
             raise DatusException(
                 ErrorCode.COMMON_FILE_NOT_FOUND,

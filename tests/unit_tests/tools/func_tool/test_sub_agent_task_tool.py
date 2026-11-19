@@ -730,9 +730,9 @@ class TestBuildTaskDescription:
 
     def test_description_defers_routing_to_parent(self, task_tool):
         desc = task_tool._build_task_description()
-        assert "Follow your own system prompt" in desc
-        assert "Chat routing priority" not in desc
-        assert "Task complexity is not the deciding factor" not in desc
+        assert "Follow your own system prompt's delegation principles" in desc
+        assert "Match a bounded task to the current capability descriptions" in desc
+        assert "existing name resolves to a plugin implementation" in desc
 
     @pytest.mark.parametrize("allowed", [["explore"], ["sales_analyst"]])
     def test_restricted_description_does_not_advertise_unavailable_agents(self, mock_agent_config, allowed):

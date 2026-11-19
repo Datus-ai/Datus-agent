@@ -425,14 +425,7 @@ class AgenticNode(Node):
             if job is None:
                 job = DATABASE_CLEANUP.submit(db_tool.close)
                 self._database_close_job = job
-            try:
-                await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(job)), timeout=_DATABASE_CLOSE_TIMEOUT)
-            except asyncio.TimeoutError:
-                # DBFuncTool.close only drains operations and returns leases.
-                # Let that worker finish safely without delaying session closure.
-                logger.warning("Node database tool release timed out after %.1fs", _DATABASE_CLOSE_TIMEOUT)
-            except Exception:
-                logger.exception("Failed to release node database tool")
+            await AgenticNode._wait_for_database_release(job)
         session = getattr(self, "_session", None)
         close = getattr(session, "close", None)
         if callable(close):
@@ -447,6 +440,16 @@ class AgenticNode(Node):
         if manager is not None:
             manager.close_all_sessions()
         self._session_manager = None
+
+    @staticmethod
+    async def _wait_for_database_release(job) -> None:
+        try:
+            await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(job)), timeout=_DATABASE_CLOSE_TIMEOUT)
+        except asyncio.TimeoutError:
+            # The worker keeps its leases until the driver returns.
+            logger.warning("Node database tool release timed out after %.1fs", _DATABASE_CLOSE_TIMEOUT)
+        except Exception:
+            logger.exception("Failed to release node database tool")
 
     def relocate_session(self, *, scope: Optional[str], session_subdir: Optional[str]) -> None:
         """Point this node's session at another directory after construction.
@@ -1253,9 +1256,11 @@ class AgenticNode(Node):
             return node_class
         return AgenticNode.get_node_name(self)
 
-    def _response_provenance(self, user_input: Any) -> Dict[str, str]:
-        """Identify this producer and any versioned chat result protocol."""
-        source = {"_node_class": self.get_node_class_name()}
+    def _response_provenance(self, user_input: Any) -> Dict[str, str | bool]:
+        """Identify the response producer and its display protocol."""
+        source: Dict[str, str | bool] = {"_node_class": self.get_node_class_name()}
+        if getattr(self, "defer_model_output", False) is True:
+            source["_defer_model_output"] = True
         if source["_node_class"] == "chat":
             config = getattr(self, "node_config", None) or {}
             version = (
@@ -3068,6 +3073,10 @@ class AgenticNode(Node):
         del skill_name
         return content
 
+    def _required_skill_agent(self, skill_name: str) -> str:
+        """Resolve the authoring role used to load a host-required specification."""
+        return self.get_node_name()
+
     def _required_skill_context(self) -> str:
         """Resolve the exact skill context used for injection and snapshot identity.
 
@@ -3115,7 +3124,7 @@ class AgenticNode(Node):
         for skill_name in skills_to_inject:
             success, message, content = self.skill_manager.load_skill(
                 skill_name,
-                self.get_node_name(),
+                self._required_skill_agent(skill_name),
                 check_permission=False,
                 node_class=self.get_node_class_name(),
             )

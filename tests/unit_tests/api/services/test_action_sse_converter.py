@@ -1393,6 +1393,21 @@ class TestActionToSSEEvent:
         event = action_to_sse_event(action, event_id=20, message_id="msg-20")
         assert event is None
 
+    @pytest.mark.parametrize(
+        "kind,status,output",
+        [
+            ("thinking_delta", ActionStatus.PROCESSING, {"delta": "Draft text"}),
+            ("response", ActionStatus.SUCCESS, {"raw_output": "Draft text", "is_thinking": False}),
+        ],
+    )
+    def test_deferred_model_text_is_hidden_even_when_streaming_is_enabled(self, kind, status, output):
+        action = _make_action(action_type=kind, status=status, output=output)
+        event = _assert_sse_event(action_to_sse_event(action, event_id=20, message_id="msg-20", stream_thinking=True))
+        assert event.data.payload.content[0].payload["content"] == "Draft text"
+
+        action.input = {"_defer_model_output": True}
+        assert action_to_sse_event(action, event_id=20, message_id="msg-20", stream_thinking=True) is None
+
     def test_thinking_delta_with_empty_delta(self):
         """thinking_delta with empty delta string still produces event when enabled."""
         action = _make_action(

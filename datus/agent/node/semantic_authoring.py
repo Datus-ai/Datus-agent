@@ -11,9 +11,9 @@ import hashlib
 import json
 import re
 import weakref
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Optional
 
 import yaml
 
@@ -71,7 +71,9 @@ def _ontology_dir(agent_config: Any = None) -> Optional[Path]:
         return None
 
 
-def inline_mapping_models(agent_config: Any = None) -> list[Dict[str, Any]]:
+def inline_mapping_models(
+    agent_config: Any = None, *, path_allowed: Callable[[Path], bool] | None = None
+) -> list[Dict[str, Any]]:
     """Ossie mapping documents that carry their semantic model inline.
 
     Such a model lives inside ``semantic_model_ref.document`` of a file under
@@ -90,6 +92,8 @@ def inline_mapping_models(agent_config: Any = None) -> list[Dict[str, Any]]:
         path for pattern in ("*.yml", "*.yaml", "*.json") for path in ontology_dir.glob(pattern) if path.is_file()
     )
     for path in paths:
+        if path_allowed is not None and not path_allowed(path):
+            continue
         try:
             document = yaml.safe_load(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, yaml.YAMLError):
@@ -107,6 +111,44 @@ def inline_mapping_models(agent_config: Any = None) -> list[Dict[str, Any]]:
             }
         )
     return found
+
+
+def require_unique_model_target(
+    agent_config: Any, target: Path, model_name: str, *, creating: bool = False, model_directory: Path | None = None
+) -> None:
+    """Check project-wide artifact identity without returning out-of-scope metadata."""
+    from datus.tools.semantic_tools.dosi.engine import document_kind
+
+    directory = model_directory or _osi_semantic_model_dir(agent_config)
+    if directory is None:
+        return
+    root = directory.resolve()
+    has_flat_model = False
+    for path in directory.rglob("*"):
+        if path.suffix.lower() not in {".yml", ".yaml", ".json"} or "metrics" in path.relative_to(directory).parts:
+            continue
+        resolved = path.resolve()
+        if not resolved.is_relative_to(root):
+            continue
+        try:
+            document = yaml.safe_load(resolved.read_text(encoding="utf-8"))
+        except (OSError, ValueError, yaml.YAMLError):
+            continue
+        if document_kind(document) == "model":
+            has_flat_model = True
+            if resolved != target and isinstance(document, dict) and document.get("name") == model_name:
+                raise ValueError("The model name conflicts with another artifact in this datasource")
+    if (
+        creating
+        and not has_flat_model
+        and inline_mapping_models(
+            agent_config,
+            path_allowed=lambda path: path.resolve().is_relative_to(path.parent.resolve()),
+        )
+    ):
+        raise ValueError(
+            "An inline model already exists in this project. Creating a flat model would change its binding."
+        )
 
 
 def inline_mapping_message(datasource: str, mappings: Iterable[Dict[str, Any]]) -> str:
@@ -228,7 +270,9 @@ def validate_osi_authoring_document(document: Any) -> Optional[str]:
     return None
 
 
-def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, Any]:
+def inspect_osi_semantic_model_inventory(
+    agent_config: Any = None, *, path_allowed: Callable[[Path], bool] | None = None
+) -> Dict[str, Any]:
     """Inspect every YAML file in the active datasource semantic-model tree.
 
     ``models`` contains schema-valid targets that metrics may bind. A parsed
@@ -244,7 +288,7 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
             "issues": [],
             "discovery_warnings": [],
             "files_scanned": 0,
-            "inline_mapping_models": inline_mapping_models(agent_config),
+            "inline_mapping_models": inline_mapping_models(agent_config, path_allowed=path_allowed),
         }
 
     datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
@@ -256,7 +300,7 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
     paths = sorted(
         path
         for path in {*model_dir.rglob("*.yml"), *model_dir.rglob("*.yaml")}
-        if "metrics" not in path.relative_to(model_dir).parts
+        if "metrics" not in path.relative_to(model_dir).parts and (path_allowed is None or path_allowed(path))
     )
     for path in paths:
         relative_path = path.relative_to(model_dir).as_posix()
@@ -468,7 +512,7 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
         "issues": issues,
         "discovery_warnings": discovery_warnings,
         "files_scanned": len(paths),
-        "inline_mapping_models": inline_mapping_models(agent_config),
+        "inline_mapping_models": inline_mapping_models(agent_config, path_allowed=path_allowed),
     }
 
 
@@ -807,11 +851,11 @@ def osi_semantic_model_turn_context(agent_config: Any, user_input: Any) -> str:
     return "\n".join(lines)
 
 
-def semantic_authoring_lock_key(agent_config: Any = None) -> str:
+def semantic_authoring_lock_key(agent_config: Any = None, datasource: str | None = None) -> str:
     """Return the lock key shared by semantic authoring for one datasource."""
     path_manager = getattr(agent_config, "path_manager", None)
     project_root = getattr(path_manager, "project_root", "")
-    datasource = str(getattr(agent_config, "current_datasource", "") or "default")
+    datasource = datasource or str(getattr(agent_config, "current_datasource", "") or "default")
     try:
         project_key = str(Path(project_root).expanduser().resolve(strict=False))
     except TypeError:
@@ -819,17 +863,19 @@ def semantic_authoring_lock_key(agent_config: Any = None) -> str:
     return f"{project_key}:{datasource}"
 
 
-def _semantic_authoring_lock(agent_config: Any = None) -> asyncio.Lock:
+def _semantic_authoring_lock(agent_config: Any = None, datasource: str | None = None) -> asyncio.Lock:
     """Return the event-loop-local lock for one project datasource."""
     loop = asyncio.get_running_loop()
     loop_locks = _SEMANTIC_AUTHORING_LOCKS.setdefault(loop, {})
-    return loop_locks.setdefault(semantic_authoring_lock_key(agent_config), asyncio.Lock())
+    return loop_locks.setdefault(semantic_authoring_lock_key(agent_config, datasource), asyncio.Lock())
 
 
 @asynccontextmanager
-async def semantic_authoring_guard(agent_config: Any = None):
-    """Serialize semantic writes for one project datasource."""
-    async with _semantic_authoring_lock(agent_config):
+async def semantic_authoring_guard(agent_config: Any = None, *, datasources: Iterable[str] = ()):
+    """Serialize writes across the datasources a turn can select."""
+    async with AsyncExitStack() as stack:
+        for datasource in sorted(set(datasources)) or [None]:
+            await stack.enter_async_context(_semantic_authoring_lock(agent_config, datasource))
         yield
 
 

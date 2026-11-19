@@ -9,6 +9,7 @@ from pydantic import BaseModel, create_model
 from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
 from datus.schemas.chat_agentic_node_models import ChatNodeInput
 from datus.schemas.compare_node_models import CompareInput
+from datus.schemas.configurable_agentic_node_models import ConfigurableNodeInput
 from datus.schemas.explore_agentic_node_models import ExploreNodeInput
 from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput
 from datus.schemas.fix_node_models import FixInput
@@ -49,6 +50,7 @@ class NodeType:
     TYPE_ANALYTICS_EXPLORER = "analytics_explorer"
     TYPE_ANALYTICS_BUILDER = "analytics_builder"
     TYPE_CHAT = "chat"  # For conversational AI interactions
+    TYPE_CONFIGURABLE = "configurable"
     TYPE_GEN_SQL = "gen_sql"  # For SQL generation with conversational AI
     TYPE_SEMANTIC = "semantic"  # For semantic model generation
     TYPE_SQL_SUMMARY = "sql_summary"  # For SQL summary generation
@@ -73,6 +75,7 @@ class NodeType:
         TYPE_ANALYTICS_EXPLORER,
         TYPE_ANALYTICS_BUILDER,
         TYPE_CHAT,
+        TYPE_CONFIGURABLE,
         TYPE_GEN_SQL,
         TYPE_SEMANTIC,
         TYPE_SQL_SUMMARY,
@@ -103,6 +106,7 @@ class NodeType:
         TYPE_ANALYTICS_EXPLORER: "Read-only analytics with shared context",
         TYPE_ANALYTICS_BUILDER: "Analytics and file-based deliverables",
         TYPE_CHAT: "Conversational AI interactions with tool calling",
+        TYPE_CONFIGURABLE: "Configured behavior with explicit tools, skills, MCP and resources",
         TYPE_GEN_SQL: "SQL generation with conversational AI and tool calling",
         TYPE_SEMANTIC: "Semantic model generation with conversational AI",
         TYPE_SQL_SUMMARY: "SQL summary generation with conversational AI",
@@ -150,6 +154,8 @@ class NodeType:
             input_data_cls = CompareInput
         elif node_type in {NodeType.TYPE_CHAT, NodeType.TYPE_ANALYTICS_EXPLORER, NodeType.TYPE_ANALYTICS_BUILDER}:
             input_data_cls = ChatNodeInput
+        elif node_type == NodeType.TYPE_CONFIGURABLE:
+            input_data_cls = ConfigurableNodeInput
         elif node_type == NodeType.TYPE_GEN_SQL:
             input_data_cls = GenSQLNodeInput
         elif node_type == NodeType.TYPE_SEMANTIC:

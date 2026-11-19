@@ -87,6 +87,21 @@ def create_interactive_node(
             reaches the terminal or the print-mode JSON stream.
     """
     if subagent_name:
+        from datus.agent.agent_registry import resolve_configurable_agent
+
+        definition = resolve_configurable_agent(subagent_name, agent_config)
+        if definition is not None:
+            from datus.agent.node.configurable_agentic_node import ConfigurableAgenticNode
+
+            return ConfigurableAgenticNode(
+                node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
+                description=definition.spec.description,
+                agent_config=agent_config,
+                node_name=subagent_name,
+                execution_mode=execution_mode,
+                scope=scope,
+                session_id=session_id,
+            )
         node_class_type = _resolve_node_class_type(subagent_name, agent_config)
         validate_node_class(node_class_type, subagent_name)
 
@@ -415,6 +430,19 @@ def _build_typed_node_input(
     source_session_id: Optional[str] = None,
 ):
     """Construct the node-type-specific input object (no @-context wiring)."""
+    from datus.agent.node.configurable_agentic_node import ConfigurableAgenticNode
+
+    if isinstance(node, ConfigurableAgenticNode):
+        from datus.schemas.configurable_agentic_node_models import ConfigurableNodeInput
+
+        return ConfigurableNodeInput(
+            user_message=user_message,
+            catalog=catalog,
+            database=database,
+            db_schema=db_schema,
+            prompt_language=prompt_language,
+            plan_mode=plan_mode,
+        )
     from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
     from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
     from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode

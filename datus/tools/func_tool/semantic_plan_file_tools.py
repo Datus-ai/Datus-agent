@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
-from typing import Any
+from typing import Any, Callable
 from uuid import NAMESPACE_URL, uuid5
 
 from datus.storage.semantic_model.artifact_file import atomic_write_text, path_mutation_lock
@@ -290,8 +290,9 @@ class SemanticPlanFileTools:
     permission_category = "semantic_tools"
     _MODEL_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.-]*\Z")
 
-    def __init__(self, project_root: str | Path):
+    def __init__(self, project_root: str | Path, *, path_allowed: Callable[[Path], bool] | None = None):
         self.project_root = Path(project_root).resolve()
+        self.path_allowed = path_allowed
         self._plan_ids: dict[str, str] = {}
         self._revisions: dict[str, int] = {}
         self._write_lock = RLock()
@@ -394,6 +395,8 @@ class SemanticPlanFileTools:
             )
             relative_path = Path(".datus/semantic-model-plans") / plan_id / "semantic-model-plan.json"
             target = self.project_root / relative_path
+            if self.path_allowed is not None and not self.path_allowed(target):
+                return FuncToolResult(success=0, error="Semantic plan is outside scoped_context.project_files")
             if not target.resolve(strict=False).is_relative_to(self.project_root):
                 return FuncToolResult(success=0, error="Semantic plan path must stay inside the project workspace")
             try:
@@ -424,6 +427,8 @@ class SemanticPlanFileTools:
     def commit(self, prepared: PreparedSemanticPlan) -> FuncToolResult:
         """Commit exactly the reviewed content, rejecting a stale baseline."""
         target = self.project_root / prepared.path
+        if self.path_allowed is not None and not self.path_allowed(target):
+            return FuncToolResult(success=0, error="Semantic plan is outside scoped_context.project_files")
         with self._write_lock:
             if not target.resolve(strict=False).is_relative_to(self.project_root):
                 return FuncToolResult(success=0, error="Semantic plan path must stay inside the project workspace")

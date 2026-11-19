@@ -617,3 +617,36 @@ def test_quality_assertion_sql_requires_stronger_authorization(profile, expected
     assert TOOL_CAPABILITIES["db_tools.check_datasource_quality"].access == "restricted"
     manager = PermissionManager(get_profile(profile), active_profile=profile)
     assert manager.check_permission("db_tools", "check_datasource_quality", "child") == expected
+
+
+@pytest.mark.parametrize("profile", ["normal", "auto"])
+@pytest.mark.parametrize(
+    "name",
+    ["list_ontology_targets", "read_ontology_draft", "validate_ontology", "describe_concept", "find_concept_paths"],
+)
+def test_official_ontology_reads_follow_builtin_modeling_permissions(profile, name):
+    manager = PermissionManager(get_profile(profile), active_profile=profile)
+    assert manager.check_permission("ontology_tools", name, "semantic_modeling") == PermissionLevel.ALLOW
+
+
+@pytest.mark.parametrize(
+    "name", ["bind_ontology_target", "upsert_ontology_concepts", "upsert_ontology_mappings", "update_ontology_metadata"]
+)
+def test_auto_allows_ontology_edits_but_normal_requires_confirmation(name):
+    assert _resolve(AUTO, "ontology_tools", name) == PermissionLevel.ALLOW
+    assert _resolve(NORMAL, "ontology_tools", name) == PermissionLevel.ASK
+
+
+@pytest.mark.parametrize("profile", [NORMAL, AUTO])
+@pytest.mark.parametrize("name", ["delete_ontology_concepts", "delete_ontology_mappings"])
+def test_ontology_deletions_remain_confirmable(profile, name):
+    assert _resolve(profile, "ontology_tools", name) == PermissionLevel.ASK
+
+
+def test_explicit_ontology_deny_overrides_auto_allow():
+    from datus.tools.permission.profiles import build_effective_config
+
+    effective = build_effective_config(
+        "auto", {"rules": [{"tool": "ontology_tools", "pattern": "upsert_ontology_concepts", "permission": "deny"}]}
+    )
+    assert _resolve(effective, "ontology_tools", "upsert_ontology_concepts") == PermissionLevel.DENY

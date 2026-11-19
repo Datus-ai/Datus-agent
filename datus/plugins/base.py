@@ -6,11 +6,12 @@
 
 A *plugin* is an installable package that extends datus with a ``datus
 <plugin> ...`` CLI subcommand plus optional bundled skills, a system-prompt
-section, bash-permission rules, tool transformers, a policy runtime and a profile config schema
+section, bash-permission rules, tool transformers, agents, a policy runtime and a profile config schema
 — all declared in a single ``datus-plugin.yml`` shipped **inside** the
 importable package. A plugin package never imports ``datus.*`` and ships no
-plugin class: the only Python it provides are plain functions referenced from
-the manifest.
+plugin class: executable entries are plain functions referenced from the
+manifest. Agent factories may return ordinary runtime objects with optional
+prepare_turn, finalize and close methods, without inheriting host classes.
 
 Discovery
 =========
@@ -26,7 +27,8 @@ datus locates the package directory with ``importlib.util.find_spec`` (which
 does **not** execute ``__init__.py``) and reads ``datus-plugin.yml`` from it.
 Collecting skills, permissions, prompt sections and config schemas therefore
 never runs plugin code; only the ``cli`` entry (on ``datus <name> ...``
-dispatch) and declared ``tool_transformers`` / ``policy_runtime`` are imported lazily. The
+dispatch), declared ``tool_transformers`` / ``policy_runtime``, and executed
+agent runtime factories are imported lazily. The
 entry-point name is the plugin name: it becomes the ``datus <name>``
 subcommand and the ``agent.plugins.<name>`` config key. It must match
 ``^[A-Za-z0-9][A-Za-z0-9._-]*$`` and must not be a reserved subcommand
@@ -201,11 +203,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import yaml
 
 from datus.utils.loggings import get_logger
+
+if TYPE_CHECKING:
+    from datus.plugins.agents import PluginAgentDefinition
 
 logger = get_logger(__name__)
 
@@ -228,6 +233,7 @@ _MANIFEST_KEYS = frozenset(
         "skills",
         "config_schema",
         "commands",
+        "agents",
     }
 )
 
@@ -284,6 +290,8 @@ class PluginManifest:
     skills: Optional[str] = None
     config_schema: Optional[Dict[str, Any]] = None
     commands: List[PluginCommand] = field(default_factory=list)
+    agents: Dict[str, PluginAgentDefinition] = field(default_factory=dict)
+    agent_errors: Dict[str, str] = field(default_factory=dict)
 
 
 def parse_code_ref(ref: Any) -> Optional[Tuple[str, str]]:
@@ -560,6 +568,13 @@ def parse_manifest(data: Any, name: str, package_dir: Path) -> Optional[PluginMa
     unknown = set(data) - _MANIFEST_KEYS
     if unknown:
         logger.warning("Plugin %r manifest has unknown keys %s; ignoring them.", name, sorted(unknown))
+    agents, agent_errors = {}, {}
+    if "agents" in data:
+        from datus.plugins.agents import parse_agent_declarations
+
+        agents, agent_errors = parse_agent_declarations(data["agents"], name, Path(package_dir))
+        for agent_name, error in agent_errors.items():
+            logger.warning("Plugin %r agent %r has an invalid definition: %s", name, agent_name, error)
     return PluginManifest(
         name=name,
         package_dir=Path(package_dir),
@@ -572,6 +587,8 @@ def parse_manifest(data: Any, name: str, package_dir: Path) -> Optional[PluginMa
         skills=_parse_rel_path(data, "skills", name),
         config_schema=_parse_config_schema(data, name),
         commands=_parse_commands(data, name),
+        agents=agents,
+        agent_errors=agent_errors,
     )
 
 

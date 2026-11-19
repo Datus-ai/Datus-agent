@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Callable
@@ -49,6 +50,9 @@ class SemanticModelWorkspace:
 
     def require_metric_revision(self, path: str | Path) -> None:
         """Require the current bytes of the selected existing or planned model."""
+        error = self.mutation_guard_error(Path(path))
+        if error is not None:
+            raise ValueError(error.error or "Semantic-model mutation is not permitted")
         self.target_state.require_selected_revision(path)
 
     def reject_write_policy(self, resolved: ResolvedPath) -> FuncToolResult | None:
@@ -69,8 +73,13 @@ class SemanticModelWorkspace:
 
         target_path = Path(state.artifact_snapshot_path)
         original_content = state.artifact_snapshot_content
-        with semantic_artifact_lock(target_path):
+        with semantic_artifact_lock(target_path, load_before_lock=False):
             try:
+                current = target_path.read_bytes() if target_path.is_file() else None
+                current_revision = hashlib.sha256(current).hexdigest() if current is not None else ""
+                if state.artifact_sha256 and current_revision != state.artifact_sha256:
+                    state.clear_artifact_snapshot()
+                    raise RuntimeError("The semantic model changed concurrently. Its newer contents were preserved.")
                 if state.artifact_snapshot_existed:
                     restored_content = original_content.decode("utf-8")
                     atomic_write_text(target_path, restored_content)
@@ -105,8 +114,12 @@ class SemanticModelWorkspace:
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 self.target_state.record_artifact_snapshot(target_path, original_content)
                 atomic_write_text(target_path, serialized)
-                self.notify_mutation(target_path)
-                self.target_state.record_metric_touch(target_path, serialized.encode("utf-8"), changed)
+                try:
+                    self.notify_mutation(target_path)
+                finally:
+                    # The replacement already succeeded. Rollback must use the committed bytes
+                    # even if notification fails or observes a newer revision.
+                    self.target_state.record_metric_touch(target_path, serialized.encode("utf-8"), changed)
             return {metric["name"]: metric_uid(metric) for metric in metric_definitions(document).values()}
 
     @staticmethod

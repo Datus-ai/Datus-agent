@@ -593,6 +593,17 @@ class ChatAgenticNode(AgenticNode):
         except Exception:
             return False
 
+    async def _before_stream(self, ctx: StreamRunContext) -> None:
+        await super()._before_stream(ctx)
+        task_tools = [tool for tool in self.tools if getattr(tool, "name", None) == "task"]
+        if self.sub_agent_task_tool is not None and task_tools:
+            # Refresh metadata in place so permission, plugin and proxy wrappers
+            # keep their existing invocation contract. Tool schemas are sent anew
+            # on each model request; the generic system prompt stays cacheable.
+            description = self.sub_agent_task_tool._build_task_description()
+            for tool in task_tools:
+                tool.description = description
+
     def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
         context_tools = getattr(self, "context_search_tools", None)
         if context_tools is not None and self._family_enabled(self._selected_tool_families(), "context_search_tools"):
