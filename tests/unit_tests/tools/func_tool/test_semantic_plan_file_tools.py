@@ -560,6 +560,10 @@ def test_existing_join_exposes_review_fields_and_requires_explicit_update(tmp_pa
     updated = writer.prepare("aviation", {"relationships": [same_endpoints]})
     updated_edge = next(edge for edge in json.loads(updated.new_text)["edges"] if edge["id"] == edge_id)
     assert updated_edge["detail"] == {**edge["detail"], "join_kind": "inner"}
+    same_endpoints["from_fields"] = ["route_id"]
+    updated = writer.prepare("aviation", {"relationships": [same_endpoints]})
+    updated_edge = next(edge for edge in json.loads(updated.new_text)["edges"] if edge["id"] == edge_id)
+    assert updated_edge["detail"] == {**edge["detail"], "join_kind": "inner", "from_fields": ["route_id"]}
     replacement = {
         "name": "flights_operated_by",
         "action": "create",
@@ -575,6 +579,31 @@ def test_existing_join_exposes_review_fields_and_requires_explicit_update(tmp_pa
     assert updated_edge["source"] == "dataset:aircraft"
     assert "from_fields" not in updated_edge["detail"]
     assert "to_fields" not in updated_edge["detail"]
+
+
+@pytest.mark.parametrize(("name", "action"), [("flights_operated_by", "update"), ("new_join", "create")])
+def test_rejects_mismatched_join_columns(tmp_path, name, action):
+    model = tmp_path / "aviation.yaml"
+    model.write_bytes((MODELS / "aviation/aviation.yaml").read_bytes())
+    writer = plan_writer(tmp_path, "aviation", model_path=model)
+
+    result = writer.prepare(
+        "aviation",
+        {
+            "relationships": [
+                {
+                    "name": name,
+                    "action": action,
+                    "from_dataset": "flights",
+                    "to_dataset": "aircraft",
+                    "from_fields": ["aircraft_id", "flight_id"],
+                }
+            ]
+        },
+    )
+
+    assert result.success == 0
+    assert f"Relationship {name} requires matching lengths for from_fields and to_fields" in result.error
 
 
 def test_explicit_repair_uses_readable_baseline_instead_of_requiring_compilation(real_agent_config):

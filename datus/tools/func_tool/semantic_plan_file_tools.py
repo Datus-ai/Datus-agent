@@ -535,6 +535,9 @@ def _merge_plan_graph(baseline: dict, proposal: dict) -> dict:
     for edge in proposed_joins:
         if edge["source"] in deleted or edge["target"] in deleted:
             raise ValueError(f"Relationship {edge['name']} refers to a dataset planned for deletion")
+        detail = edge["detail"]
+        if len(detail.get("from_fields", [])) != len(detail.get("to_fields", [])):
+            raise ValueError(f"Relationship {edge['name']} requires matching lengths for from_fields and to_fields")
         edges[edge["id"]] = edge
     for node_id in deleted:
         del nodes[node_id]
