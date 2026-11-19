@@ -75,6 +75,7 @@ class SemanticAuthoringSession:
         target_state: OsiSemanticModelTargetState | None = None,
         generation_evidence: GenerationEvidence | None = None,
         path_allowed: Callable[[Path], bool] | None = None,
+        chat_identity: Callable[[], tuple[str | None, str]] | None = None,
     ) -> None:
         if authoring_scope not in {"datasets", "full"}:
             raise ValueError("authoring_scope must be datasets or full")
@@ -98,7 +99,12 @@ class SemanticAuthoringSession:
         self.semantic_model_workspace = None
         self.semantic_model_editing_tools = None
         self.semantic_verification_tools = None
-        self.semantic_plan_file_tool = SemanticPlanFileTools(agent_config.project_root, path_allowed=path_allowed)
+        self.semantic_plan_file_tool = SemanticPlanFileTools(
+            agent_config.project_root,
+            path_allowed=path_allowed,
+            target_state=self.osi_target_state if chat_identity is not None else None,
+            chat_identity=chat_identity,
+        )
         self._runtime_db_context: Callable[[], dict[str, Any]] = lambda: {}
         self._reconciled_sha256 = ""
         self._scope_metric_baseline: bytes | None = None

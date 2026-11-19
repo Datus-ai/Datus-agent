@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -11,7 +12,6 @@ from datus.api.models.cli_models import SSEDataType
 from datus.api.services.action_sse_converter import action_to_sse_event
 from datus.schemas.action_bus import ActionBus
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
-from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
 from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
 from datus.tools.permission.permission_hooks import PermissionHooks
 from datus.tools.permission.permission_manager import PermissionManager
@@ -19,6 +19,7 @@ from datus.tools.permission.profiles import get_profile
 from datus.tools.proxy.semantic_plan_review import apply_semantic_plan_review
 from datus.tools.proxy.tool_result_channel import ToolResultChannel
 from datus.tools.registry.tool_registry import ToolRegistry
+from tests.unit_tests.semantic_plan_support import plan_writer
 
 
 class ReviewChannel(ToolResultChannel):
@@ -32,7 +33,7 @@ class ReviewChannel(ToolResultChannel):
 
 
 def node_for(root):
-    writer = SemanticPlanFileTools(root)
+    writer = plan_writer(root)
     return SimpleNamespace(
         action_bus=ActionBus(),
         semantic_plan_file_tool=writer,
@@ -111,7 +112,7 @@ async def test_web_review_still_required_after_permission_check(tmp_path, permis
 
 
 @pytest.mark.asyncio
-async def test_cancel_then_feedback_reuses_the_accepted_baseline(tmp_path):
+async def test_cancel_then_feedback_uses_fixed_baseline_and_previous_proposal(tmp_path):
     node = node_for(tmp_path)
     saved = node.semantic_plan_file_tool.write_semantic_model_plan_file("sales", {"summary": "accepted"})
     target = tmp_path / saved.result["path"]
@@ -124,7 +125,8 @@ async def test_cancel_then_feedback_reuses_the_accepted_baseline(tmp_path):
 
     running, revised = await start_review(node, "revised", "call-2")
     assert revised["filePath"] == first["filePath"]
-    assert revised["oldText"] == baseline
+    assert revised["oldText"] == first["oldText"]
+    assert revised["previousText"] == first["newText"]
     assert json.loads(revised["newText"])["plan"]["summary"] == "revised"
     await node.tool_channel.publish("call-2", {"success": 1})
     assert (await running)["success"] == 1
@@ -155,6 +157,56 @@ async def test_stop_discards_pending_proposal_without_a_write(tmp_path):
     node.tool_channel.cancel_all("stopped")
     assert (await running)["success"] == 0
     assert not (tmp_path / preview["filePath"]).exists()
+    assert not node.tool_review_previews
+
+
+@pytest.mark.asyncio
+async def test_stop_waits_for_accepted_commit_before_recording_outcome(tmp_path, monkeypatch):
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+    node = object.__new__(SemanticModelingAgenticNode)
+    vars(node).update(vars(node_for(tmp_path)))
+    writer = node.semantic_plan_file_tool
+    commit = writer.commit
+    started = asyncio.Event()
+    release = Event()
+    loop = asyncio.get_running_loop()
+
+    def delayed_commit(prepared):
+        loop.call_soon_threadsafe(started.set)
+        assert release.wait(5)
+        return commit(prepared)
+
+    async def parent_stream(_node, _manager):
+        yield "tool action"
+
+    monkeypatch.setattr(SemanticAuthoringAgenticNode, "execute_stream", parent_stream)
+    monkeypatch.setattr(writer, "commit", delayed_commit)
+    apply_semantic_plan_review(node)
+    stream = node.execute_stream()
+    await anext(stream)
+    running, preview = await start_review(node)
+    await node.tool_channel.publish("call-1", {"success": 1})
+    try:
+        await asyncio.wait_for(started.wait(), 5)
+        running.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await running
+        stopping = asyncio.create_task(stream.aclose())
+        await asyncio.sleep(0)
+        stopping.cancel()
+        await asyncio.sleep(0)
+        completed_before_write = stopping.done()
+    finally:
+        release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await stopping
+    assert not completed_before_write
+    saved = json.loads((tmp_path / preview["filePath"]).read_text())
+    assert saved["plan"]["execution"] == "not_applied"
+    assert "applied" not in saved
     assert not node.tool_review_previews
 
 

@@ -6,13 +6,15 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from typing import Any, Final, Iterable, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
 from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistory
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.semantic_agentic_node_models import SemanticModelingNodeResult, SemanticNodeInput
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.registry.contracts import tool_contract
@@ -102,6 +104,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             authoring_scope=self.authoring_scope,
             target_state=self.osi_target_state,
             generation_evidence=self.generation_evidence,
+            chat_identity=lambda: (self.scope, self.session_subdir or self.session_id),
         )
         self.authoring_session.setup(
             filesystem_factory=self._make_filesystem_tool,
@@ -128,6 +131,30 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
     async def _before_stream(self, ctx: StreamRunContext) -> None:
         await super()._before_stream(ctx)
         self.authoring_session.reset_completion()
+        self.semantic_plan_file_tool.reset_turn()
+
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        try:
+            async with aclosing(super().execute_stream(action_history_manager)) as parent:
+                async for action in parent:
+                    yield action
+        finally:
+            try:
+                await self.semantic_plan_file_tool.finish_review_commits()
+            finally:
+                # A successful finalization has already recorded and cleared its proposal.
+                self._record_plan_outcome(completed=False)
+
+    def _record_plan_outcome(self, *, completed: bool) -> str | None:
+        try:
+            self.semantic_plan_file_tool.record_outcome(completed=completed)
+        except Exception as exc:
+            # Planning metadata is ancillary to the already validated model.
+            logger.warning("Could not record semantic plan outcome: %s", exc)
+            return str(exc)
+        return None
 
     @tool_contract(access="read", direct_call=True, category="semantic_tools")
     def list_existing_osi_semantic_models(self) -> FuncToolResult:
@@ -291,6 +318,10 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
                 raise RuntimeError("semantic_modeling cannot return status='skipped' after changing the target.")
         else:
             semantic_model_files = [self._finalize_selected_osi_artifact()]
+            if plan_error := self._record_plan_outcome(completed=True):
+                response_content += (
+                    f"\n\nThe model was saved, but its plan outcome could not be recorded: {plan_error}."
+                )
 
         tokens_used = 0
         if self.execution_mode == "interactive":

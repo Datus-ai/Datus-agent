@@ -30,6 +30,7 @@ from datus.tools.permission.permission_hooks import (
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.permission.profiles import get_profile
 from datus.tools.registry.tool_registry import ToolRegistry
+from tests.unit_tests.semantic_plan_support import plan_writer
 
 
 @pytest.fixture
@@ -3364,7 +3365,7 @@ class TestPluginCliBashPermission:
 @pytest.mark.parametrize("non_interactive", [False, True])
 async def test_normal_cli_plan_writer_executes_without_confirmation(tmp_path, mock_broker, non_interactive):
     """CLI plan writes remain direct in interactive and noninteractive normal mode."""
-    tool = SemanticPlanFileTools(tmp_path).available_tools()[0]
+    tool = plan_writer(tmp_path).available_tools()[0]
     registry = ToolRegistry()
     registry.register_tools("semantic_tools", [tool])
     hooks = PermissionHooks(
