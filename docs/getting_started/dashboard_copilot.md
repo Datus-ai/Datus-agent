@@ -419,10 +419,12 @@ The attribution subagent works against the generated metrics and semantic dimens
 An attribution report should include:
 
 - the overall population change;
-- regional and country-level contributors;
-- dimension-level contribution or importance;
+- the regions that contributed most, and the countries the tool lists under them;
+- each contributor's share of the change;
 - the strongest drivers and relevant caveats;
 - a conclusion grounded in metric query results.
+
+A region-then-country split lists at most `top_groups` groups across both levels, picked by the size of their effect, and shows each country under its region. A region can therefore appear with its country count and no countries named. To see more countries, ask for a larger `top_groups` (up to 200) rather than a separate call filtered to one region.
 
 An abbreviated example:
 

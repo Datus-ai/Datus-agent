@@ -40,7 +40,7 @@ Datus 会在思考时实时流式输出，展示每一步的执行结果。如�
 
 ### 指标问数与归因
 
-Chat 可以直接使用 `list_metrics`、`get_metric`、`get_dataset`、`query_metrics` 和 `attribution_analyze` 发现、查询已有语义指标并进行归因。连续追问和较长分析留在当前 chat，不要求委派给 AskMetrics。
+Chat 可以直接使用 `list_metrics`、`get_metric`、`get_dataset`、`query_metrics`、`attribute_metrics` 和 `attribute_dimensions` 发现、查询已有语义指标并进行归因。连续追问和较长分析留在当前 chat，不要求委派给 AskMetrics。
 
 需要完整表格时，chat 使用同一个 `result_id`、下一页的 `offset` 和 `page_size` 继续调用 `query_metrics`，也可以使用 `get_query_metrics_result` 读取有上限的缓存分页。两种方式都无需重新查询，缓存读取继续受当前策略、数据源和指标范围约束。
 

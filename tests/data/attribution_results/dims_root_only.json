@@ -1,0 +1,36 @@
+{
+ "schema_version": 3,
+ "status": "unsupported",
+ "metric": "store_sales_vs_channel_average",
+ "dimensions": [
+  "item.i_category",
+  "item.i_class"
+ ],
+ "algorithm": null,
+ "accuracy": null,
+ "tree": {
+  "label": "store_sales_vs_channel_average",
+  "metric": "store_sales_vs_channel_average",
+  "expression": "store_sales_amount / channel_average_sales_amount * 100",
+  "baseline": 144.23904684175895,
+  "current": 145.31999296045603,
+  "delta": 1.080946118697085,
+  "effect": null,
+  "share": null
+ },
+ "issues": [
+  {
+   "code": "dimension_not_aligned",
+   "severity": "error",
+   "message": "in the baseline period the group `Home, (null)` comes back more than once: the metric's aggregates come from several datasets, and its query merges them on the group's values with `=`, which NULL does not match, so a group with a NULL value comes back once per dataset; the groups are not a partition of what the metric is computed from",
+   "suggested_action": "exclude the NULL values with `context_filter` (`field IS NOT NULL`)"
+  }
+ ],
+ "execution": {
+  "queries_executed": 3,
+  "rows_fetched": 165,
+  "evaluations_executed": 0,
+  "elapsed_ms": 41,
+  "budget_exhausted": []
+ }
+}

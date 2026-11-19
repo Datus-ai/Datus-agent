@@ -86,7 +86,7 @@ Key behavior:
 - `get_dataset` is called for every dataset a query reads. Dataset and field descriptions hold conventions every query on it follows, such as a snapshot's version day or what a code value means.
 - Grouping and filtering names are `dataset.field`, with the field name `get_dataset` shows.
 - `query_metrics` is the primary tool for metric values.
-- `attribution_analyze` is used for change explanation and contribution questions.
+- Change explanation and contribution questions use `attribute_metrics` to split a change over the inputs of the metric's formula, and `attribute_dimensions` to split it over the groups of one or more dimensions (one call per dimension to compare dimensions; several dimensions in one call drill down in order).
 - Raw SQL tools are not part of the default AskMetrics surface.
 
 ## Default Tools
@@ -99,7 +99,8 @@ Key behavior:
 | `semantic_tools.get_metric` | Describe one metric: how it is computed, the datasets it reads and can be grouped by, its parameters, and its time grains |
 | `semantic_tools.get_dataset` | Describe one dataset: its fields with their definitions, fixed fields, time field, and relationships |
 | `semantic_tools.query_metrics` | Query metric values |
-| `semantic_tools.attribution_analyze` | Explain metric movement across candidate dimensions |
+| `semantic_tools.attribute_metrics` | Explain a metric's change through its formula: how much each input contributed |
+| `semantic_tools.attribute_dimensions` | Explain a metric's change by the groups of its dimensions: how much each group contributed |
 | `filesystem_tools.read_file` | Read relevant project business definitions or background |
 | `filesystem_tools.glob` | Locate relevant project files |
 | `filesystem_tools.grep` | Search project files for specific business terms |

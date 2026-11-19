@@ -160,7 +160,8 @@ class TestNormalProfile:
     def test_all_semantic_tools_allowed(self):
         config = NORMAL
         assert _resolve(config, "semantic_tools", "validate_semantic") == PermissionLevel.ALLOW
-        assert _resolve(config, "semantic_tools", "attribution_analyze") == PermissionLevel.ALLOW
+        assert _resolve(config, "semantic_tools", "attribute_metrics") == PermissionLevel.ALLOW
+        assert _resolve(config, "semantic_tools", "attribute_dimensions") == PermissionLevel.ALLOW
         assert _resolve(config, "semantic_tools", "future_semantic_tool") == PermissionLevel.ALLOW
 
     def test_reference_template_tools_allowed(self):

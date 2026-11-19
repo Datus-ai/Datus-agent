@@ -46,7 +46,8 @@ def _semantic_tools(runtime):
         "list_metrics",
         "get_metric",
         "query_metrics",
-        "attribution_analyze",
+        "attribute_metrics",
+        "attribute_dimensions",
         "describe_concept",
         "find_concept_paths",
         "select_records",
@@ -108,7 +109,8 @@ class TestSetup:
             "list_metrics",
             "get_metric",
             "query_metrics",
-            "attribution_analyze",
+            "attribute_metrics",
+            "attribute_dimensions",
             "search_metrics",
         ]
         assert factory.call_args.kwargs["ontology_enabled"] is True

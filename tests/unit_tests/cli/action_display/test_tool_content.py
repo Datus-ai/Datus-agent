@@ -14,7 +14,7 @@ from datus.cli.action_display.tool_content import (
     ToolCallContent,
     ToolCallContentBuilder,
     _build_ask_user,
-    _build_attribution_analyze,
+    _build_attribution,
     _build_bash,
     _build_check_exists,
     _build_describe_table,
@@ -1511,20 +1511,48 @@ class TestBuildValidateSemantic:
         assert "relationship_target_not_unique on kpi_cell" in rendered
 
 
+def _attribution_action(name: str, result: dict) -> ActionHistory:
+    return _make(input_data={"function_name": name}, output_data={"raw_output": json.dumps(result)})
+
+
+_FORMULA_TREE = (
+    "status complete\n\nm = a / b | 2 \u2192 3 | +1 (100.0%)\n"
+    "  a | 2 \u2192 4 | +1.5 (150.0%)\n  b | 1 \u2192 1.3333 | -0.5 (-50.0%)"
+)
+_GROUP_TREE = (
+    "status complete\n\nm by region | 2 \u2192 3 | change +1\n"
+    "- east | 1 \u2192 1.8 | +0.8 (80.0%)\n- west | 1 \u2192 1.2 | +0.2 (20.0%)"
+)
+
+
 @pytest.mark.ci
-class TestBuildAttributionAnalyze:
-    def test_compact(self):
-        a = _make(
-            input_data={"function_name": "attribution_analyze"},
-            output_data={
-                "raw_output": '{"success": 1, "result": {'
-                '"implementation": "generic", "strategy": "term_wise", '
-                '"per_dimension": {"d1": {"values": [], "non_additive": false}}, '
-                '"warnings": [{"code": "dimension_analysis_failed", "dimension": "d2"}]}}'
-            },
+class TestBuildAttribution:
+    @pytest.mark.parametrize(
+        "name, text, compact",
+        [
+            ("attribute_metrics", _FORMULA_TREE, "complete · Δ +1 · a +1.5 (150.0%)"),
+            ("attribute_dimensions", _GROUP_TREE, "complete · Δ +1 · east +0.8 (80.0%)"),
+        ],
+    )
+    def test_compact_through_the_builder(self, name, text, compact):
+        tc = ToolCallContentBuilder().build(_attribution_action(name, {"success": 1, "result": text}), verbose=False)
+        assert tc.compact_result == compact
+        assert tc.status_mark == "\u2713"
+
+    def test_unsupported_is_an_answer(self):
+        text = "status unsupported\nissue error insufficient_state: counts distinct values"
+        a = _attribution_action("attribute_dimensions", {"success": 1, "result": text})
+        tc = ToolCallContentBuilder().build(a, verbose=False)
+        assert tc.status_mark == "\u2713"
+        assert tc.compact_result == "unsupported · insufficient_state"
+
+    @pytest.mark.parametrize("verbose", [False, True])
+    def test_a_refused_request_is_marked_failed(self, verbose):
+        a = _attribution_action(
+            "attribute_dimensions", {"success": 0, "error": "dimensions_required: name the fields to split by"}
         )
-        tc = _build_attribution_analyze(a, verbose=False)
-        assert tc.compact_result == "generic term_wise, 1/2 dimensions usable, 1 failed, 1 warning"
+        assert a.status == ActionStatus.SUCCESS
+        assert _build_attribution(a, verbose=verbose).status_mark == "\u2717"
 
 
 # ── Filesystem tools ──────────────────────────────────────────────
@@ -2127,7 +2155,8 @@ class TestAllToolsRegistered:
         "get_metric",
         "query_metrics",
         "validate_semantic",
-        "attribution_analyze",
+        "attribute_metrics",
+        "attribute_dimensions",
         # Filesystem
         "edit_file",
         "write_file",

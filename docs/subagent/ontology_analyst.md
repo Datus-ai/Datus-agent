@@ -200,7 +200,8 @@ Concept paths such as `FlightAlert.flight.arrives_at.name` work anywhere a field
 | `semantic_tools.list_metrics` | Enumerate executable metrics |
 | `semantic_tools.get_metric` | Describe one metric |
 | `semantic_tools.query_metrics` | Query metric values |
-| `semantic_tools.attribution_analyze` | Explain metric movement across dimensions |
+| `semantic_tools.attribute_metrics` | Explain a metric's change through its formula |
+| `semantic_tools.attribute_dimensions` | Explain a metric's change by the groups of its dimensions |
 | `context_search_tools.search_metrics` | Find candidate metrics by wording |
 
 ## Configuration

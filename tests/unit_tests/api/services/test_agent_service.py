@@ -292,7 +292,8 @@ class TestConstants:
             "semantic_tools.get_metric",
             "semantic_tools.get_dataset",
             "semantic_tools.query_metrics",
-            "semantic_tools.attribution_analyze",
+            "semantic_tools.attribute_metrics",
+            "semantic_tools.attribute_dimensions",
             "context_search_tools.list_subject_tree",
             "filesystem_tools.read_file",
             "filesystem_tools.glob",
@@ -325,7 +326,8 @@ class TestConstants:
             "semantic_tools.get_dataset",
             "semantic_tools.query_metrics",
             "semantic_tools.get_query_metrics_result",
-            "semantic_tools.attribution_analyze",
+            "semantic_tools.attribute_metrics",
+            "semantic_tools.attribute_dimensions",
             "db_tools.*",
             "context_search_tools.*",
             "reference_template_tools.*",
@@ -1012,6 +1014,41 @@ class TestCreateAgent:
         # The raw API field name must NOT be persisted — that would be invisible
         # to the runtime.
         assert "description" not in entry
+
+    async def test_create_and_edit_agent_save_a_replaced_tool_as_its_successors(
+        self, real_agent_config, agent_yml_with_singleton
+    ):
+        """A client still sending ``semantic_tools.attribution_analyze`` is not rejected:
+        the name is validated and saved as the two tools that replaced it."""
+        import yaml
+
+        from datus.api.models.agent_models import CreateAgentInput, EditAgentInput
+
+        def saved_tools(name):
+            raw = yaml.safe_load(agent_yml_with_singleton.read_text(encoding="utf-8"))
+            tools = raw["agent"]["agentic_nodes"][name]["tools"]
+            return [t.strip() for t in tools.split(",")] if isinstance(tools, str) else tools
+
+        svc = AgentService()
+        created = await svc.create_agent(
+            CreateAgentInput(name="legacy_attr", type="gen_sql", tools=["semantic_tools.attribution_analyze"]),
+            real_agent_config,
+        )
+        assert created.success is True, created.errorMessage
+        assert saved_tools("legacy_attr") == ["semantic_tools.attribute_metrics", "semantic_tools.attribute_dimensions"]
+
+        edited = await svc.edit_agent(
+            EditAgentInput(
+                id="legacy_attr", tools=["semantic_tools.query_metrics", "semantic_tools.attribution_analyze"]
+            ),
+            real_agent_config,
+        )
+        assert edited.success is True, edited.errorMessage
+        assert saved_tools("legacy_attr") == [
+            "semantic_tools.query_metrics",
+            "semantic_tools.attribute_metrics",
+            "semantic_tools.attribute_dimensions",
+        ]
 
     async def test_create_agent_invalid_tools_fails(self, real_agent_config, agent_yml_with_singleton):
         """create_agent rejects invalid tool patterns."""

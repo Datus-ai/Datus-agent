@@ -9,7 +9,6 @@ Provides permission checking and filtering for all tools, MCP servers, and skill
 following Claude Code and OpenCode patterns.
 """
 
-import fnmatch
 import logging
 import threading
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
@@ -261,15 +260,7 @@ class PermissionManager:
         Returns:
             True if rule matches
         """
-        # Check tool category match
-        if rule.tool != "*" and not fnmatch.fnmatch(tool_category, rule.tool):
-            return False
-
-        # Check pattern match within category
-        if rule.pattern != "*" and not fnmatch.fnmatch(tool_name, rule.pattern):
-            return False
-
-        return True
+        return rule.matches(tool_category, tool_name)
 
     def filter_available_tools(
         self,

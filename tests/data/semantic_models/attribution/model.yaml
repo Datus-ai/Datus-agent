@@ -72,7 +72,7 @@ metrics:
           expression: SUM(ledger.x) * SUM(ledger.y)
 
   - name: unique_categories
-    description: Deliberately unsupported distinct-count metric
+    description: Distinct count, split only by the field it counts
     expression:
       dialects:
         - dialect: ANSI_SQL
