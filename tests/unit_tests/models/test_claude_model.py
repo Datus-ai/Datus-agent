@@ -2047,57 +2047,159 @@ class TestNativeLoopHooks:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("entrypoint", ["stream", "nonstream"])
-    async def test_denied_tool_aborts_native_loop(self, entrypoint):
-        """on_tool_start raising PermissionDeniedException must propagate out of
-        the generator and prevent the tool from running — mirroring the SDK
-        path, where a denied tool aborts the run instead of feeding the model a
-        tool_result."""
+    @pytest.mark.parametrize("response", ["deny", "dismiss"])
+    async def test_declined_tool_returns_result_in_native_loop(self, entrypoint, response):
+        """A declined call stays blocked while the authorized sibling and the model continue."""
+        from agents import function_tool
+
         from datus.schemas.action_history import ActionHistoryManager, ActionStatus
-        from datus.tools.permission.permission_hooks import PermissionDeniedException
+        from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
+        from datus.tools.permission.permission_hooks import CompositeHooks, PermissionHooks
+        from datus.tools.permission.permission_manager import PermissionManager
+        from datus.tools.registry.tool_registry import ToolRegistry
 
         model = _make_claude_model(_make_model_config(use_native_api=True))
-        tool_block = _make_tool_use_block(name="list_tables", block_id="call_1")
-        resp_tool = _make_response([tool_block])
-        # Second response would only be reached if the loop kept going.
-        model.anthropic_client.messages.create.side_effect = [resp_tool, _make_response([_make_text_block("x")])]
+        tool_calls = [
+            _make_tool_use_block(name="write_project", block_id="call_write"),
+            _make_tool_use_block(name="read_project", block_id="call_read"),
+        ]
+        responses = iter([_make_response(tool_calls), _make_response([_make_text_block("done")])])
+        requests = []
 
-        func_tool = MagicMock()
-        func_tool.name = "list_tables"
-        func_tool.description = ""
-        func_tool.params_json_schema = {"type": "object"}
-        func_tool.on_invoke_tool = AsyncMock(return_value="result")
+        def respond(**kwargs):
+            requests.append(json.loads(json.dumps(kwargs["messages"])))
+            return next(responses)
 
-        hooks = _make_recorder_hooks()
-        hooks.on_tool_start = AsyncMock(side_effect=PermissionDeniedException("denied"))
+        model.anthropic_client.messages.create.side_effect = respond
+        executions = []
 
-        seen = []
-        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
-            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
-            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
-            with pytest.raises(PermissionDeniedException):
-                if entrypoint == "nonstream":
-                    await model.generate_with_tools(
-                        prompt="q",
-                        mcp_servers={"test": MagicMock()},
-                        instruction="sys",
-                        tools=[func_tool],
-                        hooks=hooks,
-                    )
-                else:
-                    async for action in model._generate_with_mcp_stream(
-                        prompt="q",
-                        mcp_servers={},
-                        instruction="sys",
-                        output_type={},
-                        func_tools=[func_tool],
-                        action_history_manager=ActionHistoryManager(),
-                        hooks=hooks,
-                    ):
-                        seen.append(action)
+        @function_tool
+        def write_project() -> str:
+            executions.append("write")
+            return "unexpected write"
 
-        # Tool never executed; no SUCCESS completion emitted for the block.
-        func_tool.on_invoke_tool.assert_not_awaited()
-        assert not any(getattr(a, "status", None) == ActionStatus.SUCCESS and a.role.name == "TOOL" for a in seen)
+        @function_tool
+        def read_project() -> str:
+            executions.append("read")
+            return "authorized result"
+
+        registry = ToolRegistry({"write_project": "project", "read_project": "project"})
+        manager = PermissionManager(
+            global_config=PermissionConfig(
+                default_permission=PermissionLevel.ALLOW,
+                rules=[PermissionRule(tool="project", pattern="write_project", permission=PermissionLevel.ASK)],
+            )
+        )
+        broker = MagicMock()
+        broker.request = AsyncMock(return_value=[["n" if response == "deny" else ""]])
+        permission = PermissionHooks(
+            broker=broker, permission_manager=manager, node_name="chat", tool_registry=registry
+        )
+        recorder = _make_recorder_hooks()
+        hooks = CompositeHooks([permission, recorder])
+        history = ActionHistoryManager()
+
+        if entrypoint == "nonstream":
+            await model.generate_with_mcp(
+                prompt="q",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                func_tools=[write_project, read_project],
+                hooks=hooks,
+                action_history_manager=history,
+            )
+        else:
+            async for _ in model._generate_with_mcp_stream(
+                prompt="q",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                func_tools=[write_project, read_project],
+                action_history_manager=history,
+                hooks=hooks,
+            ):
+                pass
+
+        assert executions == ["read"]
+        broker.request.assert_awaited_once()
+        assert len(requests) == 2
+        results = [
+            block
+            for message in requests[1]
+            if isinstance(message["content"], list)
+            for block in message["content"]
+            if block["type"] == "tool_result"
+        ]
+        assert sorted(block["tool_use_id"] for block in results) == ["call_read", "call_write"]
+        outputs = {block["tool_use_id"]: block["content"] for block in results}
+        refusal = json.loads(outputs["call_write"])
+        assert refusal["success"] == 0
+        assert "User rejected execution of 'write_project'" in refusal["error"]
+        assert "Respect this decision" in refusal["error"]
+        assert outputs["call_read"] == "authorized result"
+        assert {action.action_id: action.status for action in history.get_actions()}["complete_call_write"] == (
+            ActionStatus.FAILED
+        )
+        recorder.on_llm_end.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_invalid_scope_argument_returns_failure_and_native_loop_continues(self, real_agent_config):
+        from datus.agent.node.node_factory import create_interactive_node, create_node_input
+        from datus.schemas.action_history import ActionHistoryManager, ActionStatus
+
+        real_agent_config.agentic_nodes["reader"] = {
+            "node_class": "configurable",
+            "tools": ["filesystem_tools.grep"],
+            "scoped_context": {"project_files": ["docs/**"]},
+        }
+        node = create_interactive_node("reader", real_agent_config, execution_mode="workflow")
+        model = _make_claude_model(_make_model_config(use_native_api=True))
+        responses = iter(
+            [
+                _make_response([_make_tool_use_block("grep", "call_grep", {"path": None, "pattern": "spec"})]),
+                _make_response([_make_text_block("done")]),
+            ]
+        )
+        requests = []
+
+        def respond(**kwargs):
+            requests.append(copy.deepcopy(kwargs["messages"]))
+            return next(responses)
+
+        model.anthropic_client.messages.create.side_effect = respond
+        history = ActionHistoryManager()
+        try:
+            user_input = create_node_input("Search the docs.", node)
+            await node._before_stream(SimpleNamespace(user_input=user_input))
+            async for _ in model._generate_with_mcp_stream(
+                prompt="q",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                func_tools=node.tools,
+                hooks=node._compose_hooks(),
+                action_history_manager=history,
+            ):
+                pass
+        finally:
+            await node.aclose()
+
+        assert len(requests) == 2
+        result = next(
+            block
+            for message in requests[1]
+            if isinstance(message["content"], list)
+            for block in message["content"]
+            if block["type"] == "tool_result" and block["tool_use_id"] == "call_grep"
+        )
+        failure = json.loads(result["content"])
+        assert failure["success"] == 0
+        assert "path" in failure["error"] and "string" in failure["error"]
+        assert any(
+            action.action_id == "complete_call_grep" and action.status == ActionStatus.FAILED
+            for action in history.get_actions()
+        )
 
     @pytest.mark.asyncio
     async def test_token_usage_via_standard_on_llm_end(self):
@@ -2167,58 +2269,40 @@ class TestNativeLoopHooks:
         hooks.on_end.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_composite_permission_hook_denies_and_aborts(self):
-        """End-to-end: a real CompositeHooks wrapping a real PermissionHooks with
-        a DENY rule blocks the tool and propagates, while the token-usage hook
-        in the same composite still saw the LLM response."""
+    async def test_preflight_error_terminates_native_loop(self):
+        """Unexpected preflight errors prevent execution and stop model requests."""
+        from agents import function_tool
+
         from datus.schemas.action_history import ActionHistoryManager
-        from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
-        from datus.tools.permission.permission_hooks import CompositeHooks, PermissionDeniedException, PermissionHooks
-        from datus.tools.permission.permission_manager import PermissionManager
-        from datus.tools.registry.tool_registry import ToolRegistry
 
         model = _make_claude_model(_make_model_config(use_native_api=True))
-        tool_block = _make_tool_use_block(name="list_tables", block_id="call_1")
-        model.anthropic_client.messages.create.side_effect = [
-            _make_response([tool_block]),
-            _make_response([_make_text_block("x")]),
-        ]
-
-        func_tool = MagicMock()
-        func_tool.name = "list_tables"
-        func_tool.description = ""
-        func_tool.params_json_schema = {"type": "object"}
-        func_tool.on_invoke_tool = AsyncMock(return_value="result")
-
-        registry = ToolRegistry({"list_tables": "db_tools"})
-        manager = PermissionManager(
-            global_config=PermissionConfig(
-                default_permission=PermissionLevel.ALLOW,
-                rules=[PermissionRule(tool="db_tools", pattern="list_tables", permission=PermissionLevel.DENY)],
-            )
+        model.anthropic_client.messages.create.return_value = _make_response(
+            [_make_tool_use_block(name="write_project", block_id="call_write")]
         )
-        perm = PermissionHooks(broker=MagicMock(), permission_manager=manager, node_name="chat", tool_registry=registry)
-        recorder = _make_recorder_hooks()
-        composite = CompositeHooks([perm, recorder])
+        executions = []
 
-        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
-            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
-            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
-            with pytest.raises(PermissionDeniedException):
-                async for _ in model._generate_with_mcp_stream(
-                    prompt="q",
-                    mcp_servers={},
-                    instruction="sys",
-                    output_type={},
-                    func_tools=[func_tool],
-                    action_history_manager=ActionHistoryManager(),
-                    hooks=composite,
-                ):
-                    pass
+        @function_tool
+        def write_project() -> str:
+            executions.append("write")
+            return "unexpected write"
 
-        func_tool.on_invoke_tool.assert_not_awaited()
-        # The composite still fanned the first LLM response out to the recorder.
-        recorder.on_llm_end.assert_awaited()
+        hooks = _make_recorder_hooks()
+        hooks.on_tool_start = AsyncMock(side_effect=RuntimeError("permission service unavailable"))
+
+        with pytest.raises(RuntimeError, match="permission service unavailable"):
+            async for _ in model._generate_with_mcp_stream(
+                prompt="q",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                func_tools=[write_project],
+                action_history_manager=ActionHistoryManager(),
+                hooks=hooks,
+            ):
+                pass
+
+        assert executions == []
+        model.anthropic_client.messages.create.assert_called_once()
 
 
 class TestStoreNativeTurnUsage:

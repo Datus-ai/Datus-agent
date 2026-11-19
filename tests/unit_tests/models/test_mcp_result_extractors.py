@@ -150,6 +150,31 @@ class TestExtractSqlContexts:
         result = extract_sql_contexts(self._make_result(items), db_type="snowflake")
         assert len(result) == 2
 
+    def test_rejected_sql_is_skipped_without_dropping_the_next_result(self):
+        items = [
+            {
+                "type": "function_call",
+                "name": "execute_sql",
+                "call_id": "denied",
+                "arguments": '{"sql": "SELECT 1"}',
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "denied",
+                "output": '{"success": 0, "error": "PERMISSION_DENIED: requires approval", "result": null}',
+            },
+            {
+                "type": "function_call",
+                "name": "execute_sql",
+                "call_id": "allowed",
+                "arguments": '{"sql": "SELECT 2"}',
+            },
+            {"type": "function_call_output", "call_id": "allowed", "output": "col1\n2\n"},
+        ]
+        result = extract_sql_contexts(self._make_result(items))
+        assert [item.sql_query for item in result] == ['execute_sql:{"sql": "SELECT 2"}']
+        assert [item.sql_return for item in result] == ["col1\n2\n"]
+
     def test_duckdb_query_function(self):
         items = [
             {
