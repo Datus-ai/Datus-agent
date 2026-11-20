@@ -14,7 +14,7 @@ import asyncio
 from typing import TYPE_CHECKING, Annotated, AsyncGenerator, Optional
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from datus.api.constants import BUILTIN_SUBAGENTS
 from datus.api.deps import AppContextDep, ServiceDep
@@ -49,10 +49,11 @@ from datus.api.models.cli_models import (
     UserInteractionInput,
 )
 from datus.api.services.background_drain import track_background_task
+from datus.api.services.chat_task_manager import ChatRequestCapacityExceeded, ChatRequestReplayUnavailable
 from datus.api.utils.service_stream import ServiceStreamingResponse
 from datus.api.utils.stream_errors import humanize_stream_error
 from datus.tools.policy_runtime import PolicyRuntime
-from datus.utils.exceptions import DatusException
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.feedback_prompt import build_reaction_feedback_prompt
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso
@@ -117,6 +118,38 @@ def _policy_context_pre_check(svc: "DatusService", ctx: "AppContext") -> Optiona
 # ========== Stream Chat ==========
 
 
+class _ChatStartDenied(Exception):
+    def __init__(self, outcome: ChatPreCheckOutcome) -> None:
+        self.outcome = outcome
+
+
+async def _prepare_chat_start(
+    request: StreamChatInput, svc: "DatusService", ctx: "AppContext", http_request: Request
+) -> dict:
+    await prepare_chat_messages(http_request, request)
+    if request.subagent_id and not _is_valid_subagent_id(svc, request.subagent_id):
+        raise HTTPException(status_code=404, detail=f"Subagent '{request.subagent_id}' not found")
+
+    denial = _policy_context_pre_check(svc, ctx)
+    if denial:
+        raise _ChatStartDenied(denial)
+
+    hooks = get_chat_hooks()
+    pre_outcome = await _run_pre_chat_hook(hooks, http_request, request, ctx.user_id)
+    if pre_outcome and not pre_outcome.allow:
+        raise _ChatStartDenied(pre_outcome)
+
+    return {
+        "sub_agent_id": request.subagent_id,
+        "user_id": ctx.user_id,
+        "policy_context": ctx.policy_context,
+        "stats_context": _capture_turn_stats_context(http_request, request, ctx.user_id),
+        "on_turn_end": _post_chat_settler(
+            hooks, http_request, request, ctx.user_id, pre_outcome.extra if pre_outcome else {}
+        ),
+    }
+
+
 @router.post(
     "/stream",
     summary="Stream Chat Message",
@@ -129,52 +162,50 @@ async def stream_chat(
     ctx: AppContextDep,
     http_request: Request,
 ):
-    await prepare_chat_messages(http_request, request)
-    sub_agent_id = request.subagent_id
-    if sub_agent_id and not _is_valid_subagent_id(svc, sub_agent_id):
-        raise HTTPException(
-            status_code=404,
-            detail=f"Subagent '{sub_agent_id}' not found",
-        )
+    try:
+        if request.client_request_id is None:
+            options = await _prepare_chat_start(request, svc, ctx, http_request)
+            events = svc.chat.stream_chat(request, **options)
+        else:
+            manager = svc.task_manager
 
-    sql_policy_denial = _policy_context_pre_check(svc, ctx)
-    if sql_policy_denial:
+            async def start():
+                options = await _prepare_chat_start(request, svc, ctx, http_request)
+                try:
+                    return await manager.start_chat(svc.agent_config, request, **options)
+                except (ValueError, DatusException) as exc:
+                    code = exc.code if isinstance(exc, DatusException) else ErrorCode.COMMON_VALIDATION_FAILED
+                    raise _ChatStartDenied(
+                        ChatPreCheckOutcome(allow=False, error=str(exc), error_type=code.name)
+                    ) from exc
+
+            task = await manager.start_or_replay_chat(ctx.user_id, request.client_request_id, start)
+            # A caller retrying the POST may have missed the session frame.
+            events = manager.consume_events(task, start_from=0)
+    except _ChatStartDenied as exc:
         return StreamingResponse(
-            _emit_pre_check_denial(request, sql_policy_denial),
+            _emit_pre_check_denial(request, exc.outcome),
             media_type="text/event-stream",
             headers=_sse_headers(),
         )
-
-    hooks = get_chat_hooks()
-    pre_outcome = await _run_pre_chat_hook(hooks, http_request, request, ctx.user_id)
-    if pre_outcome and not pre_outcome.allow:
-        return StreamingResponse(
-            _emit_pre_check_denial(request, pre_outcome),
-            media_type="text/event-stream",
-            headers=_sse_headers(),
+    except ChatRequestReplayUnavailable as exc:
+        result = Result(
+            success=False,
+            errorCode="CHAT_REQUEST_REPLAY_UNAVAILABLE",
+            errorMessage=str(exc),
+            data={"session_id": exc.session_id},
         )
+        return JSONResponse(result.model_dump(), status_code=409)
+    except ChatRequestCapacityExceeded:
+        result = Result(
+            success=False,
+            errorCode="CHAT_REQUEST_CAPACITY_EXCEEDED",
+            errorMessage="Too many recent chat requests. Try again later.",
+        )
+        return JSONResponse(result.model_dump(), status_code=429)
 
-    pre_extra = pre_outcome.extra if pre_outcome else {}
-    stats_context = _capture_turn_stats_context(http_request, request, ctx.user_id)
-
-    on_turn_end = _post_chat_settler(hooks, http_request, request, ctx.user_id, pre_extra)
-
-    async def generate_sse():
-        async for chunk in _stream_with_error_event(
-            svc.chat.stream_chat(
-                request,
-                sub_agent_id=sub_agent_id,
-                user_id=ctx.user_id,
-                policy_context=ctx.policy_context,
-                stats_context=stats_context,
-                on_turn_end=on_turn_end,
-            ),
-            request=request,
-            user_id=ctx.user_id,
-        ):
-            yield chunk
-
-    return ServiceStreamingResponse(generate_sse(), service=svc, media_type="text/event-stream", headers=_sse_headers())
+    stream = _stream_with_error_event(events, request=request, user_id=ctx.user_id)
+    return ServiceStreamingResponse(stream, service=svc, media_type="text/event-stream", headers=_sse_headers())
 
 
 # ========== Reaction-triggered Feedback ==========
@@ -839,7 +870,7 @@ async def _stream_with_error_event(
             if isinstance(event.id, int):
                 last_event_id = event.id
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
-    except asyncio.CancelledError:
+    except (asyncio.CancelledError, GeneratorExit):
         # Client disconnected or the server is shutting down. The HTTP
         # response is already gone — nothing to yield, nothing to log.
         raise

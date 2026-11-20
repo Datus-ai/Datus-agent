@@ -850,6 +850,80 @@ class TestSubmitToolResult:
 
 
 @pytest.mark.asyncio
+async def test_retry_after_losing_chat_session_frame_does_not_start_another_turn(real_agent_config, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from datus.api.services.chat_service import ChatService
+    from datus.api.services.chat_task_manager import ChatTaskManager
+
+    manager = ChatTaskManager()
+    svc = SimpleNamespace(
+        agent_config=real_agent_config,
+        task_manager=manager,
+        chat=ChatService(real_agent_config, task_manager=manager),
+    )
+    admission_started = asyncio.Event()
+    allow_start = asyncio.Event()
+    ran = []
+
+    async def pre_check(*args):
+        admission_started.set()
+        await allow_start.wait()
+
+    async def run(task, *_args, **_kwargs):
+        ran.append(task.session_id)
+        await manager._push_event(
+            task, SSEEvent(id=0, event="session", data=SSESessionData(session_id=task.session_id))
+        )
+        await manager._push_event(
+            task,
+            SSEEvent(
+                id=1,
+                event="end",
+                data=SSEEndData(session_id=task.session_id, total_events=2, action_count=0, duration=0),
+            ),
+        )
+        async with task.condition:
+            task.status = "completed"
+            task.condition.notify_all()
+
+    monkeypatch.setattr("datus.api.routes.chat_routes._run_pre_chat_hook", pre_check)
+    monkeypatch.setattr(manager, "_run_loop", run)
+
+    async def send(user_id):
+        return await stream_chat(
+            StreamChatInput(message="Show the sales total", client_request_id="0123456789abcdef" * 2),
+            svc,
+            SimpleNamespace(user_id=user_id, policy_context={}),
+            MagicMock(),
+        )
+
+    try:
+        original = asyncio.create_task(send("owner"))
+        await asyncio.wait_for(admission_started.wait(), timeout=1)
+        retry = asyncio.create_task(send("owner"))
+        allow_start.set()
+        first, replay = await asyncio.wait_for(asyncio.gather(original, retry), timeout=1)
+        # The gateway could read this frame while the browser never did.
+        lost_frame = await asyncio.wait_for(anext(first.body_iterator), timeout=1)
+        await first.body_iterator.aclose()
+        replayed = [chunk async for chunk in replay.body_iterator]
+        assert replayed[0] == lost_frame
+        assert "event: session" in replayed[0]
+        assert "event: end" in replayed[-1]
+        assert len(ran) == 1
+
+        # The same key does not share a turn across authenticated users.
+        peer = await send("other-user")
+        peer_frames = [chunk async for chunk in peer.body_iterator]
+        assert peer_frames[0] != lost_frame
+        assert len(ran) == 2
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("decision", [0, 1])
 async def test_http_tool_result_requires_the_session_owner(tmp_path, decision):
     """An authenticated project peer cannot accept or cancel another user's review."""
