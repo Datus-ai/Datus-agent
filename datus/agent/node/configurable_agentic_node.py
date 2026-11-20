@@ -49,6 +49,7 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 _RUNTIME_CLOSE_TIMEOUT = 5.0
+_SEMANTIC_DRAFT_CLEANUPS: set[asyncio.Future] = set()
 
 
 async def _await_result(value: Any) -> Any:
@@ -65,7 +66,19 @@ async def _create_semantic_draft(scope: ConfigurableScope) -> SemanticAuthoringD
         # TemporaryDirectory, but must never attach it to the cancelled turn.
         def close_abandoned(completed: asyncio.Task) -> None:
             try:
-                completed.result().close()
+                draft = completed.result()
+
+                def close() -> None:
+                    try:
+                        draft.close()
+                    except BaseException:
+                        logger.exception("Failed to construct or close an abandoned semantic draft")
+
+                # Submit immediately rather than awaiting disk cleanup on the
+                # event loop. Keep the future alive until the worker finishes.
+                cleanup = asyncio.get_running_loop().run_in_executor(None, close)
+                _SEMANTIC_DRAFT_CLEANUPS.add(cleanup)
+                cleanup.add_done_callback(_SEMANTIC_DRAFT_CLEANUPS.discard)
             except BaseException:
                 logger.exception("Failed to construct or close an abandoned semantic draft")
 
@@ -149,6 +162,7 @@ class ConfigurableAgenticNode(AgenticNode):
         self._uses_semantic_authoring = requests_semantic_authoring(self.spec.tools)
         self._semantic_authoring_session: SemanticAuthoringSession | None = None
         self._semantic_draft: SemanticAuthoringDraft | None = None
+        self._semantic_draft_creating = False
         self._semantic_draft_completed = False
         self.execution_scope = ConfigurableScope(self.spec, agent_config)
         self.execution_mode = execution_mode
@@ -608,14 +622,18 @@ class ConfigurableAgenticNode(AgenticNode):
     async def _begin_semantic_draft(self) -> dict[str, Any]:
         if self.definition.plugin is None:
             raise PermissionError("Isolated business drafts require an installed publisher runtime")
-        if self._semantic_draft is not None:
+        if self._semantic_draft is not None or self._semantic_draft_creating:
             raise RuntimeError("A semantic draft is already active for this turn")
         current = self._semantic_authoring_session
         if current is not None and current.osi_target_state.selected is not None:
             raise RuntimeError("Begin the draft before selecting or modifying a semantic target")
-        await self._retire_database_tools()
-        self._semantic_authoring_session = None
-        self._semantic_draft = await _create_semantic_draft(self.execution_scope)
+        self._semantic_draft_creating = True
+        try:
+            await self._retire_database_tools()
+            self._semantic_authoring_session = None
+            self._semantic_draft = await _create_semantic_draft(self.execution_scope)
+        finally:
+            self._semantic_draft_creating = False
         self._native_scope_identity = None
         await self._refresh_native_tools()
         self.tools = list(self._native_tools)
