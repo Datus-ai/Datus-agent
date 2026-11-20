@@ -738,7 +738,12 @@ class ConfigurableAgenticNode(AgenticNode):
             await self._authorize_host_tool(candidates[0], {})
             return {"selected": session.osi_target_state.selected is not None, "changed": session._target_was_mutated()}
         path = session.osi_target_state.selected_path
-        if not path or not self._allows_authoring_path(Path(path)):
+        if not path:
+            raise RuntimeError(
+                "No semantic model is selected for this turn. Call list_existing_osi_semantic_models, "
+                "then select a target with bind_osi_semantic_model_target or plan_osi_semantic_model_target."
+            )
+        if not self._allows_authoring_path(Path(path)):
             raise PermissionError("Semantic model is outside scoped_context.project_files")
         live_path = str(self._semantic_draft.live_path(path)) if self._semantic_draft is not None else path
         await self._authorize_host_tool(candidates[0], {"path": live_path})
