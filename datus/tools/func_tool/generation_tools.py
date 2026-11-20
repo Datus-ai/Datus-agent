@@ -1396,7 +1396,6 @@ class GenerationTools:
         from datus.configuration.agent_config import _db_config_to_dosi_profile
         from datus.tools.semantic_tools.dosi import DosiConfig, DosiRuntime
         from datus.tools.semantic_tools.paging import metric_catalog_paging
-        from datus.utils.async_utils import run_async
 
         datasource = self.agent_config.current_datasource
         db_config = _db_config_to_dosi_profile(current_db_config(datasource))
@@ -1412,7 +1411,7 @@ class GenerationTools:
         page_size, max_pages = metric_catalog_paging()
         offset = 0
         for _ in range(max_pages):
-            page = list(run_async(adapter.list_metrics(limit=page_size, offset=offset)))
+            page = list(adapter.list_metrics_sync(limit=page_size, offset=offset))
             for metric in page:
                 name = str(getattr(metric, "name", "") or "").strip()
                 if name:
@@ -1420,7 +1419,7 @@ class GenerationTools:
             if len(page) < page_size:
                 return catalog
             offset += len(page)
-        if not list(run_async(adapter.list_metrics(limit=page_size, offset=offset))):
+        if not list(adapter.list_metrics_sync(limit=page_size, offset=offset)):
             return catalog
         raise ValueError(f"Dosi metric catalog exceeds the {page_size * max_pages} metric publication limit")
 

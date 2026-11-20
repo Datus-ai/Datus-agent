@@ -276,6 +276,22 @@ async def test_list_metrics_maps_rows_and_slices(make_runtime):
 
 
 @pytest.mark.asyncio
+async def test_sync_metric_listing_preserves_metadata_and_reenters_the_writer_lock(make_runtime, model_file):
+    from datus.storage.semantic_model.artifact_file import semantic_artifact_lock
+
+    runtime = make_runtime()
+    expected = await runtime.list_metrics(limit=1, offset=1)
+    # Exercise the real registry, EngineHandle.get, and _metric_snapshot, not
+    # just the catalog seam: all three must retain the writer's thread.
+    with semantic_artifact_lock(model_file):
+        actual = runtime.list_metrics_sync(limit=1, offset=1)
+    assert [metric.model_dump() for metric in actual] == [metric.model_dump() for metric in expected]
+    assert actual[0].name == "revenue"
+    with semantic_artifact_lock(model_file):
+        assert runtime.list_metrics_sync(path=["not-present"]) == []
+
+
+@pytest.mark.asyncio
 async def test_list_metrics_exposes_parameter_schema(make_runtime, monkeypatch):
     rows = [
         {

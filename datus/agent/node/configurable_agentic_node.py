@@ -55,6 +55,24 @@ async def _await_result(value: Any) -> Any:
     return await value if inspect.isawaitable(value) else value
 
 
+async def _create_semantic_draft(scope: ConfigurableScope) -> SemanticAuthoringDraft:
+    """Wait for file locks off-loop and dispose of drafts abandoned by cancellation."""
+    task = asyncio.create_task(asyncio.to_thread(SemanticAuthoringDraft, scope))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # A running thread cannot be cancelled. It still owns its eventual
+        # TemporaryDirectory, but must never attach it to the cancelled turn.
+        def close_abandoned(completed: asyncio.Task) -> None:
+            try:
+                completed.result().close()
+            except BaseException:
+                logger.exception("Failed to construct or close an abandoned semantic draft")
+
+        task.add_done_callback(close_abandoned)
+        raise
+
+
 class _ScopeHooks(CompositeHooks):
     """Run before permission hooks, which may themselves read SQL file arguments."""
 
@@ -364,7 +382,7 @@ class ConfigurableAgenticNode(AgenticNode):
             if session is not None and session.osi_target_state.selected is not None:
                 raise ValueError("A publisher must narrow the scope before selecting a semantic target")
             self._semantic_draft.close()
-            self._semantic_draft = SemanticAuthoringDraft(self.execution_scope)
+            self._semantic_draft = await _create_semantic_draft(self.execution_scope)
         await self._refresh_native_tools()
         self._turn_context["scoped_context"] = self._host.scoped_context
         self._turn_context["context"] = dict(self._prepared.context)
@@ -597,7 +615,7 @@ class ConfigurableAgenticNode(AgenticNode):
             raise RuntimeError("Begin the draft before selecting or modifying a semantic target")
         await self._retire_database_tools()
         self._semantic_authoring_session = None
-        self._semantic_draft = SemanticAuthoringDraft(self.execution_scope)
+        self._semantic_draft = await _create_semantic_draft(self.execution_scope)
         self._native_scope_identity = None
         await self._refresh_native_tools()
         self.tools = list(self._native_tools)

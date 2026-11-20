@@ -214,14 +214,54 @@ def test_uid_sync_scope_uses_selected_artifact_and_datasource(generation_tools):
 
 
 class TestCompiledMetricCatalog:
+    def test_catalog_compilation_keeps_the_artifact_lock_on_its_owner_thread(self, generation_tools, tmp_path):
+        """Reconcile owns an RLock while compiling; a worker cannot re-enter it.
+
+        Bound acquisition so this catches the production deadlock without
+        leaving an executor thread stuck forever in the test process.
+        """
+        import threading
+        from contextlib import contextmanager
+
+        from datus.storage.semantic_model import artifact_file
+        from datus.tools.semantic_tools.dosi import DosiConfig, DosiRuntime
+
+        target = tmp_path / "subject/semantic_models/warehouse/model.yml"
+        target.parent.mkdir(parents=True)
+        target.write_text("name: sales\n")
+        lock = threading.RLock()
+
+        @contextmanager
+        def bounded_lock(_path):
+            assert lock.acquire(timeout=0.2), "catalog moved to a thread that cannot re-enter the artifact lock"
+            try:
+                yield
+            finally:
+                lock.release()
+
+        runtime = DosiRuntime(DosiConfig(semantic_model_path=str(target)))
+
+        def catalog():
+            with artifact_file.semantic_model_load_lock(target):
+                return (), {}, {}
+
+        runtime._catalog = catalog
+        with (
+            patch.object(artifact_file, "_thread_mutation_lock", bounded_lock),
+            patch("datus.tools.semantic_tools.dosi.runtime.datus_extension_version", return_value="test"),
+            patch("datus.tools.semantic_tools.dosi.DosiRuntime", return_value=runtime),
+            artifact_file.semantic_artifact_lock(target, load_before_lock=False),
+        ):
+            assert generation_tools._compiled_metric_catalog(str(target)) == {}
+
     def test_dosi_catalog_paging(self, generation_tools, tmp_path):
         calls = []
 
-        async def list_metrics(*, limit, offset):
+        def list_metrics_sync(*, limit, offset):
             calls.append((limit, offset))
             return [SimpleNamespace(name="revenue")] if offset == 0 else []
 
-        runtime = SimpleNamespace(list_metrics=list_metrics)
+        runtime = SimpleNamespace(list_metrics_sync=list_metrics_sync)
 
         with (
             patch("datus.tools.semantic_tools.dosi.DosiRuntime", return_value=runtime),
