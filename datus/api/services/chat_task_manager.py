@@ -13,9 +13,7 @@ import json
 import os
 import time
 import uuid
-import weakref
 from contextlib import ExitStack
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional
 
@@ -49,6 +47,7 @@ from datus.api.services.turn_stats import TurnStatsCollector, resolve_subagent
 from datus.cli.autocomplete import AtReferenceCompleter
 from datus.cli.execution_state import PendingInputQueue
 from datus.configuration.agent_config import AgentConfig
+from datus.models.chat_request_store import ChatRequestReceipt, ChatRequestStore
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.proxy.proxy_tool import apply_proxy_tools
@@ -487,14 +486,7 @@ def _usage_kwargs(turn_usage: Any) -> Dict[str, Any]:
 _SYSTEM_TRIGGERED_AGENTS = frozenset({"feedback"})
 
 COMPLETED_TASK_TTL = 300  # seconds to keep completed tasks for resume
-MAX_CHAT_REQUESTS = 4096  # Pending and recent sends per project
-
-
-@dataclass
-class _AcceptedChatRequest:
-    session_id: str
-    task: weakref.ReferenceType[ChatTask]
-    expires_at: float = float("inf")
+MAX_CHAT_REQUESTS = 4096  # Concurrent admissions per project
 
 
 class ChatRequestReplayUnavailable(Exception):
@@ -505,6 +497,11 @@ class ChatRequestReplayUnavailable(Exception):
 
 class ChatRequestCapacityExceeded(Exception):
     pass
+
+
+class _ChatRequestAlreadyAccepted(Exception):
+    def __init__(self, receipt: ChatRequestReceipt) -> None:
+        self.receipt = receipt
 
 
 # Web clients run a FULL server-side bash (all commands allowed), confined by
@@ -539,7 +536,7 @@ class ChatTaskManager:
         self._tasks: Dict[str, ChatTask] = {}
         self._completed_tasks: Dict[str, ChatTask] = {}
         self._pending_chat_requests: dict[tuple[Optional[str], str], asyncio.Future[Optional[ChatTask]]] = {}
-        self._accepted_chat_requests: dict[tuple[Optional[str], str], _AcceptedChatRequest] = {}
+        self._starting_sessions: set[str] = set()
         self._default_source = default_source
         self._default_interactive = default_interactive
         self._stream_thinking = stream_thinking
@@ -557,24 +554,12 @@ class ChatTaskManager:
     async def start_or_replay_chat(
         self,
         user_id: Optional[str],
-        request_id: str,
+        store: ChatRequestStore,
         start: Callable[[], Awaitable[ChatTask]],
     ) -> ChatTask:
-        """Admit one send per user and request ID in this project's manager."""
-        key = (user_id, request_id)
+        """Serialize local retries and replay only the exact, durably accepted turn."""
+        key = (user_id, store.request_id)
         while not self._closed:
-            now = self._clock()
-            for expired_key, record in list(self._accepted_chat_requests.items()):
-                if record.expires_at <= now:
-                    del self._accepted_chat_requests[expired_key]
-            self._purge_expired_completed()
-            accepted = self._accepted_chat_requests.get(key)
-            if accepted is not None:
-                task = accepted.task()
-                if task is None:
-                    raise ChatRequestReplayUnavailable(accepted.session_id)
-                return task
-
             pending = self._pending_chat_requests.get(key)
             if pending is None:
                 break
@@ -584,21 +569,21 @@ class ChatTaskManager:
         else:
             raise RuntimeError("ChatTaskManager is shut down")
 
-        # There is no await between lookup and reservation. Denial or
-        # cancellation before acceptance releases it so another send can try.
-        if len(self._pending_chat_requests) + len(self._accepted_chat_requests) >= MAX_CHAT_REQUESTS:
+        if len(self._pending_chat_requests) >= MAX_CHAT_REQUESTS:
             raise ChatRequestCapacityExceeded
         pending = asyncio.get_running_loop().create_future()
         self._pending_chat_requests[key] = pending
         try:
-            task = await start()
-            accepted = _AcceptedChatRequest(task.session_id, weakref.ref(task))
-            self._accepted_chat_requests[key] = accepted
-
-            def expire_after_completion(_done: asyncio.Task) -> None:
-                accepted.expires_at = self._clock() + self._completed_task_ttl
-
-            task.asyncio_task.add_done_callback(expire_after_completion)
+            receipt = await asyncio.to_thread(store.find)
+            if receipt is None:
+                try:
+                    task = await start()
+                except _ChatRequestAlreadyAccepted as exc:
+                    receipt = exc.receipt
+            if receipt is not None:
+                task = self.get_task(receipt.session_id)
+                if task is None or task.run_id != receipt.run_id or task.user_id != user_id:
+                    raise ChatRequestReplayUnavailable(receipt.session_id)
             pending.set_result(task)
             return task
         finally:
@@ -615,6 +600,7 @@ class ChatTaskManager:
         policy_context: Optional[Dict[str, Any]] = None,
         stats_context: Optional[Dict[str, Any]] = None,
         on_turn_end: Optional["TurnEndCallback"] = None,
+        chat_request: ChatRequestStore | None = None,
     ) -> ChatTask:
         """Create a background task for the agentic loop.
             :param sub_agent_id: builtin name or custom sub-agent DB ID
@@ -761,7 +747,7 @@ class ChatTaskManager:
         # Metadata resolution above can overlap application shutdown.
         if self._closed:
             raise RuntimeError("ChatTaskManager is shut down")
-        if session_id in self._tasks:
+        if session_id in self._tasks or session_id in self._starting_sessions:
             raise ValueError(f"A task is already running for session {session_id}")
 
         # Placeholder — asyncio_task set immediately after
@@ -775,6 +761,19 @@ class ChatTaskManager:
         task.stats_context = dict(stats_context or {})
         task.on_turn_end = on_turn_end
         task.turn_id = uuid.uuid4().hex
+        if chat_request is not None:
+            # Once the receipt is committed, complete the handoff even if the
+            # HTTP reader drops. The session slot also fences unrelated sends
+            # while the durable claim is waiting on storage.
+            self._starting_sessions.add(session_id)
+            try:
+                receipt = await self._drain_cleanup(asyncio.to_thread(chat_request.claim, session_id, task.run_id))
+            finally:
+                self._starting_sessions.discard(session_id)
+            if receipt is not None:
+                raise _ChatRequestAlreadyAccepted(receipt)
+            if self._closed:
+                raise RuntimeError("ChatTaskManager is shut down")
         self._tasks[session_id] = task
 
         asyncio_task = asyncio.create_task(
@@ -824,7 +823,7 @@ class ChatTaskManager:
 
     def has_active_tasks(self) -> bool:
         """Return True if any task is still running."""
-        return any(
+        return bool(self._pending_chat_requests) or any(
             t.status == "running" or (t.asyncio_task is not None and not t.asyncio_task.done())
             for t in self._tasks.values()
         )
@@ -878,6 +877,8 @@ class ChatTaskManager:
 
     async def wait_all_tasks(self) -> None:
         """Wait for all running tasks to finish without cancelling them."""
+        if self._pending_chat_requests:
+            await asyncio.shield(asyncio.gather(*self._pending_chat_requests.values()))
         pending = [t.asyncio_task for t in self._tasks.values() if t.asyncio_task and not t.asyncio_task.done()]
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
@@ -896,7 +897,6 @@ class ChatTaskManager:
             await asyncio.gather(*pending, return_exceptions=True)
         self._tasks.clear()
         self._completed_tasks.clear()
-        self._accepted_chat_requests.clear()
         # Finishing tasks may have scheduled an expiry while shutdown drained them.
         if self._expiry_handle is not None:
             self._expiry_handle.cancel()

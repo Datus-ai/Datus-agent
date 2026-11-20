@@ -348,23 +348,28 @@ class TestChatTaskManagerInit:
 
 
 @pytest.mark.asyncio
-async def test_retry_with_evicted_replay_preserves_the_accepted_session():
+async def test_retry_with_evicted_replay_preserves_the_accepted_session(tmp_path):
+    import time
     from unittest.mock import AsyncMock
 
     from datus.api.services.chat_task_manager import ChatRequestReplayUnavailable
+    from datus.models.chat_request_store import ChatRequestStore
 
     manager = ChatTaskManager()
+    store = ChatRequestStore(str(tmp_path), f"{int(time.time() * 1000)}-{'a' * 32}", project_id="p", user_id="owner")
 
     async def start_chat():
-        return ChatTask("accepted-session", asyncio.create_task(asyncio.sleep(0)), user_id="owner")
+        task = ChatTask("accepted-session", asyncio.create_task(asyncio.sleep(0)), user_id="owner")
+        await asyncio.to_thread(store.claim, task.session_id, task.run_id)
+        return task
 
     start = AsyncMock(side_effect=start_chat)
-    accepted = await manager.start_or_replay_chat("owner", "request", start)
+    accepted = await manager.start_or_replay_chat("owner", store, start)
     await accepted.asyncio_task
     del accepted
 
     with pytest.raises(ChatRequestReplayUnavailable) as exc:
-        await manager.start_or_replay_chat("owner", "request", start)
+        await manager.start_or_replay_chat("owner", store, start)
     assert exc.value.session_id == "accepted-session"
     start.assert_awaited_once()
 

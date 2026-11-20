@@ -52,6 +52,7 @@ from datus.api.services.background_drain import track_background_task
 from datus.api.services.chat_task_manager import ChatRequestCapacityExceeded, ChatRequestReplayUnavailable
 from datus.api.utils.service_stream import ServiceStreamingResponse
 from datus.api.utils.stream_errors import humanize_stream_error
+from datus.models.chat_request_store import ChatRequestExpired, ChatRequestStore
 from datus.tools.policy_runtime import PolicyRuntime
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.feedback_prompt import build_reaction_feedback_prompt
@@ -168,18 +169,23 @@ async def stream_chat(
             events = svc.chat.stream_chat(request, **options)
         else:
             manager = svc.task_manager
+            sessions = await asyncio.to_thread(manager.session_manager, svc.agent_config, ctx.user_id)
+            store = ChatRequestStore(
+                sessions.session_dir, request.client_request_id, project_id=ctx.project_id, user_id=ctx.user_id
+            )
 
             async def start():
                 options = await _prepare_chat_start(request, svc, ctx, http_request)
                 try:
-                    return await manager.start_chat(svc.agent_config, request, **options)
+                    return await manager.start_chat(svc.agent_config, request, chat_request=store, **options)
                 except (ValueError, DatusException) as exc:
                     code = exc.code if isinstance(exc, DatusException) else ErrorCode.COMMON_VALIDATION_FAILED
                     raise _ChatStartDenied(
                         ChatPreCheckOutcome(allow=False, error=str(exc), error_type=code.name)
                     ) from exc
 
-            task = await manager.start_or_replay_chat(ctx.user_id, request.client_request_id, start)
+            task = await manager.start_or_replay_chat(ctx.user_id, store, start)
+            request.session_id = task.session_id
             # A caller retrying the POST may have missed the session frame.
             events = manager.consume_events(task, start_from=0)
     except _ChatStartDenied as exc:
@@ -203,6 +209,9 @@ async def stream_chat(
             errorMessage="Too many recent chat requests. Try again later.",
         )
         return JSONResponse(result.model_dump(), status_code=429)
+    except ChatRequestExpired:
+        result = Result(success=False, errorCode="CHAT_REQUEST_EXPIRED", errorMessage="The retry window has expired.")
+        return JSONResponse(result.model_dump(), status_code=409)
 
     stream = _stream_with_error_event(events, request=request, user_id=ctx.user_id)
     return ServiceStreamingResponse(stream, service=svc, media_type="text/event-stream", headers=_sse_headers())

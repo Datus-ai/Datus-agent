@@ -852,10 +852,12 @@ class TestSubmitToolResult:
 @pytest.mark.asyncio
 async def test_retry_after_losing_chat_session_frame_does_not_start_another_turn(real_agent_config, monkeypatch):
     import asyncio
+    import time
     from types import SimpleNamespace
 
     from datus.api.services.chat_service import ChatService
     from datus.api.services.chat_task_manager import ChatTaskManager
+    from datus.models.chat_request_store import CHAT_REQUEST_WINDOW_MS
 
     manager = ChatTaskManager()
     svc = SimpleNamespace(
@@ -866,6 +868,7 @@ async def test_retry_after_losing_chat_session_frame_does_not_start_another_turn
     admission_started = asyncio.Event()
     allow_start = asyncio.Event()
     ran = []
+    request_id = f"{int(time.time() * 1000)}-{'0123456789abcdef' * 2}"
 
     async def pre_check(*args):
         admission_started.set()
@@ -887,15 +890,18 @@ async def test_retry_after_losing_chat_session_frame_does_not_start_another_turn
         async with task.condition:
             task.status = "completed"
             task.condition.notify_all()
+        task.settled = True
+        task.completed_at = manager._clock()
+        manager._completed_tasks[task.session_id] = manager._tasks.pop(task.session_id)
 
     monkeypatch.setattr("datus.api.routes.chat_routes._run_pre_chat_hook", pre_check)
     monkeypatch.setattr(manager, "_run_loop", run)
 
-    async def send(user_id):
+    async def send(user_id, key=request_id):
         return await stream_chat(
-            StreamChatInput(message="Show the sales total", client_request_id="0123456789abcdef" * 2),
+            StreamChatInput(message="Show the sales total", client_request_id=key),
             svc,
-            SimpleNamespace(user_id=user_id, policy_context={}),
+            SimpleNamespace(user_id=user_id, project_id="project-1", policy_context={}),
             MagicMock(),
         )
 
@@ -918,6 +924,24 @@ async def test_retry_after_losing_chat_session_frame_does_not_start_another_turn
         peer = await send("other-user")
         peer_frames = [chunk async for chunk in peer.body_iterator]
         assert peer_frames[0] != lost_frame
+        assert len(ran) == 2
+
+        await manager.shutdown()
+        manager = ChatTaskManager()
+        svc.task_manager = manager
+        lost_replay = await send("owner")
+        assert lost_replay.status_code == 409
+        assert json.loads(lost_replay.body) == {
+            "success": False,
+            "data": {"session_id": ran[0]},
+            "errorCode": "CHAT_REQUEST_REPLAY_UNAVAILABLE",
+            "errorMessage": "The chat request was accepted; open the existing session to see its history.",
+        }
+        assert len(ran) == 2
+
+        expired = await send("owner", f"{int(time.time() * 1000) - CHAT_REQUEST_WINDOW_MS}-{'a' * 32}")
+        assert expired.status_code == 409
+        assert json.loads(expired.body)["errorCode"] == "CHAT_REQUEST_EXPIRED"
         assert len(ran) == 2
     finally:
         await manager.shutdown()
