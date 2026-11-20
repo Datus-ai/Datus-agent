@@ -192,13 +192,26 @@ class DosiRuntime:
         limit: int = 100,
         offset: int = 0,
     ) -> List[MetricDefinition]:
-        extension_version = await asyncio.to_thread(datus_extension_version)
-        handles, _, _ = await asyncio.to_thread(self._catalog)
+        return await asyncio.to_thread(self.list_metrics_sync, path=path, limit=limit, offset=offset)
+
+    def list_metrics_sync(
+        self,
+        path: Optional[List[str]] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[MetricDefinition]:
+        """List metrics on the calling thread, preserving artifact-lock ownership.
+
+        Synchronous publishers already hold the model's reentrant thread lock.
+        Sending any part of this read to another thread would deadlock against
+        that publisher. Async callers use ``list_metrics`` to offload the whole
+        operation without blocking their event loop.
+        """
+        extension_version = datus_extension_version()
+        handles, _, _ = self._catalog()
         metrics = []
         for model_path, handle in handles:
-            rows, dataset_rows, dimension_rows, payloads = await asyncio.to_thread(
-                self._metric_snapshot, model_path, handle
-            )
+            rows, dataset_rows, dimension_rows, payloads = self._metric_snapshot(model_path, handle)
             for row in rows:
                 hints = payloads.get(str(row.get("name") or ""), {})
                 metric_path = (
