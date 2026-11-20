@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from datus.api.models.base_models import Result
-from datus.api.models.chat_models import ToolResult, ToolResultInput
+from datus.api.models.chat_models import ResumeChatInput, StopChatInput, ToolResult, ToolResultInput
 from datus.api.models.cli_models import (
     ChatHistoryData,
     ChatSessionData,
@@ -28,6 +28,8 @@ from datus.api.routes.chat_routes import (
     delete_session,
     get_chat_history,
     list_sessions,
+    resume_chat,
+    stop_chat,
     stream_chat,
     submit_tool_result,
     submit_user_interaction,
@@ -891,6 +893,7 @@ async def test_retry_after_losing_chat_session_frame_does_not_start_another_turn
             task.status = "completed"
             task.condition.notify_all()
         task.settled = True
+        await asyncio.to_thread(task.chat_request.finish, task.run_id)
         task.completed_at = manager._clock()
         manager._completed_tasks[task.session_id] = manager._tasks.pop(task.session_id)
 
@@ -935,7 +938,7 @@ async def test_retry_after_losing_chat_session_frame_does_not_start_another_turn
             "success": False,
             "data": {"session_id": ran[0]},
             "errorCode": "CHAT_REQUEST_REPLAY_UNAVAILABLE",
-            "errorMessage": "The chat request was accepted; open the existing session to see its history.",
+            "errorMessage": "Open the existing session to see the finished turn.",
         }
         assert len(ran) == 2
 
@@ -945,6 +948,173 @@ async def test_retry_after_losing_chat_session_frame_does_not_start_another_turn
         assert len(ran) == 2
     finally:
         await manager.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["shutdown", "local-stop", "peer-stop"])
+async def test_send_interrupted_during_receipt_write(real_agent_config, monkeypatch, mode):
+    """A committed admission can be retried after shutdown, unless the user stopped it."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from datus.api.services.chat_task_manager import ChatTaskManager
+    from datus.models.chat_request_store import ChatRequestStore, issue_chat_request_id
+
+    original = ChatTaskManager()
+    replacement = ChatTaskManager()
+    svc = SimpleNamespace(agent_config=real_agent_config, task_manager=original)
+    ctx = SimpleNamespace(user_id="owner", project_id="project-1", policy_context={})
+    key = issue_chat_request_id()
+    session_id = "chat_session_existing"
+    stored = asyncio.Event()
+    continue_admission = asyncio.Event()
+    started = []
+
+    async def drain_cleanup(coro):
+        result = await coro
+        stored.set()
+        await continue_admission.wait()
+        return result
+
+    async def run(task, *_args, **_kwargs):
+        started.append((task.session_id, task.run_id))
+
+    monkeypatch.setattr(original, "_drain_cleanup", drain_cleanup)
+    monkeypatch.setattr(original, "_run_loop", run)
+    monkeypatch.setattr(replacement, "_run_loop", run)
+
+    def send():
+        return stream_chat(
+            StreamChatInput(message="Follow up", session_id=session_id, client_request_id=key), svc, ctx, MagicMock()
+        )
+
+    attempt = asyncio.create_task(send())
+    try:
+        await asyncio.wait_for(stored.wait(), timeout=3)
+        store = ChatRequestStore(
+            original.session_manager(real_agent_config, ctx.user_id).session_dir,
+            key,
+            project_id=ctx.project_id,
+            user_id=ctx.user_id,
+        )
+        reserved = store.find()
+        assert reserved.state == "pending"
+
+        if mode != "shutdown":
+            if mode == "peer-stop":
+                svc.task_manager = replacement
+            result = await stop_chat(StopChatInput(session_id=session_id, client_request_id=key), svc, ctx)
+            assert result.success is True
+            assert result.data == {"session_id": session_id, "stopped": True}
+        else:
+            await original.shutdown()
+
+        continue_admission.set()
+        if mode != "shutdown":
+            rejected = await attempt
+            assert json.loads(rejected.body)["errorCode"] == "CHAT_REQUEST_CANCELLED"
+        else:
+            with pytest.raises(RuntimeError, match="shut down"):
+                await attempt
+
+        assert not started
+        svc.task_manager = replacement
+        retry = await send()
+        if mode != "shutdown":
+            assert json.loads(retry.body)["errorCode"] == "CHAT_REQUEST_CANCELLED"
+            assert not started
+        else:
+            assert retry.status_code == 200
+            await replacement.wait_all_tasks()
+            assert started == [(session_id, reserved.run_id)]
+    finally:
+        continue_admission.set()
+        await asyncio.gather(attempt, return_exceptions=True)
+        await original.shutdown()
+        await replacement.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_retry_on_another_instance_waits_for_the_exact_turn_to_settle(real_agent_config, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from datus.api.services.chat_task_manager import ChatTaskManager
+    from datus.models.chat_request_store import issue_chat_request_id
+
+    original = ChatTaskManager()
+    peer = ChatTaskManager()
+    svc = SimpleNamespace(agent_config=real_agent_config, task_manager=original)
+    ctx = SimpleNamespace(user_id="owner", project_id="project-1", policy_context={})
+    key = issue_chat_request_id()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    session_id = "chat_session_existing"
+
+    async def run(task, *_args, **_kwargs):
+        started.set()
+        await release.wait()
+        await asyncio.to_thread(task.chat_request.finish, task.run_id)
+
+    monkeypatch.setattr(original, "_run_loop", run)
+    monkeypatch.setattr(peer, "_run_loop", AsyncMock(side_effect=AssertionError("duplicate turn")))
+
+    def send():
+        return stream_chat(
+            StreamChatInput(message="Follow up", session_id=session_id, client_request_id=key), svc, ctx, MagicMock()
+        )
+
+    async def resume():
+        return await resume_chat(ResumeChatInput(session_id=session_id, client_request_id=key), svc, ctx)
+
+    try:
+        assert (await send()).status_code == 200
+        await asyncio.wait_for(started.wait(), timeout=3)
+        svc.task_manager = peer
+        for reply in (await send(), await resume()):
+            assert reply.status_code == 409
+            assert json.loads(reply.body)["errorCode"] == "CHAT_REQUEST_RUNNING"
+
+        release.set()
+        await original.wait_all_tasks()
+        for reply in (await send(), await resume()):
+            assert reply.status_code == 409
+            data = json.loads(reply.body)
+            assert data["errorCode"] == "CHAT_REQUEST_REPLAY_UNAVAILABLE"
+            assert data["data"] == {"session_id": session_id}
+        peer._run_loop.assert_not_awaited()
+    finally:
+        release.set()
+        await original.shutdown()
+        await peer.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_issued_request_id_uses_server_time_and_disables_caching(monkeypatch):
+    import re
+
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from datus.api.deps import get_app_context, service_request
+    from datus.api.routes.chat_routes import router
+
+    monkeypatch.setattr("datus.models.chat_request_store.time.time", lambda: 1_795_000_000.0)
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[service_request] = lambda: None
+    app.dependency_overrides[get_app_context] = lambda: None
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.get("/api/v1/chat/request-id")
+        second = await client.get("/api/v1/chat/request-id")
+
+    assert first.status_code == second.status_code == 200
+    assert first.headers["Cache-Control"] == second.headers["Cache-Control"] == "no-store"
+    first_id = first.json()["data"]["client_request_id"]
+    second_id = second.json()["data"]["client_request_id"]
+    assert re.fullmatch(r"1795000000000-[0-9a-f]{32}", first_id)
+    assert re.fullmatch(r"1795000000000-[0-9a-f]{32}", second_id)
+    assert first_id != second_id
 
 
 @pytest.mark.asyncio

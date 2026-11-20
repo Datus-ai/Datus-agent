@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from datus.api.models.message_contents import ChatMessageContent
+from datus.models.chat_request_store import CHAT_REQUEST_ID_PATTERN
 from datus.utils.time_utils import now_utc_iso
 
 
@@ -316,8 +317,8 @@ class StreamChatInput(ChatInput):
 
     client_request_id: Optional[str] = Field(
         default=None,
-        pattern=r"^[0-9]{13}-[0-9a-f]{32}$",
-        description="Client-generated Unix milliseconds and random hex ID. Reuse for retries within one hour.",
+        pattern=CHAT_REQUEST_ID_PATTERN,
+        description="ID from /chat/request-id. Reuse for retries within one hour.",
     )
     subagent_id: Optional[str] = Field(default=None, description="Subagent ID (builtin name or DB SubAgent id)")
     prompt_version: Optional[str] = Field(default=None, description="Prompt version")

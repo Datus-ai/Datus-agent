@@ -2,13 +2,20 @@
 
 import sqlite3
 import time
+import uuid
 from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
+CHAT_REQUEST_ID_PATTERN = r"^[0-9]{13}-[0-9a-f]{32}$"
 CHAT_REQUEST_WINDOW_MS = 60 * 60 * 1000
 _MAX_CLOCK_SKEW_MS = 5 * 60 * 1000
+
+
+def issue_chat_request_id() -> str:
+    return f"{int(time.time() * 1000)}-{uuid.uuid4().hex}"
 
 
 class ChatRequestExpired(Exception):
@@ -19,6 +26,7 @@ class ChatRequestExpired(Exception):
 class ChatRequestReceipt:
     session_id: str
     run_id: str
+    state: Literal["pending", "running", "finished", "cancelled"]
 
 
 class ChatRequestStore:
@@ -55,6 +63,7 @@ class ChatRequestStore:
                 """CREATE TABLE IF NOT EXISTS chat_requests (
                     project_id TEXT NOT NULL, user_id TEXT NOT NULL, request_id TEXT NOT NULL,
                     session_id TEXT NOT NULL, run_id TEXT NOT NULL, expires_at INTEGER NOT NULL,
+                    state TEXT NOT NULL,
                     PRIMARY KEY (project_id, user_id, request_id)
                 )"""
             )
@@ -66,7 +75,7 @@ class ChatRequestStore:
 
     def _select(self, conn: sqlite3.Connection) -> ChatRequestReceipt | None:
         row = conn.execute(
-            "SELECT session_id, run_id FROM chat_requests WHERE project_id=? AND user_id=? AND request_id=?",
+            "SELECT session_id, run_id, state FROM chat_requests WHERE project_id=? AND user_id=? AND request_id=?",
             self._key,
         ).fetchone()
         return ChatRequestReceipt(*row) if row else None
@@ -79,19 +88,60 @@ class ChatRequestStore:
         with closing(self._connect()) as conn:
             return self._select(conn)
 
-    def claim(self, session_id: str, run_id: str) -> ChatRequestReceipt | None:
-        """Persist the winning turn before dispatch, or return the existing receipt."""
+    def reserve(self, session_id: str, run_id: str) -> ChatRequestReceipt:
+        """Persist the turn identity before dispatching it."""
+        return self._reserve_or_cancel(session_id, run_id, cancel=False)
+
+    def cancel_pending(self, session_id: str) -> ChatRequestReceipt:
+        """Prevent dispatch even if the send has yet to reach the worker."""
+        return self._reserve_or_cancel(session_id, "", cancel=True)
+
+    def _reserve_or_cancel(self, session_id: str, run_id: str, *, cancel: bool) -> ChatRequestReceipt:
         self._check_window()
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
-            # Check again after acquiring the lock. Expired IDs can never be
-            # admitted again, even after their receipts have been pruned.
             now = self._check_window()
             conn.execute("DELETE FROM chat_requests WHERE expires_at <= ?", (now,))
-            inserted = conn.execute(
-                "INSERT INTO chat_requests VALUES (?, ?, ?, ?, ?, ?) "
+            conn.execute(
+                "INSERT INTO chat_requests VALUES (?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(project_id, user_id, request_id) DO NOTHING",
-                (*self._key, session_id, run_id, self._expires_at),
+                (*self._key, session_id, run_id, self._expires_at, "cancelled" if cancel else "pending"),
             )
-            return None if inserted.rowcount else self._select(conn)
+            if cancel:
+                conn.execute(
+                    "UPDATE chat_requests SET state='cancelled' "
+                    "WHERE project_id=? AND user_id=? AND request_id=? AND state='pending' AND (? IN ('', session_id))",
+                    (*self._key, session_id),
+                )
+            receipt = self._select(conn)
+            assert receipt is not None
+            return receipt
+
+    def begin(self, run_id: str) -> bool:
+        """Only a scheduled worker may move a pending turn into execution."""
+        return self._transition(run_id, "pending", "running")
+
+    def finish(self, run_id: str) -> None:
+        """Record completion after the turn and its history have settled."""
+        self._transition(run_id, "running", "finished")
+
+    def stop_before_start(self, run_id: str) -> None:
+        """The worker acquired dispatch ownership but a stop arrived before execution."""
+        self._transition(run_id, "running", "cancelled")
+
+    def release_before_start(self, run_id: str) -> None:
+        """The worker shut down after taking dispatch ownership but before entering the turn."""
+        self._transition(run_id, "running", "pending")
+
+    def _transition(self, run_id: str, expected: str, state: str) -> bool:
+        with closing(self._connect()) as conn, conn:
+            if expected == "pending":
+                conn.execute("BEGIN IMMEDIATE")
+                self._check_window()
+            updated = conn.execute(
+                "UPDATE chat_requests SET state=? "
+                "WHERE project_id=? AND user_id=? AND request_id=? AND run_id=? AND state=?",
+                (state, *self._key, run_id, expected),
+            )
+            return bool(updated.rowcount)

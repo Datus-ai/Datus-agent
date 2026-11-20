@@ -396,6 +396,9 @@ class ChatTask:
         self.session_id = session_id
         self.user_id = user_id
         self.run_id = uuid.uuid4().hex
+        self.dispatch_ready: asyncio.Future[bool] | None = None
+        self.chat_request: ChatRequestStore | None = None
+        self.stop_before_dispatch = False
         self.live_permission_profile = None
         self.asyncio_task = asyncio_task
         self.node: Optional[AgenticNode] = None
@@ -489,19 +492,13 @@ COMPLETED_TASK_TTL = 300  # seconds to keep completed tasks for resume
 MAX_CHAT_REQUESTS = 4096  # Concurrent admissions per project
 
 
-class ChatRequestReplayUnavailable(Exception):
-    def __init__(self, session_id: str) -> None:
-        self.session_id = session_id
-        super().__init__("The chat request was accepted; open the existing session to see its history.")
+class ChatRequestUnavailable(Exception):
+    def __init__(self, receipt: ChatRequestReceipt) -> None:
+        self.receipt = receipt
 
 
 class ChatRequestCapacityExceeded(Exception):
     pass
-
-
-class _ChatRequestAlreadyAccepted(Exception):
-    def __init__(self, receipt: ChatRequestReceipt) -> None:
-        self.receipt = receipt
 
 
 # Web clients run a FULL server-side bash (all commands allowed), confined by
@@ -536,7 +533,7 @@ class ChatTaskManager:
         self._tasks: Dict[str, ChatTask] = {}
         self._completed_tasks: Dict[str, ChatTask] = {}
         self._pending_chat_requests: dict[tuple[Optional[str], str], asyncio.Future[Optional[ChatTask]]] = {}
-        self._starting_sessions: set[str] = set()
+        self._starting_sessions: dict[str, ChatTask] = {}
         self._default_source = default_source
         self._default_interactive = default_interactive
         self._stream_thinking = stream_thinking
@@ -575,21 +572,42 @@ class ChatTaskManager:
         self._pending_chat_requests[key] = pending
         try:
             receipt = await asyncio.to_thread(store.find)
-            if receipt is None:
-                try:
-                    task = await start()
-                except _ChatRequestAlreadyAccepted as exc:
-                    receipt = exc.receipt
-            if receipt is not None:
-                task = self.get_task(receipt.session_id)
-                if task is None or task.run_id != receipt.run_id or task.user_id != user_id:
-                    raise ChatRequestReplayUnavailable(receipt.session_id)
+            if receipt is None or receipt.state == "pending":
+                task = await start()
+            else:
+                task = self.replay_chat_request(receipt, user_id)
             pending.set_result(task)
             return task
         finally:
             self._pending_chat_requests.pop(key)
             if not pending.done():
                 pending.set_result(None)
+
+    def replay_chat_request(self, receipt: ChatRequestReceipt, user_id: str | None) -> ChatTask:
+        task = self.get_task(receipt.session_id)
+        if (
+            receipt.state in ("running", "finished")
+            and task is not None
+            and task.run_id == receipt.run_id
+            and task.user_id == user_id
+            and (task.dispatch_ready is None or task.dispatch_ready.done() and task.dispatch_ready.result())
+        ):
+            return task
+        raise ChatRequestUnavailable(receipt)
+
+    def get_dispatched_chat_request(self, session_id: str, request_id: str, user_id: str | None) -> ChatTask | None:
+        task = self.get_task(session_id)
+        if (
+            task is not None
+            and task.user_id == user_id
+            and task.chat_request is not None
+            and task.chat_request.request_id == request_id
+            and task.dispatch_ready is not None
+            and task.dispatch_ready.done()
+            and task.dispatch_ready.result()
+        ):
+            return task
+        return None
 
     async def start_chat(
         self,
@@ -762,49 +780,115 @@ class ChatTaskManager:
         task.on_turn_end = on_turn_end
         task.turn_id = uuid.uuid4().hex
         if chat_request is not None:
-            # Once the receipt is committed, complete the handoff even if the
-            # HTTP reader drops. The session slot also fences unrelated sends
-            # while the durable claim is waiting on storage.
-            self._starting_sessions.add(session_id)
+            task.chat_request = chat_request
+            self._starting_sessions[session_id] = task
             try:
-                receipt = await self._drain_cleanup(asyncio.to_thread(chat_request.claim, session_id, task.run_id))
+                receipt = await self._drain_cleanup(asyncio.to_thread(chat_request.reserve, session_id, task.run_id))
+                if task.stop_before_dispatch and receipt.state == "pending":
+                    receipt = await self._drain_cleanup(
+                        asyncio.to_thread(chat_request.cancel_pending, receipt.session_id)
+                    )
             finally:
-                self._starting_sessions.discard(session_id)
-            if receipt is not None:
-                raise _ChatRequestAlreadyAccepted(receipt)
+                self._starting_sessions.pop(session_id)
+            if receipt.state != "pending":
+                return self.replay_chat_request(receipt, user_id)
             if self._closed:
                 raise RuntimeError("ChatTaskManager is shut down")
+            if receipt.session_id in self._tasks or receipt.session_id in self._starting_sessions:
+                raise ChatRequestUnavailable(receipt)
+            session_id = task.session_id = request.session_id = receipt.session_id
+            task.run_id = receipt.run_id
+            task.dispatch_ready = asyncio.get_running_loop().create_future()
+
         self._tasks[session_id] = task
 
-        asyncio_task = asyncio.create_task(
-            self._run_loop(
-                task,
-                agent_config,
-                request,
-                sub_agent_id=sub_agent_id,
-                user_id=user_id,
-            )
-        )
+        def run():
+            return self._run_loop(task, agent_config, request, sub_agent_id=sub_agent_id, user_id=user_id)
+
+        if chat_request is not None:
+            asyncio_task = asyncio.create_task(self._dispatch_chat_request(task, chat_request, run))
+        else:
+            asyncio_task = asyncio.create_task(run())
         task.asyncio_task = asyncio_task
-        # A task cancelled before its first step never enters _run_loop, so its
-        # ``finally`` never settles it or releases the session. Cover that here.
+        # A task cancelled before its first step never enters _run_loop.
         asyncio_task.add_done_callback(lambda _done: self._finish_unstarted(task))
+        if task.dispatch_ready is not None and not await asyncio.shield(task.dispatch_ready):
+            receipt = await asyncio.to_thread(chat_request.find)
+            if receipt is None:
+                raise RuntimeError("Chat request receipt disappeared during dispatch")
+            return self.replay_chat_request(receipt, user_id)
         return task
+
+    async def _dispatch_chat_request(
+        self, task: ChatTask, store: ChatRequestStore, run: Callable[[], Awaitable[None]]
+    ) -> None:
+        ready = task.dispatch_ready
+        assert ready is not None
+        try:
+            if self._closed or not await asyncio.to_thread(store.begin, task.run_id):
+                return
+            if task.stop_before_dispatch:
+                await asyncio.to_thread(store.stop_before_start, task.run_id)
+                return
+            if self._closed:
+                await asyncio.to_thread(store.release_before_start, task.run_id)
+                return
+            ready.set_result(True)
+            await run()
+        except Exception:
+            logger.exception("Chat request dispatch or cleanup failed for %s", task.session_id)
+        finally:
+            if not ready.done():
+                ready.set_result(False)
 
     def _finish_unstarted(self, task: ChatTask) -> None:
         """Settle and release a task whose ``_run_loop`` never ran; else a no-op."""
         if task.settled:
             return
+        if task.dispatch_ready is not None:
+            if not task.dispatch_ready.done():
+                task.dispatch_ready.set_result(False)
+            if not task.dispatch_ready.result():
+                # The worker did not dispatch this turn.
+                task.on_turn_end = None
         if task.status == "running":
             task.status = "cancelled"
         if self._tasks.get(task.session_id) is task:
             self._tasks.pop(task.session_id, None)
         self._settle_turn(task, None)
 
-    async def stop_task(self, session_id: str) -> bool:
-        """Stop a running task by interrupting its node."""
+    def mark_starting_chat_stopped(self, session_id: str, request_id: str, user_id: str | None) -> None:
+        """Fence a local dispatch immediately while the durable stop is being written."""
+        task = self._starting_sessions.get(session_id) or self._tasks.get(session_id)
+        if (
+            task is not None
+            and task.user_id == user_id
+            and task.chat_request is not None
+            and task.chat_request.request_id == request_id
+            and (task.dispatch_ready is None or not task.dispatch_ready.done())
+        ):
+            task.stop_before_dispatch = True
+
+    async def stop_task(self, session_id: str, *, run_id: str | None = None) -> bool:
+        """Stop a running task or an admission currently waiting on storage."""
+        task = self._starting_sessions.get(session_id) or self._tasks.get(session_id)
+        if (
+            run_id is None
+            and task is not None
+            and task.chat_request is not None
+            and (task.dispatch_ready is None or not task.dispatch_ready.done())
+        ):
+            task.stop_before_dispatch = True
+            receipt = await asyncio.to_thread(task.chat_request.cancel_pending, session_id)
+            if receipt.state == "cancelled":
+                return True
+            run_id = receipt.run_id
+
         task = self._tasks.get(session_id)
-        if not task:
+        if not task or (run_id is not None and task.run_id != run_id):
+            return False
+
+        if task.dispatch_ready is not None and not await asyncio.shield(task.dispatch_ready):
             return False
 
         if task.node:
@@ -890,7 +974,11 @@ class ChatTaskManager:
             self._expiry_handle.cancel()
             self._expiry_handle = None
         for task in list(self._tasks.values()):
-            if task.asyncio_task and not task.asyncio_task.done():
+            if (
+                task.asyncio_task
+                and not task.asyncio_task.done()
+                and (task.dispatch_ready is None or task.dispatch_ready.done())
+            ):
                 task.asyncio_task.cancel()
         pending = [t.asyncio_task for t in self._tasks.values() if t.asyncio_task and not t.asyncio_task.done()]
         if pending:
@@ -1513,6 +1601,11 @@ class ChatTaskManager:
             )
             self._settle_turn(task, last_usage)
             await self._drain_cleanup(self._release_task_resources(task))
+            if task.chat_request is not None:
+                try:
+                    await self._drain_cleanup(asyncio.to_thread(task.chat_request.finish, task.run_id))
+                except Exception:
+                    logger.exception("Could not settle the chat request receipt for %s", session_id)
             async with task.condition:
                 task.condition.notify_all()
             self._tasks.pop(session_id, None)

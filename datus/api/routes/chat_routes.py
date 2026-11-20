@@ -13,7 +13,7 @@ asyncio.Task so that client disconnects do not cancel the computation.
 import asyncio
 from typing import TYPE_CHECKING, Annotated, AsyncGenerator, Optional
 
-from fastapi import APIRouter, HTTPException, Path, Query, Request
+from fastapi import APIRouter, HTTPException, Path, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from datus.api.constants import BUILTIN_SUBAGENTS
@@ -28,6 +28,7 @@ from datus.api.hooks import (
 from datus.api.hooks.message_hooks import prepare_chat_messages
 from datus.api.models.base_models import Result
 from datus.api.models.chat_models import (
+    ChatRequestIdData,
     InsertMessageData,
     InsertMessageInput,
     ResumeChatInput,
@@ -49,10 +50,15 @@ from datus.api.models.cli_models import (
     UserInteractionInput,
 )
 from datus.api.services.background_drain import track_background_task
-from datus.api.services.chat_task_manager import ChatRequestCapacityExceeded, ChatRequestReplayUnavailable
+from datus.api.services.chat_task_manager import ChatRequestCapacityExceeded, ChatRequestUnavailable
 from datus.api.utils.service_stream import ServiceStreamingResponse
 from datus.api.utils.stream_errors import humanize_stream_error
-from datus.models.chat_request_store import ChatRequestExpired, ChatRequestStore
+from datus.models.chat_request_store import (
+    ChatRequestExpired,
+    ChatRequestReceipt,
+    ChatRequestStore,
+    issue_chat_request_id,
+)
 from datus.tools.policy_runtime import PolicyRuntime
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.feedback_prompt import build_reaction_feedback_prompt
@@ -151,6 +157,33 @@ async def _prepare_chat_start(
     }
 
 
+@router.get("/request-id", response_model=Result[ChatRequestIdData], summary="Issue a Chat Request ID")
+async def get_chat_request_id(_svc: ServiceDep, _ctx: AppContextDep, response: Response) -> Result[ChatRequestIdData]:
+    response.headers["Cache-Control"] = "no-store"
+    return Result(success=True, data=ChatRequestIdData(client_request_id=issue_chat_request_id()))
+
+
+async def _chat_request_store(svc: "DatusService", ctx: "AppContext", request_id: str) -> ChatRequestStore:
+    sessions = await asyncio.to_thread(svc.task_manager.session_manager, svc.agent_config, ctx.user_id)
+    return ChatRequestStore(sessions.session_dir, request_id, project_id=ctx.project_id, user_id=ctx.user_id)
+
+
+def _chat_request_unavailable(receipt: ChatRequestReceipt) -> JSONResponse:
+    code, message = {
+        "pending": ("CHAT_REQUEST_PENDING", "The chat request is waiting to be dispatched."),
+        "running": ("CHAT_REQUEST_RUNNING", "The chat request is still running on another instance."),
+        "finished": ("CHAT_REQUEST_REPLAY_UNAVAILABLE", "Open the existing session to see the finished turn."),
+        "cancelled": ("CHAT_REQUEST_CANCELLED", "The chat request was stopped before dispatch."),
+    }[receipt.state]
+    result = Result(success=False, errorCode=code, errorMessage=message, data={"session_id": receipt.session_id})
+    return JSONResponse(result.model_dump(), status_code=409)
+
+
+def _chat_request_expired() -> JSONResponse:
+    result = Result(success=False, errorCode="CHAT_REQUEST_EXPIRED", errorMessage="The retry window has expired.")
+    return JSONResponse(result.model_dump(), status_code=409)
+
+
 @router.post(
     "/stream",
     summary="Stream Chat Message",
@@ -169,10 +202,7 @@ async def stream_chat(
             events = svc.chat.stream_chat(request, **options)
         else:
             manager = svc.task_manager
-            sessions = await asyncio.to_thread(manager.session_manager, svc.agent_config, ctx.user_id)
-            store = ChatRequestStore(
-                sessions.session_dir, request.client_request_id, project_id=ctx.project_id, user_id=ctx.user_id
-            )
+            store = await _chat_request_store(svc, ctx, request.client_request_id)
 
             async def start():
                 options = await _prepare_chat_start(request, svc, ctx, http_request)
@@ -194,14 +224,8 @@ async def stream_chat(
             media_type="text/event-stream",
             headers=_sse_headers(),
         )
-    except ChatRequestReplayUnavailable as exc:
-        result = Result(
-            success=False,
-            errorCode="CHAT_REQUEST_REPLAY_UNAVAILABLE",
-            errorMessage=str(exc),
-            data={"session_id": exc.session_id},
-        )
-        return JSONResponse(result.model_dump(), status_code=409)
+    except ChatRequestUnavailable as exc:
+        return _chat_request_unavailable(exc.receipt)
     except ChatRequestCapacityExceeded:
         result = Result(
             success=False,
@@ -210,8 +234,7 @@ async def stream_chat(
         )
         return JSONResponse(result.model_dump(), status_code=429)
     except ChatRequestExpired:
-        result = Result(success=False, errorCode="CHAT_REQUEST_EXPIRED", errorMessage="The retry window has expired.")
-        return JSONResponse(result.model_dump(), status_code=409)
+        return _chat_request_expired()
 
     stream = _stream_with_error_event(events, request=request, user_id=ctx.user_id)
     return ServiceStreamingResponse(stream, service=svc, media_type="text/event-stream", headers=_sse_headers())
@@ -286,7 +309,21 @@ async def resume_chat(
 ):
     """Resume an owned task, reserving completed-turn diff replay for explicit cursors."""
     task_manager = svc.task_manager
-    task = task_manager.get_task(request.session_id)
+    if request.client_request_id is None:
+        task = task_manager.get_task(request.session_id)
+    else:
+        task = task_manager.get_dispatched_chat_request(request.session_id, request.client_request_id, ctx.user_id)
+        if task is None:
+            store = await _chat_request_store(svc, ctx, request.client_request_id)
+            try:
+                receipt = await asyncio.to_thread(store.find)
+                if receipt is None or receipt.session_id != request.session_id:
+                    raise HTTPException(status_code=404, detail="Task not found")
+                task = task_manager.replay_chat_request(receipt, ctx.user_id)
+            except ChatRequestUnavailable as exc:
+                return _chat_request_unavailable(exc.receipt)
+            except ChatRequestExpired:
+                return _chat_request_expired()
     if task is not None and task.user_id != ctx.user_id:
         raise HTTPException(status_code=404, detail="Task not found")
     if task is None:
@@ -333,10 +370,38 @@ async def resume_chat(
 async def stop_chat(
     request: StopChatInput,
     svc: ServiceDep,
+    ctx: AppContextDep,
 ) -> Result[dict]:
-    stopped = await svc.task_manager.stop_task(request.session_id)
+    session_id = request.session_id
+    if request.client_request_id is None:
+        stopped = await svc.task_manager.stop_task(session_id)
+    else:
+        svc.task_manager.mark_starting_chat_stopped(session_id, request.client_request_id, ctx.user_id)
+        store = await _chat_request_store(svc, ctx, request.client_request_id)
+        try:
+            receipt = await asyncio.to_thread(store.cancel_pending, session_id)
+        except ChatRequestExpired:
+            task = svc.task_manager.get_dispatched_chat_request(session_id, request.client_request_id, ctx.user_id)
+            if task is not None and await svc.task_manager.stop_task(session_id, run_id=task.run_id):
+                return Result(success=True, data={"session_id": session_id, "stopped": True})
+            return Result(success=False, errorCode="CHAT_REQUEST_EXPIRED", errorMessage="The retry window has expired.")
+        if session_id and receipt.session_id != session_id:
+            raise HTTPException(status_code=404, detail="Task not found")
+        session_id = receipt.session_id
+        stopped = receipt.state == "cancelled"
+        if receipt.state == "running":
+            stopped = await svc.task_manager.stop_task(session_id, run_id=receipt.run_id)
+            if not stopped:
+                receipt = await asyncio.to_thread(store.cancel_pending, session_id)
+                if receipt.state == "running":
+                    return Result(
+                        success=False,
+                        errorCode="CHAT_REQUEST_RUNNING",
+                        errorMessage="The chat request is still running.",
+                    )
+                stopped = receipt.state == "cancelled"
     if stopped:
-        return Result[dict](success=True, data={"session_id": request.session_id, "stopped": True})
+        return Result[dict](success=True, data={"session_id": session_id, "stopped": True})
     return Result[dict](
         success=False,
         errorCode="SESSION_NOT_RUNNING",

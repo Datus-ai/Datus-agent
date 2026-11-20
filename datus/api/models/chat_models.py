@@ -5,6 +5,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
 from datus.api.models.message_contents import ChatMessageContent
+from datus.models.chat_request_store import CHAT_REQUEST_ID_PATTERN
 
 
 class ToolResult(BaseModel):
@@ -39,12 +40,14 @@ class ResumeChatInput(BaseModel):
     session_id: str = Field(..., description="Session ID to reconnect to")
     source: Optional[str] = Field(None, description="chat source, web/vscode")
     from_event_id: Optional[int] = Field(None, ge=0, description="Event cursor to resume from; omit to auto-resume")
+    client_request_id: Optional[str] = Field(None, pattern=CHAT_REQUEST_ID_PATTERN)
 
 
 class StopChatInput(BaseModel):
     """Input for stopping a running chat session."""
 
     session_id: str = Field(..., description="Session ID to stop")
+    client_request_id: Optional[str] = Field(None, pattern=CHAT_REQUEST_ID_PATTERN)
 
 
 class ToolResultData(BaseModel):
@@ -93,3 +96,7 @@ class UpdatePermissionModeInput(BaseModel):
     session_id: str = Field(..., min_length=1)
     run_id: str = Field(..., min_length=1)
     permission_mode: Literal["normal", "auto", "dangerous"]
+
+
+class ChatRequestIdData(BaseModel):
+    client_request_id: str
