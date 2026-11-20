@@ -30,6 +30,7 @@ from datus.agent.semantic_authoring_session import (
     AUTHORING_MUTATION_TOOL_IDS,
     AUTHORING_TOOL_NAMES,
     SemanticAuthoringSession,
+    missing_semantic_target_guidance,
     requests_semantic_authoring,
 )
 from datus.configuration.agent_config import AgentConfig
@@ -41,6 +42,7 @@ from datus.schemas.action_history import ActionHistory
 from datus.schemas.configurable_agentic_node_models import ConfigurableNodeInput, ConfigurableNodeResult
 from datus.tools.db_tools.async_workers import DATABASE_CLEANUP
 from datus.tools.func_tool.base import parse_tool_args, write_back_tool_args
+from datus.tools.permission.permission_config import PermissionLevel
 from datus.tools.permission.permission_hooks import CompositeHooks
 from datus.tools.registry.contracts import tool_definition
 from datus.tools.registry.tool_registry import ToolRegistry
@@ -709,6 +711,20 @@ class ConfigurableAgenticNode(AgenticNode):
         self._apply_semantic_plan_review()
         return receipt
 
+    def _tool_ids_allowed_by_profile(self, selected: list[str]) -> set[str]:
+        manager = self.permission_manager
+        if manager is None:
+            return set(selected)
+        allowed = {PermissionLevel.ALLOW}
+        if self.execution_mode != "workflow":
+            allowed.add(PermissionLevel.ASK)
+        node_name = self.get_node_name()
+        return {
+            identity
+            for identity in selected
+            if manager.check_permission(*identity.split(".", 1), node_name=node_name) in allowed
+        }
+
     async def _call_semantic_authoring(self, operation: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         if self._runtime_closed or not self._uses_semantic_authoring:
             raise PermissionError("Semantic authoring is not available on this agent")
@@ -738,7 +754,9 @@ class ConfigurableAgenticNode(AgenticNode):
             await self._authorize_host_tool(candidates[0], {})
             return {"selected": session.osi_target_state.selected is not None, "changed": session._target_was_mutated()}
         path = session.osi_target_state.selected_path
-        if not path or not self._allows_authoring_path(Path(path)):
+        if not path:
+            raise RuntimeError(missing_semantic_target_guidance(self._tool_ids_allowed_by_profile(selected)))
+        if not self._allows_authoring_path(Path(path)):
             raise PermissionError("Semantic model is outside scoped_context.project_files")
         live_path = str(self._semantic_draft.live_path(path)) if self._semantic_draft is not None else path
         await self._authorize_host_tool(candidates[0], {"path": live_path})
