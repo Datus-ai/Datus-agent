@@ -15,7 +15,6 @@ pytestmark = [pytest.mark.acceptance, pytest.mark.nightly]
 
 @pytest.mark.parametrize("legacy_version", [False, True])
 def test_native_catalog_compilation_while_holding_the_artifact_lock(tmp_path, legacy_version):
-    pytest.importorskip("dosi_engine")
     fixture = Path(__file__).parents[2] / "data/semantic_models/window_filters/model.yaml"
     model = tmp_path / "subject/semantic_models/warehouse/model.yaml"
     model.parent.mkdir(parents=True)
