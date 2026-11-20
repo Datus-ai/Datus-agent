@@ -347,7 +347,7 @@ class TestProjectConfigRefresh:
             assert snapshots[old_task.session_id] is not before
             assert snapshots[new_task.session_id] is not after
 
-            stopped = await stop_chat(StopChatInput(session_id=old_task.session_id), refreshed)
+            stopped = await stop_chat(StopChatInput(session_id=old_task.session_id), refreshed, MagicMock())
             assert stopped.success is True
             old_task.node.interrupt_controller.interrupt.assert_called_once_with()
             await asyncio.gather(old_task.asyncio_task, return_exceptions=True)

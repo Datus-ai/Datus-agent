@@ -347,6 +347,36 @@ class TestChatTaskManagerInit:
         assert manager._default_interactive is False
 
 
+@pytest.mark.asyncio
+async def test_retry_with_evicted_replay_preserves_the_accepted_session(tmp_path):
+    import time
+    from unittest.mock import AsyncMock
+
+    from datus.api.services.chat_task_manager import ChatRequestUnavailable
+    from datus.models.chat_request_store import ChatRequestStore
+
+    manager = ChatTaskManager()
+    store = ChatRequestStore(str(tmp_path), f"{int(time.time() * 1000)}-{'a' * 32}", project_id="p", user_id="owner")
+
+    async def start_chat():
+        task = ChatTask("accepted-session", asyncio.create_task(asyncio.sleep(0)), user_id="owner")
+        store.reserve(task.session_id, task.run_id)
+        assert store.begin(task.run_id)
+        store.finish(task.run_id)
+        return task
+
+    start = AsyncMock(side_effect=start_chat)
+    accepted = await manager.start_or_replay_chat("owner", store, start)
+    await accepted.asyncio_task
+    del accepted
+
+    with pytest.raises(ChatRequestUnavailable) as exc:
+        await manager.start_or_replay_chat("owner", store, start)
+    assert exc.value.receipt.session_id == "accepted-session"
+    assert exc.value.receipt.state == "finished"
+    start.assert_awaited_once()
+
+
 class TestChatTaskManagerCreateNodeInteractive:
     """Verify _create_node forwards interactive flag to ChatAgenticNode."""
 
