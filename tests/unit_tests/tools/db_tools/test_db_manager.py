@@ -1337,3 +1337,133 @@ def test_duckdb_fixed_uri_can_bind_a_database_actually_attached_to_the_file(tmp_
         assert conn.database_name == "attached"
     finally:
         manager.close()
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        {"database": "BAASSYS"},
+        {"extra": {"service_name": "BAASSYS"}},
+        {"uri": "oracle://localhost/BAASSYS"},
+        {"extra": {"database": "BAASSYS"}},
+        {"extra": {"uri": "oracle://localhost/BAASSYS"}},
+    ],
+    ids=["database-alias", "service-name", "uri", "extra-database-alias", "extra-uri"],
+)
+def test_schema_only_adapter_replays_its_captured_execution_context(target):
+    configured = DbConfig(type="oracle", schema="ORIGINAL", **target)
+    manager = DBManager({"warehouse": configured})
+    built = []
+
+    def build(config):
+        built.append(config)
+        connector = _TrackedConnector()
+        connector.database_name = ""
+        connector.schema_name = config.schema
+        return connector
+
+    manager._build_conn = build
+    with (
+        patch("datus.tools.db_tools.db_manager.connector_registry.has_capabilities", return_value=True),
+        patch("datus.tools.db_tools.db_manager.connector_registry.support_database", return_value=False),
+    ):
+        try:
+            selected = DatabaseExecutionContext(datasource="warehouse", database=configured.database, schema="TPCDS")
+            original = manager.get_conn("warehouse", context=selected)
+            assert original.database_name == ""
+            # Oracle artifact context captured by the producer: service/PDB is not a SQL database namespace.
+            captured = {"datasource": "warehouse", "catalog": "", "database": "", "schema": "TPCDS"}
+            replayed = manager.get_conn("warehouse", context=DatabaseExecutionContext.from_mapping(captured))
+            assert replayed.schema_name == "TPCDS"
+            assert built[-1].database == configured.database
+            assert built[-1].uri == configured.uri
+            assert built[-1].extra == configured.extra
+            assert configured.schema == "ORIGINAL"
+            other = manager.get_conn(
+                "warehouse", context=DatabaseExecutionContext(datasource="warehouse", schema="OTHER")
+            )
+            assert other.schema_name == "OTHER"
+            assert other is not replayed
+            assert manager.get_conn("warehouse", context=DatabaseExecutionContext.from_mapping(captured)) is replayed
+        finally:
+            manager.close()
+
+
+@pytest.mark.parametrize(
+    "engine, has_metadata, supports_database",
+    [
+        ("unknown_adapter", False, False),
+        ("oracle", False, False),
+        ("postgresql", True, True),
+        ("sqlite", True, False),
+        ("duckdb", True, False),
+    ],
+)
+@pytest.mark.parametrize(
+    "target",
+    [
+        {"database": "configured"},
+        {"uri": "adapter://localhost/configured"},
+        {"extra": {"database": "configured"}},
+        {"extra": {"uri": "adapter://localhost/configured"}},
+        {"path_pattern": "*.db"},
+    ],
+    ids=["database", "uri", "extra-database", "extra-uri", "file-glob"],
+)
+def test_empty_database_requires_explicit_adapter_metadata_without_a_database_namespace(
+    engine, has_metadata, supports_database, target
+):
+    manager = DBManager({"warehouse": DbConfig(type=engine, **target)})
+    manager._build_conn = Mock()
+    with (
+        patch("datus.tools.db_tools.db_manager.connector_registry.has_capabilities", return_value=has_metadata),
+        patch("datus.tools.db_tools.db_manager.connector_registry.support_database", return_value=supports_database),
+        pytest.raises(ValueError, match="Select a database explicitly"),
+    ):
+        manager.get_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse"))
+    manager._build_conn.assert_not_called()
+
+
+def test_schema_only_metadata_cannot_select_an_implicit_file_from_a_glob():
+    manager = DBManager({"warehouse": DbConfig(type="oracle", path_pattern="*.db")})
+    manager._build_conn = Mock()
+    with (
+        patch("datus.tools.db_tools.db_manager.connector_registry.has_capabilities", return_value=True),
+        patch("datus.tools.db_tools.db_manager.connector_registry.support_database", return_value=False),
+        pytest.raises(ValueError, match="Select a database explicitly"),
+    ):
+        manager.acquire_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse"))
+    manager._build_conn.assert_not_called()
+
+
+def test_schema_only_replay_preserves_connection_leases_and_schema_isolation():
+    configured = DbConfig(type="oracle", database="BAASSYS", schema="ORIGINAL")
+    manager = DBManager({"warehouse": configured}, max_connections=1)
+
+    def build(config):
+        connector = _TrackedConnector()
+        connector.schema_name = config.schema
+        return connector
+
+    manager._build_conn = build
+    context = DatabaseExecutionContext(datasource="warehouse", schema="TPCDS")
+    other_context = DatabaseExecutionContext(datasource="warehouse", schema="OTHER")
+    with (
+        patch("datus.tools.db_tools.db_manager.connector_registry.has_capabilities", return_value=True),
+        patch("datus.tools.db_tools.db_manager.connector_registry.support_database", return_value=False),
+    ):
+        try:
+            with manager.acquire_conn("warehouse", context=context) as first:
+                with manager.acquire_conn("warehouse", context=context) as shared:
+                    assert shared is first
+                    with manager.acquire_conn("warehouse", context=other_context) as other:
+                        assert other is not first
+                        assert (first.schema_name, other.schema_name) == ("TPCDS", "OTHER")
+                    assert other.close_count == 1
+                    assert first.close_count == 0
+                assert first.close_count == 0
+            assert first.close_count == 0
+            assert configured.schema == "ORIGINAL"
+        finally:
+            manager.close()
+    assert first.close_count == 1

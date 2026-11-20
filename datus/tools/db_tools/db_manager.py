@@ -343,8 +343,9 @@ class DBManager:
 
         Without ``context``, ``database`` empty selects the datasource default.
         A resolved ``context`` is authoritative. An empty database is allowed for
-        server profiles without a default target, but cannot restore a configured
-        database or select a file database.
+        server profiles without a default target and adapters declaring no SQL
+        database namespace. Other contexts cannot restore a configured database
+        or select a file database.
         For a glob (``path_pattern``)
         datasource each matched file is a database; for server DBs ``database`` overrides the
         configured one (cloned into the connection URI).
@@ -493,7 +494,18 @@ class DBManager:
                     requires_selection = not isinstance(effective_config, dict) or bool(
                         effective_config.get("database") or effective_config.get("uri")
                     )
-                if requires_selection:
+                # Schema-only adapters use service/PDB values as connection
+                # targets, not SQL database defaults. File targets still require
+                # an explicit binding, even when metadata declares no database.
+                db_type = _normalize_dialect_name(getattr(configured, "type", None))
+                schema_only = (
+                    configured is not None
+                    and not configured.path_pattern
+                    and db_type not in (DBType.SQLITE, DBType.DUCKDB)
+                    and connector_registry.has_capabilities(db_type)
+                    and not connector_registry.support_database(db_type)
+                )
+                if requires_selection and not schema_only:
                     raise ValueError(
                         "Select a database explicitly; a resolved empty database cannot use a connection default"
                     )
