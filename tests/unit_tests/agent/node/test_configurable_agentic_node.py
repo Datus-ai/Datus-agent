@@ -590,6 +590,81 @@ async def test_task_route_and_result_preserve_generic_business_fields(real_agent
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tools", "permissions", "execution_mode", "guidance"),
+    [
+        pytest.param(
+            ["list_existing_osi_semantic_models"],
+            {},
+            "interactive",
+            "No target-selection tool is available for this agent.",
+            id="discovery-only",
+        ),
+        pytest.param(
+            ["bind_osi_semantic_model_target"],
+            {},
+            "interactive",
+            "Model discovery is unavailable for this agent.",
+            id="missing-discovery",
+        ),
+        pytest.param(
+            ["list_existing_osi_semantic_models", "bind_osi_semantic_model_target", "plan_osi_semantic_model_target"],
+            {"plan_osi_semantic_model_target": "deny"},
+            "interactive",
+            "Call list_existing_osi_semantic_models, then select a target with bind_osi_semantic_model_target.",
+            id="bind-allowed-plan-denied",
+        ),
+        pytest.param(
+            ["list_existing_osi_semantic_models", "plan_osi_semantic_model_target"],
+            {"plan_osi_semantic_model_target": "ask"},
+            "interactive",
+            "Call list_existing_osi_semantic_models, then select a target with plan_osi_semantic_model_target.",
+            id="plan-with-confirmation",
+        ),
+        pytest.param(
+            ["list_existing_osi_semantic_models", "plan_osi_semantic_model_target"],
+            {"plan_osi_semantic_model_target": "ask"},
+            "workflow",
+            "No target-selection tool is available for this agent.",
+            id="confirmation-unavailable",
+        ),
+    ],
+)
+async def test_unselected_semantic_model_guidance_uses_available_tools(
+    real_agent_config, mock_llm_create, tools, permissions, execution_mode, guidance
+):
+    from datus.agent.node.stream_run_context import StreamRunContext
+    from datus.schemas.action_history import ActionHistoryManager
+    from datus.tools.permission.permission_config import PermissionConfig, PermissionRule
+
+    config = _configure(
+        real_agent_config,
+        tools=tools,
+        scoped_context={
+            "datasource": real_agent_config.current_datasource,
+            "project_files": ["subject/semantic_models/**"],
+        },
+    )
+    config.permissions_config = PermissionConfig(
+        default_permission="allow",
+        rules=[
+            PermissionRule(tool="semantic_tools", pattern=name, permission=permission)
+            for name, permission in permissions.items()
+        ],
+    )
+    config.workflow_permission_profile = "normal"
+    node = create_interactive_node("research", config, execution_mode=execution_mode)
+    try:
+        node.input = create_node_input("Inspect the selected semantic model.", node)
+        await node._before_stream(StreamRunContext(node.input, ActionHistoryManager()))
+        with pytest.raises(RuntimeError) as error:
+            await node._host.semantic_authoring.snapshot()
+        assert str(error.value) == f"No semantic model is selected for this turn. {guidance}"
+    finally:
+        await node.aclose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("accept", [False, True])
 async def test_rebuilt_plan_tool_preserves_web_review_across_turns(real_agent_config, mock_llm_create, accept):
     from types import SimpleNamespace

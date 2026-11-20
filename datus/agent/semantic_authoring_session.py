@@ -57,6 +57,22 @@ def requests_semantic_authoring(selections: list[str]) -> bool:
     return any(name.rsplit(".", 1)[-1] in AUTHORING_TOOL_NAMES for name in selections)
 
 
+def missing_semantic_target_guidance(available_tools: set[str]) -> str:
+    """Describe the available steps for selecting the turn's semantic model."""
+    message = "No semantic model is selected for this turn."
+    discovery = "list_existing_osi_semantic_models"
+    if f"semantic_tools.{discovery}" not in available_tools:
+        return f"{message} Model discovery is unavailable for this agent."
+    targets = [
+        name
+        for name in ("bind_osi_semantic_model_target", "plan_osi_semantic_model_target")
+        if f"semantic_tools.{name}" in available_tools
+    ]
+    if not targets:
+        return f"{message} No target-selection tool is available for this agent."
+    return f"{message} Call {discovery}, then select a target with {' or '.join(targets)}."
+
+
 class SemanticAuthoringSession:
     """One execution owner's target, workspace, tools and completion evidence.
 
