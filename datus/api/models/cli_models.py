@@ -314,6 +314,11 @@ class CompactSessionData(BaseModel):
 class StreamChatInput(ChatInput):
     """Input for streaming chat via /chat/stream."""
 
+    client_request_id: Optional[str] = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{32}$",
+        description="Client-generated ID reused when retrying the same send.",
+    )
     subagent_id: Optional[str] = Field(default=None, description="Subagent ID (builtin name or DB SubAgent id)")
     prompt_version: Optional[str] = Field(default=None, description="Prompt version")
     prompt_language: str = Field(default="en", description="Prompt language")
