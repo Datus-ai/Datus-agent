@@ -434,6 +434,7 @@ class TestBuildArtifactContent:
                 "artifact_kind": "report",
                 "artifact_mode": "new",
                 "report_slug": "q3_revenue",
+                "app_jsx_path": "reports/q3_revenue/render/app.jsx",
                 "name": "Q3 Revenue Report",
                 "description": "Quarterly revenue breakdown.",
                 "created_at": "2026-05-16T10:00:00Z",
@@ -465,6 +466,7 @@ class TestBuildArtifactContent:
                 "artifact_kind": "dashboard",
                 "artifact_mode": "edit",
                 "dashboard_slug": "sales_overview",
+                "app_jsx_path": "dashboards/sales_overview/render/app.jsx",
                 "name": "Sales Overview",
                 "description": None,
                 "created_at": "2026-05-10T08:00:00Z",
@@ -527,6 +529,7 @@ class TestBuildArtifactContent:
             output={
                 "artifact_kind": "report",
                 "report_slug": "x",
+                "app_jsx_path": "reports/x/render/app.jsx",
                 "response": long_text,
             },
         )
@@ -547,6 +550,7 @@ class TestBuildArtifactContent:
             output={
                 "artifact_kind": "report",
                 "report_slug": "x",
+                "app_jsx_path": "reports/x/render/app.jsx",
                 "response": "   ",
             },
         )
@@ -1049,6 +1053,7 @@ class TestActionToSSEEvent:
                 "artifact_kind": "report",
                 "artifact_mode": "new",
                 "report_slug": "q3_revenue",
+                "app_jsx_path": "reports/q3_revenue/render/app.jsx",
                 "name": "Q3 Revenue",
                 "description": "",
                 "response": "Done.",
@@ -1073,6 +1078,7 @@ class TestActionToSSEEvent:
                 "artifact_kind": "dashboard",
                 "artifact_mode": "edit",
                 "dashboard_slug": "sales_overview",
+                "app_jsx_path": "dashboards/sales_overview/render/app.jsx",
                 "name": "Sales Overview",
                 "description": "Quarterly sales view.",
                 "response": "Updated.",
@@ -1084,6 +1090,29 @@ class TestActionToSSEEvent:
         assert content.type == "artifact"
         assert content.payload["slug"] == "sales_overview"
         assert content.payload["kind"] == "dashboard"
+
+    @pytest.mark.parametrize("app_jsx_path", [None, "dashboards/other/render/app.jsx"])
+    def test_dashboard_completion_requires_its_own_validated_entry(self, app_jsx_path: str | None):
+        """A successful text turn can have a bound dashboard without validating it."""
+        answer = "I found the tables needed for this dashboard."
+        action = _make_action(
+            action_type="gen_visual_dashboard_response",
+            output={
+                "artifact_kind": "dashboard",
+                "artifact_mode": "new",
+                "dashboard_slug": "sales_overview",
+                "app_jsx_path": app_jsx_path,
+                "response": answer,
+            },
+        )
+
+        assert action_to_sse_event(action, event_id=205, message_id="msg-205") is None
+        event = _assert_sse_event(
+            action_to_sse_event(action, event_id=205, message_id="msg-205", include_final_response=True)
+        )
+        content = event.data.payload.content[0]
+        assert content.type == "markdown"
+        assert content.payload["content"] == answer
 
     def test_artifact_response_with_missing_slug_falls_back_to_markdown_when_requested(self):
         """Malformed artifact payloads must not suppress the assistant's prose.

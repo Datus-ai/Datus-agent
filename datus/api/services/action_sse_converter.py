@@ -511,18 +511,20 @@ _ARTIFACT_PREVIEW_LIMIT = 200
 def _build_artifact_content(action: ActionHistory) -> Optional[List[IMessageContent]]:
     """Build an artifact-card content block from a finished gen_visual_* run.
 
-    Returns ``None`` when the action does not actually carry an artifact
-    payload (missing slug or kind) so the caller can fall back to the
-    regular ``_response`` markdown rendering.
+    A completed text turn can carry a bound slug without a successful
+    ``validate_render``. Require the validated entry path for that artifact;
+    otherwise the caller can fall back to the regular ``_response`` rendering.
 
     The payload mirrors :class:`IArtifactPayload`. ``mode`` reuses the
     backend artifact-tools vocabulary (``'new'`` / ``'edit'``) so there
     is no translation layer between the NodeResult and the wire payload.
     """
     output = action.output if isinstance(action.output, dict) else {}
-    slug = output.get("report_slug") or output.get("dashboard_slug")
     kind = output.get("artifact_kind")
-    if not slug or kind not in ("report", "dashboard"):
+    if kind not in ("report", "dashboard"):
+        return None
+    slug = output.get(f"{kind}_slug")
+    if not slug or output.get("app_jsx_path") != f"{kind}s/{slug}/render/app.jsx":
         return None
 
     response_text = output.get("response") or ""
@@ -905,10 +907,8 @@ def action_to_sse_event(
             if isinstance(action.output, dict) and action.output.get("artifact_kind") in ("report", "dashboard"):
                 contents = _build_artifact_content(action)
 
-            # Either this is a plain wrapper response (no artifact) or the
-            # artifact payload was malformed (e.g. missing slug). Don't
-            # drop the event silently — fall back to the standard
-            # ``_response`` handling so the assistant's parsed output can
+            # Fall back to the standard ``_response`` handling when there is
+            # no validated artifact, so the assistant's parsed output can
             # still be surfaced to history tooling when requested.
             if contents is None:
                 if not include_final_response:
