@@ -468,6 +468,11 @@ if inherited:
 tool = BashTool(workspace_root=workspace, allowed_patterns=["*"], timeout=10,
                 extra_env=env, output_dir_provider=(lambda: root / "output") if offload else None)
 command = ("set -o pipefail; " if explicit else "") + "yes | head -1"
+if blocked:
+    # Finish the pipeline before emitting its stdout. GNU yes writes its error
+    # in fragments, which could otherwise interleave with head's output.
+    # Keep stderr untouched and return the actual pipeline's exit status.
+    command += ' > .sigpipe-head; status=$?; cat .sigpipe-head; exit "$status"'
 result = tool.bash(command)
 print("SIGPIPE_RESULT " + json.dumps({"success": result.success, "result": result.result, "error": result.error}))
 """
@@ -564,7 +569,9 @@ class TestPipelineExecution:
         # GNU and BSD yes name the failing output stream differently.
         stream = "stdout" if sys.platform == "darwin" else "standard output"
         diagnostic = f"yes: {stream}: Broken pipe"
-        expected = f"y\n{diagnostic}\n" if offload else f"y\n\n[stderr]\n{diagnostic}\n"
+        # The command emits captured stdout only after the pipeline finishes;
+        # stderr remains untouched and both streams must be preserved verbatim.
+        expected = f"{diagnostic}\ny\n" if offload else f"y\n\n[stderr]\n{diagnostic}\n"
         assert result["result"] == expected
 
     def test_explicit_pipeline_failure_option_remains_effective(self, unrestricted_tool):
