@@ -10,6 +10,7 @@ _collected: set[str] = set()
 _executed: set[str] = set()
 _outcomes: dict[str, str] = {}
 _excluded: dict[str, str] = {}
+_config = None
 
 
 def pytest_addoption(parser):
@@ -20,6 +21,8 @@ def pytest_addoption(parser):
 
 
 def pytest_sessionstart(session):
+    global _config
+    _config = session.config
     _collected.clear()
     _executed.clear()
     _outcomes.clear()
@@ -72,6 +75,7 @@ def pytest_testnodedown(node, error):
     _excluded.update(getattr(node, "workeroutput", {}).get("gate_excluded", {}))
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_runtest_logreport(report):
     if report.when == "call":
         _executed.add(report.nodeid)
@@ -79,6 +83,14 @@ def pytest_runtest_logreport(report):
         previous = _outcomes.get(report.nodeid)
         if previous not in {"failed", "skipped"}:
             _outcomes[report.nodeid] = "xfailed" if getattr(report, "wasxfail", None) else report.outcome
+    if report.failed and _config is not None and not hasattr(_config, "workerinput"):
+        reporter = _config.pluginmanager.get_plugin("terminalreporter")
+        if reporter is not None:
+            reporter.write_sep("=", f"Immediate failure: {report.nodeid} [{report.when}]")
+            # Pytest already formatted longrepr with the selected traceback and
+            # locals options, including reports transported back from xdist.
+            report.toterminal(reporter._tw)
+            reporter._tw.flush()
 
 
 @pytest.hookimpl(trylast=True)
