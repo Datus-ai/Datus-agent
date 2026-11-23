@@ -247,6 +247,7 @@ jobs:
             --reinstall-package datus-oracle \
             --reinstall-package datus-gaussdb \
             --reinstall-package datus-dws \
+            --reinstall-package datus-hana \
             --reinstall-package datus-storage-base \
             --reinstall-package datus-storage-postgresql \
             pytest-playwright \
@@ -271,6 +272,7 @@ jobs:
             ./external/datus-db-adapters/datus-spark \
             ./external/datus-db-adapters/datus-gaussdb \
             ./external/datus-db-adapters/datus-dws \
+            ./external/datus-db-adapters/datus-hana \
             ./external/datus-bi-adapters/datus-bi-core \
             ./external/datus-bi-adapters/datus-bi-superset \
             ./external/datus-bi-adapters/datus-bi-grafana \

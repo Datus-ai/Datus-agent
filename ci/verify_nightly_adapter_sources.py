@@ -33,6 +33,7 @@ EXPECTED_LOCAL_PACKAGES = {
     "datus-gaussdb": "datus-db-adapters/datus-gaussdb",
     "datus-tidb": "datus-db-adapters/datus-tidb",
     "datus-dws": "datus-db-adapters/datus-dws",
+    "datus-hana": "datus-db-adapters/datus-hana",
     "datus-bi-core": "datus-bi-adapters/datus-bi-core",
     "datus-bi-superset": "datus-bi-adapters/datus-bi-superset",
     "datus-bi-grafana": "datus-bi-adapters/datus-bi-grafana",

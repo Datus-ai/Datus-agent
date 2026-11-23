@@ -78,6 +78,31 @@ def test_verify_local_sources_accepts_every_expected_checkout(monkeypatch, tmp_p
     assert verify_sources.verify_local_sources(external_root) == []
 
 
+@pytest.mark.parametrize("source", ["missing", "registry", "other-checkout"])
+def test_hana_source_cannot_be_missing_or_satisfied_by_a_registry_package(monkeypatch, tmp_path, source):
+    external_root = tmp_path / "external"
+    distributions = {
+        name: _local_distribution(external_root / relative_path)
+        for name, relative_path in verify_sources.EXPECTED_LOCAL_PACKAGES.items()
+    }
+
+    def distribution(name):
+        if name != "datus-hana":
+            return distributions[name]
+        if source == "missing":
+            raise verify_sources.metadata.PackageNotFoundError(name)
+        if source == "registry":
+            return _FakeDistribution(None)
+        return _local_distribution(tmp_path / "unrelated-hana-checkout")
+
+    monkeypatch.setattr(verify_sources.metadata, "distribution", distribution)
+    errors = verify_sources.verify_local_sources(external_root)
+    assert len(errors) == 1
+    assert errors[0].startswith("datus-hana: ")
+    if source == "other-checkout":
+        assert str(external_root / "datus-db-adapters/datus-hana") in errors[0]
+
+
 def test_expected_sources_include_the_tidb_checkout_path():
     """`test_verify_local_sources_accepts_every_expected_checkout` builds its
     fixtures from this same mapping, so a typo here would pass it unnoticed."""

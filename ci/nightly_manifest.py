@@ -40,6 +40,7 @@ PACKAGE_NAMES = (
     "datus-trino",
     "datus-greenplum",
     "datus-hive",
+    "datus-hana",
     "datus-spark",
     "datus-gaussdb",
     "datus-tidb",
