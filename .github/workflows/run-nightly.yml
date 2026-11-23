@@ -67,8 +67,9 @@ concurrency:
 
 jobs:
   run-nightly:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: codebuild-datus-agent-nightly-${{ github.run_id }}-${{ github.run_attempt }}
     env:
+      PYTEST_XDIST_AUTO_NUM_WORKERS: "8"
       DATUS_AGENT_REF: ${{ inputs.datus_agent_ref || github.ref_name }}
       NIGHTLY_GROUP_FILTER: ${{ inputs.nightly_group_filter || '' }}
       PRODUCT_TEST_BASE_REF: ${{ inputs.product_test_base_ref || '' }}
@@ -345,6 +346,9 @@ jobs:
           fi
 
           docker compose version
+
+      - name: Prepare CodeBuild nightly host
+        run: bash ci/prepare-codebuild-nightly-host.sh
 
       # On cache miss the extraction needs Docker (it pulls the pinned
       # openGauss image), so this runs after the Docker runtime check; the

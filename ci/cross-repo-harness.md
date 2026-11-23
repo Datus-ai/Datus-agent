@@ -88,12 +88,21 @@ weekly run exists. The Apache Hive service group runs the Dosi Hive contracts
 after service startup and records the Inceptor-only system-view case as
 `not_applicable` for that target. Missing credentials never decide applicability.
 
+The nightly workflow uses the ephemeral `datus-agent-nightly` CodeBuild GitHub
+Actions runner. Its standard Linux x86_64 image enables Docker, while pytest
+keeps eight workers even on a larger compute instance. GitHub still supplies
+the existing secrets, source checkouts and artifact uploads; the CodeBuild role
+only writes its own logs. The runner webhook must allow the actual dispatch or
+scheduled actor; a dispatch-only allowlist does not certify scheduled execution.
+
 HANA runs in the dedicated `HANA Agent Tests` Docker group after the other
 database groups have stopped. It uses the adapter checkout's official Express
 Compose and preparation/readiness helpers, a private per-run bootstrap directory,
 an ephemeral password, and loopback port 23942. The runner must be prepared Linux
-x86_64 with the adapter's RAM, disk and kernel prerequisites. The harness checks
-those prerequisites without changing host kernel settings. Startup, readiness,
+x86_64 with the adapter's RAM, disk and kernel prerequisites. The CodeBuild-only
+host preparation step validates the project/build identity, prepares SAP kernel
+limits on the disposable build host and reads them back. The HANA group still
+checks all adapter prerequisites without bypassing them. Startup, readiness,
 test or cleanup failures fail the required group. HANA query/action evidence is
 uploaded from `test-results/hana/`.
 
@@ -101,7 +110,9 @@ Prepare the Docker host according to the [SAP HANA Express Docker guide](https:/
 In particular, SAP requires `vm.max_map_count >= 135217728`; the adapter helper
 also checks asynchronous I/O, disk space and available memory before bootstrap.
 A failure at an earlier check does not certify the remaining prerequisites.
-Host administrators must apply these settings before running the group.
+Outside the dedicated CodeBuild workflow, host administrators must apply these
+settings before running the group; the host preparation script rejects other
+projects and local environments.
 
 `Self-hosted Vision Tests` then provisions a CPU llama.cpp container with a pinned
 multi-architecture image digest and verified Qwen3-VL-2B model/projector hashes.
