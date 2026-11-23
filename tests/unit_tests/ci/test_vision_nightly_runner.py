@@ -110,16 +110,28 @@ def test_shell_provisions_before_collection_and_continues_after_failures(tmp_pat
     artifacts = list((tmp_path / "repo/nightly-vision-evidence").rglob("*"))
     assert {path.name for path in artifacts if path.is_file()} == {"evidence.json", "server.log"}
     pytest_events = [event for event in observed if event["action"] == "pytest"]
-    if pytest_events:
-        event = pytest_events[0]
-        assert event["layer"] == "nightly" and event["model"] == "real-fixture"
-        assert "--fail-on-skip" in event["args"]
-        assert "ci.pytest_gate_plugin" in event["args"]
-        assert (
-            "tests/integration/models/test_custom_model_preflight.py::test_self_hosted_model_reads_code_from_image"
-            in event["args"]
-        )
-        assert "--reruns" not in event["args"]
+    assert len(pytest_events) == actions.count("pytest")
+    target = "tests/integration/models/test_custom_model_preflight.py::test_self_hosted_model_reads_code_from_image"
+    assert [
+        {
+            "layer": event["layer"],
+            "model": event["model"],
+            "strict_skip": "--fail-on-skip" in event["args"],
+            "execution_evidence": "ci.pytest_gate_plugin" in event["args"],
+            "vision_case": target in event["args"],
+            "reruns": "--reruns" in event["args"],
+        }
+        for event in pytest_events
+    ] == [
+        {
+            "layer": "nightly",
+            "model": "real-fixture",
+            "strict_skip": True,
+            "execution_evidence": True,
+            "vision_case": True,
+            "reruns": False,
+        }
+    ] * actions.count("pytest")
     assert Path(env["LOG_FILE"]).is_relative_to(tmp_path)
 
 

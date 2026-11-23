@@ -78,8 +78,17 @@ def test_verify_local_sources_accepts_every_expected_checkout(monkeypatch, tmp_p
     assert verify_sources.verify_local_sources(external_root) == []
 
 
-@pytest.mark.parametrize("source", ["missing", "registry", "other-checkout"])
-def test_hana_source_cannot_be_missing_or_satisfied_by_a_registry_package(monkeypatch, tmp_path, source):
+@pytest.mark.parametrize(
+    "source,expected_error",
+    [
+        ("missing", "datus-hana: package is not installed"),
+        ("registry", "datus-hana: package has no direct_url.json and was likely installed from a registry"),
+        ("other-checkout", "datus-hana: expected checkout source {expected}, got {actual}"),
+    ],
+)
+def test_hana_source_cannot_be_missing_or_satisfied_by_a_registry_package(
+    monkeypatch, tmp_path, source, expected_error
+):
     external_root = tmp_path / "external"
     distributions = {
         name: _local_distribution(external_root / relative_path)
@@ -97,10 +106,12 @@ def test_hana_source_cannot_be_missing_or_satisfied_by_a_registry_package(monkey
 
     monkeypatch.setattr(verify_sources.metadata, "distribution", distribution)
     errors = verify_sources.verify_local_sources(external_root)
-    assert len(errors) == 1
-    assert errors[0].startswith("datus-hana: ")
-    if source == "other-checkout":
-        assert str(external_root / "datus-db-adapters/datus-hana") in errors[0]
+    assert errors == [
+        expected_error.format(
+            expected=(external_root / "datus-db-adapters/datus-hana").resolve(),
+            actual=(tmp_path / "unrelated-hana-checkout").resolve(),
+        )
+    ]
 
 
 def test_expected_sources_include_the_tidb_checkout_path():
