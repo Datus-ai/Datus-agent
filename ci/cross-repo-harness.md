@@ -38,6 +38,19 @@ cross-repository integration contract changes.
 
 The Superset product suite runs chart repair/deletion, managed plugin installation
 with verified SQL export, and real-model dashboard creation.
+Default full nightly runs these as three separate `Superset Product Tests -
+Chart Lifecycle`, `- Bootstrap`, and `- Dashboard` groups. Each starts and removes
+its own Compose project and volumes and uses a separate Agent home, workspace,
+pytest base directory, and execution receipt. Superset retains its production
+50 requests/second limit; one contract's requests cannot consume the next
+contract's global limiter budget. The legacy `^Superset Product Tests$` filter
+selects all three children; an exact child filter selects only that contract.
+Evaluations with `PRODUCT_TEST_BASE_REF` retain the existing combined parent
+suite and affected-case selection.
+Compose volume cleanup failures now fail the nightly receipt and cleanup-only
+entry point while cleanup continues for the remaining owned projects. A failed
+pre-start cleanup prevents reuse of stale service state; a teardown error never
+replaces an earlier test failure code.
 Creation runs through GenDashboardAgenticNode, reloads persisted dashboard/chart
 objects through the BI adapter, and compares chart data with independently computed
 source-table aggregates. Full skill-driven bootstrap remains a documented coverage gap. It requires provider

@@ -79,11 +79,16 @@ def pytest_testnodedown(node, error):
 def pytest_runtest_logreport(report):
     if report.when == "call":
         _executed.add(report.nodeid)
-    if report.when == "call" or report.failed or report.skipped:
+    # pytest-rerunfailures changes a failed report's outcome to "rerun".
+    # Treat it as the original failure, even if a diagnostic retry later passes.
+    failed = report.failed or report.outcome == "rerun"
+    if failed:
+        _outcomes[report.nodeid] = "failed"
+    elif report.when == "call" or report.skipped:
         previous = _outcomes.get(report.nodeid)
         if previous not in {"failed", "skipped"}:
             _outcomes[report.nodeid] = "xfailed" if getattr(report, "wasxfail", None) else report.outcome
-    if report.failed and _config is not None and not hasattr(_config, "workerinput"):
+    if failed and _config is not None and not hasattr(_config, "workerinput"):
         reporter = _config.pluginmanager.get_plugin("terminalreporter")
         if reporter is not None:
             reporter.write_sep("=", f"Immediate failure: {report.nodeid} [{report.when}]")
@@ -99,6 +104,8 @@ def pytest_sessionfinish(session, exitstatus):
         session.config.workeroutput["gate_excluded"] = _excluded
     target = session.config.getoption("--gate-report")
     if target and not hasattr(session.config, "workerinput"):
+        if session.exitstatus == pytest.ExitCode.OK and "failed" in _outcomes.values():
+            session.exitstatus = pytest.ExitCode.TESTS_FAILED
         identity = {"source_id": os.environ["DATUS_GATE_SOURCE_ID"]} if os.environ.get("DATUS_GATE_SOURCE_ID") else {}
         Path(target).write_text(
             json.dumps(

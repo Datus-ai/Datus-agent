@@ -116,6 +116,9 @@ COMPOSE_FILES=(
 
 COMPOSE_GROUPS=(
   "Superset Product Tests"
+  "Superset Product Tests - Chart Lifecycle"
+  "Superset Product Tests - Bootstrap"
+  "Superset Product Tests - Dashboard"
   "BI Orchestration Contracts"
   "Grafana Nightly Tests"
   "Airflow Nightly Tests"
@@ -353,7 +356,12 @@ should_run_group() {
     return 0
   fi
 
-  [[ "$group_name" =~ $NIGHTLY_GROUP_FILTER ]]
+  if [[ "$group_name" =~ $NIGHTLY_GROUP_FILTER ]]; then
+    return 0
+  fi
+  # Preserve parent filters (including an anchored exact name) for the full
+  # nightly's isolated children, without broadening other profile selection.
+  [[ "$group_name" == "Superset Product Tests - "* && "Superset Product Tests" =~ $NIGHTLY_GROUP_FILTER ]]
 }
 
 validate_nightly_group_filter() {
@@ -523,6 +531,9 @@ compose_project_slug() {
   local group_name="$1"
 
   case "$group_name" in
+    "Superset Product Tests - Chart Lifecycle") echo "superset-chart-lifecycle" ;;
+    "Superset Product Tests - Bootstrap") echo "superset-bootstrap" ;;
+    "Superset Product Tests - Dashboard") echo "superset-dashboard" ;;
     "Superset Product Tests" | "BI Orchestration Contracts") echo "superset" ;;
     "Grafana Nightly Tests") echo "grafana" ;;
     "Airflow Nightly Tests") echo "airflow" ;;
@@ -568,7 +579,7 @@ compose_cmd() {
 compose_down() {
   local compose_file="$1"
   local project_name="$2"
-  compose_cmd "$project_name" "$compose_file" down -v --remove-orphans >/dev/null 2>&1 || true
+  compose_cmd "$project_name" "$compose_file" down -v --remove-orphans
 }
 
 cleanup_all_compose() {
@@ -587,7 +598,7 @@ cleanup_all_compose() {
       continue
     fi
     case "$group_name" in
-      "Superset Product Tests" | "BI Orchestration Contracts") compose_file="$SUPERSET_COMPOSE" ;;
+      "Superset Product Tests" | "Superset Product Tests - "* | "BI Orchestration Contracts") compose_file="$SUPERSET_COMPOSE" ;;
       "Grafana Nightly Tests") compose_file="$GRAFANA_COMPOSE" ;;
       "Airflow Nightly Tests") compose_file="$AIRFLOW_COMPOSE" ;;
       "PostgreSQL Adapter Tests") compose_file="$POSTGRES_COMPOSE" ;;
@@ -606,7 +617,7 @@ cleanup_all_compose() {
     if [ -f "$compose_file" ]; then
       project_name="$(compose_project_name "$group_name")"
       echo "Stopping services from $compose_file (project=$project_name)"
-      compose_cmd "$project_name" "$compose_file" down -v --remove-orphans || true
+      compose_down "$compose_file" "$project_name" || cleanup_status=1
     fi
   done
   return "$cleanup_status"
@@ -734,6 +745,7 @@ nightly_trace_expected_for_group() {
       "Web UI Nightly Tests" | \
       "Product E2E Nightly Tests" | \
       "Superset Product Tests" | \
+      "Superset Product Tests - "* | \
       "Grafana Nightly Tests" | \
       "Airflow Nightly Tests" | \
       "HANA Agent Tests" | \
@@ -1006,11 +1018,19 @@ finish_compose_suite() {
   local group_name="$1"
   local compose_file="$2"
   local project_name="$3"
+  local previous_test_exit_code="$test_exit_code"
+  local cleanup_status
   if [ "$group_name" = "HANA Agent Tests" ]; then
     cleanup_hana_nightly_environment
+    cleanup_status=$?
   else
     compose_down "$compose_file" "$project_name"
+    cleanup_status=$?
   fi
+  if [ "$previous_test_exit_code" -ne 0 ]; then
+    test_exit_code="$previous_test_exit_code"
+  fi
+  return "$cleanup_status"
 }
 
 cleanup_all() {
@@ -1450,7 +1470,7 @@ compose_host_port_specs() {
   local group_name="$1"
 
   case "$group_name" in
-    "Superset Product Tests" | "BI Orchestration Contracts")
+    "Superset Product Tests" | "Superset Product Tests - "* | "BI Orchestration Contracts")
       printf 'Superset web:%s\nSuperset PostgreSQL:%s\n' "${SUPERSET_PORT:-18088}" "${SUPERSET_POSTGRES_PORT:-15433}"
       ;;
     "Grafana Nightly Tests")
@@ -1809,7 +1829,7 @@ wait_for_compose_client_readiness() {
   local airflow_base
 
   case "$group_name" in
-    "Superset Product Tests" | "BI Orchestration Contracts")
+    "Superset Product Tests" | "Superset Product Tests - "* | "BI Orchestration Contracts")
       wait_for_http_readiness "Superset" "${SUPERSET_URL%/}/health" 300
       ;;
     "Grafana Nightly Tests")
@@ -1972,16 +1992,24 @@ run_compose_suite() {
   log "Host ports:"
   printf '%s\n' "$host_ports" | sed 's/^/  /' | tee -a "$LOG_FILE"
 
-  compose_down "$compose_file" "$project_name"
+  if ! compose_down "$compose_file" "$project_name"; then
+    if [ "$test_exit_code" -eq 0 ]; then test_exit_code=1; fi
+    manifest_record_suite "$group_name" "blocking" "compose" "failed" 1 "$started_at" "$(utc_now)" "$@"
+    return 0
+  fi
   if ! check_compose_host_ports_available "$group_name"; then
     log "Skipping ${group_name} startup because required host ports are unavailable"
     manifest_record_suite "$group_name" "blocking" "compose" "failed" "$test_exit_code" "$started_at" "$(utc_now)" "$@"
-    finish_compose_suite "$group_name" "$compose_file" "$project_name" || test_exit_code=1
+    finish_compose_suite "$group_name" "$compose_file" "$project_name" || {
+      if [ "$test_exit_code" -eq 0 ]; then test_exit_code=1; fi
+    }
     return 0
   fi
 
   if ! compose_up "$project_name" "$compose_file"; then
-    finish_compose_suite "$group_name" "$compose_file" "$project_name" || test_exit_code=1
+    finish_compose_suite "$group_name" "$compose_file" "$project_name" || {
+      if [ "$test_exit_code" -eq 0 ]; then test_exit_code=1; fi
+    }
     manifest_record_suite "$group_name" "blocking" "compose" "failed" "$test_exit_code" "$started_at" "$(utc_now)" "$@"
     return 0
   fi
@@ -1991,7 +2019,9 @@ run_compose_suite() {
     local service_name="${spec%%:*}"
     local timeout_seconds="${spec##*:}"
     if ! wait_for_service_health "$project_name" "$compose_file" "$service_name" "$timeout_seconds"; then
-      finish_compose_suite "$group_name" "$compose_file" "$project_name" || test_exit_code=1
+      finish_compose_suite "$group_name" "$compose_file" "$project_name" || {
+        if [ "$test_exit_code" -eq 0 ]; then test_exit_code=1; fi
+      }
       manifest_record_suite "$group_name" "blocking" "compose" "failed" "$test_exit_code" "$started_at" "$(utc_now)" "$@"
       return 0
     fi
@@ -2000,7 +2030,9 @@ run_compose_suite() {
   if ! wait_for_compose_client_readiness "$group_name"; then
     dump_compose_diagnostics "$project_name" "$compose_file" "$group_name"
     test_exit_code=1
-    finish_compose_suite "$group_name" "$compose_file" "$project_name" || test_exit_code=1
+    finish_compose_suite "$group_name" "$compose_file" "$project_name" || {
+      if [ "$test_exit_code" -eq 0 ]; then test_exit_code=1; fi
+    }
     manifest_record_suite "$group_name" "blocking" "compose" "failed" "$test_exit_code" "$started_at" "$(utc_now)" "$@"
     return 0
   fi
@@ -2018,7 +2050,10 @@ run_compose_suite() {
 
   log ""
   log "=== Stopping ${group_name} Services (project=${project_name}) ==="
-  finish_compose_suite "$group_name" "$compose_file" "$project_name" || test_exit_code=1
+  if ! finish_compose_suite "$group_name" "$compose_file" "$project_name"; then
+    if [ "$test_exit_code" -eq 0 ]; then test_exit_code=1; fi
+    manifest_record_suite "$group_name" "blocking" "compose" "failed" 1 "$started_at" "$(utc_now)" "$@"
+  fi
   return 0
 }
 
@@ -2171,7 +2206,12 @@ run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIG
 if [ -n "${PRODUCT_TEST_BASE_REF:-}" ]; then
   run_compose_suite "Superset Product Tests" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest -m "$DASHBOARD_MARK_EXPR" tests/integration/tools/test_bi_chart_lifecycle.py tests/integration/plugins/test_dashboard_bootstrap_plugin.py tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread
 else
-  run_compose_suite "Superset Product Tests" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "${NIGHTLY_HOME}/superset-product/home" "${NIGHTLY_HOME}/superset-product/workspace" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/tools/test_bi_chart_lifecycle.py::test_table_grouping_repair_and_deleted_chart_validation tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticExecution::test_creates_a_persisted_queryable_dashboard -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/superset-product"
+  # Each contract gets a fresh global limiter bucket, metadata DB and volumes.
+  # Keep Superset's production 50/s limit; earlier contracts must not consume
+  # the next contract's budget or leak persisted dashboard/plugin state.
+  run_compose_suite "Superset Product Tests - Chart Lifecycle" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "${NIGHTLY_HOME}/superset-chart-lifecycle/home" "${NIGHTLY_HOME}/superset-chart-lifecycle/workspace" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/tools/test_bi_chart_lifecycle.py::test_table_grouping_repair_and_deleted_chart_validation -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/superset-chart-lifecycle"
+  run_compose_suite "Superset Product Tests - Bootstrap" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "${NIGHTLY_HOME}/superset-bootstrap/home" "${NIGHTLY_HOME}/superset-bootstrap/workspace" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/superset-bootstrap"
+  run_compose_suite "Superset Product Tests - Dashboard" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "${NIGHTLY_HOME}/superset-dashboard/home" "${NIGHTLY_HOME}/superset-dashboard/workspace" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticExecution::test_creates_a_persisted_queryable_dashboard -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/superset-dashboard"
 fi
 run_compose_suite "BI Orchestration Contracts" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/tools/test_bi_dashboard.py::TestPartialIntegration::test_workflow_without_llm --tb=short --verbose --timeout=600 --timeout-method=thread
 
