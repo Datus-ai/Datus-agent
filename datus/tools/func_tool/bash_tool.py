@@ -321,13 +321,16 @@ class BashTool:
         - ``python`` shim: shadow ``python`` with the interpreter datus runs
           under, preserving the legacy ``argv[0]=='python' -> sys.executable``
           rewrite for environments where only ``python3`` exists.
+        - ``set +o pipefail``: preserve the documented last-stage pipeline
+          status even when the caller exported ``SHELLOPTS=pipefail``.
 
-        NOTE: intentionally NO ``set -o pipefail`` — bash's default takes the
-        LAST stage's exit code, matching Claude Code. pipefail would flag the
-        ubiquitous ``... | head`` as a failure because the upstream stage dies
-        with SIGPIPE (exit 141) when ``head`` closes the pipe early.
+        Bash's default takes the LAST stage's exit code, matching Claude Code.
+        Inherited pipefail would flag ``... | head`` as a failure because the
+        upstream stage dies with SIGPIPE (exit 141) when ``head`` closes early.
+        An explicit ``set -o pipefail`` in the command can still opt into it.
         """
         parts = [
+            "set +o pipefail",
             "shopt -u extglob 2>/dev/null || true",
         ]
         py = sys.executable or shutil.which("python3")

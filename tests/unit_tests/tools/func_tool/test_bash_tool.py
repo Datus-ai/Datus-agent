@@ -494,6 +494,24 @@ class TestPipelineExecution:
         assert result.success == 1
         assert result.result.strip() == "y"
 
+    @pytest.mark.parametrize("offload", [False, True])
+    def test_inherited_pipefail_does_not_change_pipeline_exit_semantics(self, temp_workspace, offload):
+        tool = BashTool(
+            workspace_root=str(temp_workspace),
+            allowed_patterns=["*"],
+            timeout=10,
+            extra_env={"SHELLOPTS": "braceexpand:hashall:interactive-comments:pipefail"},
+            output_dir_provider=(lambda: temp_workspace / "output") if offload else None,
+        )
+        result = tool.bash("yes | head -1")
+        assert result.success == 1, result.error
+        assert result.result.strip() == "y"
+
+    def test_explicit_pipeline_failure_option_remains_effective(self, unrestricted_tool):
+        result = unrestricted_tool.bash("set -o pipefail; false | true")
+        assert result.success == 0
+        assert result.error == "Command exited with code 1"
+
     def test_timeout_kills_whole_pipeline(self, temp_workspace):
         tool = BashTool(workspace_root=str(temp_workspace), allowed_patterns=["*"], timeout=1)
         import time
