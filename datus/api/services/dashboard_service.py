@@ -395,7 +395,9 @@ class DashboardService:
                     agent_config=self.agent_config, sub_agent_name="gen_visual_dashboard"
                 )
                 source_root = Path(self.agent_config.project_root).resolve()
-                use_snapshot = published or artifact_output_root(self.agent_config) != source_root
+                use_snapshot = (
+                    published or query.use_model_snapshot or artifact_output_root(self.agent_config) != source_root
+                )
                 model_path = (source_root / query.model_path).resolve()
                 if not model_path.is_relative_to(source_root):
                     raise ValueError("metric model path escapes project")
