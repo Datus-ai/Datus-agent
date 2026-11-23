@@ -628,21 +628,20 @@ def semantic_projection_is_stale(agent_config: "AgentConfig") -> bool:
     lookup, and stalling silently is worse than saying what to run.
     """
     try:
-        if SemanticDatasetRAG(agent_config).get_size() > 0:
+        datasets = SemanticDatasetRAG(agent_config)
+        if datasets.get_size() > 0:
             return False
     except Exception as exc:
         logger.debug("Unable to size the semantic dataset projection: %s", exc)
         return False
 
     try:
-        from datus.agent.node.semantic_authoring import _osi_semantic_model_dir
-
         # Reuse what sync-yaml itself would pick up, so the hint is never shown
         # for files that a sync would then skip.
         from datus.storage.semantic_model.semantic_model_init import semantic_yaml_files
 
-        model_dir = _osi_semantic_model_dir(agent_config)
-        return bool(model_dir is not None and semantic_yaml_files(model_dir))
+        model_dir = agent_config.path_manager.semantic_models_dir / datasets.datasource_id
+        return bool(semantic_yaml_files(model_dir))
     except Exception as exc:
         logger.debug("Unable to resolve the semantic model directory: %s", exc)
         return False

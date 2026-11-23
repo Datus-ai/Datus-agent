@@ -17,6 +17,7 @@ from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.registry.contracts import tool_contract
 from datus.utils.exceptions import DatusException
+from datus.utils.path_manager import DatusPathManager
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -955,23 +956,34 @@ class TestDescribeTableWithoutProjection:
         assert "table" not in result.result
         assert "semantic" not in result.result
 
-    def test_stale_projection_is_reported_once_per_project(self):
+    def test_stale_projection_is_reported_once_per_project(self, tmp_path):
         from datus.tools.func_tool import database as database_module
 
-        database_module._STALE_PROJECTION_WARNED.clear()
-        config = Mock()
-        config.project_name = "shop"
+        config = SimpleNamespace(
+            project_name="shop",
+            current_datasource="sales",
+            path_manager=DatusPathManager(datus_home=tmp_path, project_root=tmp_path),
+        )
+        model_dir = tmp_path / "subject" / "semantic_models" / "sales"
 
         with (
-            patch("datus.storage.semantic_dataset.store.semantic_projection_is_stale", return_value=True),
+            patch("datus.storage.registry.get_storage") as get_storage,
+            patch.object(database_module, "_STALE_PROJECTION_WARNED", set()),
             patch.object(database_module, "logger") as mock_logger,
         ):
+            get_storage.return_value._count_rows.return_value = 0
+            database_module._warn_once_if_projection_is_stale(config)
+
+            assert not model_dir.exists()
+            mock_logger.warning.assert_not_called()
+
+            model_dir.mkdir(parents=True)
+            (model_dir / "orders.yaml").write_text("name: orders\ndatasets: []\n", encoding="utf-8")
             database_module._warn_once_if_projection_is_stale(config)
             database_module._warn_once_if_projection_is_stale(config)
 
         assert mock_logger.warning.call_count == 1
         assert "sync-yaml" in mock_logger.warning.call_args.args[0]
-        database_module._STALE_PROJECTION_WARNED.clear()
 
 
 class TestSearchTableWithSharedTable:
