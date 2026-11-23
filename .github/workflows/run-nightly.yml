@@ -1,10 +1,17 @@
 name: Run Nightly Tests
+# The daily trigger is AWS EventBridge Scheduler (ci/nightly_scheduler), which
+# dispatches main at 04:17 Beijing time with a per-day schedule_key. GitHub cron
+# is intentionally absent: it can start late or be dropped under load.
+run-name: ${{ inputs.schedule_key && format('Run Nightly Tests · {0}', inputs.schedule_key) || 'Run Nightly Tests' }}
 
 on:
-  schedule:
-    - cron: '17 20 * * *' # 20:17 UTC daily (04:17 Beijing time the next day)
   workflow_dispatch:
     inputs:
+      schedule_key:
+        description: "Set by the AWS nightly scheduler (nightly-YYYY-MM-DD) for once-per-day dispatch. Leave empty for manual runs."
+        required: false
+        default: ""
+        type: string
       datus_agent_ref:
         description: "Optional Datus-agent branch, tag, or SHA to test. Defaults to the workflow branch."
         required: false
