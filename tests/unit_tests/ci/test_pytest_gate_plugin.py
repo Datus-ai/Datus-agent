@@ -2,6 +2,7 @@
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -15,7 +16,10 @@ from ci import pytest_gate_plugin as gate
 
 
 @pytest.mark.parametrize("showlocals", [False, True])
-def test_failure_traceback_is_printed_before_the_next_test(tmp_path, showlocals):
+def test_failure_traceback_is_printed_before_the_next_test(tmp_path, showlocals, monkeypatch):
+    # Nightly exports parent-only options, including a basetemp above this cwd.
+    parent_options = f"--basetemp={shlex.quote(str(tmp_path.parent))} --no-showlocals --maxfail=1"
+    monkeypatch.setenv("PYTEST_ADDOPTS", parent_options)
     source = tmp_path / "test_early_failure.py"
     source.write_text(
         'def test_fails():\n    local_value = 6 * 7\n    assert False, "EARLY_FAILURE"\n'
@@ -46,7 +50,7 @@ def test_failure_traceback_is_printed_before_the_next_test(tmp_path, showlocals)
         ],
         cwd=tmp_path,
         env={
-            **os.environ,
+            **{name: value for name, value in os.environ.items() if name != "PYTEST_ADDOPTS"},
             "PYTHONPATH": str(Path(__file__).resolve().parents[3]),
             "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
         },
@@ -55,6 +59,8 @@ def test_failure_traceback_is_printed_before_the_next_test(tmp_path, showlocals)
         timeout=15,
     )
     assert result.returncode == 1, result.stdout + result.stderr
+    assert os.environ["PYTEST_ADDOPTS"] == parent_options
+    assert "SECOND_TEST_STARTED" in result.stdout
     before_next_test = result.stdout.split("SECOND_TEST_STARTED", 1)[0]
     assert "AssertionError: EARLY_FAILURE" in before_next_test, result.stdout
     assert ("local_value = 42" in before_next_test) is showlocals
