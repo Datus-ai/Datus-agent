@@ -1,26 +1,10 @@
 name: Run Nightly Tests
-run-name: ${{ inputs.prepare_codebuild_config && 'Prepare CodeBuild configuration (no tests)' || 'Run Nightly Tests' }}
 
 on:
   schedule:
     - cron: '17 20 * * *' # 20:17 UTC daily (04:17 Beijing time the next day)
   workflow_dispatch:
     inputs:
-      prepare_codebuild_config:
-        description: "Temporary one-use: seal the three legacy configs for repository Secrets migration."
-        required: false
-        default: false
-        type: boolean
-      public_key:
-        description: "GitHub repository public encryption key (public data only)."
-        required: false
-        default: ""
-        type: string
-      public_key_id:
-        description: "GitHub repository public encryption key ID (public data only)."
-        required: false
-        default: ""
-        type: string
       datus_agent_ref:
         description: "Optional Datus-agent branch, tag, or SHA to test. Defaults to the workflow branch."
         required: false
@@ -91,36 +75,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  seal-legacy-nightly-config:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.prepare_codebuild_config && github.actor_id == '5009345' && github.repository == 'Datus-ai/Datus-agent' }}
-    runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 10
-    steps:
-      - name: Checkout reviewed migration helper
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-
-      - name: Install temporary uv runner
-        uses: astral-sh/setup-uv@v5
-
-      - name: Seal only the three authorized legacy configurations
-        env:
-          NIGHTLY_SEAL_PUBLIC_KEY: ${{ inputs.public_key }}
-          NIGHTLY_SEAL_PUBLIC_KEY_ID: ${{ inputs.public_key_id }}
-        run: uv run --no-project --with PyNaCl==1.6.2 python ci/seal_nightly_config.py
-
-      - name: Upload ciphertext only
-        uses: actions/upload-artifact@v4
-        with:
-          name: sealed-nightly-config-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/nightly-config-sealed/sealed-config.json
-          if-no-files-found: error
-          retention-days: 1
-
   run-nightly:
-    if: ${{ !inputs.prepare_codebuild_config }}
     runs-on: codebuild-datus-agent-nightly-${{ github.run_id }}-${{ github.run_attempt }}
     env:
       PYTEST_XDIST_AUTO_NUM_WORKERS: "8"

@@ -288,53 +288,7 @@ def test_nightly_installs_p0_plugins_only_through_managed_store():
 
 def test_nightly_consumes_policy_releases_without_native_build_jobs():
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    # Temporary, narrowly controlled migration exception. Restore the strict
-    # single-job assertion when the sealing job/helper are removed.
-    assert set(workflow["jobs"]) == {"run-nightly", "seal-legacy-nightly-config"}
-    assert workflow.get("env", {}) == {}
-    assert workflow["permissions"] == {"contents": "read"}
-    assert workflow["jobs"]["run-nightly"]["if"] == "${{ !inputs.prepare_codebuild_config }}"
-    seal = workflow["jobs"]["seal-legacy-nightly-config"]
-    assert seal == {
-        "if": (
-            "${{ github.event_name == 'workflow_dispatch' && inputs.prepare_codebuild_config "
-            "&& github.actor_id == '5009345' && github.repository == 'Datus-ai/Datus-agent' }}"
-        ),
-        "runs-on": ["self-hosted", "Linux", "X64"],
-        "timeout-minutes": 10,
-        "steps": [
-            {
-                "name": "Checkout reviewed migration helper",
-                "uses": "actions/checkout@v4",
-                "with": {"ref": "${{ github.sha }}", "persist-credentials": False},
-            },
-            {"name": "Install temporary uv runner", "uses": "astral-sh/setup-uv@v5"},
-            {
-                "name": "Seal only the three authorized legacy configurations",
-                "env": {
-                    "NIGHTLY_SEAL_PUBLIC_KEY": "${{ inputs.public_key }}",
-                    "NIGHTLY_SEAL_PUBLIC_KEY_ID": "${{ inputs.public_key_id }}",
-                },
-                "run": "uv run --no-project --with PyNaCl==1.6.2 python ci/seal_nightly_config.py",
-            },
-            {
-                "name": "Upload ciphertext only",
-                "uses": "actions/upload-artifact@v4",
-                "with": {
-                    "name": "sealed-nightly-config-${{ github.run_id }}-${{ github.run_attempt }}",
-                    "path": "${{ runner.temp }}/nightly-config-sealed/sealed-config.json",
-                    "if-no-files-found": "error",
-                    "retention-days": 1,
-                },
-            },
-        ],
-    }
-    # BaseLoader preserves the literal 'on' key instead of YAML 1.1's boolean.
-    dispatch = yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)["on"]["workflow_dispatch"]["inputs"]
-    assert dispatch["prepare_codebuild_config"]["type"] == "boolean"
-    assert dispatch["prepare_codebuild_config"]["default"] == "false"
-    assert dispatch["public_key"]["default"] == ""
-    assert dispatch["public_key_id"]["default"] == ""
+    assert set(workflow["jobs"]) == {"run-nightly"}
     steps = workflow["jobs"]["run-nightly"]["steps"]
     release = next(step for step in steps if step.get("id") == "policy_release")
     assert release["env"]["GH_TOKEN"] == "${{ secrets.RELEASE_BOT_TOKEN }}"
