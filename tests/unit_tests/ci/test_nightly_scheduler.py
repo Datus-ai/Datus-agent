@@ -41,6 +41,13 @@ class Response(io.BytesIO):
         self.status = status
 
 
+class StalledResponse(Response):
+    """Headers arrived, but the body read times out."""
+
+    def read(self, *args):
+        raise TimeoutError("The read operation timed out")
+
+
 class FakeNetwork:
     """Scripted GitHub/Feishu endpoint that records every request."""
 
@@ -58,8 +65,12 @@ class FakeNetwork:
         if request.get_method() == "POST":
             if isinstance(self.dispatch, Exception):
                 raise self.dispatch
+            if self.dispatch == "stall":
+                return StalledResponse(204)
             return Response(self.dispatch)
         runs = self.list_results.pop(0) if len(self.list_results) > 1 else self.list_results[0]
+        if runs == "stall":
+            return StalledResponse(200, {"workflow_runs": []})
         if isinstance(runs, int):
             return Response(runs, {"message": "error"})
         return Response(200, {"workflow_runs": runs})
@@ -203,6 +214,27 @@ def test_failed_confirmation_after_accepted_dispatch_still_succeeds_without_aler
     result, _ = run(network)
     assert result == {"status": "dispatched", "schedule_key": KEY, "run": None}
     assert len(network.posts()) == 1 and network.alerts() == []
+
+
+def test_confirmation_read_timeout_after_accepted_dispatch_still_succeeds():
+    network = FakeNetwork([[], "stall"])
+    result, _ = run(network)
+    assert result == {"status": "dispatched", "schedule_key": KEY, "run": None}
+    assert len(network.posts()) == 1 and network.alerts() == []
+
+
+def test_dispatch_body_read_timeout_is_resolved_by_lookup():
+    network = FakeNetwork([[], [matching_run()]], dispatch="stall")
+    result, _ = run(network)
+    assert result["status"] == "dispatched" and result["run"]["id"] == 42
+    assert len(network.posts()) == 1
+
+
+def test_listing_read_timeout_before_dispatch_stays_fatal():
+    network = FakeNetwork(["stall"])
+    with pytest.raises(handler.DispatchError, match="^github_transport_uncertain$"):
+        run(network)
+    assert network.posts() == [] and len(network.alerts()) == 1
 
 
 def test_failed_lookup_during_lost_response_recovery_stays_fatal():

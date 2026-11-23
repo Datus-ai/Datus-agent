@@ -125,9 +125,13 @@ class GitHub:
             response = error
         except Exception:
             raise DispatchError("github_transport_uncertain") from None
-        with response:
-            status = response.status
-            raw = response.read(2 * 1024 * 1024)
+        try:
+            with response:
+                status = response.status
+                raw = response.read(2 * 1024 * 1024)
+        except Exception:
+            # A body that times out or resets mid-read is as uncertain as a lost connection.
+            raise DispatchError("github_transport_uncertain") from None
         try:
             return status, json.loads(raw) if raw else None
         except ValueError:
