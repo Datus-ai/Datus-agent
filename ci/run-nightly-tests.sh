@@ -1076,6 +1076,9 @@ handle_interrupt() {
 
 finalize_nightly_exit() {
   local initial_status="$1" cleanup_status final_status
+  # cleanup_all records this value in the manifest before teardown, and teardown
+  # (e.g. HANA cleanup) may change test_exit_code; compare against the recorded one.
+  local recorded_exit_code="${test_exit_code:-$initial_status}"
   trap - EXIT
   cleanup_all
   cleanup_status=$?
@@ -1088,7 +1091,7 @@ finalize_nightly_exit() {
   # cleanup_all finalized the evidence before tearing resources down. When the
   # outcome changed afterwards, rewrite the manifest and its derived reports so
   # they carry the final exit code instead of the pre-cleanup one.
-  if [ "${NIGHTLY_SKIP_MANIFEST_FINALIZE:-0}" != "1" ] && [ "$final_status" -ne "${test_exit_code:-$initial_status}" ]; then
+  if [ "${NIGHTLY_SKIP_MANIFEST_FINALIZE:-0}" != "1" ] && [ "$final_status" -ne "$recorded_exit_code" ]; then
     test_exit_code="$final_status"
     NIGHTLY_MANIFEST_FINALIZED=0
     PROVIDER_COVERAGE_MANIFEST_FINALIZED=0

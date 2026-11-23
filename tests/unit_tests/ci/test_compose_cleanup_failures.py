@@ -105,6 +105,7 @@ def run_cleanup(tmp_path, *, initial=0, cleanup_only=False):
     ("initial", "cleanup_fails", "expected_finalizations"),
     [
         (0, True, ["0", "1"]),
+        (0, "sets-exit-code", ["0", "1"]),
         (0, False, ["0"]),
         (7, True, ["7"]),
     ],
@@ -129,7 +130,10 @@ def test_manifest_and_reports_carry_the_post_cleanup_exit_code(
         "collect_nightly_trace_diagnostics() { :; }",
         "restore_agent_test_config() { :; }; cleanup_gaussdb_tls_host_artifacts() { :; }",
         "validate_pytest_basetemp() { return 1; }; cleanup_vision_nightly_environment() { return 0; }",
-        f"cleanup_all_compose() {{ return {1 if cleanup_fails else 0}; }}",
+        # HANA teardown also flips test_exit_code while reporting its failure.
+        "cleanup_all_compose() { test_exit_code=1; return 1; }"
+        if cleanup_fails == "sets-exit-code"
+        else f"cleanup_all_compose() {{ return {1 if cleanup_fails else 0}; }}",
         source("manifest_finalize"),
         source("provider_coverage_finalize"),
         source("failure_classification_finalize"),
