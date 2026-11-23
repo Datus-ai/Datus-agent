@@ -165,3 +165,32 @@ and the
 | A01 | `test_datasource_switch_acceptance.py::test_same_session_switches_source_before_querying_and_authoring_metrics` | Same-session A-to-B switch, different data behind identical table names, B tool results and metric scope. |
 | A11 | `test_chat_acceptance.py::test_http_running_session_consumes_queued_message_once` | Insert during an active HTTP turn, consume once, preserve session ownership, finish and accept a subsequent request. |
 | A09 | `test_semantic_session_acceptance.py::test_http_semantic_generation_finishes_and_releases_session` | Real semantic tools and persisted metric, independent query oracle, terminal task and usable follow-up session. |
+
+
+## Private nightly configuration on CodeBuild
+
+The runner does not use host-local CI template files. An administrator must
+supply these GitHub Actions secrets using the secure repository/organization
+settings or an approved secret-management path:
+
+| GitHub secret | Existing private source content | Fixed output |
+| --- | --- | --- |
+| `DATUS_NIGHTLY_AGENT_CONFIG` | Raw former `ci_template/agent.yml` content | `conf/agent.yml` |
+| `DATUS_NIGHTLY_CI_ENV` | Raw former `ci_template/ci.env` content | `.env` |
+| `DATUS_NIGHTLY_SERVICE_ENV` | Raw former `ci_template/nightly.env` content | `.nightly.env` |
+
+Do not paste credentials into chat, workflow arguments, commits or buildspecs.
+Preparing this interface does not provision secrets or authorize their transfer;
+the administrator still needs to supply the approved configuration securely.
+Reusable workflow callers must provide all three secrets. A direct run with a
+missing secret fails and names the missing reference; there is no host fallback.
+
+`ci/prepare_nightly_config.py` reads only step environment variables, validates
+all three inputs before touching configuration, masks sensitive YAML values
+(including nested credential values) and dotenv values on GitHub Actions, then
+stages fixed output files with mode `0600`. Dotenv inputs use literal single-line
+`NAME=value` assignments, comments and blank lines, matching the existing loader;
+transport CRLF and whitespace-only blank lines are normalized. Use one literal assignment per physical line; shell `export` syntax is rejected. Configuration and private dotenv files
+are excluded from nightly artifacts and caches. Outside GitHub Actions the helper
+never prints values or masking commands. Actual secret availability remains a
+prerequisite for a successful CodeBuild nightly run.
