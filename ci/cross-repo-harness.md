@@ -97,6 +97,12 @@ those prerequisites without changing host kernel settings. Startup, readiness,
 test or cleanup failures fail the required group. HANA query/action evidence is
 uploaded from `test-results/hana/`.
 
+Prepare the Docker host according to the [SAP HANA Express Docker guide](https://developers.sap.com/tutorials/hxe-ua-install-using-docker).
+In particular, SAP requires `vm.max_map_count >= 135217728`; the adapter helper
+also checks asynchronous I/O, disk space and available memory before bootstrap.
+A failure at an earlier check does not certify the remaining prerequisites.
+Host administrators must apply these settings before running the group.
+
 `Self-hosted Vision Tests` then provisions a CPU llama.cpp container with a pinned
 multi-architecture image digest and verified Qwen3-VL-2B model/projector hashes.
 The server binds a dynamic loopback port; the original test must call `read_image`
