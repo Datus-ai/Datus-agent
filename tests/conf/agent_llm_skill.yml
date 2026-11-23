@@ -12,11 +12,11 @@ agent:
       california_schools:
         name: california_schools
         type: sqlite
-        uri: ~/.datus/benchmark/california_schools/california_schools.sqlite
+        uri: datus/sample_data/california_schools/california_schools.sqlite
 
   skills:
     directories:
-      - ~/.datus/skills
+      - tests/data/skills
 
   permissions:
     default: allow
@@ -30,7 +30,7 @@ agent:
       model: deepseek
       system_prompt: gen_sql
       prompt_language: en
-      tools: db_tools.*, context_search_tools.*
+      tools: db_tools.*, context_search_tools.*, skills.*
       skills: "*"
       agent_description: "SQL assistant with skill support for california_schools"
 

@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
@@ -33,9 +34,8 @@ TESTS_ROOT = Path(__file__).parent.parent  # tests/
 CONF_DIR = TESTS_ROOT / "conf"
 SKILLS_DIR = TESTS_ROOT / "data" / "skills"
 
-# Real LLM integration test paths
-REAL_SKILLS_DIR = Path.home() / ".datus" / "skills"
-REAL_SQLITE_DB = Path.home() / ".datus" / "benchmark" / "california_schools" / "california_schools.sqlite"
+# Versioned fixtures for real-model Skill execution, copied per test module.
+SKILL_SQLITE_DB = TESTS_ROOT.parent / "datus" / "sample_data" / "california_schools" / "california_schools.sqlite"
 
 
 @dataclass(frozen=True)
@@ -363,36 +363,49 @@ def skill_func_tool(skill_manager) -> SkillFuncTool:
 
 @pytest.fixture(scope="module")
 def llm_agent_config(tmp_path_factory) -> AgentConfig:
-    """Load AgentConfig for real LLM integration tests.
+    """Run real-model Skill tests using isolated, versioned assets.
 
-    Uses tests/conf/agent_llm_skill.yml with california_schools database
-    and real skills from ~/.datus/skills/.
-
-    Skips if prerequisites missing:
-    - DEEPSEEK_API_KEY not set
-    - california_schools.sqlite not found
-    - ~/.datus/skills/report-generator/ not found
+    The model transport stays real. Database and skill prerequisites are copied
+    from the repository instead of relying on a developer's global Datus home.
     """
     if not os.environ.get("DEEPSEEK_API_KEY"):
+        if os.environ.get("DATUS_STRICT_NIGHTLY_REQUIREMENTS") == "1":
+            pytest.fail("Required nightly Skill tests need DEEPSEEK_API_KEY")
         pytest.skip("DEEPSEEK_API_KEY not set")
-    if not REAL_SQLITE_DB.exists():
-        pytest.skip(f"SQLite database not found: {REAL_SQLITE_DB}")
-    if not (REAL_SKILLS_DIR / "report-generator" / "SKILL.md").exists():
-        pytest.skip(f"report-generator skill not found: {REAL_SKILLS_DIR}")
+    skill_source = SKILLS_DIR / "report-generator"
+    for required in (SKILL_SQLITE_DB, skill_source / "SKILL.md", skill_source / "scripts" / "generate_report.py"):
+        if not required.is_file():
+            pytest.fail(f"Required versioned Skill fixture is missing: {required}")
 
-    src = CONF_DIR / "agent_llm_skill.yml"
     tmp_dir = tmp_path_factory.mktemp("llm_skill_conf")
-    tmp_cfg = tmp_dir / "agent_llm_skill.yml"
-    shutil.copy2(src, tmp_cfg)
+    home = tmp_dir / "home"
+    database = home / "benchmark" / "california_schools" / "california_schools.sqlite"
+    database.parent.mkdir(parents=True)
+    shutil.copy2(SKILL_SQLITE_DB, database)
+    skills = home / "skills"
+    shutil.copytree(skill_source, skills / "report-generator")
+    workspace = home / "workspace"
+    workspace.mkdir()
 
-    config = load_agent_config(
+    data = yaml.safe_load((CONF_DIR / "agent_llm_skill.yml").read_text(encoding="utf-8"))
+    agent = data["agent"]
+    agent.update(home=str(home), project_root=str(workspace), project_name="nightly_skill_execution")
+    agent["services"]["datasources"]["california_schools"]["uri"] = str(database)
+    agent["skills"]["directories"] = [str(skills)]
+    agent["storage"]["base_path"] = str(home / "data")
+    tmp_cfg = tmp_dir / "agent_llm_skill.yml"
+    tmp_cfg.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    return load_agent_config(
         config=str(tmp_cfg),
         datasource="california_schools",
+        home=str(home),
+        project_root=str(workspace),
+        project_name="nightly_skill_execution",
         reload=True,
         force=True,
         yes=True,
     )
-    return config
 
 
 # ── CLI shared fixtures ──

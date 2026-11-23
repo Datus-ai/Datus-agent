@@ -277,5 +277,12 @@ class TestRealLLMSkillIntegration:
 
         assert has_load_skill, f"Expected load_skill in action history. Action types found: {action_types}"
 
+        successful_loads = [
+            action
+            for action in all_actions
+            if action.role == "tool" and action.action_type == "load_skill" and action.status == "success"
+        ]
+        assert successful_loads, "Loading report-generator must succeed, not merely appear in history"
         final_action = all_actions[-1]
-        assert final_action.status in ("success", "failed"), f"Unexpected final status: {final_action.status}"
+        assert final_action.status == "success", f"Skill integration failed: {final_action.output}"
+        assert node.result.success, node.result.error

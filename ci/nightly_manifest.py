@@ -130,6 +130,63 @@ def env_value(name: str) -> str:
     return os.environ.get(name, "")
 
 
+def nightly_case_scope() -> list[dict[str, str]]:
+    """Declare daily requirements and deliberate frequency/protocol exclusions.
+
+    Credentials never determine applicability. Explicit capacity opt-ins bring
+    the weekly scenarios into this run and make them ordinary required tests.
+    """
+    cases = [
+        {
+            "nodeid": "tests/integration/cli/test_init_live.py::test_qwen_scoped_init_supplements_existing_documents",
+            "status": "required",
+            "frequency": "nightly",
+            "reason": "Scoped init is a core user-facing flow in the daily product baseline.",
+        }
+    ]
+    for nodeid, opt_in, reason in (
+        (
+            "tests/integration/cli/test_init_live.py::test_qwen_init_large_catalog_in_one_loop",
+            "DATUS_RUN_LIVE_INIT_SCALE",
+            "The 20,000-table catalog extends the daily init flow as a weekly capacity scenario.",
+        ),
+        (
+            "tests/integration/models/test_qwen_capacity_live.py::test_qwen_long_input_and_automatic_compaction",
+            "DATUS_RUN_LIVE_CAPACITY",
+            "Long-input and compaction capacity extend the daily model baseline on the weekly schedule.",
+        ),
+    ):
+        cases.append(
+            {
+                "nodeid": nodeid,
+                "status": "required" if os.environ.get(opt_in) == "1" else "scheduled_out",
+                "frequency": "weekly",
+                "opt_in_env": opt_in,
+                "reason": reason,
+            }
+        )
+    cases.append(
+        {
+            "nodeid": "tests/integration/tools/test_dosi_hive.py::test_native_inceptor_system_varchar2_metrics",
+            "status": "not_applicable",
+            "frequency": "nightly",
+            "reason": "The provisioned compose target is Apache Hive; Inceptor system views require an Inceptor target.",
+            "target": "apache-hive",
+        }
+    )
+    return cases
+
+
+def print_case_scope(args: argparse.Namespace) -> None:
+    scope = nightly_case_scope()
+    if args.deselected_nodeids:
+        for case in scope:
+            if case["status"] in {"scheduled_out", "not_applicable"}:
+                print(case["nodeid"])
+    else:
+        print(json.dumps(scope, indent=2))
+
+
 def init_manifest(args: argparse.Namespace) -> None:
     repo_root = Path(args.repo_root).resolve()
     external_root = Path(args.external_repos_root).resolve()
@@ -184,6 +241,7 @@ def init_manifest(args: argparse.Namespace) -> None:
             if os.environ.get("DATUS_SQL_POLICY_RECEIPT")
             else None
         ),
+        "case_scope": nightly_case_scope(),
         "compose_projects": [],
         "suites": [],
     }
@@ -377,6 +435,10 @@ def summarize_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    scope_parser = subparsers.add_parser("case-scope")
+    scope_parser.add_argument("--deselected-nodeids", action="store_true")
+    scope_parser.set_defaults(func=print_case_scope)
 
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--output", required=True)
