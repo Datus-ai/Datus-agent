@@ -3,7 +3,11 @@
 import hashlib
 import io
 import json
+import socket
+import struct
 import subprocess
+import threading
+from urllib.error import URLError
 
 import pytest
 
@@ -40,8 +44,72 @@ def test_bad_download_is_not_promoted_to_cache(monkeypatch, tmp_path):
 
 
 @pytest.fixture
+def reset_then_ready(monkeypatch):
+    """Consume HTTP headers, send a real TCP RST, then serve a healthy reply."""
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(2)
+    listener.settimeout(0.1)
+    stop = threading.Event()
+    requests, errors = [], []
+
+    def serve():
+        try:
+            while not stop.is_set():
+                try:
+                    connection, _ = listener.accept()
+                except TimeoutError:
+                    continue
+                with connection:
+                    connection.settimeout(2)
+                    headers = b""
+                    while b"\r\n\r\n" not in headers:
+                        chunk = connection.recv(4096)
+                        if not chunk:
+                            raise RuntimeError("Health client closed before sending headers")
+                        headers += chunk
+                    requests.append(headers.split(b"\r\n", 1)[0])
+                    if len(requests) == 1:
+                        # Abort after receiving the request, rather than producing
+                        # the graceful FIN that HTTPServer.shutdown would send.
+                        connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                    else:
+                        body = b'{"status":"ok"}'
+                        connection.sendall(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: "
+                            + str(len(body)).encode()
+                            + b"\r\nConnection: close\r\n\r\n"
+                            + body
+                        )
+        except OSError as error:
+            if not stop.is_set():
+                errors.append(error)
+        except Exception as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        yield {"base": f"http://127.0.0.1:{listener.getsockname()[1]}", "requests": requests}
+    finally:
+        stop.set()
+        listener.close()
+        thread.join(timeout=3)
+        assert not thread.is_alive(), "Owned health server must stop"
+        assert errors == []
+
+
+def test_health_reset_is_not_ready_and_next_http_reply_is_ready(reset_then_ready):
+    assert vision.healthy(reset_then_ready["base"]) is False
+    assert vision.healthy(reset_then_ready["base"]) is True
+    assert reset_then_ready["requests"] == [b"GET /health HTTP/1.1"] * 2
+
+
+@pytest.fixture
 def server(monkeypatch):
-    state = {"calls": [], "owner": None}
+    state = {"calls": [], "owner": None, "running": True, "healthy": vision.healthy}
 
     def docker(*args):
         state["calls"].append(args)
@@ -53,7 +121,9 @@ def server(monkeypatch):
         if args[0] == "port":
             return "127.0.0.1:45678"
         if args[0] == "inspect":
-            return json.dumps([{"State": {"Running": True}, "Config": {"Labels": {vision.LABEL: state["owner"]}}}])
+            return json.dumps(
+                [{"State": {"Running": state["running"]}, "Config": {"Labels": {vision.LABEL: state["owner"]}}}]
+            )
         return ""
 
     monkeypatch.setattr(vision, "docker", docker)
@@ -139,3 +209,58 @@ def test_external_missing_key_fails_before_test_can_skip(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match="populated API key"):
         vision.prepare(tmp_path, tmp_path / "cache")
     assert not (tmp_path / "environment.sh").exists()
+
+
+def _use_real_health_endpoint(server, reset_then_ready, monkeypatch):
+    docker = vision.docker
+
+    def redirected_docker(*args):
+        if args[0] == "port":
+            return reset_then_ready["base"].removeprefix("http://")
+        return docker(*args)
+
+    monkeypatch.setattr(vision, "docker", redirected_docker)
+    monkeypatch.setattr(vision, "healthy", server["healthy"])
+
+
+def test_prepare_recovers_from_health_reset_within_existing_polling_loop(
+    server, reset_then_ready, monkeypatch, tmp_path
+):
+    _use_real_health_endpoint(server, reset_then_ready, monkeypatch)
+    work = tmp_path / "work"
+    receipt = vision.prepare(work, tmp_path / "cache", ready_timeout=5)
+    assert receipt["status"] == "ready"
+    assert reset_then_ready["requests"] == [b"GET /health HTTP/1.1"] * 2
+    assert not any(call[0] == "rm" for call in server["calls"])
+    vision.cleanup(work)
+    assert json.loads((work / "evidence.json").read_text())["cleaned_up"] is True
+
+
+def test_prepare_does_not_retry_reset_after_container_stops(server, reset_then_ready, monkeypatch, tmp_path):
+    _use_real_health_endpoint(server, reset_then_ready, monkeypatch)
+    server["running"] = False
+    work = tmp_path / "work"
+    with pytest.raises(RuntimeError, match="container stopped before readiness"):
+        vision.prepare(work, tmp_path / "cache", ready_timeout=5)
+    assert reset_then_ready["requests"] == [b"GET /health HTTP/1.1"]
+    evidence = json.loads((work / "evidence.json").read_text())
+    assert evidence["status"] == "failure" and evidence["cleaned_up"] is True
+    assert not (work / "environment.sh").exists()
+
+
+@pytest.mark.parametrize("error", [URLError("unavailable"), TimeoutError("timeout"), ValueError("bad JSON")])
+def test_existing_health_errors_remain_not_ready(monkeypatch, error):
+    def unavailable(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(vision, "urlopen", unavailable)
+    assert vision.healthy("http://vision.invalid") is False
+
+
+def test_health_probe_does_not_swallow_programming_errors(monkeypatch):
+    def invalid_call(*args, **kwargs):
+        raise TypeError("incorrect health implementation")
+
+    monkeypatch.setattr(vision, "urlopen", invalid_call)
+    with pytest.raises(TypeError, match="incorrect health implementation"):
+        vision.healthy("http://vision.invalid")

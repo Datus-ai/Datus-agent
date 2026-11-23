@@ -105,7 +105,7 @@ def healthy(base_url: str) -> bool:
     try:
         with urlopen(base_url + "/health", timeout=5) as response:
             return response.status == 200 and json.load(response).get("status") == "ok"
-    except (URLError, TimeoutError, ValueError):
+    except (URLError, TimeoutError, ConnectionError, ValueError):
         return False
 
 
