@@ -649,6 +649,8 @@ def test_published_execution_uses_saved_model_after_studio_changes(environment, 
             self.path = Path(config.semantic_model_path)
             assert self.path.read_bytes() == original
             assert config.semantic_models_path is None
+            assert config.ontology_dir is None
+            assert config.db_config == {"type": "duckdb", "database": "warehouse"}
             if normalizes_model:
                 self.path.write_text("version: 0.2.0.dev0\nname: model\ndatasets: []\n")
 
@@ -666,7 +668,13 @@ def test_published_execution_uses_saved_model_after_studio_changes(environment, 
     monkeypatch.setattr("datus.tools.semantic_tools.dosi.DosiRuntime", FrozenRuntime)
     policy = {"reader": "alice"}
     result, _ = execute_published_metric_query(
-        query, runtime_config=DosiConfig(), db_tool=env.db, params={}, policy_context=policy
+        query,
+        runtime_config=DosiConfig(
+            ontology_dir=str(env.model.parent), db_config={"type": "duckdb", "database": "warehouse"}
+        ),
+        db_tool=env.db,
+        params={},
+        policy_context=policy,
     )
     assert result.rows == [{"revenue": 25.0}]
     assert env.db.execute_read_enforced.call_args.kwargs["policy_context"] == policy
@@ -1269,6 +1277,7 @@ async def test_builder_metric_preview_uses_artifact_snapshot_without_source_mode
             return await env.runtime.query_metrics(**kwargs)
 
     env.runtime.config = DosiConfig()
+    env.semantic.runtime_connection_config = lambda: env.runtime.config
     monkeypatch.setattr("datus.tools.semantic_tools.dosi.DosiRuntime", FrozenRuntime)
     monkeypatch.setattr("datus.tools.func_tool.DBFuncTool", lambda **kwargs: env.db)
     monkeypatch.setattr("datus.tools.func_tool.semantic_tools.SemanticTools", lambda **kwargs: env.semantic)

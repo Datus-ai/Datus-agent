@@ -88,6 +88,7 @@ async def test_metric_failure_logs_traceback_only_for_unexpected_errors(
         datasource="warehouse",
         model_path="models/shop.yml",
         use_model_snapshot=None,
+        model_snapshot=None,
         parameter_names=lambda: set(),
     )
     meta = SimpleNamespace(slug="sales", datasource="warehouse", params=[])
@@ -125,6 +126,7 @@ async def test_dashboard_metric_tools_keep_explicit_request_policy_context(monke
         datasource="warehouse",
         model_path="models/shop.yml",
         use_model_snapshot=None,
+        model_snapshot=None,
         parameter_names=lambda: set(),
     )
     meta = SimpleNamespace(slug="sales", datasource="warehouse", params=[])
@@ -135,7 +137,8 @@ async def test_dashboard_metric_tools_keep_explicit_request_policy_context(monke
 
 
 @pytest.mark.asyncio
-async def test_mapped_metric_preview_uses_saved_model_with_destination_policy(monkeypatch, tmp_path):
+@pytest.mark.parametrize("force_snapshot", [True, None])
+async def test_metric_preview_uses_saved_model_with_destination_policy(monkeypatch, tmp_path, force_snapshot):
     from types import SimpleNamespace
 
     from datus.tools import func_tool
@@ -149,15 +152,16 @@ async def test_mapped_metric_preview_uses_saved_model_with_destination_policy(mo
         datasource="destination",
         execution_context={"datasource": "destination"},
         model_path="subject/semantic_models/source/shop.yml",
-        use_model_snapshot=True,
+        use_model_snapshot=force_snapshot,
+        model_snapshot="saved model",
+        model_snapshot_path="models/shop.yml",
         parameter_names=lambda: set(),
     )
     meta = SimpleNamespace(slug="sales", datasource="destination", params=[])
 
     def build_semantic_tools(**kwargs):
-        assert kwargs["semantic_model_path_provider"] is None
         assert kwargs["runtime_db_context_provider"]() == query.execution_context
-        return SimpleNamespace(runtime=SimpleNamespace(config=config))
+        return SimpleNamespace(runtime_connection_config=lambda: config)
 
     def execute(saved, *, policy_context, **_):
         assert saved is query
