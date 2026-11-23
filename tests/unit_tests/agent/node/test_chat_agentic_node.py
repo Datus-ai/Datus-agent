@@ -2339,7 +2339,9 @@ class TestChatAgenticNodePlanMode:
 class TestChatAgenticNodeRebuildTools:
     """Verify _rebuild_tools correctly assembles tools from all sources."""
 
-    def test_host_tool_survives_rebuild_without_leaking_to_another_node(self, real_agent_config, mock_llm_create):
+    def test_host_tool_survives_rebuild_without_leaking_to_another_node(
+        self, real_agent_config, mock_llm_create, monkeypatch
+    ):
         from agents import function_tool
 
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -2354,7 +2356,10 @@ class TestChatAgenticNodeRebuildTools:
         node = ChatAgenticNode(
             node_id="host-chat", description="Host chat", node_type=NodeType.TYPE_CHAT, agent_config=real_agent_config
         )
-        node.install_host_tools([host_status])
+        with monkeypatch.context() as scoped:
+            context_tools = MagicMock(side_effect=AssertionError("Installing a host tool must not query context tools"))
+            scoped.setattr(node, "_available_context_search_tools", context_tools)
+            node.install_host_tools([host_status])
         node.setup_tools()
         child = ChatAgenticNode(
             node_id="child-chat",

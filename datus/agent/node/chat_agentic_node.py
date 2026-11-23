@@ -484,9 +484,11 @@ class ChatAgenticNode(AgenticNode):
             if tool.name in names:
                 raise ValueError(f"Duplicate host tool: {tool.name}")
             names.add(tool.name)
-        self._host_tools = tuple(tools)
-        self._rebuild_tools()
-        self._populate_tool_registry()
+        for tool in tools:
+            self.tool_registry.register_tools(tool_definition(tool).category, [tool])
+        self._host_tools += tuple(tools)
+        self.tools.extend(tools)
+        self._tool_transformers_applied = False
 
     def _rebuild_tools(self):
         """Rebuild the tools list with current tool instances including skills.
