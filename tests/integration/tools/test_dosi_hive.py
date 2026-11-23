@@ -20,6 +20,8 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+from datus.utils.query_result_text import parse_query_result_text
+
 pytestmark = pytest.mark.nightly
 
 
@@ -145,7 +147,9 @@ def hive_tool(tmp_path_factory):
 
 def _rows(tool, result):
     assert result.success == 1, result.error
-    page = tool.get_query_metrics_result(result.result["result_id"])
+    parsed = parse_query_result_text(result.result)
+    assert parsed is not None and parsed.result_id, result.result
+    page = tool.get_query_metrics_result(parsed.result_id)
     assert page.success == 1, page.error
     return list(csv.DictReader(io.StringIO(page.result["csv"])))
 

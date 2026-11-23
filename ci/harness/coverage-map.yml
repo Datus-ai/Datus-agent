@@ -1525,6 +1525,7 @@ execution:
       paths:
         - datus/agent/node/
       targets:
+        - tests/unit_tests/ci/test_llm_skill_fixture.py
         - tests/unit_tests/ci/test_bi_diagnostics.py
         - tests/unit_tests/agent/
         - tests/unit_tests/api/
@@ -1538,6 +1539,7 @@ execution:
       paths:
         - datus/agent/
       targets:
+        - tests/unit_tests/ci/test_llm_skill_fixture.py
         - tests/unit_tests/ci/test_bi_diagnostics.py
         - tests/unit_tests/agent/
         - tests/unit_tests/api/
@@ -1841,6 +1843,7 @@ execution:
       paths:
         - datus/tools/skill_tools/
       targets:
+        - tests/unit_tests/ci/test_llm_skill_fixture.py
         - tests/unit_tests/agent/
         - tests/unit_tests/cli/
         - tests/unit_tests/tools/skill_tools/
