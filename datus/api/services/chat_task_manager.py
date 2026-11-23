@@ -967,25 +967,30 @@ class ChatTaskManager:
                 )
 
             async def _init_owned_node():
-                task.node = await asyncio.to_thread(_init_node)
-                return task.node
+                node = await asyncio.to_thread(_init_node)
+                task.node = node
+                if tool_binder is not None and sub_agent_id is None and interactive_enabled:
+                    from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+                    if type(node) is ChatAgenticNode and not node._is_subagent:
+
+                        def _bind_host_tools():
+                            node.install_host_tools(tool_binder(node))
+
+                        await asyncio.to_thread(_bind_host_tools)
+                return node
 
             initialization = asyncio.create_task(_init_owned_node())
             try:
                 node = await asyncio.shield(initialization)
             except asyncio.CancelledError:
-                # A running constructor cannot be stopped by cancelling its
-                # awaiter. Adopt its result before terminal cleanup can run.
+                # Worker-thread initialization cannot be stopped by cancelling
+                # its awaiter. Finish it before releasing the node.
                 async def finish_initialization():
                     await asyncio.gather(initialization, return_exceptions=True)
 
                 await self._drain_cleanup(finish_initialization())
                 raise
-            if tool_binder is not None and sub_agent_id is None and interactive_enabled:
-                from datus.agent.node.chat_agentic_node import ChatAgenticNode
-
-                if type(node) is ChatAgenticNode and not node._is_subagent:
-                    node.install_host_tools(tool_binder(node))
             # Each request owns its node, including any continuation passes.
             # An omitted request limit must preserve the configured node limit.
             if "max_turns" in request.model_fields_set:

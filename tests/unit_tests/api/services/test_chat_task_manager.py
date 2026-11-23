@@ -1515,7 +1515,20 @@ class TestStartChat:
             return "ready"
 
         register_tool_definition(host_status, ToolDefinition("host_tools.host_status", "read", False))
-        binder = MagicMock(return_value=[host_status])
+        event_loop_thread = threading.get_ident()
+        thread_ids = {}
+        original_install = ChatAgenticNode.install_host_tools
+
+        def bind(node):
+            thread_ids["bind"] = threading.get_ident()
+            return [host_status]
+
+        def install(node, tools):
+            thread_ids["install"] = threading.get_ident()
+            return original_install(node, tools)
+
+        binder = MagicMock(side_effect=bind)
+        monkeypatch.setattr(ChatAgenticNode, "install_host_tools", install)
         seen_tools = []
 
         async def execute(node, action_history_manager):
@@ -1550,6 +1563,10 @@ class TestStartChat:
         assert task.status == "completed"
         assert ("host_status" in seen_tools) is injected
         assert binder.call_count == int(injected)
+        if injected:
+            assert thread_ids["bind"] == thread_ids["install"] != event_loop_thread
+        else:
+            assert thread_ids == {}
 
     async def test_start_chat_creates_task(self, real_agent_config, mock_llm_create):
         """start_chat creates a ChatTask and returns it."""

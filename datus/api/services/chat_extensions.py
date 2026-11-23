@@ -19,7 +19,9 @@ if TYPE_CHECKING:
     from datus.configuration.agent_config import AgentConfig
 
 # The HTTP host can install a provider on app.state.chat_tool_provider.
-# Its return value is scoped to the new task and sees its final node.
+# The async provider resolves request context on the event loop. Its synchronous
+# binder runs during worker-thread node initialization and may prepare tools,
+# but must defer any event-loop-bound work to the tool's invocation.
 ChatToolBinder = Callable[["AgenticNode"], Sequence[FunctionTool]]
 ChatToolProvider = Callable[["Request", "AppContext", "StreamChatInput"], Awaitable[ChatToolBinder | None]]
 

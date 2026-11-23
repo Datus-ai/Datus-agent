@@ -63,6 +63,27 @@ class ChatAgenticNode(AgenticNode):
         "attribute_dimensions",
     )
 
+    # Reserve these families even when a node's current configuration, model,
+    # or datasource leaves their tools unmounted.
+    _BUILTIN_TOOL_FAMILIES = frozenset(
+        {
+            "bash_tools",
+            "context_search_tools",
+            "date_parsing_tools",
+            "db_tools",
+            "filesystem_tools",
+            "lineage_tools",
+            "memory_tools",
+            "platform_doc_tools",
+            "reference_template_tools",
+            "semantic_tools",
+            "skills",
+            "sub_agent_tools",
+            "tools",
+            "web_tool",
+        }
+    )
+
     # Subclasses whose contract is read-only (e.g. artifact ask agents) set this
     # to True so the unified write-capable ``execute_sql`` tool hard-rejects any
     # non-read statement at the tool layer. Defaults to False (full SQL access).
@@ -449,9 +470,15 @@ class ChatAgenticNode(AgenticNode):
 
     def install_host_tools(self, tools: Sequence[FunctionTool]) -> None:
         """Attach tools from the current trusted API host to this node only."""
+        from datus.tools.registry.capabilities import TOOL_CAPABILITIES
         from datus.tools.registry.contracts import tool_definition
 
-        names = {tool.name for tool in self.tools}
+        names = {
+            name
+            for family, name in (tool_id.split(".", 1) for tool_id in TOOL_CAPABILITIES)
+            if family in self._BUILTIN_TOOL_FAMILIES
+        }
+        names.update(tool.name for tool in self.tools)
         for tool in tools:
             tool_definition(tool)
             if tool.name in names:
