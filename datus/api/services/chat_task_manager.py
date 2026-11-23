@@ -41,7 +41,7 @@ from datus.api.services.action_sse_converter import (
     action_to_sse_event,
 )
 from datus.api.services.background_drain import track_background_task
-from datus.api.services.chat_extensions import ChatNodeFactory
+from datus.api.services.chat_extensions import ChatNodeFactory, ChatToolBinder
 from datus.api.services.semantic_model_diff import SemanticModelSnapshot
 from datus.api.services.turn_stats import TurnStatsCollector, resolve_subagent
 from datus.cli.autocomplete import AtReferenceCompleter
@@ -540,6 +540,8 @@ class ChatTaskManager:
         policy_context: Optional[Dict[str, Any]] = None,
         stats_context: Optional[Dict[str, Any]] = None,
         on_turn_end: Optional["TurnEndCallback"] = None,
+        *,
+        tool_binder: ChatToolBinder | None = None,
     ) -> ChatTask:
         """Create a background task for the agentic loop.
             :param sub_agent_id: builtin name or custom sub-agent DB ID
@@ -709,6 +711,7 @@ class ChatTaskManager:
                 request,
                 sub_agent_id=sub_agent_id,
                 user_id=user_id,
+                **({"tool_binder": tool_binder} if tool_binder is not None else {}),
             )
         )
         task.asyncio_task = asyncio_task
@@ -837,6 +840,8 @@ class ChatTaskManager:
         request: StreamChatInput,
         sub_agent_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        *,
+        tool_binder: ChatToolBinder | None = None,
     ) -> None:
         """Execute the full agentic loop, pushing SSE events to the task buffer."""
         session_id = task.session_id
@@ -962,15 +967,25 @@ class ChatTaskManager:
                 )
 
             async def _init_owned_node():
-                task.node = await asyncio.to_thread(_init_node)
-                return task.node
+                node = await asyncio.to_thread(_init_node)
+                task.node = node
+                if tool_binder is not None and sub_agent_id is None and interactive_enabled:
+                    from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+                    if type(node) is ChatAgenticNode and not node._is_subagent:
+
+                        def _bind_host_tools():
+                            node.install_host_tools(tool_binder(node))
+
+                        await asyncio.to_thread(_bind_host_tools)
+                return node
 
             initialization = asyncio.create_task(_init_owned_node())
             try:
                 node = await asyncio.shield(initialization)
             except asyncio.CancelledError:
-                # A running constructor cannot be stopped by cancelling its
-                # awaiter. Adopt its result before terminal cleanup can run.
+                # Worker-thread initialization cannot be stopped by cancelling
+                # its awaiter. Finish it before releasing the node.
                 async def finish_initialization():
                     await asyncio.gather(initialization, return_exceptions=True)
 

@@ -11,6 +11,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
+from datus.api.auth.context import AppContext
 from datus.api.models.base_models import Result
 from datus.api.models.chat_models import ToolResult, ToolResultInput
 from datus.api.models.cli_models import (
@@ -36,6 +37,12 @@ from datus.tools.proxy.tool_result_channel import ToolResultChannel
 from datus.utils.exceptions import DatusException, ErrorCode
 
 
+def _http_request():
+    request = MagicMock()
+    request.app.state.chat_tool_provider = None
+    return request
+
+
 async def _timeout_wait_for(awaitable, timeout):
     """Async stub for asyncio.wait_for that closes the awaitable before raising TimeoutError."""
     if hasattr(awaitable, "close"):
@@ -54,6 +61,7 @@ def _mock_svc(task=None):
 def _mock_task(broker_submit_return=True):
     """Build a mock task with node and interaction_broker."""
     task = MagicMock()
+    task.user_id = None
     task.node.interaction_broker = AsyncMock()
     task.node.interaction_broker.submit = AsyncMock(return_value=broker_submit_return)
     return task
@@ -74,7 +82,7 @@ class TestSubmitUserInteractionConversion:
         svc = _mock_svc(task=task)
         request = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["2"]])
 
-        result = await submit_user_interaction(request, svc)
+        result = await submit_user_interaction(request, svc, AppContext())
 
         task.node.interaction_broker.submit.assert_called_once_with("k1", [["2"]])
         assert result.success is True
@@ -86,7 +94,7 @@ class TestSubmitUserInteractionConversion:
         svc = _mock_svc(task=task)
         request = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["1", "3"]])
 
-        result = await submit_user_interaction(request, svc)
+        result = await submit_user_interaction(request, svc, AppContext())
 
         task.node.interaction_broker.submit.assert_called_once_with("k1", [["1", "3"]])
         assert result.success is True
@@ -98,7 +106,7 @@ class TestSubmitUserInteractionConversion:
         svc = _mock_svc(task=task)
         request = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["2"], ["1", "3"]])
 
-        result = await submit_user_interaction(request, svc)
+        result = await submit_user_interaction(request, svc, AppContext())
 
         task.node.interaction_broker.submit.assert_called_once_with("k1", [["2"], ["1", "3"]])
         assert result.success is True
@@ -110,7 +118,7 @@ class TestSubmitUserInteractionConversion:
         svc = _mock_svc(task=task)
         request = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["a"], ["b"]])
 
-        await submit_user_interaction(request, svc)
+        await submit_user_interaction(request, svc, AppContext())
 
         task.node.interaction_broker.submit.assert_called_once_with("k1", [["a"], ["b"]])
 
@@ -120,7 +128,7 @@ class TestSubmitUserInteractionConversion:
         svc = _mock_svc(task=None)
         request = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["1"]])
 
-        result = await submit_user_interaction(request, svc)
+        result = await submit_user_interaction(request, svc, AppContext())
 
         assert result.success is False
         assert result.errorCode == "SESSION_NOT_FOUND"
@@ -128,12 +136,12 @@ class TestSubmitUserInteractionConversion:
     @pytest.mark.asyncio
     async def test_broker_not_found(self):
         """Returns error when broker is None."""
-        task = MagicMock()
+        task = _mock_task()
         task.node.interaction_broker = None
         svc = _mock_svc(task=task)
         request = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["1"]])
 
-        result = await submit_user_interaction(request, svc)
+        result = await submit_user_interaction(request, svc, AppContext())
 
         assert result.success is False
         assert result.errorCode == "BROKER_NOT_FOUND"
@@ -146,7 +154,7 @@ class TestSubmitUserInteractionConversion:
         svc = _mock_svc(task=task)
         request = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["1"]])
 
-        result = await submit_user_interaction(request, svc)
+        result = await submit_user_interaction(request, svc, AppContext())
 
         task.node.interaction_broker.is_pending.assert_called_once_with("k1")
         assert result.success is False
@@ -162,12 +170,23 @@ class TestSubmitUserInteractionConversion:
         svc = _mock_svc(task=task)
         request = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["9"]])
 
-        result = await submit_user_interaction(request, svc)
+        result = await submit_user_interaction(request, svc, AppContext())
 
         assert result.success is False
         assert result.errorCode == "INVALID_INPUT"
         assert result.errorMessage == "Answer does not match the question's options"
         assert result.data == {"interaction_key": "k1", "submitted": False}
+
+    @pytest.mark.asyncio
+    async def test_interaction_cannot_be_answered_by_another_user(self):
+        task = _mock_task()
+        task.user_id = "owner"
+        request = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["y"]])
+
+        result = await submit_user_interaction(request, _mock_svc(task), AppContext(user_id="other"))
+
+        assert result.errorCode == "SESSION_NOT_FOUND"
+        task.node.interaction_broker.submit.assert_not_awaited()
 
 
 def _mock_svc_with_nodes(agentic_nodes=None):
@@ -227,7 +246,7 @@ class TestStreamChat404Gate:
         request = StreamChatInput(message="hi", subagent_id="nonexistent_xyz")
 
         with pytest.raises(HTTPException) as exc_info:
-            await stream_chat(request, svc, ctx, MagicMock())
+            await stream_chat(request, svc, ctx, _http_request())
 
         assert exc_info.value.status_code == 404
         assert "nonexistent_xyz" in exc_info.value.detail
@@ -239,7 +258,7 @@ class TestStreamChat404Gate:
         ctx = MagicMock(user_id="u1")
         request = StreamChatInput(message="/build-kb", subagent_id="semantic_modeling")
 
-        response = await stream_chat(request, svc, ctx, MagicMock())
+        response = await stream_chat(request, svc, ctx, _http_request())
 
         assert isinstance(response, StreamingResponse)
         assert response.status_code == 200
@@ -252,7 +271,7 @@ class TestStreamChat404Gate:
         ctx = MagicMock(user_id="u1")
         request = StreamChatInput(message="hi", subagent_id=None)
 
-        response = await stream_chat(request, svc, ctx, MagicMock())
+        response = await stream_chat(request, svc, ctx, _http_request())
 
         assert isinstance(response, StreamingResponse)
         assert response.status_code == 200
@@ -273,7 +292,7 @@ class TestStreamChatPolicyContextPreCheck:
         runtime = MagicMock()
         runtime.validate_context.return_value = MagicMock(allowed=False, reason="Policy context denies all data reads")
         with patch("datus.api.routes.chat_routes.PolicyRuntime", return_value=runtime):
-            response = await stream_chat(request, svc, ctx, MagicMock())
+            response = await stream_chat(request, svc, ctx, _http_request())
 
         chunks = []
         async for chunk in response.body_iterator:
@@ -304,7 +323,7 @@ class TestStreamChatPolicyContextPreCheck:
             patch("datus.api.routes.chat_routes.PolicyRuntime", return_value=runtime),
             patch("datus.api.routes.chat_routes.logger.error") as log_error,
         ):
-            response = await stream_chat(request, svc, ctx, MagicMock())
+            response = await stream_chat(request, svc, ctx, _http_request())
 
         chunks = [chunk.decode() if isinstance(chunk, bytes) else chunk async for chunk in response.body_iterator]
         payload = json.loads(
@@ -335,7 +354,7 @@ class TestStreamChatPolicyContextPreCheck:
         runtime = MagicMock()
         runtime.validate_context.return_value = MagicMock(allowed=True)
         with patch("datus.api.routes.chat_routes.PolicyRuntime", return_value=runtime):
-            response = await stream_chat(request, svc, ctx, MagicMock())
+            response = await stream_chat(request, svc, ctx, _http_request())
         async for _ in response.body_iterator:
             pass
 
@@ -357,7 +376,7 @@ class TestStreamChatPolicyContextPreCheck:
         runtime = MagicMock()
         runtime.validate_context.return_value = MagicMock(allowed=True)
         with patch("datus.api.routes.chat_routes.PolicyRuntime", return_value=runtime):
-            response = await stream_chat(request, svc, ctx, MagicMock())
+            response = await stream_chat(request, svc, ctx, _http_request())
         async for _ in response.body_iterator:
             pass
 
@@ -375,7 +394,7 @@ class TestStreamChatPolicyContextPreCheck:
         runtime = MagicMock()
         runtime.validate_context.return_value = MagicMock(allowed=False, reason="missing policy context field")
         with patch("datus.api.routes.chat_routes.PolicyRuntime", return_value=runtime):
-            response = await stream_chat(request, svc, ctx, MagicMock())
+            response = await stream_chat(request, svc, ctx, _http_request())
 
         chunks = []
         async for chunk in response.body_iterator:
@@ -426,6 +445,26 @@ class TestChatRouteAcceptance:
         assert chunks
 
     @pytest.mark.asyncio
+    async def test_stream_passes_the_current_apps_tool_binder_to_the_new_task(self):
+        async def events():
+            yield SSEEvent(id=1, event="session", data=SSESessionData(session_id="host-chat"))
+
+        http_request = _http_request()
+        binder = MagicMock()
+        provider = AsyncMock(return_value=binder)
+        http_request.app.state.chat_tool_provider = provider
+        svc = _mock_svc_with_nodes()
+        svc.chat.stream_chat = MagicMock(return_value=events())
+        context = AppContext(user_id="user-1", project_id="project-1")
+        request = StreamChatInput(message="Use a host tool")
+
+        response = await stream_chat(request, svc, context, http_request)
+        assert any("event: session" in chunk for chunk in [chunk async for chunk in response.body_iterator])
+
+        provider.assert_awaited_once_with(http_request, context, request)
+        assert svc.chat.stream_chat.call_args.kwargs["tool_binder"] is binder
+
+    @pytest.mark.asyncio
     async def test_stream_chat_routes_gen_sql_to_service_sse(self):
         async def fake_chat_stream(*args, **kwargs):
             yield SSEEvent(id=1, event="session", data=SSESessionData(session_id="gen_sql_acceptance"))
@@ -449,7 +488,7 @@ class TestChatRouteAcceptance:
             subagent_id="gen_sql",
         )
 
-        response = await stream_chat(request, svc, ctx, MagicMock())
+        response = await stream_chat(request, svc, ctx, _http_request())
         chunks = []
         async for chunk in response.body_iterator:
             chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
@@ -471,7 +510,7 @@ class TestChatRouteAcceptance:
         ctx = MagicMock(user_id="u1")
         request = StreamChatInput(message="hi", subagent_id="gen_sql")
 
-        response = await stream_chat(request, svc, ctx, MagicMock())
+        response = await stream_chat(request, svc, ctx, _http_request())
 
         assert isinstance(response, StreamingResponse)
         assert response.status_code == 200

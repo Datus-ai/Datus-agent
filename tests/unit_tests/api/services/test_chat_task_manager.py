@@ -1495,6 +1495,79 @@ class TestStartChat:
         assert "Subagent 'gen_report' does not exist" in error.error
         assert "Use 'gen_visual_report' instead" in error.error
 
+    @pytest.mark.parametrize(
+        ("subagent_id", "interactive", "injected"),
+        [(None, True, True), ("gen_sql", True, False), (None, False, False)],
+    )
+    async def test_host_tools_bind_only_to_the_interactive_main_node(
+        self, real_agent_config, mock_llm_create, monkeypatch, subagent_id, interactive, injected
+    ):
+        from agents import function_tool
+
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+        from datus.tools.registry.contracts import ToolDefinition, register_tool_definition
+
+        @function_tool
+        def host_status() -> str:
+            """Read host status."""
+            return "ready"
+
+        register_tool_definition(host_status, ToolDefinition("host_tools.host_status", "read", False))
+        event_loop_thread = threading.get_ident()
+        thread_ids = {}
+        original_install = ChatAgenticNode.install_host_tools
+
+        def bind(node):
+            thread_ids["bind"] = threading.get_ident()
+            return [host_status]
+
+        def install(node, tools):
+            thread_ids["install"] = threading.get_ident()
+            return original_install(node, tools)
+
+        binder = MagicMock(side_effect=bind)
+        monkeypatch.setattr(ChatAgenticNode, "install_host_tools", install)
+        seen_tools = []
+
+        async def execute(node, action_history_manager):
+            seen_tools.extend(tool.name for tool in node.tools)
+            yield ActionHistory(
+                action_id="answer",
+                role=ActionRole.ASSISTANT,
+                action_type="chat_response",
+                messages="done",
+                input={},
+                output={"response": "done"},
+                status=ActionStatus.SUCCESS,
+            )
+
+        monkeypatch.setattr(ChatAgenticNode, "execute_stream_with_interactions", execute)
+        manager = ChatTaskManager()
+
+        def create_node(config, subagent_id, node_id, **kwargs):
+            return ChatAgenticNode(node_id, "Chat", "chat", agent_config=config)
+
+        # Exercise the dispatch guard even when a host returns a chat node
+        # for a targeted request.
+        monkeypatch.setattr(manager, "_create_node", create_node)
+        task = await manager.start_chat(
+            real_agent_config,
+            StreamChatInput(message="check status", interactive=interactive),
+            sub_agent_id=subagent_id,
+            tool_binder=binder,
+        )
+        await task.asyncio_task
+
+        assert task.status == "completed"
+        assert ("host_status" in seen_tools) is injected
+        assert binder.call_count == int(injected)
+        if injected:
+            assert thread_ids["bind"] == thread_ids["install"] != event_loop_thread
+        else:
+            assert thread_ids == {}
+
     async def test_start_chat_creates_task(self, real_agent_config, mock_llm_create):
         """start_chat creates a ChatTask and returns it."""
         from datus.api.models.cli_models import StreamChatInput

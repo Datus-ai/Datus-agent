@@ -332,6 +332,7 @@ class TestProjectConfigRefresh:
             interaction = await submit_user_interaction(
                 UserInteractionInput(session_id=old_task.session_id, interaction_key="question", input=[["yes"]]),
                 refreshed,
+                request.state.app_context,
             )
             assert interaction.success is True
             old_task.node.interaction_broker.submit.assert_awaited_once_with("question", [["yes"]])

@@ -5,12 +5,25 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Awaitable, Callable, Protocol, Sequence
+
+from agents import FunctionTool
 
 if TYPE_CHECKING:
+    from fastapi import Request
+
     from datus.agent.node.agentic_node import AgenticNode
+    from datus.api.auth.context import AppContext
+    from datus.api.models.cli_models import StreamChatInput
     from datus.api.services.chat_task_manager import ChatTaskManager
     from datus.configuration.agent_config import AgentConfig
+
+# The HTTP host can install a provider on app.state.chat_tool_provider.
+# The async provider resolves request context on the event loop. Its synchronous
+# binder runs during worker-thread node initialization and may prepare tools,
+# but must defer any event-loop-bound work to the tool's invocation.
+ChatToolBinder = Callable[["AgenticNode"], Sequence[FunctionTool]]
+ChatToolProvider = Callable[["Request", "AppContext", "StreamChatInput"], Awaitable[ChatToolBinder | None]]
 
 
 class ChatNodeFactory(Protocol):

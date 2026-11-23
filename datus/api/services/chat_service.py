@@ -34,6 +34,7 @@ from datus.api.services.action_sse_converter import (
     action_to_sse_event,
     answered_ask_user_to_sse_event,
 )
+from datus.api.services.chat_extensions import ChatToolBinder
 from datus.api.services.chat_task_manager import (
     TurnEndCallback,
     _is_visible_assistant_response,
@@ -343,6 +344,8 @@ class ChatService:
         policy_context: Optional[Dict[str, Any]] = None,
         stats_context: Optional[Dict[str, Any]] = None,
         on_turn_end: Optional[TurnEndCallback] = None,
+        *,
+        tool_binder: ChatToolBinder | None = None,
     ) -> AsyncGenerator[SSEEvent, None]:
         """Start a background chat task and yield SSE events."""
         task_manager = self._task_manager
@@ -355,6 +358,7 @@ class ChatService:
                 policy_context=policy_context,
                 stats_context=stats_context,
                 on_turn_end=on_turn_end,
+                **({"tool_binder": tool_binder} if tool_binder is not None else {}),
             )
         except (ValueError, DatusException) as e:
             error_code = e.code.name if isinstance(e, DatusException) else ErrorCode.COMMON_VALIDATION_FAILED.name

@@ -9,6 +9,7 @@ import json
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi import FastAPI, Request
 
 from datus.api.hooks import (
     ChatPostUsageContext,
@@ -25,6 +26,10 @@ from datus.api.routes import chat_routes
 def _clear_hooks_after_test():
     yield
     set_chat_hooks(None)
+
+
+def _http_request() -> Request:
+    return Request({"type": "http", "app": FastAPI()})
 
 
 def _mock_svc_with_nodes(nodes=None):
@@ -102,7 +107,7 @@ class TestStreamChatPreHookDenial:
 
         set_chat_hooks(make_chat_hooks(pre_chat=_pre))
 
-        response = await chat_routes.stream_chat(request, svc, ctx, MagicMock())
+        response = await chat_routes.stream_chat(request, svc, ctx, _http_request())
 
         chunks = []
         async for chunk in response.body_iterator:
@@ -129,7 +134,7 @@ class TestStreamChatPreHookDenial:
 
         set_chat_hooks(make_chat_hooks(pre_chat=_pre))
 
-        response = await chat_routes.stream_chat(request, svc, ctx, MagicMock())
+        response = await chat_routes.stream_chat(request, svc, ctx, _http_request())
 
         chunks = []
         async for chunk in response.body_iterator:
@@ -158,7 +163,7 @@ class TestStreamChatPostHookSchedule:
         svc.chat.stream_chat = _upstream
         set_chat_hooks(make_chat_hooks(pre_chat=pre, post_chat=post))
         response = await chat_routes.stream_chat(
-            StreamChatInput(message="hi"), svc, MagicMock(user_id="u1"), MagicMock()
+            StreamChatInput(message="hi"), svc, MagicMock(user_id="u1"), _http_request()
         )
         async for _ in response.body_iterator:
             pass
@@ -205,7 +210,7 @@ class TestStreamChatPostHookSchedule:
         svc = _mock_svc_with_nodes()
         svc.chat.stream_chat = _upstream
         response = await chat_routes.stream_chat(
-            StreamChatInput(message="hi"), svc, MagicMock(user_id="u1"), MagicMock()
+            StreamChatInput(message="hi"), svc, MagicMock(user_id="u1"), _http_request()
         )
         async for _ in response.body_iterator:
             pass
@@ -245,7 +250,7 @@ class TestStreamChatGeneratorError:
         ctx = MagicMock(user_id="u1")
         request = StreamChatInput(message="hi", session_id="sess-err")
 
-        response = await chat_routes.stream_chat(request, svc, ctx, MagicMock())
+        response = await chat_routes.stream_chat(request, svc, ctx, _http_request())
 
         body_chunks: list[str] = []
         with pytest.raises(RuntimeError):
@@ -278,7 +283,7 @@ class TestStreamChatGeneratorError:
         ctx = MagicMock(user_id="u1")
         request = StreamChatInput(message="hi", session_id="sess-cancel")
 
-        response = await chat_routes.stream_chat(request, svc, ctx, MagicMock())
+        response = await chat_routes.stream_chat(request, svc, ctx, _http_request())
 
         body_chunks: list[str] = []
         with pytest.raises(asyncio.CancelledError):
