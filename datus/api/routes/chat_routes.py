@@ -49,6 +49,7 @@ from datus.api.models.cli_models import (
     UserInteractionInput,
 )
 from datus.api.services.background_drain import track_background_task
+from datus.api.services.chat_extensions import ChatToolProvider
 from datus.api.utils.service_stream import ServiceStreamingResponse
 from datus.api.utils.stream_errors import humanize_stream_error
 from datus.tools.policy_runtime import PolicyRuntime
@@ -154,6 +155,10 @@ async def stream_chat(
             headers=_sse_headers(),
         )
 
+    provider: ChatToolProvider | None = getattr(http_request.app.state, "chat_tool_provider", None)
+    tool_binder = await provider(http_request, ctx, request) if provider is not None else None
+    tool_options = {"tool_binder": tool_binder} if tool_binder is not None else {}
+
     pre_extra = pre_outcome.extra if pre_outcome else {}
     stats_context = _capture_turn_stats_context(http_request, request, ctx.user_id)
 
@@ -168,6 +173,7 @@ async def stream_chat(
                 policy_context=ctx.policy_context,
                 stats_context=stats_context,
                 on_turn_end=on_turn_end,
+                **tool_options,
             ),
             request=request,
             user_id=ctx.user_id,
@@ -488,10 +494,11 @@ async def get_chat_history_content(
 async def submit_user_interaction(
     request: UserInteractionInput,
     svc: ServiceDep,
+    ctx: AppContextDep,
 ) -> Result[dict]:
     task_manager = svc.task_manager
     task = task_manager.get_task(request.session_id)
-    if task is None or task.node is None:
+    if task is None or task.node is None or task.user_id != ctx.user_id:
         return Result[dict](
             success=False,
             errorCode="SESSION_NOT_FOUND",

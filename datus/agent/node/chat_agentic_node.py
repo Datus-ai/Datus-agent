@@ -12,7 +12,9 @@ skills, and permissions. This node is fully independent from GenSQLAgenticNode.
 
 import hashlib
 import json
-from typing import ClassVar, Dict, Literal, Optional
+from typing import ClassVar, Dict, Literal, Optional, Sequence
+
+from agents import FunctionTool
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.gen_sql_agentic_node import prepare_template_context
@@ -104,6 +106,7 @@ class ChatAgenticNode(AgenticNode):
                 self.max_turns = agentic_node_config.get("max_turns", 200)
 
         # Initialize tool attributes BEFORE calling parent constructor
+        self._host_tools = ()
         self.db_func_tool: Optional[DBFuncTool] = None
         self.context_search_tools: Optional[ContextSearchTools] = None
         self.semantic_tools: Optional[SemanticTools] = None
@@ -444,6 +447,20 @@ class ChatAgenticNode(AgenticNode):
             return
         super()._ensure_web_tools_in_tools()
 
+    def install_host_tools(self, tools: Sequence[FunctionTool]) -> None:
+        """Attach tools from the current trusted API host to this node only."""
+        from datus.tools.registry.contracts import tool_definition
+
+        names = {tool.name for tool in self.tools}
+        for tool in tools:
+            tool_definition(tool)
+            if tool.name in names:
+                raise ValueError(f"Duplicate host tool: {tool.name}")
+            names.add(tool.name)
+        self._host_tools = tuple(tools)
+        self._rebuild_tools()
+        self._populate_tool_registry()
+
     def _rebuild_tools(self):
         """Rebuild the tools list with current tool instances including skills.
 
@@ -505,6 +522,7 @@ class ChatAgenticNode(AgenticNode):
             self.tools.extend(self._platform_doc_tool.available_tools())
         # Plan-mode tools (confirm_plan + todo_*) for main agents; no-op for sub-agents.
         self._register_plan_mode_tools()
+        self.tools.extend(self._host_tools)
         # The rebuilt list holds fresh, unwrapped FunctionTool instances —
         # force plugin tool transformers to re-apply on the next hook
         # composition or the policy wrappers silently vanish mid-session

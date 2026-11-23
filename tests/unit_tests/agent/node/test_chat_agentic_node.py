@@ -2339,6 +2339,35 @@ class TestChatAgenticNodePlanMode:
 class TestChatAgenticNodeRebuildTools:
     """Verify _rebuild_tools correctly assembles tools from all sources."""
 
+    def test_host_tool_survives_rebuild_without_leaking_to_another_node(self, real_agent_config, mock_llm_create):
+        from agents import function_tool
+
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.tools.registry.contracts import ToolDefinition, register_tool_definition
+
+        @function_tool
+        def host_status() -> str:
+            """Read host status."""
+            return "ready"
+
+        register_tool_definition(host_status, ToolDefinition("host_tools.host_status", "read", False))
+        node = ChatAgenticNode(
+            node_id="host-chat", description="Host chat", node_type=NodeType.TYPE_CHAT, agent_config=real_agent_config
+        )
+        node.install_host_tools([host_status])
+        node.setup_tools()
+        child = ChatAgenticNode(
+            node_id="child-chat",
+            description="Child chat",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+            is_subagent=True,
+        )
+
+        assert host_status in node.tools
+        assert node.tool_registry.get("host_status") == "host_tools"
+        assert "host_status" not in {tool.name for tool in child.tools}
+
     def test_rebuild_tools_with_all_components(self, real_agent_config, mock_llm_create):
         """_rebuild_tools includes tools from db, context, date, filesystem, skills, sub_agent, ask_user."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
