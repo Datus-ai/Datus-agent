@@ -25,6 +25,10 @@ from tests.integration.api.test_chat_acceptance import resource_project as resou
 
 pytestmark = pytest.mark.acceptance
 
+# Well below the Core Acceptance group's 600 s thread timeout: a missing terminal
+# event fails this test alone instead of killing the group's pytest process.
+TERMINAL_DEADLINE_SECONDS = 240
+
 
 @pytest.mark.asyncio
 async def test_http_semantic_generation_finishes_and_releases_session(
@@ -61,15 +65,18 @@ async def test_http_semantic_generation_finishes_and_releases_session(
     )
     sid = "a09_semantic_terminal"
     client, manager = resource_project.client, resource_project.service.task_manager
-    response = await client.post(
-        "/api/v1/chat/stream",
-        json={
-            "message": "Generate the revenue metric for orders, reconcile it and finish.",
-            "session_id": sid,
-            "subagent_id": "semantic_modeling",
-            "interactive": False,
-            "permission_mode": "dangerous",
-        },
+    response = await asyncio.wait_for(
+        client.post(
+            "/api/v1/chat/stream",
+            json={
+                "message": "Generate the revenue metric for orders, reconcile it and finish.",
+                "session_id": sid,
+                "subagent_id": "semantic_modeling",
+                "interactive": False,
+                "permission_mode": "dangerous",
+            },
+        ),
+        TERMINAL_DEADLINE_SECONDS,
     )
     assert response.status_code == 200
     events = parse_sse_body(response.text)
@@ -108,9 +115,12 @@ async def test_http_semantic_generation_finishes_and_releases_session(
 
     # A new request on the same session proves authoring released its run lock.
     model_server.enqueue(answer("A09 session can continue after metric generation."))
-    followup = await client.post(
-        "/api/v1/chat/stream",
-        json={"message": "Continue after generating revenue.", "session_id": sid, "interactive": False},
+    followup = await asyncio.wait_for(
+        client.post(
+            "/api/v1/chat/stream",
+            json={"message": "Continue after generating revenue.", "session_id": sid, "interactive": False},
+        ),
+        TERMINAL_DEADLINE_SECONDS,
     )
     followup_events = parse_sse_body(followup.text)
     assert find_event(followup_events, "error") is None, followup.text

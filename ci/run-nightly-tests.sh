@@ -1085,6 +1085,18 @@ finalize_nightly_exit() {
   if [ "$final_status" -eq 0 ] && [ "$cleanup_status" -ne 0 ]; then
     final_status="$cleanup_status"
   fi
+  # cleanup_all finalized the evidence before tearing resources down. When the
+  # outcome changed afterwards, rewrite the manifest and its derived reports so
+  # they carry the final exit code instead of the pre-cleanup one.
+  if [ "${NIGHTLY_SKIP_MANIFEST_FINALIZE:-0}" != "1" ] && [ "$final_status" -ne "${test_exit_code:-$initial_status}" ]; then
+    test_exit_code="$final_status"
+    NIGHTLY_MANIFEST_FINALIZED=0
+    PROVIDER_COVERAGE_MANIFEST_FINALIZED=0
+    NIGHTLY_FAILURE_CLASSIFICATION_FINALIZED=0
+    manifest_finalize
+    provider_coverage_finalize
+    failure_classification_finalize
+  fi
   python3 - "${NIGHTLY_CLEANUP_STATUS_FILE:-${REPO_ROOT}/nightly-cleanup-status.json}" \
     "$initial_status" "$cleanup_status" "$final_status" <<'CLEANUP_STATUS'
 import json

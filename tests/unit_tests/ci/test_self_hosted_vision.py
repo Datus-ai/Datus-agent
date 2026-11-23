@@ -168,6 +168,44 @@ def test_cleanup_refuses_foreign_container(server, tmp_path):
     assert not any(call[0] == "rm" for call in server["calls"])
 
 
+@pytest.mark.parametrize(
+    "log_failure",
+    [subprocess.CalledProcessError(1, ["docker", "logs"]), subprocess.TimeoutExpired(["docker", "logs"], 30)],
+)
+def test_log_collection_failure_still_records_removal_for_a_later_cleanup(server, monkeypatch, tmp_path, log_failure):
+    work = tmp_path / "work"
+    vision.prepare(work, tmp_path / "cache")
+
+    def failing_logs(*args, **kwargs):
+        raise log_failure
+
+    monkeypatch.setattr(vision.subprocess, "run", failing_logs)
+    with pytest.raises(type(log_failure)):
+        vision.cleanup(work)
+    assert ("rm", "--force", "owned-container") in server["calls"]
+    evidence = json.loads((work / "evidence.json").read_text())
+    assert evidence["cleaned_up"] is True and evidence["log_collection_error"] == type(log_failure).__name__
+    count = len(server["calls"])
+    vision.cleanup(work)
+    assert len(server["calls"]) == count
+
+
+def test_failed_removal_leaves_cleanup_pending(server, monkeypatch, tmp_path):
+    work = tmp_path / "work"
+    vision.prepare(work, tmp_path / "cache")
+    real_docker = vision.docker
+
+    def docker(*args):
+        if args[0] == "rm":
+            raise subprocess.CalledProcessError(1, ["docker", *args])
+        return real_docker(*args)
+
+    monkeypatch.setattr(vision, "docker", docker)
+    with pytest.raises(subprocess.CalledProcessError):
+        vision.cleanup(work)
+    assert "cleaned_up" not in json.loads((work / "evidence.json").read_text())
+
+
 def test_readiness_timeout_is_failure_and_cleans_owned_container(server, monkeypatch, tmp_path):
     monkeypatch.setattr(vision, "healthy", lambda _: False)
     ticks = iter([0, 100])

@@ -28,6 +28,7 @@ import pytest
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools import SkillFuncTool, SkillManager
 from datus.utils.loggings import get_logger
+from tests.helpers.skill_actions import successful_skill_loads
 
 logger = get_logger(__name__)
 
@@ -127,12 +128,8 @@ class TestRealLLMSkillExecution:
         has_load_skill = "load_skill" in action_types
         assert has_load_skill, f"Agent should invoke load_skill for a local skill. Action types: {action_types}"
 
-        successful_loads = [
-            action
-            for action in all_actions
-            if action.role == "tool" and action.action_type == "load_skill" and action.status == "success"
-        ]
-        assert successful_loads, "Loading the requested local skill must actually succeed"
+        successful_loads = successful_skill_loads(all_actions, "report-generator")
+        assert successful_loads, "Loading report-generator must actually succeed; another skill does not count"
         final_action = all_actions[-1]
         assert final_action.status == "success", f"Skill execution failed: {final_action.output}"
         assert node.result.success, node.result.error

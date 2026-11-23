@@ -33,6 +33,9 @@ RUN_TITLE_PREFIX = "Run Nightly Tests · "
 MAX_EVENT_AGE = dt.timedelta(hours=6)
 CONFIRM_ATTEMPTS = 6
 CONFIRM_INTERVAL_SECONDS = 5
+REQUEST_TIMEOUT_SECONDS = 20
+# Optional confirmation stops while this much Lambda time is still left.
+CONFIRM_RESERVE_SECONDS = CONFIRM_INTERVAL_SECONDS + REQUEST_TIMEOUT_SECONDS + 10
 TOKEN_KEYS = ("datus-nightly-token", "Token", "token")
 FEISHU_KEYS = ("FEISHU_NOTIFY_CI_URL", "webhook")
 
@@ -117,7 +120,7 @@ class GitHub:
             },
         )
         try:
-            response = self._open(request, timeout=20)
+            response = self._open(request, timeout=REQUEST_TIMEOUT_SECONDS)
         except urllib.error.HTTPError as error:
             response = error
         except Exception:
@@ -166,7 +169,16 @@ def notify_feishu(webhook: str | None, text: str, opener=None) -> bool:
         return False
 
 
-def run(event: dict, *, secrets_client, now: dt.datetime, opener=None, sleep=time.sleep) -> dict:
+def run(
+    event: dict,
+    *,
+    secrets_client,
+    now: dt.datetime,
+    opener=None,
+    sleep=time.sleep,
+    remaining=lambda: float("inf"),
+) -> dict:
+    """``remaining`` returns the seconds left before the Lambda times out."""
     config = _config()
     scheduled = parse_scheduled_time(event.get("scheduled_time"))
     key = schedule_key(scheduled)
@@ -194,10 +206,17 @@ def run(event: dict, *, secrets_client, now: dt.datetime, opener=None, sleep=tim
             if existing:
                 return {"status": "dispatched", "schedule_key": key, "run": existing}
             raise
-        # 204 is authoritative; confirmation only records the run for the logs.
+        # 204 is authoritative. Confirmation only records the run for the logs, so
+        # its failures or a shrinking time budget must not fail the invocation.
         for _ in range(CONFIRM_ATTEMPTS):
+            if remaining() < CONFIRM_RESERVE_SECONDS:
+                break
             sleep(CONFIRM_INTERVAL_SECONDS)
-            existing = github.find_run(workflow, ref, key, scheduled)
+            try:
+                existing = github.find_run(workflow, ref, key, scheduled)
+            except DispatchError as error:
+                LOGGER.warning("dispatch_confirmation_skipped key=%s reason=%s", key, error)
+                break
             if existing:
                 return {"status": "dispatched", "schedule_key": key, "run": existing}
         return {"status": "dispatched", "schedule_key": key, "run": None}
@@ -214,6 +233,11 @@ def run(event: dict, *, secrets_client, now: dt.datetime, opener=None, sleep=tim
 def handler(event, context):  # pragma: no cover - thin AWS entry point
     import boto3
 
-    result = run(event or {}, secrets_client=boto3.client("secretsmanager"), now=dt.datetime.now(UTC))
+    result = run(
+        event or {},
+        secrets_client=boto3.client("secretsmanager"),
+        now=dt.datetime.now(UTC),
+        remaining=lambda: context.get_remaining_time_in_millis() / 1000,
+    )
     LOGGER.info("nightly_scheduler_result %s", json.dumps(result, sort_keys=True))
     return result

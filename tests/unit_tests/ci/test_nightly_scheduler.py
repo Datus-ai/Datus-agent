@@ -80,7 +80,7 @@ def matching_run(key=KEY, run_id=42):
     }
 
 
-def run(network, event=None, secrets=None, now=NOW):
+def run(network, event=None, secrets=None, now=NOW, remaining=lambda: float("inf")):
     sleeps = []
     result = handler.run(
         {"scheduled_time": SCHEDULED} if event is None else event,
@@ -88,6 +88,7 @@ def run(network, event=None, secrets=None, now=NOW):
         now=now,
         opener=network,
         sleep=sleeps.append,
+        remaining=remaining,
     )
     return result, sleeps
 
@@ -196,6 +197,36 @@ def test_accepted_dispatch_that_is_not_yet_listed_still_counts_as_dispatched():
     assert len(network.posts()) == 1 and len(sleeps) == handler.CONFIRM_ATTEMPTS
 
 
+def test_failed_confirmation_after_accepted_dispatch_still_succeeds_without_alert():
+    # GET 200 (no run) -> POST 204 -> GET 503: the run was created; do not fail or retry.
+    network = FakeNetwork([[], 503])
+    result, _ = run(network)
+    assert result == {"status": "dispatched", "schedule_key": KEY, "run": None}
+    assert len(network.posts()) == 1 and network.alerts() == []
+
+
+def test_failed_lookup_during_lost_response_recovery_stays_fatal():
+    network = FakeNetwork([[], 503], dispatch=TimeoutError("read timed out"))
+    with pytest.raises(handler.DispatchError, match="^github_list_runs_http_503$"):
+        run(network)
+    assert len(network.posts()) == 1 and len(network.alerts()) == 1
+
+
+@pytest.mark.parametrize("budget", [0, handler.CONFIRM_RESERVE_SECONDS - 1])
+def test_confirmation_stops_before_the_lambda_deadline(budget):
+    network = FakeNetwork([[]])
+    result, sleeps = run(network, remaining=lambda: budget)
+    assert result == {"status": "dispatched", "schedule_key": KEY, "run": None}
+    assert sleeps == [] and len(network.posts()) == 1
+
+
+def test_confirmation_uses_the_remaining_budget_as_it_shrinks():
+    left = iter([100, 60, handler.CONFIRM_RESERVE_SECONDS - 1])
+    network = FakeNetwork([[]])
+    result, sleeps = run(network, remaining=lambda: next(left))
+    assert result["run"] is None and len(sleeps) == 2
+
+
 @pytest.mark.parametrize("status", [401, 403, 404, 422, 500])
 def test_rejected_dispatch_alerts_feishu_without_secrets_and_raises(status):
     network = FakeNetwork([[]], dispatch=status)
@@ -296,8 +327,10 @@ def test_template_fires_on_time_and_bounds_retries():
     assert async_config["DestinationConfig"]["OnFailure"]["Destination"] == {"Fn::GetAtt": ["FailedEvents", "Arn"]}
     function = template["Resources"]["Function"]["Properties"]
     assert function["Handler"] == "index.handler" and function["Code"] == {"ZipFile": deploy.PLACEHOLDER}
-    timeout = function["Timeout"]
-    assert timeout > handler.CONFIRM_ATTEMPTS * handler.CONFIRM_INTERVAL_SECONDS + 3 * 20
+    # Mandatory path: listing, dispatch, then one recovery lookup after a lost
+    # response. Optional confirmation is bounded by the remaining time instead.
+    mandatory = 3 * handler.REQUEST_TIMEOUT_SECONDS + handler.CONFIRM_INTERVAL_SECONDS
+    assert function["Timeout"] >= mandatory + handler.CONFIRM_RESERVE_SECONDS + 30
 
 
 def test_template_grants_only_the_configured_secret():

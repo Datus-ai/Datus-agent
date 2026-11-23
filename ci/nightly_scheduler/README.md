@@ -44,8 +44,9 @@ results or alerts.
 python ci/nightly_scheduler/deploy.py
 # Apply it.
 python ci/nightly_scheduler/deploy.py --execute
-# Check access without dispatching.
-aws lambda invoke --function-name datus-agent-nightly-scheduler \
+# Check access without dispatching. Use the deployment Region (deploy.py
+# defaults to us-east-1; substitute yours if you passed --region).
+aws lambda invoke --region us-east-1 --function-name datus-agent-nightly-scheduler \
   --cli-binary-format raw-in-base64-out \
   --payload "{\"scheduled_time\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"dry_run\": true}" /dev/stdout
 # After the workflow without the GitHub cron is merged to main:

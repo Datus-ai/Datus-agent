@@ -84,6 +84,7 @@ def cleanup(work: Path) -> None:
         inspected = json.loads(docker("inspect", container))[0]
         if inspected.get("Config", {}).get("Labels", {}).get(LABEL) != receipt["owner"]:
             raise ValueError("Refusing to remove a vision container owned by another run")
+        log_error = None
         try:
             logs = subprocess.run(
                 ["docker", "logs", container],
@@ -94,8 +95,17 @@ def cleanup(work: Path) -> None:
                 timeout=30,
             ).stdout
             (work / "server.log").write_text(logs)
-        finally:
-            docker("rm", "--force", container)
+        except (subprocess.SubprocessError, OSError) as error:
+            log_error = error
+        docker("rm", "--force", container)
+        if log_error is not None:
+            # The container is gone; record that before reporting the lost logs so
+            # a later cleanup does not try to inspect a removed container.
+            receipt["log_collection_error"] = type(log_error).__name__
+            receipt["cleaned_up"] = True
+            receipt["cleanup_time"] = time.time()
+            save(work, receipt)
+            raise log_error
     receipt["cleaned_up"] = True
     receipt["cleanup_time"] = time.time()
     save(work, receipt)
