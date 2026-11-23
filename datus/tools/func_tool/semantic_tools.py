@@ -1333,6 +1333,20 @@ class SemanticTools:
             )
         return self._runtime_db_context()
 
+    def runtime_connection_config(self, runtime_db_context: Optional[Dict[str, str]] = None) -> DosiConfig:
+        """Build the request's connection profile without discovering project models."""
+        from datus.configuration.agent_config import _apply_runtime_db_context_to_dosi_profile
+
+        if runtime_db_context is None:
+            runtime_db_context = self._runtime_db_context()
+        datasource = runtime_db_context.get("datasource") or self.agent_config.current_datasource
+        db_config = _apply_runtime_db_context_to_dosi_profile(self._extract_db_config(datasource), runtime_db_context)
+        return DosiConfig(
+            datasource=datasource,
+            db_config=db_config,
+            timeout_seconds=float((db_config or {}).get("timeout_seconds", 30)),
+        )
+
     @property
     def runtime(self) -> Optional[DosiRuntime]:
         """Load the embedded Dosi runtime for the current datasource/model."""
@@ -1353,17 +1367,11 @@ class SemanticTools:
                 self._runtime = None
                 self._runtime_context_key = None
 
-            from datus.configuration.agent_config import _apply_runtime_db_context_to_dosi_profile
-
-            db_config = _apply_runtime_db_context_to_dosi_profile(
-                self._extract_db_config(datasource), runtime_db_context
-            )
-            runtime_config = DosiConfig(
-                datasource=datasource,
-                db_config=db_config,
-                timeout_seconds=float((db_config or {}).get("timeout_seconds", 30)),
-                semantic_models_path=str(self.agent_config.path_manager.semantic_model_path(datasource)),
-                semantic_model_path=semantic_model_path or None,
+            runtime_config = self.runtime_connection_config(runtime_db_context).model_copy(
+                update={
+                    "semantic_models_path": str(self.agent_config.path_manager.semantic_model_path(datasource)),
+                    "semantic_model_path": semantic_model_path or None,
+                }
             )
             # Ontology-aware agents always load the ontology directory. Every
             # other agent stays on the plain model, unless the datasource has

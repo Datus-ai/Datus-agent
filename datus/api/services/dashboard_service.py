@@ -377,6 +377,8 @@ class DashboardService:
             execute_published_metric_query,
         )
         from datus.tools.func_tool.semantic_tools import SemanticTools
+        from datus.tools.semantic_tools.dosi.errors import SemanticValidationException
+        from datus.tools.semantic_tools.exceptions import SemanticCoreException
 
         if (
             query.name != meta.slug
@@ -395,7 +397,9 @@ class DashboardService:
                     agent_config=self.agent_config, sub_agent_name="gen_visual_dashboard"
                 )
                 source_root = Path(self.agent_config.project_root).resolve()
-                use_snapshot = published or artifact_output_root(self.agent_config) != source_root
+                use_snapshot = (
+                    published or query.use_model_snapshot or artifact_output_root(self.agent_config) != source_root
+                )
                 model_path = (source_root / query.model_path).resolve()
                 if not model_path.is_relative_to(source_root):
                     raise ValueError("metric model path escapes project")
@@ -410,12 +414,28 @@ class DashboardService:
                         else getattr(self.agent_config, "policy_context", None) or {}
                     ),
                 )
+                if not use_snapshot and query.model_snapshot is not None:
+                    # A shared connection can resolve in the importing project
+                    # even when its project model (or this metric) cannot.
+                    runtime = semantic_tools.runtime if model_path.is_file() else None
+                    if runtime is None:
+                        use_snapshot = True
+                    else:
+                        try:
+                            binding = runtime.artifact_metric_binding(query.metric.name)
+                            use_snapshot = Path(binding["model_path"]).resolve() != model_path
+                        except (OSError, SemanticCoreException, SemanticValidationException):
+                            use_snapshot = True
                 if use_snapshot:
                     # The local loader hydrates the artifact-owned model snapshot.
                     # Builder files do not share the context root used by IDE preview.
                     return execute_published_metric_query(
-                        query,
-                        runtime_config=semantic_tools.runtime.config,
+                        (
+                            resolve_metric_query_snapshot(query)
+                            if query.model_snapshot is not None and query.model_snapshot_path is None
+                            else query
+                        ),
+                        runtime_config=semantic_tools.runtime_connection_config(),
                         db_tool=db_tool,
                         params=params,
                         policy_context=policy_context,

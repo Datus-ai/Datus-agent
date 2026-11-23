@@ -53,6 +53,8 @@ class MetricQueryFile(MetricQueryRequest, ArtifactDatasource):
     model_revision: str = Field(pattern=r"^[a-f0-9]{64}$")
     model_snapshot: str | None = None
     model_snapshot_path: str | None = None
+    # A remapped query may have no matching live model in its destination project.
+    use_model_snapshot: bool | None = None
     metric_detail: dict[str, Any]
     metric_tables: list[str] = Field(default_factory=list)
     captured_at: str

@@ -84,7 +84,12 @@ async def test_metric_failure_logs_traceback_only_for_unexpected_errors(
     logger = MagicMock()
     monkeypatch.setattr(dashboard_service, "logger", logger)
     query = SimpleNamespace(
-        name="sales", datasource="warehouse", model_path="models/shop.yml", parameter_names=lambda: set()
+        name="sales",
+        datasource="warehouse",
+        model_path="models/shop.yml",
+        use_model_snapshot=None,
+        model_snapshot=None,
+        parameter_names=lambda: set(),
     )
     meta = SimpleNamespace(slug="sales", datasource="warehouse", params=[])
     result = await DashboardService(agent_config=_artifact_config())._run_metric_query(query, meta, {}, None, None)
@@ -117,13 +122,58 @@ async def test_dashboard_metric_tools_keep_explicit_request_policy_context(monke
 
     monkeypatch.setattr(metric_artifact_tools, "execute_metric_artifact_query", execute)
     query = SimpleNamespace(
-        name="sales", datasource="warehouse", model_path="models/shop.yml", parameter_names=lambda: set()
+        name="sales",
+        datasource="warehouse",
+        model_path="models/shop.yml",
+        use_model_snapshot=None,
+        model_snapshot=None,
+        parameter_names=lambda: set(),
     )
     meta = SimpleNamespace(slug="sales", datasource="warehouse", params=[])
     result = await DashboardService(agent_config=config)._run_metric_query(query, meta, {}, None, request_context)
     assert result.errorCode == "POLICY_DENIED"
     assert captured == [request_context]
     assert config.policy_context is config_context
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("force_snapshot", [True, None])
+async def test_metric_preview_uses_saved_model_with_destination_policy(monkeypatch, tmp_path, force_snapshot):
+    from types import SimpleNamespace
+
+    from datus.tools import func_tool
+    from datus.tools.func_tool import metric_artifact_tools, semantic_tools
+    from datus.utils.exceptions import DatusException
+
+    config = SimpleNamespace(project_root=str(tmp_path))
+    policy_context = {"sql_policy": {"version": "destination"}}
+    query = SimpleNamespace(
+        name="sales",
+        datasource="destination",
+        execution_context={"datasource": "destination"},
+        model_path="subject/semantic_models/source/shop.yml",
+        use_model_snapshot=force_snapshot,
+        model_snapshot="saved model",
+        model_snapshot_path="models/shop.yml",
+        parameter_names=lambda: set(),
+    )
+    meta = SimpleNamespace(slug="sales", datasource="destination", params=[])
+
+    def build_semantic_tools(**kwargs):
+        assert kwargs["runtime_db_context_provider"]() == query.execution_context
+        return SimpleNamespace(runtime_connection_config=lambda: config)
+
+    def execute(saved, *, policy_context, **_):
+        assert saved is query
+        assert policy_context == {"sql_policy": {"version": "destination"}}
+        raise DatusException(ErrorCode.POLICY_DENIED, message="destination denies the query")
+
+    monkeypatch.setattr(func_tool, "DBFuncTool", lambda **_: object())
+    monkeypatch.setattr(semantic_tools, "SemanticTools", build_semantic_tools)
+    monkeypatch.setattr(metric_artifact_tools, "execute_published_metric_query", execute)
+
+    result = await DashboardService(agent_config=config)._run_metric_query(query, meta, {}, tmp_path, policy_context)
+    assert result.errorCode == "POLICY_DENIED"
 
 
 def _write_dashboard(

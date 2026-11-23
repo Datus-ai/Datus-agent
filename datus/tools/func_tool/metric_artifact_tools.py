@@ -294,6 +294,10 @@ def execute_published_metric_query(query: MetricQueryFile, *, runtime_config, db
             update={
                 "semantic_model_path": str(model),
                 "semantic_models_path": None,
+                "ontology_dir": None,
+                "ontology_path": None,
+                "mapping_path": None,
+                "mapping_references": [],
                 "datasource": query.datasource,
                 "connection": query.datasource,
             }
