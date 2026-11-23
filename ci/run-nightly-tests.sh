@@ -152,6 +152,7 @@ manifest_update() {
   local status=$?
   if [ "$status" -ne 0 ]; then
     echo "WARNING: nightly manifest update failed: ci/nightly_manifest.py $*" | tee -a "$LOG_FILE" >&2
+    test_exit_code=1
     return 0
   fi
 }
@@ -992,8 +993,21 @@ run_logged_unfiltered() {
   local started_at
   started_at="$(utc_now)"
   collect_pytest_suite "$group_name" "$@"
-  if [ -n "${PRODUCT_EXECUTION_DIR:-}" ] && command_contains_pytest "$@"; then
-    set -- "$@" -p ci.pytest_gate_plugin --gate-report "${PRODUCT_EXECUTION_DIR}/${group_name//[^A-Za-z0-9_-]/_}.json"
+  local execution_report=""
+  if command_contains_pytest "$@"; then
+    local execution_dir="${PRODUCT_EXECUTION_DIR:-${NIGHTLY_MANIFEST_FILE}.execution}"
+    mkdir -p "$execution_dir"
+    execution_report="${execution_dir}/${group_name//[^A-Za-z0-9_-]/_}.json"
+    rm -f "$execution_report"
+    set -- "$@" -p ci.pytest_gate_plugin --gate-report "$execution_report"
+    # Unit suites include deliberately platform/optional-dependency gated tests.
+    # Every selected nightly integration/product case is required to execute.
+    if [ "$group_name" != "Full Unit Tests" ]; then
+      # Dedicated groups may already carry this explicit option.
+      if [[ " $* " != *" --fail-on-skip "* ]]; then
+        set -- "$@" -p ci.pytest_fail_on_skip_plugin --fail-on-skip
+      fi
+    fi
   fi
   local trace_expected=0
   if nightly_trace_expected_for_group "$group_name"; then
@@ -1016,6 +1030,14 @@ run_logged_unfiltered() {
     status="failed"
   fi
   manifest_record_suite "$group_name" "blocking" "command" "$status" "$cmd_status" "$started_at" "$ended_at" "$@"
+  if [ -n "$execution_report" ]; then
+    if [ ! -s "$execution_report" ]; then
+      log "ERROR: missing execution evidence for ${group_name}"
+      test_exit_code=1
+    else
+      manifest_update record-execution --output "$NIGHTLY_MANIFEST_FILE" --name "$group_name" --execution-report "$execution_report"
+    fi
+  fi
   return 0
 }
 
@@ -1044,6 +1066,14 @@ run_logged_warn_only_unfiltered() {
   local started_at
   started_at="$(utc_now)"
   collect_pytest_suite "$group_name" "$@"
+  local execution_report=""
+  if command_contains_pytest "$@"; then
+    local execution_dir="${NIGHTLY_MANIFEST_FILE}.execution"
+    mkdir -p "$execution_dir"
+    execution_report="${execution_dir}/${group_name//[^A-Za-z0-9_-]/_}.json"
+    rm -f "$execution_report"
+    set -- "$@" -p ci.pytest_gate_plugin --gate-report "$execution_report"
+  fi
   local trace_expected=0
   if nightly_trace_expected_for_group "$group_name"; then
     trace_expected=1
@@ -1065,6 +1095,9 @@ run_logged_warn_only_unfiltered() {
     status="failed"
   fi
   manifest_record_suite "$group_name" "warn-only" "command" "$status" "$cmd_status" "$started_at" "$ended_at" "$@"
+  if [ -s "$execution_report" ]; then
+    manifest_update record-execution --output "$NIGHTLY_MANIFEST_FILE" --name "$group_name" --execution-report "$execution_report"
+  fi
   return 0
 }
 
@@ -1609,8 +1642,7 @@ run_gaussdb_adapter_tests() {
     DATUS_TEST_LAYER=nightly \
     GAUSSDB_SSLMODE=verify-ca \
     GAUSSDB_SSLROOTCERT="$tls_rootcert" \
-    uv run pytest -m nightly tests/integration/adapters/test_gaussdb.py \
-    --tb=short --verbose --timeout=300 --timeout-method=thread
+    "$@"
   suite_status=$?
 
   cleanup_gaussdb_tls_host_artifacts
@@ -1795,7 +1827,7 @@ run_logged "Gen Agent Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJE
   --deselect tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm \
   --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
-run_logged "Core Acceptance Tests" run_with_agent_home "${NIGHTLY_HOME}/core-acceptance/home" "${NIGHTLY_HOME}/core-acceptance/workspace" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/unit_tests/tools/registry/test_capabilities.py::test_generated_catalog_matches_source tests/integration/agent/test_core_acceptance.py tests/integration/api/test_chat_acceptance.py tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/core-acceptance"
+run_logged "Core Acceptance Tests" run_with_agent_home "${NIGHTLY_HOME}/core-acceptance/home" "${NIGHTLY_HOME}/core-acceptance/workspace" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/unit_tests/tools/registry/test_capabilities.py::test_generated_catalog_matches_source tests/integration/agent/test_core_acceptance.py tests/integration/agent/test_datasource_switch_acceptance.py tests/integration/api/test_chat_acceptance.py tests/integration/api/test_semantic_session_acceptance.py tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/core-acceptance"
 run_logged "Core Real Model Tests" run_with_agent_home "${NIGHTLY_HOME}/core-real-model/home" "${NIGHTLY_HOME}/core-real-model/workspace" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/agent/test_core_live.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/core-real-model"
 run_logged "PostgreSQL Agent Storage Tests" run_with_agent_home "${NIGHTLY_HOME}/postgresql-agent-storage/home" "${NIGHTLY_HOME}/postgresql-agent-storage/workspace" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/storage/test_postgresql_semantic_kb.py tests/integration/storage/test_postgresql_feedback_store.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/postgresql-agent-storage"
 run_logged "SQL Policy Plugin Tests" run_with_agent_home "${NIGHTLY_HOME}/sql-policy-plugin/home" "${NIGHTLY_HOME}/sql-policy-plugin/workspace" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/plugins/test_sql_policy_plugin.py::test_managed_sql_policy_enforces_sql_semantic_and_api_reads -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/sql-policy-plugin"
@@ -1867,7 +1899,7 @@ run_compose_suite "Trino Adapter Tests" "$TRINO_COMPOSE" "trino:300" -- run_with
 run_compose_suite "Greenplum Adapter Tests" "$GREENPLUM_COMPOSE" "greenplum:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_greenplum.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_hive.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Spark Adapter Tests" "$SPARK_COMPOSE" "spark-thrift:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300 --timeout-method=thread
-run_compose_suite "GaussDB Adapter Tests" "$GAUSSDB_COMPOSE" "gaussdb:600" -- run_gaussdb_adapter_tests
+run_compose_suite "GaussDB Adapter Tests" "$GAUSSDB_COMPOSE" "gaussdb:600" -- run_gaussdb_adapter_tests env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_gaussdb.py --tb=short --verbose --timeout=300 --timeout-method=thread
 
 run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
 

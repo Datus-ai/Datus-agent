@@ -121,6 +121,86 @@ async def test_stop_releases_session_for_the_next_request(chat_client, chat_datu
     await chat_client.delete(f"/api/v1/chat/sessions/{sid}")
 
 
+@pytest.mark.asyncio
+async def test_http_running_session_consumes_queued_message_once(resource_project, model_server):
+    """A11: inserting B must continue A's HTTP run without replaying either turn."""
+    entered, release = threading.Event(), threading.Event()
+    first_message = "A11 first request: compute the order total."
+    inserted_message = "A11 queued request: now report the East total."
+
+    def blocked_reply(request):
+        entered.set()
+        assert release.wait(15), "The test must release the first model request"
+        return answer("First request completed: 350.")
+
+    offset = len(model_server.requests)
+    model_server.enqueue(
+        blocked_reply,
+        tool_call("execute_sql", {"sql": "SELECT SUM(amount) total FROM orders WHERE customer_id=1"}),
+        answer("Queued request completed: 150."),
+    )
+    client, manager = resource_project.client, resource_project.service.task_manager
+    sid = "a11_pending_input"
+    response_task = asyncio.create_task(
+        client.post("/api/v1/chat/stream", json={"message": first_message, "session_id": sid, "interactive": False})
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 10)
+        original_task = manager.get_task(sid)
+        assert original_task.status == "running"
+        inserted = await client.post("/api/v1/chat/insert", json={"message": inserted_message, "session_id": sid})
+        assert inserted.json()["success"], inserted.text
+        assert inserted.json()["data"] == {"session_id": sid, "queued_count": 1}
+        assert manager.get_task(sid) is original_task
+        release.set()
+        response = await asyncio.wait_for(response_task, 30)
+        await asyncio.wait_for(original_task.asyncio_task, 10)
+    finally:
+        release.set()
+        await asyncio.gather(response_task, return_exceptions=True)
+
+    events = parse_sse_body(response.text)
+    assert response.status_code == 200
+    assert find_event(events, "error") is None, response.text
+    assert sum(event["event"] == "end" for event in events) == 1, response.text
+    assert find_event(events, "end")["data"]["session_id"] == sid
+    sessions = [event["data"]["session_id"] for event in events if event["event"] == "session"]
+    assert sessions and set(sessions) == {sid}, response.text
+    assert "First request completed: 350." in response.text
+    assert "Queued request completed: 150." in response.text
+    inserted_bubbles = [
+        event
+        for event in events
+        if event["event"] == "message"
+        and event["data"]["payload"]["role"] == "user"
+        and inserted_message in json.dumps(event["data"]["payload"]["content"])
+    ]
+    assert len(inserted_bubbles) == 1, inserted_bubbles
+    assert original_task.status == "completed", original_task.error
+    assert original_task.node is None
+    assert len(original_task.pending_input_queue) == 0
+    assert not manager.has_active_tasks()
+    requests = model_server.requests[offset:]
+    assert len(requests) == 3, "The queued request must execute exactly one SQL tool and finish"
+    for request in requests[1:]:
+        users = [message.get("content") for message in request["messages"] if message["role"] == "user"]
+        assert sum(str(content).count(inserted_message) for content in users) == 1, users
+    assert "150" in json.dumps(requests[-1]["messages"])
+    history = await client.get("/api/v1/chat/history", params={"session_id": sid})
+    assert history.json()["success"], history.text
+    assert first_message in history.text and inserted_message in history.text
+    assert "Queued request completed: 150." in history.text
+    late = await client.post("/api/v1/chat/insert", json={"message": "Too late", "session_id": sid})
+    assert late.json()["errorCode"] == "SESSION_NOT_RUNNING"
+    model_server.enqueue(answer("A11 follow-up is usable."))
+    followup = await client.post(
+        "/api/v1/chat/stream",
+        json={"message": "Continue after the queue drained.", "session_id": sid, "interactive": False},
+    )
+    assert find_event(parse_sse_body(followup.text), "end") is not None, followup.text
+    assert find_event(parse_sse_body(followup.text), "error") is None, followup.text
+
+
 @pytest_asyncio.fixture
 async def resource_project(tmp_path, model_server, monkeypatch):
     """Use the normal auth/config/cache boundary with isolated real project storage."""
@@ -144,6 +224,9 @@ async def resource_project(tmp_path, model_server, monkeypatch):
             context.config = self.configs[context.project_id]
             return context
 
+    # File-backed storage defaults can resolve relative to cwd. Keep those
+    # artifacts inside the run's temporary root as well as the project files.
+    monkeypatch.chdir(tmp_path)
     with isolated_connectors():
         config = product_config(tmp_path / "default", model_server.url, project="resource_default")
         config.current_datasource = "sales"

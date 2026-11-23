@@ -52,18 +52,36 @@ def test_ran_covers_granularity(map_nodeid: str, ran: set[str], expected: bool) 
 # ── build_ran_set ───────────────────────────────────────────────────────────
 
 
-def test_build_ran_set_unions_executed_suites_and_skips_skipped() -> None:
+def test_build_ran_set_uses_actual_outcomes_not_collection() -> None:
     manifest = {
         "suites": [
-            {"name": "A", "status": "passed", "collection": {"nodeids": ["t/a.py::t1", "t/a.py::t2"]}},
-            {"name": "B", "status": "failed", "collection": {"nodeids": ["t/b.py::t1"]}},
-            # a whole-suite skip must contribute nothing even if it has a collection
-            {"name": "C", "status": "skipped", "collection": {"nodeids": ["t/c.py::t1"]}},
-            # a suite without a collection block is ignored
-            {"name": "D", "status": "passed"},
+            {
+                "name": "A",
+                "status": "passed",
+                "collection": {"nodeids": ["t/a.py::skipped", "t/a.py::unrun"]},
+                "execution": {
+                    "executed": ["t/a.py::passed"],
+                    "outcomes": {
+                        "t/a.py::passed": "passed",
+                        "t/a.py::skipped": "skipped",
+                        "t/a.py::setup_failure": "failed",
+                    },
+                },
+            },
+            {
+                "name": "B",
+                "status": "failed",
+                "execution": {"executed": ["t/b.py::failed"], "outcomes": {"t/b.py::failed": "failed"}},
+            },
+            {
+                "name": "C",
+                "status": "skipped",
+                "execution": {"executed": ["t/c.py::t"], "outcomes": {"t/c.py::t": "passed"}},
+            },
+            {"name": "legacy", "status": "passed", "collection": {"nodeids": ["legacy.py::t"]}},
         ]
     }
-    assert cnc.build_ran_set(manifest) == {"t/a.py::t1", "t/a.py::t2", "t/b.py::t1"}
+    assert cnc.build_ran_set(manifest) == {"t/a.py::passed", "t/b.py::failed"}
 
 
 def test_build_ran_set_handles_empty_or_garbled() -> None:
@@ -296,7 +314,11 @@ def test_build_ran_set_excludes_non_executed_status() -> None:
     # Only passed/failed contribute; an unknown/errored status must not.
     manifest = {
         "suites": [
-            {"name": "ok", "status": "passed", "collection": {"nodeids": ["t/a.py::t1"]}},
+            {
+                "name": "ok",
+                "status": "passed",
+                "execution": {"executed": ["t/a.py::t1"], "outcomes": {"t/a.py::t1": "passed"}},
+            },
             {"name": "weird", "status": "errored", "collection": {"nodeids": ["t/b.py::t2"]}},
         ]
     }

@@ -635,6 +635,7 @@ jobs:
           path: |
             test_output_nightly_*.log
             nightly-manifest.json
+            nightly-manifest.json.execution/
             ${{ env.DATUS_SQL_POLICY_RECEIPT }}
             ci/product-test-plan.json
             ci/product-execution.*/
