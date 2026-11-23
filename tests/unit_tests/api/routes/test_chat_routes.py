@@ -446,18 +446,20 @@ class TestChatRouteAcceptance:
 
     @pytest.mark.asyncio
     async def test_stream_passes_the_current_apps_tool_binder_to_the_new_task(self):
+        async def events():
+            yield SSEEvent(id=1, event="session", data=SSESessionData(session_id="host-chat"))
+
         http_request = _http_request()
         binder = MagicMock()
         provider = AsyncMock(return_value=binder)
         http_request.app.state.chat_tool_provider = provider
         svc = _mock_svc_with_nodes()
-        svc.chat.stream_chat = MagicMock(return_value=AsyncMock().__aiter__())
+        svc.chat.stream_chat = MagicMock(return_value=events())
         context = AppContext(user_id="user-1", project_id="project-1")
         request = StreamChatInput(message="Use a host tool")
 
         response = await stream_chat(request, svc, context, http_request)
-        async for _ in response.body_iterator:
-            pass
+        assert any("event: session" in chunk for chunk in [chunk async for chunk in response.body_iterator])
 
         provider.assert_awaited_once_with(http_request, context, request)
         assert svc.chat.stream_chat.call_args.kwargs["tool_binder"] is binder
