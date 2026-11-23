@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pytest import ExitCode
+from pytest import ExitCode, hookimpl
 
 
 def pytest_addoption(parser) -> None:
@@ -14,6 +14,7 @@ def pytest_addoption(parser) -> None:
     )
 
 
+@hookimpl(tryfirst=True)
 def pytest_sessionfinish(session, exitstatus) -> None:
     if not session.config.getoption("--fail-on-skip"):
         return

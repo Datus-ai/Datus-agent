@@ -62,3 +62,38 @@ in daily Nightly, which tests repository-main source compatibility. Release
 workflows run package and docs smoke checks; product validation remains in Nightly
 and weekly/manual benchmarks. See `ci/harness/README.md` for execution evidence and
 service setup.
+
+## Required nightly execution evidence
+
+Every selected blocking integration/product group runs with `--fail-on-skip`,
+including ordinary scheduled runs. Missing credentials or unavailable required
+services fail the group. Full unit tests retain their existing platform and
+optional-dependency skips; provider-health checks remain diagnostic. A failed
+group records its failure while unrelated groups continue.
+
+Each pytest group writes collected nodeids and actual per-case outcomes to a
+gate report. The manifest embeds that report, and the workflow uploads the raw
+reports under `nightly-manifest.json.execution/` (targeted product evaluations
+use `ci/product-execution.*/`). Missing required execution evidence fails the
+run. Coverage checks use actual passed/failed cases, never collection alone;
+skipped, expected-failure and unexecuted cases do not satisfy coverage claims.
+Declared coverage gaps remain in the advisory coverage digest.
+
+Core acceptance includes the regression-plan contracts A01 (same-session
+datasource switch and metric isolation), A11 (HTTP queued message consumed once)
+and A09 (semantic generation, independent metric query, terminal session and
+subsequent request). These use controlled model responses with real local SQL,
+semantic storage and session management. The existing real-model SQL and
+semantic-authoring groups remain separate daily checks. These Agent checks do
+not certify Studio UI flows or candidate-image deployment/upgrade acceptance.
+
+The contracts follow the Agent-owned cases in the
+[product regression plan](https://gaaoegmov5r.feishu.cn/docx/O50Zd2P6BonaEfxtmCFc6UQvncV)
+and the
+[functional/UI/deployment split](https://gaaoegmov5r.feishu.cn/docx/B0ONd3t3aoXkUhxIdSdcVt72nff).
+
+| Case | Fixed acceptance test | Required evidence |
+| --- | --- | --- |
+| A01 | `test_datasource_switch_acceptance.py::test_same_session_switches_source_before_querying_and_authoring_metrics` | Same-session A-to-B switch, different data behind identical table names, B tool results and metric scope. |
+| A11 | `test_chat_acceptance.py::test_http_running_session_consumes_queued_message_once` | Insert during an active HTTP turn, consume once, preserve session ownership, finish and accept a subsequent request. |
+| A09 | `test_semantic_session_acceptance.py::test_http_semantic_generation_finishes_and_releases_session` | Real semantic tools and persisted metric, independent query oracle, terminal task and usable follow-up session. |

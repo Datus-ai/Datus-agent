@@ -317,6 +317,16 @@ def record_collection(args: argparse.Namespace) -> None:
     write_manifest(path, manifest)
 
 
+def record_execution(args: argparse.Namespace) -> None:
+    path = Path(args.output)
+    manifest = load_manifest(path)
+    execution = json.loads(Path(args.execution_report).read_text(encoding="utf-8"))
+    if not isinstance(execution, dict) or not isinstance(execution.get("outcomes"), dict):
+        raise ValueError("Invalid pytest execution report")
+    find_suite(manifest, args.name)["execution"] = execution
+    write_manifest(path, manifest)
+
+
 def record_compose_project(args: argparse.Namespace) -> None:
     path = Path(args.output)
     manifest = load_manifest(path)
@@ -395,6 +405,12 @@ def build_parser() -> argparse.ArgumentParser:
     collection_parser.add_argument("--exit-code", required=True, type=int)
     collection_parser.add_argument("--collection-output", required=True)
     collection_parser.set_defaults(func=record_collection)
+
+    execution_parser = subparsers.add_parser("record-execution")
+    execution_parser.add_argument("--output", required=True)
+    execution_parser.add_argument("--name", required=True)
+    execution_parser.add_argument("--execution-report", required=True)
+    execution_parser.set_defaults(func=record_execution)
 
     compose_parser = subparsers.add_parser("record-compose-project")
     compose_parser.add_argument("--output", required=True)

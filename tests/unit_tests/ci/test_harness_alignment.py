@@ -146,7 +146,7 @@ def test_bulk_and_spool_keep_indirect_callers_without_selecting_the_whole_tools_
     assert "tests/unit_tests/tools/registry/test_capabilities.py" in plan["targets"]
     assert "tests/unit_tests/tools/func_tool/test_database.py" in plan["targets"]
     assert plan["integration_groups"] == ["cli", "database"]
-    assert len(plan["core_nodeids"]) == 16
+    assert len(plan["core_nodeids"]) == 19
     assert plan["coverage_applicable"] is True
 
 
@@ -156,7 +156,7 @@ def test_full_unit_selection_does_not_imply_every_integration_group():
     assert plan["integration_groups"] == ["cli", "database"]
     unknown = pr_test_plan(["datus/new_unowned_module.py"])
     assert unknown["targets"] == ["tests/unit_tests/"]
-    assert len(unknown["core_nodeids"]) == 16
+    assert len(unknown["core_nodeids"]) == 19
 
 
 @pytest.mark.parametrize(

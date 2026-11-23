@@ -82,26 +82,29 @@ def ran_covers(map_nodeid: str, ran_set: Iterable[str]) -> bool:
 
 
 def build_ran_set(manifest: dict[str, Any]) -> set[str]:
-    """Union of collected nodeids across nightly suites that were executed.
+    """Use actual test outcomes; collection alone is never execution evidence.
 
-    A whole-suite ``skipped`` (e.g. filtered out by NIGHTLY_GROUP_FILTER)
-    contributes nothing. Suite red/green is a separate signal — drift only asks
-    "was it collected and run at all".
+    Skips, expected failures and tests not reached after an interruption do not
+    demonstrate that a documented product contract ran.
     """
     ran: set[str] = set()
     for suite in manifest.get("suites", []) or []:
-        if not isinstance(suite, dict):
+        if not isinstance(suite, dict) or suite.get("status") not in ("passed", "failed"):
             continue
-        # Only suites that were actually executed contribute nodeids; a
-        # whole-suite skip (or any non-executed status) does not.
-        if suite.get("status") not in ("passed", "failed"):
+        execution = suite.get("execution")
+        if not isinstance(execution, dict):
             continue
-        collection = suite.get("collection")
-        if not isinstance(collection, dict):
+        outcomes = execution.get("outcomes")
+        if not isinstance(outcomes, dict):
             continue
-        for nodeid in collection.get("nodeids", []) or []:
-            if isinstance(nodeid, str) and nodeid:
-                ran.add(nodeid)
+        executed = execution.get("executed")
+        if not isinstance(executed, list):
+            continue
+        ran.update(
+            nodeid
+            for nodeid in executed
+            if isinstance(nodeid, str) and nodeid and outcomes.get(nodeid) in ("passed", "failed")
+        )
     return ran
 
 

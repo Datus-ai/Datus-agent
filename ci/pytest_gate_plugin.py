@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 _collected: set[str] = set()
+_executed: set[str] = set()
 _outcomes: dict[str, str] = {}
 _excluded: dict[str, str] = {}
 
@@ -20,6 +21,7 @@ def pytest_addoption(parser):
 
 def pytest_sessionstart(session):
     _collected.clear()
+    _executed.clear()
     _outcomes.clear()
     _excluded.clear()
 
@@ -71,12 +73,15 @@ def pytest_testnodedown(node, error):
 
 
 def pytest_runtest_logreport(report):
+    if report.when == "call":
+        _executed.add(report.nodeid)
     if report.when == "call" or report.failed or report.skipped:
         previous = _outcomes.get(report.nodeid)
         if previous not in {"failed", "skipped"}:
             _outcomes[report.nodeid] = "xfailed" if getattr(report, "wasxfail", None) else report.outcome
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
     if hasattr(session.config, "workeroutput"):
         session.config.workeroutput["gate_excluded"] = _excluded
@@ -87,9 +92,10 @@ def pytest_sessionfinish(session, exitstatus):
             json.dumps(
                 {
                     "collected": sorted(_collected),
+                    "executed": sorted(_executed),
                     "outcomes": _outcomes,
                     "excluded": _excluded,
-                    "exit_code": int(exitstatus),
+                    "exit_code": int(session.exitstatus),
                     **identity,
                 },
                 indent=2,

@@ -176,3 +176,22 @@ def test_record_collection_and_finalize_manifest(tmp_path):
     assert manifest["summary"]["suite_count"] == 1
     assert manifest["summary"]["collected_nodeid_count"] == 1
     assert manifest["suites"][0]["collection"]["counts"] == {"selected": 1, "deselected": 3}
+
+
+def test_record_execution_preserves_actual_outcomes(tmp_path):
+    output = tmp_path / "manifest.json"
+    output.write_text('{"suites": []}')
+    report = tmp_path / "execution.json"
+    evidence = {
+        "collected": ["test.py::ok", "test.py::skipped", "test.py::unrun"],
+        "outcomes": {"test.py::ok": "passed", "test.py::skipped": "skipped"},
+        "exit_code": 1,
+    }
+    report.write_text(json.dumps(evidence))
+    assert (
+        nightly_manifest.main(
+            ["record-execution", "--output", str(output), "--name", "required", "--execution-report", str(report)]
+        )
+        == 0
+    )
+    assert json.loads(output.read_text())["suites"][0]["execution"] == evidence

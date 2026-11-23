@@ -233,6 +233,8 @@ flow_groups:
             status: covered
             nodeids:
               - tests/integration/api/test_api_chat.py
+              - tests/integration/api/test_chat_acceptance.py::test_http_running_session_consumes_queued_message_once
+              - tests/integration/api/test_semantic_session_acceptance.py::test_http_semantic_generation_finishes_and_releases_session
           weekly_benchmark:
             status: not_applicable
         gaps:
@@ -586,6 +588,8 @@ flow_groups:
               - tests/unit_tests/tools/func_tool/test_semantic_tools.py::TestRuntimeDbContext::test_runtime_change_rebuilds_dosi_runtime
               - tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm
               - tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm
+              - tests/integration/agent/test_datasource_switch_acceptance.py::test_same_session_switches_source_before_querying_and_authoring_metrics
+              - tests/integration/api/test_semantic_session_acceptance.py::test_http_semantic_generation_finishes_and_releases_session
               - tests/integration/storage/test_postgresql_semantic_kb.py::test_postgresql_semantic_kb_reconcile_is_idempotent
               - tests/integration/tools/test_dosi_ontology.py
             notes: >
@@ -1288,6 +1292,9 @@ execution:
     - tests/integration/api/test_chat_acceptance.py::test_chat_http_sql_multiturn_history_and_delete
     - tests/integration/api/test_chat_acceptance.py::test_chat_history_is_isolated_by_user
     - tests/integration/api/test_chat_acceptance.py::test_stop_releases_session_for_the_next_request
+    - tests/integration/agent/test_datasource_switch_acceptance.py::test_same_session_switches_source_before_querying_and_authoring_metrics
+    - tests/integration/api/test_chat_acceptance.py::test_http_running_session_consumes_queued_message_once
+    - tests/integration/api/test_semantic_session_acceptance.py::test_http_semantic_generation_finishes_and_releases_session
   integration_rules:
     - id: api
       paths:
