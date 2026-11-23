@@ -1133,8 +1133,14 @@ flow_groups:
           merge_queue:
             status: not_applicable
           nightly:
-            status: external
-            notes: Live image interpretation depends on provider credentials and network access.
+            status: partial
+            nodeids:
+              - tests/integration/models/test_custom_model_preflight.py::test_self_hosted_model_reads_code_from_image
+            notes: >
+              The required Docker vision suite verifies real local-image interpretation
+              with a pinned self-hosted model. Resuming an image-bearing agent session
+              still has deterministic coverage only; provider-specific image support
+              remains dependent on external credentials and network access.
           weekly_benchmark:
             status: not_applicable
         gaps:
