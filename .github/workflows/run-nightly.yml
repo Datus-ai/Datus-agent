@@ -67,7 +67,7 @@ concurrency:
 
 jobs:
   run-nightly:
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux, X64]
     env:
       DATUS_AGENT_REF: ${{ inputs.datus_agent_ref || github.ref_name }}
       NIGHTLY_GROUP_FILTER: ${{ inputs.nightly_group_filter || '' }}
@@ -623,6 +623,7 @@ jobs:
           ci/run-nightly-tests.sh
 
       - name: Stop nightly services
+        id: nightly_cleanup
         if: always()
         env:
           EXTERNAL_REPOS_ROOT: ${{ github.workspace }}/external
@@ -639,6 +640,7 @@ jobs:
             test_output_nightly_*.log
             nightly-manifest.json
             nightly-manifest.json.execution/
+            nightly-cleanup-status.json
             ${{ env.DATUS_SQL_POLICY_RECEIPT }}
             ci/product-test-plan.json
             ci/product-execution.*/
@@ -646,10 +648,13 @@ jobs:
             nightly-failure-classification.json
             provider-coverage-manifest.json
             nightly-bi-evidence/*.json
+            nightly-vision-evidence/**/evidence.json
+            nightly-vision-evidence/**/server.log
             nightly-trace-references.jsonl
             nightly-trace-summary.jsonl
             nightly-process-diagnostics.json
             test-results/mcp/
+            test-results/hana/
             test-results/web-e2e/
           retention-days: 7
 
@@ -697,10 +702,16 @@ jobs:
             const { buildNightlyFeishuMessage, nightlyStatus } = require('./ci/format-nightly-feishu-report');
 
             const policyResult = '${{ steps.policy_release.outcome }}';
-            const testStatus = nightlyStatus(
-              '${{ steps.nightly_tests.outputs.test_exit_code }}',
-              policyResult,
-            );
+            const testExitCode = '${{ steps.nightly_tests.outputs.test_exit_code }}';
+            const testOutcome = '${{ steps.nightly_tests.outcome }}';
+            const cleanupOutcome = '${{ steps.nightly_cleanup.outcome }}';
+            const requiredStepsSucceeded = policyResult === 'success'
+              && testOutcome === 'success'
+              && cleanupOutcome === 'success'
+              && testExitCode === '0';
+            const testStatus = requiredStepsSucceeded
+              ? nightlyStatus(testExitCode, policyResult)
+              : 'FAILED';
             const today = new Date().toISOString().split('T')[0];
             const messageBody = buildNightlyFeishuMessage({
               status: testStatus,
