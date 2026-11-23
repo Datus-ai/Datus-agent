@@ -145,6 +145,27 @@ def nightly_case_scope() -> list[dict[str, str]]:
             "reason": "Scoped init is a core user-facing flow in the daily product baseline.",
         }
     ]
+    for nodeid, target in (
+        (
+            "tests/integration/tools/test_hana_semantic_verification.py::test_hana_derived_metric_bindings_and_business_verification",
+            "hana-express",
+        ),
+        ("tests/integration/agent/test_hana_chat_agentic.py::test_hana_chat_join_aggregate", "hana-express"),
+        ("tests/integration/agent/test_hana_chat_agentic.py::test_hana_chat_multi_turn", "hana-express"),
+        (
+            "tests/integration/models/test_custom_model_preflight.py::test_self_hosted_model_reads_code_from_image",
+            "self-hosted-vision",
+        ),
+    ):
+        cases.append(
+            {
+                "nodeid": nodeid,
+                "status": "required",
+                "frequency": "nightly",
+                "reason": "A dedicated service group provisions the required real Docker test dependency.",
+                "target": target,
+            }
+        )
     for nodeid, opt_in, reason in (
         (
             "tests/integration/cli/test_init_live.py::test_qwen_init_large_catalog_in_one_loop",

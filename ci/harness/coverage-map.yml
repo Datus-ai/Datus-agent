@@ -372,6 +372,9 @@ flow_groups:
               - tests/integration/adapters/test_hive.py
               - tests/integration/adapters/test_spark.py
               - tests/integration/adapters/test_gaussdb.py
+              - tests/integration/tools/test_hana_semantic_verification.py::test_hana_derived_metric_bindings_and_business_verification
+              - tests/integration/agent/test_hana_chat_agentic.py::test_hana_chat_join_aggregate
+              - tests/integration/agent/test_hana_chat_agentic.py::test_hana_chat_multi_turn
           weekly_benchmark:
             status: covered
             notes: Baisheng weekly benchmark runs Datus queries against StarRocks.
@@ -1262,6 +1265,7 @@ flow_groups:
               - tests/integration/models/test_qwen_model.py
               - tests/integration/models/test_other_models.py
               - tests/integration/models/test_deepseek_model.py
+              - tests/integration/models/test_custom_model_preflight.py::test_self_hosted_model_reads_code_from_image
           weekly_benchmark:
             status: covered
             notes: Weekly benchmark records model/target metadata for quality trend tracking.

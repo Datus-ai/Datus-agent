@@ -88,6 +88,27 @@ weekly run exists. The Apache Hive service group runs the Dosi Hive contracts
 after service startup and records the Inceptor-only system-view case as
 `not_applicable` for that target. Missing credentials never decide applicability.
 
+HANA runs in the dedicated `HANA Agent Tests` Docker group after the other
+database groups have stopped. It uses the adapter checkout's official Express
+Compose and preparation/readiness helpers, a private per-run bootstrap directory,
+an ephemeral password, and loopback port 23942. The runner must be prepared Linux
+x86_64 with the adapter's RAM, disk and kernel prerequisites. The harness checks
+those prerequisites without changing host kernel settings. Startup, readiness,
+test or cleanup failures fail the required group. HANA query/action evidence is
+uploaded from `test-results/hana/`.
+
+`Self-hosted Vision Tests` then provisions a CPU llama.cpp container with a pinned
+multi-architecture image digest and verified Qwen3-VL-2B model/projector hashes.
+The server binds a dynamic loopback port; the original test must call `read_image`
+and read a random six-digit code. Validated model files are cached across runs,
+while the container belongs to one run and is removed on cleanup. An explicitly
+configured external endpoint remains supported. Only the image/model receipt and
+server log are uploaded; its private environment file is excluded.
+
+Final cleanup writes `nightly-cleanup-status.json` and updates the step's final
+exit code. Notifications require successful policy preparation, tests and cleanup,
+so a late cleanup failure cannot retain a successful pre-cleanup report.
+
 Skill model tests copy the versioned database and skill into an isolated test
 home. Their dedicated Chat tool configuration explicitly enables `skills.*`;
 both successful skill loading and a successful node terminal result are required.

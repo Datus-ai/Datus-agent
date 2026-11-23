@@ -2,9 +2,11 @@ import json
 import os
 import shutil
 import subprocess
+import textwrap
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -46,6 +48,45 @@ def test_nightly_notification_requires_verified_policy_release(exit_code, policy
         f"const {{nightlyStatus}} = require({json.dumps(module)}); "
         f"console.log(nightlyStatus({json.dumps(exit_code)}, {json.dumps(policy_result)}));"
     )
+    result = subprocess.run([_find_node_executable(), "-e", script], check=True, capture_output=True, text=True)
+    assert result.stdout.strip() == expected
+
+
+@pytest.mark.component
+@pytest.mark.parametrize(
+    "exit_code,policy_result,test_outcome,cleanup_outcome,expected",
+    [
+        ("0", "success", "success", "success", "PASSED"),
+        ("1", "success", "success", "success", "FAILED"),
+        ("", "success", "success", "success", "FAILED"),
+        *[("0", "success", outcome, "success", "FAILED") for outcome in ("failure", "cancelled", "skipped", "")],
+        *[("0", "success", "success", outcome, "FAILED") for outcome in ("failure", "cancelled", "skipped", "")],
+        *[("0", outcome, "success", "success", "FAILED") for outcome in ("failure", "cancelled", "skipped", "")],
+    ],
+)
+def test_workflow_notification_requires_test_and_cleanup_step_success(
+    exit_code, policy_result, test_outcome, cleanup_outcome, expected
+):
+    """Execute the deployed caller's status decision without sending a webhook."""
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/run-nightly.yml").read_text())
+    steps = workflow["jobs"]["run-nightly"]["steps"]
+    cleanup = next(step for step in steps if step["name"] == "Stop nightly services")
+    notification = next(step for step in steps if step["name"] == "Send Feishu notification")
+    deployed_script = notification["with"]["script"]
+    start = deployed_script.index("const policyResult =")
+    end = deployed_script.index("const today =", start)
+    status_script = textwrap.dedent(deployed_script[start:end])
+    values = {
+        "steps.policy_release.outcome": policy_result,
+        "steps.nightly_tests.outputs.test_exit_code": exit_code,
+        "steps.nightly_tests.outcome": test_outcome,
+        f"steps.{cleanup.get('id', 'unidentified_cleanup')}.outcome": cleanup_outcome,
+    }
+    for expression, value in values.items():
+        status_script = status_script.replace("'${{ " + expression + " }}'", json.dumps(value))
+    module = str(REPO_ROOT / "ci/format-nightly-feishu-report.js")
+    script = f"const {{nightlyStatus}} = require({json.dumps(module)});\n" + status_script
+    script += "\nconsole.log(testStatus);"
     result = subprocess.run([_find_node_executable(), "-e", script], check=True, capture_output=True, text=True)
     assert result.stdout.strip() == expected
 
