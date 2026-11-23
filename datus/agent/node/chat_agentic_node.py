@@ -419,6 +419,17 @@ class ChatAgenticNode(AgenticNode):
             return
         super()._ensure_bash_tool_in_tools()
 
+    def _get_available_skills_context(self) -> str:
+        """Advertise loadable skills only when their tool family is enabled.
+
+        The base constructor can create a SkillFuncTool from a ``skills``
+        pattern even when Chat's explicit ``tools`` allowlist excludes it.
+        Keep the prompt aligned with the surface actually offered to the SDK.
+        """
+        if not self._family_enabled(self._selected_tool_families(), "skills"):
+            return ""
+        return super()._get_available_skills_context()
+
     def _ensure_skill_tools_in_tools(self) -> None:
         if not self._family_enabled(self._selected_tool_families(), "skills"):
             return

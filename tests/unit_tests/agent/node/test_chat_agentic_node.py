@@ -2892,6 +2892,25 @@ class TestChatAgenticNodeHonoursConfiguredTools:
         for expected in ("add_memory", "bash", "load_skill", "web_fetch"):
             assert expected in names
 
+    @pytest.mark.parametrize("tools", ["db_tools.*", "db_tools.*, skills.*", None])
+    def test_skill_advertising_matches_the_mounted_tool_families(self, real_agent_config, mock_llm_create, tools):
+        from datus.tools.skill_tools import SkillConfig
+
+        real_agent_config.skills_config = SkillConfig(
+            directories=[str(Path(__file__).resolve().parents[3] / "data" / "skills")]
+        )
+        real_agent_config.agentic_nodes["chat"]["skills"] = "report-*"
+        node = self._node(real_agent_config, tools=tools)
+        prompt = node._finalize_system_prompt("Configured tool availability")
+        tool_names = {tool.name for tool in node.tools}
+        if tools == "db_tools.*":
+            assert "load_skill" not in tool_names
+            assert "report-generator" not in prompt
+            assert node._get_available_skills_context() == ""
+        else:
+            assert "load_skill" in tool_names
+            assert "report-generator" in prompt
+
     def test_a_selected_family_survives_the_lazy_mount(self, real_agent_config, mock_llm_create):
         """Gating is per family, not a blanket "narrowed nodes get nothing lazy"."""
         node = self._node(real_agent_config, tools="db_tools.*, memory_tools.*")

@@ -50,6 +50,18 @@ NIGHTLY_PYTEST_ROOTS=(tests/integration tests/regression)
 # import so strict collection does not require its explicitly opt-in credentials.
 NIGHTLY_OPTIONAL_CLOUD_IGNORES=(--ignore tests/integration/adapters/test_snowflake_secrets.py)
 
+prepare_nightly_case_scope() {
+  local deselected_nodeids
+  local nodeid
+  NIGHTLY_FREQUENCY_DESELECTS=()
+  deselected_nodeids="$(uv run python ci/nightly_manifest.py case-scope --deselected-nodeids)" || return 1
+  while IFS= read -r nodeid; do
+    if [ -n "$nodeid" ]; then
+      NIGHTLY_FREQUENCY_DESELECTS+=(--deselect "$nodeid")
+    fi
+  done <<< "$deselected_nodeids"
+}
+
 default_repo_root() {
   local explicit_root="$1"
   local repo_name="$2"
@@ -869,6 +881,8 @@ trap handle_interrupt INT TERM
 rm -f "$AGENT_TEST_CONFIG_BACKUP"
 
 export DATUS_STRICT_NIGHTLY_REQUIREMENTS="${DATUS_STRICT_NIGHTLY_REQUIREMENTS:-1}"
+# The daily scoped-init product flow is required; scale/capacity remain weekly.
+export DATUS_RUN_LIVE_INIT="${DATUS_RUN_LIVE_INIT:-1}"
 export ADAPTERS_PG="${ADAPTERS_PG:-1}"
 export ADAPTERS_MYSQL="${ADAPTERS_MYSQL:-1}"
 export ADAPTERS_CH="${ADAPTERS_CH:-1}"
@@ -1620,6 +1634,43 @@ wait_for_compose_client_readiness() {
   esac
 }
 
+
+run_hive_adapter_tests() {
+  local connections_file
+  local suite_status
+
+  connections_file="$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-agent-hive-connections.XXXXXX")" || return 1
+  # JSON is valid YAML and avoids interpolating connection values into shell code.
+  if ! python3 - "$connections_file" <<'PYHIVE'
+import json
+import os
+import sys
+from pathlib import Path
+
+profile = {
+    "type": "hive",
+    "server_type": "hive",
+    "host": os.environ.get("HIVE_HOST", "localhost"),
+    "port": int(os.environ.get("HIVE_PORT", "10000")),
+    "username": os.environ.get("HIVE_USERNAME", "hive"),
+    "password": os.environ.get("HIVE_PASSWORD", ""),
+    "database": os.environ.get("HIVE_DATABASE", "default"),
+}
+Path(sys.argv[1]).write_text(json.dumps({"datasources": {"hive": profile}}), encoding="utf-8")
+PYHIVE
+  then
+    rm -f -- "$connections_file"
+    return 1
+  fi
+
+  run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env \
+    DOSI_TEST_HIVE_CONNECTIONS="$connections_file" DOSI_TEST_HIVE_CONNECTION=hive \
+    "$@"
+  suite_status=$?
+  rm -f -- "$connections_file"
+  return "$suite_status"
+}
+
 run_gaussdb_adapter_tests() {
   local project_name
   local tls_rootcert
@@ -1762,6 +1813,7 @@ NIGHTLY_STARTED_AT="$(utc_now)"
 export NIGHTLY_STARTED_AT
 rm -f "$NIGHTLY_TRACE_REFERENCES_FILE" "$NIGHTLY_TRACE_SUMMARY_FILE" "$NIGHTLY_PROCESS_DIAGNOSTICS_FILE"
 
+prepare_nightly_case_scope || exit 1
 manifest_init
 
 log "Nightly log: $LOG_FILE"
@@ -1862,6 +1914,7 @@ NIGHTLY_DEDICATED_SUITE_DESELECTS=(
   --deselect tests/integration/adapters/test_trino.py
   --deselect tests/integration/adapters/test_greenplum.py
   --deselect tests/integration/adapters/test_hive.py
+  --deselect tests/integration/tools/test_dosi_hive.py
   --deselect tests/integration/adapters/test_spark.py
   --deselect tests/integration/adapters/test_gaussdb.py
   --deselect tests/regression/test_regression_web_e2e.py
@@ -1871,9 +1924,9 @@ if [ -z "${PRODUCT_TEST_BASE_REF:-}" ]; then
   NIGHTLY_DEDICATED_SUITE_DESELECTS+=(--deselect tests/integration/agent/test_core_live.py)
 fi
 
-run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and not provider_health and not product_e2e" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
+run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and not provider_health and not product_e2e" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" "${NIGHTLY_FREQUENCY_DESELECTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
 
-run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and product_e2e and not provider_health" "${PRODUCT_E2E_ROOTS[@]}" "${PRODUCT_REQUIRED_ARGS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
+run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and product_e2e and not provider_health" "${PRODUCT_E2E_ROOTS[@]}" "${PRODUCT_REQUIRED_ARGS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" "${NIGHTLY_FREQUENCY_DESELECTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
 # Scheduled Nightly runs the explicit Superset export/bootstrap
 # contracts. A targeted evaluation also retains the other affected node cases.
@@ -1897,7 +1950,7 @@ run_compose_suite "Doris Adapter Tests" "$DORIS_COMPOSE" "doris:600" -- run_with
 run_compose_suite "TiDB Adapter Tests" "$TIDB_COMPOSE" "tidb:120" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_tidb.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Trino Adapter Tests" "$TRINO_COMPOSE" "trino:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_trino.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Greenplum Adapter Tests" "$GREENPLUM_COMPOSE" "greenplum:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_greenplum.py --tb=short --verbose --timeout=300 --timeout-method=thread
-run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_hive.py --tb=short --verbose --timeout=300 --timeout-method=thread
+run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- run_hive_adapter_tests env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_hive.py tests/integration/tools/test_dosi_hive.py --deselect tests/integration/tools/test_dosi_hive.py::test_native_inceptor_system_varchar2_metrics --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Spark Adapter Tests" "$SPARK_COMPOSE" "spark-thrift:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "GaussDB Adapter Tests" "$GAUSSDB_COMPOSE" "gaussdb:600" -- run_gaussdb_adapter_tests env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_gaussdb.py --tb=short --verbose --timeout=300 --timeout-method=thread
 

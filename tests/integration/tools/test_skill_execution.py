@@ -80,9 +80,9 @@ class TestLocalSkillDiscoveryAndExecutionGate:
 class TestRealLLMSkillExecution:
     """Real-LLM execution of an installed local skill via ChatAgenticNode.
 
-    Reuses the ``llm_agent_config`` fixture (skips automatically when the
-    DEEPSEEK key, california_schools DB, or the local report-generator skill is
-    missing). No marketplace network is touched.
+    Reuses ``llm_agent_config`` with isolated, versioned california_schools
+    and report-generator fixtures. The model transport stays real; no
+    marketplace network is touched.
     """
 
     QUESTION = (
@@ -127,7 +127,12 @@ class TestRealLLMSkillExecution:
         has_load_skill = "load_skill" in action_types
         assert has_load_skill, f"Agent should invoke load_skill for a local skill. Action types: {action_types}"
 
+        successful_loads = [
+            action
+            for action in all_actions
+            if action.role == "tool" and action.action_type == "load_skill" and action.status == "success"
+        ]
+        assert successful_loads, "Loading the requested local skill must actually succeed"
         final_action = all_actions[-1]
-        assert final_action.status in ("success", "failed"), (
-            f"Run must reach a terminal status, got {final_action.status}"
-        )
+        assert final_action.status == "success", f"Skill execution failed: {final_action.output}"
+        assert node.result.success, node.result.error

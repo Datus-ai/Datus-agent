@@ -79,6 +79,23 @@ run. Coverage checks use actual passed/failed cases, never collection alone;
 skipped, expected-failure and unexecuted cases do not satisfy coverage claims.
 Declared coverage gaps remain in the advisory coverage digest.
 
+`case_scope` records the ordinary scoped-init journey as a daily requirement.
+The 20,000-table init and long-input capacity scenarios are collected only with
+their explicit `DATUS_RUN_LIVE_INIT_SCALE=1` / `DATUS_RUN_LIVE_CAPACITY=1` opt-ins;
+otherwise they are recorded as `scheduled_out` with weekly frequency and a
+reason. This declares their intended frequency; it does not claim an automated
+weekly run exists. The Apache Hive service group runs the Dosi Hive contracts
+after service startup and records the Inceptor-only system-view case as
+`not_applicable` for that target. Missing credentials never decide applicability.
+
+Skill model tests copy the versioned database and skill into an isolated test
+home. Their dedicated Chat tool configuration explicitly enables `skills.*`;
+both successful skill loading and a successful node terminal result are required.
+These checks certify loading/invocation, not completion of every script supplied
+by the example skill. GitHub document-fetch tests receive the workflow's existing
+read-only token. Provider health uses the supported Qwen test alias rather than
+the retired `qwen3-coder-plus`; product defaults are unchanged.
+
 Core acceptance includes the regression-plan contracts A01 (same-session
 datasource switch and metric isolation), A11 (HTTP queued message consumed once)
 and A09 (semantic generation, independent metric query, terminal session and
