@@ -327,6 +327,27 @@ def test_metric_bundle_validation_rejects_mismatched_sidecars(environment, chang
     assert "Invalid saved metric query" in tools._validate_metric_queries("report")
 
 
+@pytest.mark.parametrize(
+    "cls, tool_name",
+    [(ReportArtifactTools, "save_query"), (DashboardArtifactTools, "save_query_template")],
+)
+@pytest.mark.parametrize("with_semantic_tools", [False, True])
+def test_raw_sql_tool_schema_reflects_fallback_contract(environment, cls, tool_name, with_semantic_tools):
+    tools = cls(
+        agent_config=environment.config,
+        db_func_tool=environment.db,
+        semantic_tools=environment.semantic if with_semantic_tools else None,
+    )
+    tool = next(tool for tool in tools.available_tools() if tool.name == tool_name)
+    schema = tool.params_json_schema
+    assert ("fallback_reason" in schema["required"]) is with_semantic_tools
+    assert "candidate_metrics" not in schema["required"]
+    candidates = schema["properties"]["candidate_metrics"]
+    array = next(option for option in candidates["anyOf"] if option.get("type") == "array")
+    item = schema["$defs"][array["items"]["$ref"].split("/")[-1]]
+    assert set(item["required"]) == {"path", "name"}
+
+
 def test_sql_fallback_requires_recorded_reason_and_clears_previous_metric_source(environment):
     tools, saved = _save(environment)
     assert saved.success == 1

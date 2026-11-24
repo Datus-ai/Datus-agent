@@ -31,10 +31,13 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Literal, Optional, Set
 
+import pyarrow as pa
 from agents import Tool
+from datus_db_core import BaseSqlConnector
 
+from datus.schemas.analysis_artifacts import SubjectAssetRef
 from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.schemas.gen_visual_report_models import (
     QUERY_SLUG_RE,
@@ -43,19 +46,22 @@ from datus.schemas.gen_visual_report_models import (
     QueryResultFile,
     extract_query_slug,
 )
+from datus.schemas.node_models import ExecuteSQLResult
 from datus.tools.db_tools.connection_scope import connection_scope
+from datus.tools.db_tools.sqlite_connector import SQLiteConnector
 from datus.tools.func_tool._artifact_filesystem_base import ArtifactFilesystemFuncTool
 from datus.tools.func_tool._jsx_hooks_lint import format_hook_order_issues
 from datus.tools.func_tool._visual_artifact_cards import scan_render_cards
 from datus.tools.func_tool._visual_artifact_helpers import (
     append_intent_section,
     coerce_uses_arg,
+    raw_sql_save_tool,
     touch_manifest_after_save,
     utc_now_iso,
     write_query_brief,
 )
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
-from datus.tools.func_tool.metric_artifact_tools import MetricArtifactToolsMixin
+from datus.tools.func_tool.metric_artifact_tools import MetricArtifactToolsMixin, _arrow_column_type
 from datus.tools.registry.contracts import tool_contract
 from datus.utils.artifact_output import artifact_output_root, current_artifact_slug_factory
 from datus.utils.loggings import get_logger
@@ -191,6 +197,39 @@ def _normalize_value(value: Any) -> Any:
         except UnicodeDecodeError:
             return value.hex()
     return str(value)
+
+
+def _query_result_format(connector: BaseSqlConnector) -> Literal["list", "arrow"]:
+    # SQLite permits values of different types in the same column.
+    return "list" if isinstance(connector, SQLiteConnector) else "arrow"
+
+
+def _query_rows_and_columns(execute_result: ExecuteSQLResult) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Preserve projected columns from a zero-row query or trial."""
+    result = execute_result.sql_return
+    if isinstance(result, pa.Table):
+        # Match the row-list result's last-value behavior for repeated labels.
+        names = result.column_names
+        indices = dict(zip(names, range(result.num_columns)))
+        if len(indices) != result.num_columns:
+            result = result.select(list(indices.values()))
+        if result.num_rows == 0:
+            return [], [{"name": field.name, "type": _arrow_column_type(field.type)} for field in result.schema]
+        result = result.to_pylist()
+    if not isinstance(result, list):
+        raise ValueError("Unexpected query result format; expected an Arrow table or a list of dictionaries")
+    if any(not isinstance(row, dict) for row in result):
+        raise ValueError("Unexpected query row format; expected one dictionary per row")
+
+    if not result:
+        # SQLite's cursor descriptions provide names, but no column types.
+        names = dict.fromkeys(getattr(execute_result, "column_names", None) or [])
+        return [], [{"name": name, "type": "string"} for name in names]
+
+    rows = [{key: _normalize_value(value) for key, value in row.items()} for row in result]
+    names = dict.fromkeys(key for row in rows for key in row)
+    columns = [{"name": name, "type": _infer_column_type([row.get(name) for row in rows[:200]])} for name in names]
+    return rows, columns
 
 
 def _looks_like_select(sql: str) -> bool:
@@ -349,11 +388,7 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
         return [
             trans_to_function_tool(self.start_new_report),
             trans_to_function_tool(self.bind_existing_report),
-            # ``save_query.uses`` is a free-form ``Dict[str, List[str]]`` —
-            # strict-mode JSON schema rejects ``additionalProperties: true``
-            # which ``Dict[str, Any]`` emits. We validate the shape
-            # ourselves via :func:`coerce_uses_arg` once the call lands.
-            trans_to_function_tool(self.save_query, strict_mode=False),
+            raw_sql_save_tool(self.save_query, require_fallback_reason=self._semantic_tools is not None),
             trans_to_function_tool(self.save_metric_query, strict_mode=False),
             trans_to_function_tool(self.validate_render),
         ]
@@ -592,7 +627,7 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
         caveats: str = "",
         datasource: str = "",
         fallback_reason: str = "",
-        candidate_metrics: Optional[List[Dict[str, Any]]] = None,
+        candidate_metrics: Optional[List[SubjectAssetRef]] = None,
     ) -> FuncToolResult:
         """
         Run a read-only SQL, persist the SQL text, the result, AND the per-query brief sidecar.
@@ -639,6 +674,12 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
                 no implicit assumptions get an empty string — filler like
                 "no caveats" is NOT acceptable.
             datasource: Logical datasource name. Empty string uses the default.
+            fallback_reason: Required when metric tools are available. Explain
+                what the inspected metrics cannot express. Permission and
+                connection failures are not semantic gaps.
+            candidate_metrics: Metrics inspected before choosing raw SQL.
+                Copy each metric's path (list of strings) and name from
+                discovery. Omit or pass [] if no relevant metric was found.
 
         Returns:
             FuncToolResult.result is a dict like::
@@ -687,7 +728,10 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
         if self._semantic_tools is not None and not fallback_reason.strip():
             return FuncToolResult(
                 success=0,
-                error="Use the single-metric save tool whenever it meets the need. SQL fallback requires fallback_reason and candidate_metrics after checking metric capabilities.",
+                error=(
+                    "SQL fallback requires a non-empty fallback_reason explaining the semantic gap. "
+                    "Pass the inspected metrics as candidate_metrics entries with path and name, or [] if none were found."
+                ),
             )
         source_selection = (
             {"reason": fallback_reason.strip(), "candidate_metrics": candidate_metrics or []}
@@ -730,7 +774,7 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
             # apply here too — a bare connector.execute_query would let an
             # unbounded statement reach the engine and OOM the DB backend.
             execute_result = self._db_func_tool.execute_read_enforced(
-                sql, connector, datasource=datasource, result_format="list"
+                sql, connector, datasource=datasource, result_format=_query_result_format(connector)
             )
         except Exception as exc:
             logger.exception("save_query execute_query crashed", extra={"name": name})
@@ -742,30 +786,10 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
                 error=f"Query failed: {execute_result.error}",
             )
 
-        rows_raw = execute_result.sql_return or []
-        if not isinstance(rows_raw, list):
-            return FuncToolResult(
-                success=0,
-                error="Unexpected result format from connector; expected list of dicts",
-            )
-        rows: List[Dict[str, Any]] = []
-        column_names: List[str] = []
-        for row in rows_raw:
-            if not isinstance(row, dict):
-                return FuncToolResult(
-                    success=0,
-                    error="Unexpected row format from connector; expected dict per row",
-                )
-            normalized = {k: _normalize_value(v) for k, v in row.items()}
-            rows.append(normalized)
-            for key in row.keys():
-                if key not in column_names:
-                    column_names.append(key)
-
-        columns_meta: List[Dict[str, str]] = []
-        for col_name in column_names:
-            sample = [row.get(col_name) for row in rows[:200]]
-            columns_meta.append({"name": col_name, "type": _infer_column_type(sample)})
+        try:
+            rows, columns_meta = _query_rows_and_columns(execute_result)
+        except ValueError as exc:
+            return FuncToolResult(success=0, error=str(exc))
 
         if not columns_meta:
             return FuncToolResult(

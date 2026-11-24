@@ -26,6 +26,7 @@ No mocks; we use a real SQLite database wired through ``DBFuncTool`` so
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -344,6 +345,61 @@ class TestInferColumnType:
 
 
 class TestSaveQuery:
+    def test_preserves_mixed_sqlite_values(self, report_tools: ReportArtifactTools, project_root: Path):
+        result = report_tools.save_query(
+            name="mixed_values",
+            sql="SELECT 7 AS value, X'6f6b' AS detail UNION ALL SELECT 'unknown', X'ff'",
+            goal="Inspect mixed data values",
+            hypothesis="The query returns a number and a status in the same column.",
+        )
+
+        assert result.success == 1, result.error
+        saved = json.loads((project_root / result.result["json_path"]).read_text(encoding="utf-8"))
+        assert saved["rows"] == [{"value": 7, "detail": "ok"}, {"value": "unknown", "detail": "ff"}]
+
+    def test_saves_projection_when_no_rows_match(self, report_tools: ReportArtifactTools, project_root: Path):
+        result = report_tools.save_query(
+            name="unmatched_sales",
+            sql="SELECT store_name, sales FROM sales WHERE month = 99",
+            goal="Sales in the selected month",
+            hypothesis="No sales were recorded in that month.",
+        )
+
+        assert result.success == 1, result.error
+        saved = json.loads((project_root / result.result["json_path"]).read_text(encoding="utf-8"))
+        assert saved["row_count"] == 0
+        assert saved["rows"] == []
+        assert [column["name"] for column in saved["columns"]] == ["store_name", "sales"]
+
+    @pytest.mark.parametrize(
+        "predicate, expected_rows",
+        [("TRUE", [{"qty": 7, "order_date": "2026-01-01"}]), ("FALSE", [])],
+    )
+    def test_preserves_duckdb_projection(self, project_root: Path, predicate: str, expected_rows: list):
+        from datus.tools.db_tools.config import DuckDBConfig
+        from datus.tools.db_tools.duckdb_connector import DuckdbConnector
+
+        connector = DuckdbConnector(DuckDBConfig(db_path=str(project_root / "orders.duckdb")))
+        db = DBFuncTool(connector_or_manager=connector)
+        try:
+            tools = ReportArtifactTools(agent_config=SimpleNamespace(project_root=str(project_root)), db_func_tool=db)
+            started = tools.start_new_report("orders", "Orders", "Orders in the selected period")
+            assert started.success == 1, started.error
+            result = tools.save_query(
+                name="orders",
+                sql=f"SELECT 1 AS qty, 7 AS qty, DATE '2026-01-01' AS order_date WHERE {predicate}",
+                goal="Orders in the selected period",
+                hypothesis="The projection includes quantity and order date.",
+            )
+
+            assert result.success == 1, result.error
+            saved = json.loads((project_root / result.result["json_path"]).read_text(encoding="utf-8"))
+            assert saved["row_count"] == len(expected_rows)
+            assert saved["rows"] == expected_rows
+            assert saved["columns"] == [{"name": "qty", "type": "integer"}, {"name": "order_date", "type": "date"}]
+        finally:
+            db.close()
+
     def test_persists_sql_and_json(self, report_tools: ReportArtifactTools, project_root: Path):
         result = report_tools.save_query(
             name="sales_by_store",

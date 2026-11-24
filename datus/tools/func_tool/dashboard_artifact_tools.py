@@ -34,6 +34,7 @@ from jinja2 import StrictUndefined
 from jinja2.exceptions import TemplateError
 from jinja2.sandbox import SandboxedEnvironment
 
+from datus.schemas.analysis_artifacts import SubjectAssetRef
 from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.schemas.gen_visual_dashboard_models import (
     DASHBOARD_SLUG_RE,
@@ -50,6 +51,7 @@ from datus.tools.func_tool._visual_artifact_cards import scan_render_cards
 from datus.tools.func_tool._visual_artifact_helpers import (
     append_intent_section,
     coerce_uses_arg,
+    raw_sql_save_tool,
     touch_manifest_after_save,
     utc_now_iso,
     write_query_brief,
@@ -61,10 +63,11 @@ from datus.tools.func_tool.report_artifact_tools import (
     _IMPORT_PATH_RE,
     ALLOWED_BARE_MODULES,
     _atomic_write_text,
-    _infer_column_type,
     _looks_like_select,
     _module_key,
     _normalize_value,
+    _query_result_format,
+    _query_rows_and_columns,
     _resolve_relative_import,
 )
 from datus.tools.registry.contracts import tool_contract
@@ -401,12 +404,7 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
         return [
             trans_to_function_tool(self.start_new_dashboard),
             trans_to_function_tool(self.bind_existing_dashboard),
-            # ``save_query_template.sample_params`` is a free-form ``Dict[str, Any]``
-            # — the keys are whatever the LLM declared in ``-- @datus-params`` and
-            # the values are scalars / arrays. Strict mode would reject the
-            # ``additionalProperties: true`` JSON schema this produces; we
-            # validate keys + types ourselves once the call lands.
-            trans_to_function_tool(self.save_query_template, strict_mode=False),
+            raw_sql_save_tool(self.save_query_template, require_fallback_reason=self._semantic_tools is not None),
             trans_to_function_tool(self.save_metric_query_template, strict_mode=False),
             trans_to_function_tool(self.validate_render),
         ]
@@ -642,7 +640,7 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
         caveats: str = "",
         datasource: str = "",
         fallback_reason: str = "",
-        candidate_metrics: Optional[List[Dict[str, Any]]] = None,
+        candidate_metrics: Optional[List[SubjectAssetRef]] = None,
     ) -> FuncToolResult:
         """
         Persist a parameterized Jinja2 SQL template after a trial render,
@@ -693,6 +691,12 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
                 an empty string — filler like "no caveats" is NOT
                 acceptable.
             datasource: Logical datasource name. Empty string uses the default.
+            fallback_reason: Required when metric tools are available. Explain
+                what the inspected metrics cannot express. Permission and
+                connection failures are not semantic gaps.
+            candidate_metrics: Metrics inspected before choosing raw SQL.
+                Copy each metric's path (list of strings) and name from
+                discovery. Omit or pass [] if no relevant metric was found.
 
         Returns:
             FuncToolResult.result is a dict like::
@@ -745,7 +749,10 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
         if self._semantic_tools is not None and not fallback_reason.strip():
             return FuncToolResult(
                 success=0,
-                error="Use the single-metric save tool whenever it meets the need. SQL fallback requires fallback_reason and candidate_metrics after checking metric capabilities.",
+                error=(
+                    "SQL fallback requires a non-empty fallback_reason explaining the semantic gap. "
+                    "Pass the inspected metrics as candidate_metrics entries with path and name, or [] if none were found."
+                ),
             )
         source_selection = (
             {"reason": fallback_reason.strip(), "candidate_metrics": candidate_metrics or []}
@@ -862,7 +869,7 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
             # Enforced-read path: apply SQL policy + multi-statement rejection
             # to the trial render so a runaway template can't OOM the engine.
             execute_result = self._db_func_tool.execute_read_enforced(
-                rendered_sql, connector, datasource=datasource, result_format="list"
+                rendered_sql, connector, datasource=datasource, result_format=_query_result_format(connector)
             )
         except Exception as exc:
             logger.exception("save_query_template trial execute crashed", extra={"name": name})
@@ -874,30 +881,10 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
                 error=f"Trial query failed: {execute_result.error}",
             )
 
-        rows_raw = execute_result.sql_return or []
-        if not isinstance(rows_raw, list):
-            return FuncToolResult(
-                success=0,
-                error="Unexpected result format from connector; expected list of dicts",
-            )
-        rows: List[Dict[str, Any]] = []
-        column_names: List[str] = []
-        for row in rows_raw:
-            if not isinstance(row, dict):
-                return FuncToolResult(
-                    success=0,
-                    error="Unexpected row format from connector; expected dict per row",
-                )
-            normalized = {k: _normalize_value(v) for k, v in row.items()}
-            rows.append(normalized)
-            for key in row.keys():
-                if key not in column_names:
-                    column_names.append(key)
-
-        columns_meta: List[Dict[str, str]] = []
-        for col_name in column_names:
-            sample = [row.get(col_name) for row in rows[:200]]
-            columns_meta.append({"name": col_name, "type": _infer_column_type(sample)})
+        try:
+            rows, columns_meta = _query_rows_and_columns(execute_result)
+        except ValueError as exc:
+            return FuncToolResult(success=0, error=str(exc))
 
         if not columns_meta:
             return FuncToolResult(

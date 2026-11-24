@@ -446,6 +446,8 @@ class ExecuteSQLResult(BaseResult):
         default=None, description="The result of SQL execution (string or Arrow data)"
     )
     result_format: str = Field(default="", description="Format of the result: 'csv' or 'arrow' or 'pandas' or 'list'")
+    # Cursor metadata for empty queries where rows cannot describe the projection.
+    column_names: Optional[list[str]] = Field(default=None, exclude=True, repr=False)
 
     def compact_result(self) -> str:
         """

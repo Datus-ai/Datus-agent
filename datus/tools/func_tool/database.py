@@ -3224,7 +3224,7 @@ class DBFuncTool(BulkQueryTools):
         LLM ``read_query`` path plus the report/dashboard artifact save paths
         and dashboard view-time re-execution. Rejects multi-statement input and
         applies configured policy runtimes (rewrites / denials) before
-        the statement reaches the engine, then returns the connector's raw
+        the statement reaches the engine, then returns the
         ``ExecuteSQLResult`` after result policies have run. Without this,
         artifact query execution bypassed policy enforcement
         and could hand the engine an unbounded statement (e.g. a cross-join
@@ -3347,6 +3347,12 @@ class DBFuncTool(BulkQueryTools):
                     error="Read policy transformed the reference result; complete calculation verification is unavailable.",
                     sql_query=enforced_sql,
                 )
+            if result_decision.result is not result.sql_return:
+                column_names = getattr(result_decision, "column_names", None) if result_format == "list" else None
+                if column_names is not None and not hasattr(result, "column_names"):
+                    result = ExecuteSQLResult.model_validate(result, from_attributes=True)
+                if hasattr(result, "column_names"):
+                    result.column_names = column_names
             result.sql_return = result_decision.result
             if typed_policy_result and result_format in {"csv", "pandas"}:
                 import pandas as pd

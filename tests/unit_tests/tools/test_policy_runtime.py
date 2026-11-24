@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from datus.schemas.node_models import ExecuteSQLResult
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.policy_runtime import PolicyRuntime
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -393,7 +394,8 @@ def connector():
 
 
 @pytest.mark.parametrize("allowed", [False, True])
-def test_db_read_cannot_skip_a_batch_only_policy(monkeypatch, allowed):
+@pytest.mark.parametrize("emails", [[], ["a@example.com"]])
+def test_db_read_cannot_skip_a_batch_only_policy(monkeypatch, allowed, emails):
     import pyarrow as pa
 
     received = []
@@ -402,7 +404,7 @@ def test_db_read_cannot_skip_a_batch_only_policy(monkeypatch, allowed):
         received.append(table.to_pylist())
         return SimpleNamespace(
             allowed=allowed,
-            result=table.set_column(0, "email", pa.array(["masked"] * table.num_rows)),
+            result=table.set_column(0, "masked_email", pa.array(["masked"] * table.num_rows, type=pa.string())),
             reason="Batch policy denied read",
             applied_policies=["mask"],
         )
@@ -412,18 +414,61 @@ def test_db_read_cannot_skip_a_batch_only_policy(monkeypatch, allowed):
         lambda active: {"sql-policy": lambda profile: SimpleNamespace(after_read_batch=hook)},
     )
     db = connector()
-    db.execute_query.return_value = SimpleNamespace(
-        success=True, sql_return=pa.table({"email": ["a@example.com"]}), error=None, result_format="arrow"
+    db.execute_query.return_value = ExecuteSQLResult(
+        success=True,
+        sql_return=pa.table({"email": pa.array(emails, type=pa.string())}),
+        result_format="arrow",
+        column_names=["email"] if not emails else None,
     )
     result = make_db_tool(db, config()).execute_read_enforced("SELECT * FROM orders", db)
-    assert received == [[{"email": "a@example.com"}]]
+    assert received == [[{"email": email} for email in emails]]
     if allowed:
         assert result.success is True
-        assert result.sql_return == [{"email": "masked"}]
+        assert result.sql_return == [{"masked_email": "masked"} for _ in emails]
+        assert result.column_names == ["masked_email"]
     else:
         assert result.success is False
         assert result.error == "Batch policy denied read"
         assert result.sql_return is None
+
+
+@pytest.mark.parametrize("discard_projection", [False, True])
+def test_db_read_keeps_only_the_final_authoritative_arrow_projection(monkeypatch, discard_projection):
+    import pyarrow as pa
+    from datus_db_core.models import ExecuteSQLResult as ConnectorResult
+
+    def project(result, **kwargs):
+        return SimpleNamespace(allowed=True, result=pa.table({"masked_email": pa.array([], type=pa.string())}))
+
+    def discard(result, **kwargs):
+        return SimpleNamespace(allowed=True, result=[])
+
+    received_columns = []
+
+    def pass_batch(table, **kwargs):
+        received_columns.append(table.column_names)
+        return SimpleNamespace(allowed=True, result=table)
+
+    policies = {"project": lambda profile: SimpleNamespace(after_read_result=project)}
+    if discard_projection:
+        policies["discard"] = lambda profile: SimpleNamespace(after_read_result=discard)
+    policies["batch"] = lambda profile: SimpleNamespace(after_read_batch=pass_batch)
+    monkeypatch.setattr("datus.tools.policy_runtime.collect_plugin_policy_runtime_factories", lambda active: policies)
+
+    db = connector()
+    db.execute_query.return_value = ConnectorResult(
+        success=True, sql_return=pa.table({"email": pa.array([], type=pa.string())}), result_format="arrow"
+    )
+    result = make_db_tool(db, config()).execute_read_enforced("SELECT email FROM orders WHERE 1 = 0", db)
+
+    assert result.success is True
+    assert result.sql_return == []
+    if discard_projection:
+        assert received_columns == [[]]
+        assert getattr(result, "column_names", None) is None
+    else:
+        assert received_columns == [["masked_email"]]
+        assert result.column_names == ["masked_email"]
 
 
 def test_db_read_applies_before_and_after_hooks(monkeypatch):
@@ -439,6 +484,25 @@ def test_db_read_applies_before_and_after_hooks(monkeypatch):
     assert db.execute_query.call_args.args[0] == "SELECT * FROM orders WHERE store_id = 1"
     assert result.sql_return == [{"email": "***"}]
     assert fake.contexts[-1] == cfg.policy_context
+
+
+@pytest.mark.parametrize("replacement, expected_columns", [(None, ["email"]), ([], None)])
+def test_db_read_carries_empty_projection_only_for_original_result(monkeypatch, replacement, expected_columns):
+    fake = FakeRuntime(result=replacement)
+    monkeypatch.setattr(
+        "datus.tools.policy_runtime.collect_plugin_policy_runtime_factories",
+        lambda active: {"sql-policy": lambda profile: fake},
+    )
+    db = connector()
+    db.execute_query.return_value = ExecuteSQLResult(
+        success=True, sql_return=[], result_format="list", column_names=["email"]
+    )
+
+    result = make_db_tool(db, config()).execute_read_enforced("SELECT email FROM orders WHERE 1 = 0", db)
+
+    assert result.success is True
+    assert result.sql_return == []
+    assert result.column_names == expected_columns
 
 
 @pytest.mark.parametrize("level", [logging.DEBUG, logging.INFO])
