@@ -26,6 +26,7 @@ No mocks; we use a real SQLite database wired through ``DBFuncTool`` so
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -344,6 +345,20 @@ class TestInferColumnType:
 
 
 class TestSaveQuery:
+    def test_saves_projection_when_no_rows_match(self, report_tools: ReportArtifactTools, project_root: Path):
+        result = report_tools.save_query(
+            name="unmatched_sales",
+            sql="SELECT store_name, sales FROM sales WHERE month = 99",
+            goal="Sales in the selected month",
+            hypothesis="No sales were recorded in that month.",
+        )
+
+        assert result.success == 1, result.error
+        saved = json.loads((project_root / result.result["json_path"]).read_text(encoding="utf-8"))
+        assert saved["row_count"] == 0
+        assert saved["rows"] == []
+        assert [column["name"] for column in saved["columns"]] == ["store_name", "sales"]
+
     def test_persists_sql_and_json(self, report_tools: ReportArtifactTools, project_root: Path):
         result = report_tools.save_query(
             name="sales_by_store",

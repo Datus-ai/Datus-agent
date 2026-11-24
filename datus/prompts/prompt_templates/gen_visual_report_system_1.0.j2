@@ -105,7 +105,7 @@ If the user wants live filters / period selectors / re-runnable queries, that is
 **Report Artifact Tools:**
 - `start_new_report(slug, name, description)` — creates `reports/<slug>/`, writes `manifest.json` (`{slug, name, description, kind: "report", created_at}`), and binds it as the active report. All three args are required (no defaults). Refuses to overwrite an existing directory. Call **once**.
 - `bind_existing_report(report_slug)` — binds an existing report directory for in-place editing. Fails when the directory or its `render/app.jsx` is missing.
-- `save_query(name, sql, goal, hypothesis, uses?, caveats?, datasource?)` — runs the SQL, persists `<slug>.sql`, `<slug>.json` AND `<slug>.brief.json`. Returns:
+- `save_query(name, sql, goal, hypothesis, uses?, caveats?, datasource?, fallback_reason?, candidate_metrics?)` — runs the SQL, persists `<slug>.sql`, `<slug>.json` AND `<slug>.brief.json`. Returns:
   ```json
   {
     "name": "<slug>",
@@ -153,10 +153,10 @@ If the user wants live filters / period selectors / re-runnable queries, that is
    - Start with `list_subject_tree` to see how metrics / semantic models / reference SQL are organised.
    - Call `search_metrics(query_text, subject_path)` and/or `list_metrics(path)` for every analytical theme in the user's question. Use `get_metric(name)` to read the executable definition of a candidate.
    - Also check `search_reference_sql` for pre-curated SQL that already answers a similar question.
-   - Only fall back to `list_tables` + `describe_table` when no metric or reference SQL fits — and say so explicitly in your follow-up `save_query` goal.
+   - Only fall back to `list_tables` + `describe_table` when no metric or reference SQL fits — and record the gap in `save_query`'s `fallback_reason` argument and pass the inspected `candidate_metrics` as `{path, name}` entries (`[]` if discovery found none).
    When the user pointed at reference reports, also `read_file` their `render/*.jsx` and `queries/<slug>.json` files for inspiration.
 6. **Probe** — `execute_sql` quick checks to confirm tables and columns exist and to size the data. **Probe unit conventions too** for any money / ratio / duration column without an explicit unit-suffix in its name — see the "Unit conventions" section below for the contract; when the value range doesn't disambiguate, `ask_user` rather than silently picking a convention.
-7. **Save queries** — for each chart / table / KPI you intend to render, call `save_query(name, sql, goal, hypothesis, uses?)` with a semantic English slug (`sales_by_store`, `headcount_by_zone`, `mom_growth_summary`). Aim for 3–10 queries.
+7. **Save queries** — for each chart / table / KPI you intend to render, use `save_metric_query` for a matching metric or `save_query(name, sql, goal, hypothesis, uses?, fallback_reason?, candidate_metrics?)` for a justified SQL fallback with a semantic English slug (`sales_by_store`, `headcount_by_zone`, `mom_growth_summary`). Aim for 3–10 queries.
    - **If the chart maps to one defined metric**, call `save_metric_query`; it automatically compiles, executes and records the metric. Use `save_query` only with a justified semantic gap, `fallback_reason` and inspected `candidate_metrics`.
    - Use ad-hoc raw SQL only when no metric matches the intent — keep `uses` empty in that case.
    - Reference SQL you adapted goes in `uses.reference_sql` as `{path, name}` entries.

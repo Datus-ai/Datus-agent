@@ -30,11 +30,14 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
+
+from agents import FunctionTool
 
 from datus.schemas.action_history import ActionHistory
 from datus.schemas.analysis_artifacts import QueryBrief, SubjectRefs
 from datus.schemas.artifact_manifest import ArtifactManifest
+from datus.tools.func_tool.base import trans_to_function_tool
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -71,6 +74,19 @@ def _is_meaningful_intent(message: str) -> bool:
         if pattern.search(text):
             return False
     return True
+
+
+def raw_sql_save_tool(method: Callable, *, require_fallback_reason: bool) -> FunctionTool:
+    """Expose the raw SQL save contract for the tools mounted in this run."""
+    # uses and sample_params accept keys that are validated at execution time.
+    tool = trans_to_function_tool(method, strict_mode=False)
+    if require_fallback_reason:
+        schema = tool.params_json_schema
+        schema["required"].append("fallback_reason")
+        reason = schema["properties"]["fallback_reason"]
+        reason.pop("default", None)
+        reason["minLength"] = 1
+    return tool
 
 
 def utc_now_iso() -> str:
