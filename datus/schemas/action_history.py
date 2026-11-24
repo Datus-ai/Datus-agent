@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from datus.utils.loggings import get_logger
 
@@ -58,6 +58,8 @@ class ActionHistory(BaseModel):
     end_time: Optional[datetime] = Field(default=None, description="End time of the action")
     depth: int = Field(default=0, description="Nesting depth for hierarchical display (0=main, 1=sub-agent)")
     parent_action_id: Optional[str] = Field(default=None, description="Parent action ID for grouping sub-actions")
+    # On replay this identifies the archived task result by its original row.
+    _indexed_child_session_id: Optional[str] = PrivateAttr(default=None)
 
     @classmethod
     def create_action(
