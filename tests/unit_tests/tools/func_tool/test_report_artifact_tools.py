@@ -371,6 +371,35 @@ class TestSaveQuery:
         assert saved["rows"] == []
         assert [column["name"] for column in saved["columns"]] == ["store_name", "sales"]
 
+    @pytest.mark.parametrize(
+        "predicate, expected_rows",
+        [("TRUE", [{"qty": 7, "order_date": "2026-01-01"}]), ("FALSE", [])],
+    )
+    def test_preserves_duckdb_projection(self, project_root: Path, predicate: str, expected_rows: list):
+        from datus.tools.db_tools.config import DuckDBConfig
+        from datus.tools.db_tools.duckdb_connector import DuckdbConnector
+
+        connector = DuckdbConnector(DuckDBConfig(db_path=str(project_root / "orders.duckdb")))
+        db = DBFuncTool(connector_or_manager=connector)
+        try:
+            tools = ReportArtifactTools(agent_config=SimpleNamespace(project_root=str(project_root)), db_func_tool=db)
+            started = tools.start_new_report("orders", "Orders", "Orders in the selected period")
+            assert started.success == 1, started.error
+            result = tools.save_query(
+                name="orders",
+                sql=f"SELECT 1 AS qty, 7 AS qty, DATE '2026-01-01' AS order_date WHERE {predicate}",
+                goal="Orders in the selected period",
+                hypothesis="The projection includes quantity and order date.",
+            )
+
+            assert result.success == 1, result.error
+            saved = json.loads((project_root / result.result["json_path"]).read_text(encoding="utf-8"))
+            assert saved["row_count"] == len(expected_rows)
+            assert saved["rows"] == expected_rows
+            assert saved["columns"] == [{"name": "qty", "type": "integer"}, {"name": "order_date", "type": "date"}]
+        finally:
+            db.close()
+
     def test_persists_sql_and_json(self, report_tools: ReportArtifactTools, project_root: Path):
         result = report_tools.save_query(
             name="sales_by_store",
