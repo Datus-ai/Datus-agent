@@ -2,7 +2,9 @@
 
 ## Overview
 
-`gen_visual_report` turns a question — *"how did Q4 revenue do?"*, *"explain merchant churn in H2"* — into a self-contained **HTML report**: a scrollable web page with an executive summary, KPI cards, charts, tables, and narrative paragraphs. When run from the CLI, the report opens in your browser automatically.
+`gen_visual_report` turns a question — *"how did Q4 revenue do?"*, *"explain merchant churn in H2"* — into a self-contained **HTML report**: a scrollable web page with an executive summary, KPI cards, charts, tables, and narrative paragraphs.
+
+The interactive CLI opens the report in your browser by default. Print mode (`--print`) and `--no-open-report` skip automatic opening. You can open the HTML file in your browser using the path shown in the CLI output.
 
 ![Sample HTML report — KPI strip, headline metrics, and a monthly growth trend chart](../assets/gen_visual_report_preview.png)
 
