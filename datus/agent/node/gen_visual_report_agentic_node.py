@@ -21,9 +21,9 @@ The artifact is consumed by:
   and rendered dynamically by ``@datus/web-common/modules/report`` (also
   iframe-sandboxed).
 
-See ``Datus-saas/docs/gen-report-artifact.md`` for the full contract this
-node enforces. Common machinery (tool setup, prompt rendering, the LLM
-loop, action-history extraction) lives in
+See ``Datus-saas/design-docs/artifacts/report-dashboard-artifact.md`` for the
+full contract this node enforces. Common machinery (tool setup, prompt rendering,
+the LLM loop, action-history extraction) lives in
 :class:`BaseVisualArtifactAgenticNode`; this file owns the
 report-specific artifact wiring, result model, and the CLI HTML compile
 path that has no analogue in dashboard mode.

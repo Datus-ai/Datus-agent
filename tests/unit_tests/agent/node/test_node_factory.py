@@ -121,24 +121,21 @@ class TestSubagentValidationHelpers:
 
 class TestCreateInteractiveNode:
     @pytest.mark.parametrize(
-        "name,type_field,node_class",
+        "name,entry",
         [
-            ("legacy_report", "node_class", "gen_report"),
-            ("legacy_report", "type", "gen_report"),
-            ("gen_report", "node_class", "gen_sql"),
+            ("legacy_report", {"node_class": "gen_report"}),
+            ("legacy_report", {"type": "gen_report"}),
+            ("gen_report", {"node_class": "gen_sql"}),
+            ("gen_report", None),
         ],
     )
-    def test_old_report_config_explains_how_to_migrate(self, name, type_field, node_class):
-        config = _mock_agent_config(agentic_nodes={name: {type_field: node_class}})
+    def test_old_report_selection_explains_how_to_migrate(self, name, entry):
+        config = _mock_agent_config(agentic_nodes={} if entry is None else {name: entry})
 
         with pytest.raises(ValueError, match="does not exist.*Use 'gen_visual_report' instead") as exc:
             create_interactive_node(name, config)
 
         assert name in str(exc.value)
-
-    def test_old_builtin_report_explains_how_to_migrate(self):
-        with pytest.raises(ValueError, match="gen_visual_report"):
-            create_interactive_node("gen_report", _mock_agent_config())
 
     def test_old_workflow_report_recommends_visual_report(self):
         with pytest.raises(ValueError, match="does not exist.*Use 'gen_visual_report' instead"):
