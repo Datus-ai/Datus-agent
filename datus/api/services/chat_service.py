@@ -45,7 +45,7 @@ from datus.api.services.chat_task_manager import (
 )
 from datus.api.services.turn_stats import resolve_subagent
 from datus.configuration.agent_config import AgentConfig
-from datus.models.history_archive import HistoryArchiveReadError, child_session_id
+from datus.models.history_archive import TASK_CHILD_UNAVAILABLE, HistoryArchiveReadError, task_child_session_id
 from datus.models.session_manager import SessionManager, extract_agent_from_session_id, session_matches_agent
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.artifact_output import session_user_scope
@@ -569,25 +569,31 @@ class ChatService:
                 os.path.join(session_manager.session_dir, session_id) if _is_safe_session_id(session_id) else None
             )
             subagent_runs: Dict[str, List[List[ActionHistory]]] = {}
-            child_sessions: dict[str, str] = {}
+            child_sessions: dict[int, str] = {}
             if subagent_dir:
                 archive_dir = Path(session_manager.session_dir).resolve() / session_id / "data"
-                child_sessions = {
-                    action.action_id: child_id
-                    for msg in raw_messages
-                    for action in msg.get("actions", [])
-                    if _is_task_result(action)
-                    and (child_id := child_session_id(action.output, archive_dir=archive_dir))
-                }
+                task_results = (
+                    action for msg in raw_messages for action in msg.get("actions", []) if _is_task_result(action)
+                )
+                for action in task_results:
+                    child_id = task_child_session_id(action.output, archive_dir=archive_dir)
+                    if child_id == TASK_CHILD_UNAVAILABLE:
+                        # Its run could belong to any of the child sessions seen later.
+                        break
+                    if child_id:
+                        # Providers can reuse a call ID in another turn.
+                        child_sessions[id(action)] = child_id
             if window and child_sessions and subagent_dir:
                 from datus.api.services.history_pagination import subagent_run_offsets
 
-                run_counts = Counter(child_sessions.values())
                 offsets = subagent_run_offsets(session_manager, session_id, window[0])
-                for child_id, count in run_counts.items():
-                    subagent_runs[child_id] = _load_subagent_runs(
-                        subagent_dir, child_id, skip=offsets.get(child_id, 0), count=count
-                    )
+                if offsets is None:
+                    child_sessions.clear()
+                else:
+                    for child_id, count in Counter(child_sessions.values()).items():
+                        subagent_runs[child_id] = _load_subagent_runs(
+                            subagent_dir, child_id, skip=offsets.get(child_id, 0), count=count
+                        )
             pending_review_messages: List[SSEMessagePayload] = []
 
             for idx, msg in enumerate(raw_messages):
@@ -656,7 +662,7 @@ class ChatService:
                                     lambda call_id, result_action: _subagent_run_actions(
                                         subagent_dir,
                                         call_id,
-                                        child_sessions.get(result_action.action_id),
+                                        child_sessions.get(id(result_action)),
                                         subagent_runs,
                                         self.agent_config,
                                         node_responses,

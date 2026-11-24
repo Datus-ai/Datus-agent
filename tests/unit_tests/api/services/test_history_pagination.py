@@ -146,11 +146,18 @@ def test_cursor_is_scoped_and_rejects_rewritten_anchor(history):
 
 
 @pytest.mark.parametrize("native", [False, True])
-@pytest.mark.parametrize("archived", [False, True])
-def test_subagent_reused_on_an_older_page_does_not_replay_the_wrong_run(history, tmp_path, native, archived):
+@pytest.mark.parametrize("storage", ["inline", "archived", "relative", "missing", "reused_call_id"])
+def test_subagent_reused_on_an_older_page_does_not_replay_the_wrong_run(
+    history, tmp_path, monkeypatch, native, storage
+):
     service, write = history
     parent = "chat_parent"
     child = "gen_job_session_child"
+    data_dir = tmp_path / "alice" / parent / "data"
+    if storage == "relative":
+        monkeypatch.chdir(tmp_path.parent)
+        service = ChatService(SimpleNamespace(session_dir=tmp_path.name))
+        data_dir = data_dir.relative_to(tmp_path.parent)
     write(
         child,
         [
@@ -164,9 +171,11 @@ def test_subagent_reused_on_an_older_page_does_not_replay_the_wrong_run(history,
 
     def parent_task(call_id, index):
         call, result = tool(call_id, "task", {"session_id": child})
-        if archived:
-            archive = ToolArchive("", parent, base_dir=tmp_path / "alice" / parent / "data", preview_chars=12)
+        if storage in ("archived", "relative", "missing"):
+            archive = ToolArchive("", parent, base_dir=data_dir, preview_chars=12)
             result["output"] = archive.archive(result["output"], index, "output")
+            if index == 0 and storage == "missing":
+                next(data_dir.glob("000000_output_*.txt")).unlink()
         if not native:
             return [call, result]
         return [
@@ -183,17 +192,24 @@ def test_subagent_reused_on_an_older_page_does_not_replay_the_wrong_run(history,
             },
         ]
 
-    write(parent, [*turn(0), *parent_task("task_old", 0), *turn(1), *parent_task("task_new", 1)])
+    second_call = "task_old" if storage == "reused_call_id" else "task_new"
+    write(parent, [*turn(0), *parent_task("task_old", 0), *turn(1), *parent_task(second_call, 1)])
 
     def child_calls(messages):
         return [p.payload["callToolId"] for m in messages if m.depth == 1 for p in m.content if p.type == "call-tool"]
 
     page = get_history_page(service, parent, "alice", 1, None)
-    assert child_calls(page.messages) == ["child_new"]
+    assert child_calls(page.messages) == ([] if storage == "missing" else ["child_new"])
     assert questions(page) == ["question 1"]
+    assert any(
+        p.payload["callToolId"] == second_call for m in page.messages for p in m.content if p.type == "call-tool"
+    )
+
     older = get_history_page(service, parent, "alice", 1, page.next_cursor)
-    assert child_calls(older.messages) == ["child_old"]
-    assert child_calls(service.get_history(parent, "alice").data.messages) == ["child_old", "child_new"]
+    assert child_calls(older.messages) == ([] if storage == "missing" else ["child_old"])
+    expected = [] if storage == "missing" else ["child_old", "child_new"]
+    assert child_calls(get_history_page(service, parent, "alice", 2, None).messages) == expected
+    assert child_calls(service.get_history(parent, "alice").data.messages) == expected
 
 
 @pytest.mark.parametrize("invalid", ["missing", "outside", "symlink", "changed"])
@@ -743,6 +759,55 @@ async def test_archived_tool_display_keeps_subagent_run_alignment(history, tmp_p
     ]
     assert questions(page) == ["question 2"]
     assert children == ["child_2"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("index", ["legacy", "legacy_missing", "indexed_missing", "indexed_known"])
+async def test_legacy_task_index_gaps_do_not_shift_the_next_subagent_run(history, tmp_path, index):
+    service, write = history
+    parent, child = "chat_legacy_task_index", "gen_job_session_child"
+    write(
+        child,
+        turn(1) + tool("child_1", "lookup", "old run") + turn(2) + tool("child_2", "lookup", "new run"),
+        parent=parent,
+    )
+    manager = SessionManager(session_dir=str(tmp_path), scope="alice")
+    session = manager.get_session(parent)
+    archive = ToolArchive("", parent, base_dir=tmp_path / "alice" / parent / "data", preview_chars=12)
+    call, result = tool("task_1", "task", {"session_id": child})
+    result["output"] = archive.archive(result["output"], 1, "output")
+    offloaded = next(archive.dir.glob("000001_output_*.txt"))
+    parked = offloaded.with_suffix(".parked")
+    if index == "indexed_missing":
+        offloaded.rename(parked)
+    await session.add_items(turn(1) + [call, result])
+    await session.replace_items([{"role": "assistant", "content": "summary"}])
+
+    if index.startswith("legacy"):
+        # The old writer indexed the call but could not index a result behind a tool archive marker.
+        with sqlite3.connect(tmp_path / "alice" / f"{parent}.db") as conn:
+            conn.execute("DELETE FROM chat_history_tasks WHERE child_id IS NOT NULL")
+            assert conn.execute("SELECT call_id,child_id FROM chat_history_tasks").fetchall() == [("task_1", None)]
+    if index in ("legacy_missing", "indexed_known"):
+        offloaded.rename(parked)
+
+    await session.add_items(turn(2) + tool("task_2", "task", {"session_id": child}))
+    session.close()
+
+    def latest_child_calls():
+        page = get_history_page(service, parent, "alice", 1, None)
+        return [
+            part.payload["callToolId"]
+            for msg in page.messages
+            if msg.depth == 1
+            for part in msg.content
+            if part.type == "call-tool"
+        ]
+
+    assert latest_child_calls() == ([] if index in ("legacy_missing", "indexed_missing") else ["child_2"])
+    if parked.exists():
+        parked.rename(offloaded)
+    assert latest_child_calls() == ["child_2"]
 
 
 @pytest.mark.asyncio

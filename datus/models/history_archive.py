@@ -11,14 +11,17 @@ import re
 import sqlite3
 import uuid
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
 from datus.utils.message_utils import extract_user_input, is_compact_resume_text
-from datus.utils.tool_archive import parse_archived_marker
+from datus.utils.tool_archive import is_archived_output, parse_archived_marker
 
 HISTORY_VERSION_KEY = "chat_history_version"
 HISTORY_REWRITE_KEY = "chat_history_hidden_through"
+# A result whose tool archive could not be read. This cannot be a session ID.
+TASK_CHILD_UNAVAILABLE = "!"
 _SEGMENT_NAME = re.compile(r"chat-[0-9a-f]{32}\.jsonl")
 _SEGMENTS = """
 CREATE TABLE IF NOT EXISTS chat_history_segments (
@@ -85,14 +88,15 @@ def _archived_task_output(raw: str, directory: Path) -> str | None:
         return None
     path = Path(marker["path"])
     filename = _TOOL_OUTPUT_NAME.fullmatch(path.name)
-    if not path.is_absolute() or not filename:
+    if not filename:
         return None
 
     # The marker is tool output. Only open a result written inside this session's data directory.
     try:
-        if path.resolve() != directory / path.name or not path.is_file():
+        resolved = path.resolve()
+        if resolved != directory / path.name or not resolved.is_file():
             return None
-        payload = path.read_bytes()
+        payload = resolved.read_bytes()
         if not hashlib.sha256(payload).hexdigest().startswith(filename[1]):
             return None
         return payload.decode("utf-8")
@@ -107,10 +111,14 @@ def _task_result(raw: Any) -> Any:
     return _parse_output(output.get("result", output)) if isinstance(output, dict) else output
 
 
-def child_session_id(raw: Any, *, archive_dir: Path | None = None) -> str | None:
+def task_child_session_id(raw: Any, *, archive_dir: Path) -> str | None:
+    """Resolve a task result, distinguishing an unreadable marker from a result with no child."""
     result = _task_result(raw)
-    if isinstance(result, str) and archive_dir is not None:
-        result = _task_result(_archived_task_output(result, archive_dir))
+    if is_archived_output(result):
+        archived = _archived_task_output(result, archive_dir)
+        if archived is None:
+            return TASK_CHILD_UNAVAILABLE
+        result = _task_result(archived)
     child = result.get("session_id") if isinstance(result, dict) else None
     if isinstance(child, str) and _SAFE_SESSION_ID.fullmatch(child) and ".." not in child:
         return child
@@ -272,12 +280,45 @@ class HistoryArchive:
                     "WHERE session_id=? AND call_id=? AND child_id IS NULL AND message_id<?",
                     (self.session_id, call_id, row_id),
                 ).fetchone()
-                if not task_call or not (child := child_session_id(output, archive_dir=self.directory.parent / "data")):
+                if not task_call:
                     continue
+                child = task_child_session_id(output, archive_dir=self.directory.parent / "data") or ""
             self.conn.execute(
                 "INSERT OR IGNORE INTO chat_history_tasks VALUES (?,?,?,?)",
                 (self.session_id, row_id, call_id, child),
             )
+
+    def unindexed_task_outputs(self, before: int) -> Iterator[Any]:
+        """Read earlier task outputs that the index could not resolve."""
+        if not self.hidden_through:
+            return
+        candidates = self.conn.execute(
+            "WITH task_events AS ("
+            "SELECT message_id,call_id,child_id,"
+            "LEAD(message_id,1,:before) OVER call_events AS next_id,"
+            "LEAD(child_id) OVER call_events AS next_child "
+            "FROM chat_history_tasks WHERE session_id=:session AND message_id<:before "
+            "WINDOW call_events AS (PARTITION BY call_id ORDER BY message_id)) "
+            "SELECT message_id,call_id,child_id,next_id FROM task_events "
+            "WHERE child_id=:unavailable OR (child_id IS NULL AND next_child IS NULL)",
+            {"session": self.session_id, "before": before, "unavailable": TASK_CHILD_UNAVAILABLE},
+        )
+        for row_id, call_id, child, next_id in candidates:
+            # Old writers left only the call indexed. Search until its result or the
+            # next use of this call ID. New writers can point to the exact result.
+            start, end = (row_id, row_id) if child else (row_id + 1, min(next_id - 1, self.hidden_through))
+            if end < start:
+                continue
+            with closing(self.archived_rows(start, end)) as rows:
+                for _, raw, _, _ in rows:
+                    outputs = [
+                        output
+                        for result_id, is_call, output in _task_events(json.loads(raw))
+                        if not is_call and result_id == call_id
+                    ]
+                    if outputs:
+                        yield from outputs
+                        break
 
     def snapshot(self) -> int:
         head = self.conn.execute(

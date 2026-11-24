@@ -15,7 +15,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator, Optional
 
 from datus.api.models.cli_models import ChatHistoryPageData
-from datus.models.history_archive import Anchor, HistoryArchive, child_session_id, prompt_anchor
+from datus.models.history_archive import (
+    TASK_CHILD_UNAVAILABLE,
+    Anchor,
+    HistoryArchive,
+    HistoryArchiveReadError,
+    prompt_anchor,
+    task_child_session_id,
+)
 from datus.models.session_manager import SessionManager, extract_user_input, is_compact_resume_text
 from datus.utils.artifact_output import session_user_scope
 
@@ -58,8 +65,8 @@ def _connect(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def subagent_run_offsets(manager: SessionManager, session_id: str, start_id: int) -> dict[str, int]:
-    """Count earlier task results using the archive index and the live SQLite tail."""
+def subagent_run_offsets(manager: SessionManager, session_id: str, start_id: int) -> dict[str, int] | None:
+    """Count earlier child runs, or return None if an earlier result cannot be attributed."""
     path = _db_path(manager, session_id)
     with _connect(path) as conn:
         conn.execute("BEGIN")
@@ -71,8 +78,9 @@ def subagent_run_offsets(manager: SessionManager, session_id: str, start_id: int
                 dict(
                     conn.execute(
                         "SELECT child_id,COUNT(*) FROM chat_history_tasks "
-                        "WHERE session_id=:session AND message_id<:before AND child_id IS NOT NULL GROUP BY child_id",
-                        {"session": session_id, "before": start_id},
+                        "WHERE session_id=:session AND message_id<:before AND child_id NOT IN ('',:unavailable) "
+                        "GROUP BY child_id",
+                        {"session": session_id, "before": start_id, "unavailable": TASK_CHILD_UNAVAILABLE},
                     )
                 )
             )
@@ -101,7 +109,16 @@ def subagent_run_offsets(manager: SessionManager, session_id: str, start_id: int
             {"session": session_id, "hidden": archive.hidden_through or 0, "before": start_id},
         )
         archive_dir = Path(manager.session_dir).resolve() / session_id / "data"
-        counts.update(child for (raw,) in rows if (child := child_session_id(raw, archive_dir=archive_dir)))
+        try:
+            for raw in chain(archive.unindexed_task_outputs(start_id), (raw for (raw,) in rows)):
+                child = task_child_session_id(raw, archive_dir=archive_dir)
+                if child == TASK_CHILD_UNAVAILABLE:
+                    return None
+                if child:
+                    counts[child] += 1
+        except HistoryArchiveReadError:
+            # Off-page task data only affects whether child runs can be attributed.
+            return None
         return dict(counts)
 
 
