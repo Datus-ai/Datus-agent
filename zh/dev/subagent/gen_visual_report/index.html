@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/dev/subagent/gen_visual_report/">
       
       
         <link rel="prev" href="../gen_job/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/dev/subagent/gen_visual_report/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/subagent/gen_visual_report/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/subagent/gen_visual_report/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/subagent/gen_visual_report/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -5195,7 +5189,9 @@
 
 <h1 id="html">HTML 报告生成指南<a class="headerlink" href="#html" title="Permanent link">&para;</a></h1>
 <h2 id="_1">概览<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<p><code>gen_visual_report</code> 把一个问题——<em>"Q4 营收怎么样？"</em>、<em>"分析一下 H2 商户流失"</em>——直接变成一份自包含的 <strong>HTML 报告</strong>：一个可上下滚动浏览的网页，包含执行摘要、KPI 卡片、图表、表格和叙事段落。Datus-CLI 模式下，页面会自动在浏览器中打开；Datus-SaaS 模式下，直接在 chat 中内联展示。</p>
+<p><code>gen_visual_report</code> 把一个问题——<em>"Q4 营收怎么样？"</em>、<em>"分析一下 H2 商户流失"</em>——直接变成一份 <strong>HTML 报告</strong>：一个可上下滚动浏览的网页，包含执行摘要、KPI 卡片、图表、表格和叙事段落。</p>
+<p>生成的 HTML 会嵌入报告的渲染文件和已保存的查询结果。浏览器默认从 CDN 加载渲染器，因此查看报告需要网络连接。要离线查看，请在生成报告时用 <code>--report-dist &lt;dir&gt;</code> 指定包含 <code>index.css</code> 和 <code>index.umd.js</code> 的本地渲染器目录。CLI 会将这两个文件复制到 <code>index.html</code> 旁的 <code>_assets/</code> 目录。</p>
+<p>交互式 CLI 默认在浏览器中打开报告。使用 Print 模式（<code>--print</code>）或传入 <code>--no-open-report</code> 时，会跳过自动打开。你可以根据 CLI 输出的 HTML 文件路径，在浏览器中手动打开报告。</p>
 <p><img alt="HTML 报告示例——KPI 横幅、关键指标、月度增长趋势图" src="../../assets/gen_visual_report_preview.png" /></p>
 <p>HTML 报告是一份长篇叙事，数据在生成时就固化下来。页面上没有筛选器，也不会再次访问数据库。如果你要的是接 Superset 等外部 BI 平台的仪表盘，请让主 agent 直接使用已安装的 BI plugin。</p>
 <h2 id="_2">快速开始<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
@@ -5237,6 +5233,7 @@
     C --&gt; D[组织叙事 + 图表]
     D --&gt; E[在浏览器中打开]</code></pre>
 <p>agent 会先理解你的问题，找到最相关的 metric 和数据表，跑必要的 SQL，然后把执行摘要、KPI、图表、表格、建议组合成一份完整的 HTML 报告。如果之后要修改，再次调用 <code>gen_visual_report</code> 即可原地编辑同一份报告。</p>
+<p>报告默认保存在项目根目录下的 <code>reports/&lt;slug&gt;/</code>。宿主应用可以设置 <code>AgentConfig.artifact_output_root</code>，此时报告会保存在该目录下的 <code>reports/&lt;slug&gt;/</code>。<code>manifest.json</code> 保存元数据，<code>render/app.jsx</code> 是 React 入口，<code>queries/</code> 保存 SQL 和查询结果的 JSON 文件。</p>
 <h2 id="_4">按模块独立修改<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
 <p>每份报告都是由相互独立的模块组成的——KPI 横幅、单张图表、数据表、建议块、页脚等等。你可以只针对 <strong>其中一个</strong> 模块做改动，其它部分不会被牵连：</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>把<span class="w"> </span>q4_2025_revenue_analysis<span class="w"> </span>里的营收趋势图改成按月聚合
