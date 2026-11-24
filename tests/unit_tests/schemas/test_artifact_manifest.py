@@ -4,7 +4,7 @@
 
 """Unit tests for :class:`ArtifactManifest`.
 
-The shared manifest is the contract that the Datus-SaaS list pages, the
+The shared manifest is the contract that artifact browsers, the
 CLI HTML compile, and the IDE explorer rely on. These tests pin the
 required-field semantics so a future refactor doesn't silently allow
 ``Untitled report`` cards.

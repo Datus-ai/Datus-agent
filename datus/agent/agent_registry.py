@@ -19,7 +19,6 @@ from datus.schemas.agent_spec import AgentSpec
 from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
-from datus.utils.node_utils import validate_node_class
 
 if TYPE_CHECKING:
     from datus.configuration.agent_config import AgentConfig
@@ -91,8 +90,6 @@ def resolve_configurable_agent(
     configured = is_configurable_entry(config)
     if not configured and name in _BUILTIN_DISPATCH_NAMES:
         return None
-    if configured:
-        validate_node_class("configurable", name)
     if configured and "resources" in config:
         raise DatusException(
             ErrorCode.COMMON_CONFIG_ERROR,
@@ -141,7 +138,6 @@ def resolve_configurable_agent(
                 ErrorCode.COMMON_CONFIG_ERROR,
                 message=f"Plugin agent {name!r} conflicts with an existing node; configure an explicit source.",
             )
-        validate_node_class("configurable", name)
         plugin = plugin_agents[name]
     else:
         return None

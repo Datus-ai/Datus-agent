@@ -11,10 +11,8 @@ that plan instead of reading the engine.
 
 Reaching it used to cost more than it looks. ``report()`` is a method on ``DDLEngine``, so the
 agent had to author ``data/gen.py`` first; the plan was cheap for the engine and expensive for the
-model. A measured production run (Datus-saas-dev, trace e2c917f9b380db89efedb580b28e9369) skipped
-it, tried to divide an 80,000-row budget across five tables by hand, could not make the total come
-out, opened ``ddl_engine.py`` to find the allocator, and spent 36 turns and 19,885 output tokens in
-the source without generating a single row.
+model. Without the plan, the agent can spend turns reading ``ddl_engine.py`` to work out the
+row allocation before generating any data.
 
 This module makes the plan reachable in one call, and puts it in the tool schema where a model
 that ignores prose still sees it.

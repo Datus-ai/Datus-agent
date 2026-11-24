@@ -8,11 +8,17 @@ from typing import Any, Dict, Optional
 
 
 def validate_node_class(node_class: Optional[str], node_name: str) -> None:
-    """Reject removed node classes and recommend the supported subagent."""
-    if node_class == "gen_report" or node_name == "gen_report":
-        raise ValueError(
-            f"Subagent 'gen_report' does not exist (configured for '{node_name}'). Use 'gen_visual_report' instead."
-        )
+    """Reject unknown configured types before dispatch can fall back to SQL."""
+    from datus.configuration.node_type import NodeType
+    from datus.utils.constants import SYS_SUB_AGENTS
+
+    if (
+        node_class is not None
+        and node_class not in NodeType.ACTION_TYPES
+        and node_class not in SYS_SUB_AGENTS
+        and node_class not in {"ask_report", "ask_dashboard"}
+    ):
+        raise ValueError(f"Unknown subagent type {node_class!r} configured for {node_name!r}")
 
 
 def resolve_database_name_for_prompt(connector: Any, connection_name: str = "") -> str:

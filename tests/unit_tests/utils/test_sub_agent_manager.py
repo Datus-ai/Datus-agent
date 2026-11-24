@@ -72,8 +72,7 @@ def test_save_agent_rename_preserves_config(tmp_path):
     assert "old_agent" not in manager.list_agents()
 
 
-@pytest.mark.parametrize("name,node_class", [("legacy_report", "gen_report"), ("gen_report", "gen_sql")])
-def test_save_rejects_removed_report_before_modifying_existing_agent(tmp_path, name, node_class):
+def test_save_rejects_unknown_type_before_modifying_existing_agent(tmp_path):
     manager, config_mgr, agent_config = _build_manager(tmp_path)
     original = SubAgentConfig(system_prompt="kept_agent", node_class="gen_sql").as_payload("demo")
     config_mgr.update_item("agentic_nodes", {"kept_agent": original})
@@ -81,8 +80,10 @@ def test_save_rejects_removed_report_before_modifying_existing_agent(tmp_path, n
     prompt = tmp_path / "kept_agent_system_1.0.j2"
     prompt.write_text("Project-specific SQL instructions", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="does not exist.*Use 'gen_visual_report' instead"):
-        manager.save_agent(SubAgentConfig(system_prompt=name, node_class=node_class), previous_name="kept_agent")
+    with pytest.raises(ValueError, match="Unknown subagent type 'unknown_type'"):
+        manager.save_agent(
+            SubAgentConfig(system_prompt="renamed_agent", node_class="unknown_type"), previous_name="kept_agent"
+        )
 
     assert manager.list_agents() == {"kept_agent": original}
     assert agent_config.agentic_nodes == {"kept_agent": original}

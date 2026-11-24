@@ -2,7 +2,7 @@
 
 ## 概览
 
-`gen_visual_report` 把一个问题——*"Q4 营收怎么样？"*、*"分析一下 H2 商户流失"*——直接变成一份自包含的 **HTML 报告**：一个可上下滚动浏览的网页，包含执行摘要、KPI 卡片、图表、表格和叙事段落。Datus-CLI 模式下，页面会自动在浏览器中打开；Datus-SaaS 模式下，直接在 chat 中内联展示。
+`gen_visual_report` 把一个问题——*"Q4 营收怎么样？"*、*"分析一下 H2 商户流失"*——直接变成一份自包含的 **HTML 报告**：一个可上下滚动浏览的网页，包含执行摘要、KPI 卡片、图表、表格和叙事段落。从 CLI 运行时，报告会自动在浏览器中打开。
 
 ![HTML 报告示例——KPI 横幅、关键指标、月度增长趋势图](../assets/gen_visual_report_preview.png)
 
@@ -67,6 +67,8 @@ graph LR
 ```
 
 agent 会先理解你的问题，找到最相关的 metric 和数据表，跑必要的 SQL，然后把执行摘要、KPI、图表、表格、建议组合成一份完整的 HTML 报告。如果之后要修改，再次调用 `gen_visual_report` 即可原地编辑同一份报告。
+
+报告保存在项目根目录下的 `reports/<slug>/`。`manifest.json` 保存元数据，`render/app.jsx` 是 React 入口，`queries/` 保存 SQL 和查询结果的 JSON 文件。本地编译生成的 `index.html` 会嵌入渲染文件和查询结果。
 
 ## 按模块独立修改
 

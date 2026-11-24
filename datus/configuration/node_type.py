@@ -24,7 +24,6 @@ from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
 from datus.schemas.subworkflow_node_models import SubworkflowInput
-from datus.utils.node_utils import validate_node_class
 
 
 class NodeType:
@@ -134,7 +133,6 @@ class NodeType:
 
     @classmethod
     def type_input(cls, node_type: str, input_data: dict, ignore_require_check: bool = False):
-        validate_node_class(node_type, node_type)
         # TODO: use factory pattern to create the input data
         if node_type == NodeType.TYPE_SCHEMA_LINKING:
             input_data_cls = SchemaLinkingInput

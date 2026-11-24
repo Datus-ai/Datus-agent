@@ -6,7 +6,7 @@
 
 Schemas for the ``gen_visual_report`` subagent, which produces a React-JSX
 report artifact (``render/app.jsx`` + ``queries/*.sql`` + ``queries/*.json``).
-See ``Datus-saas/design-docs/artifacts/report-dashboard-artifact.md`` for the wire contract.
+See ``docs/subagent/gen_visual_report.md`` for the artifact format.
 """
 
 import re

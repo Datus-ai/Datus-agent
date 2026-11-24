@@ -32,7 +32,7 @@ What differs across kinds is centralised in :class:`ArtifactHtmlSpec`:
   a running ``datus --web`` server).
 
 The CDN URLs both kinds use point at ``@datus/web-artifact-render`` —
-one UMD bundle now serves both viewers (Datus-saas#412).
+one UMD bundle serves both viewers.
 """
 
 from __future__ import annotations

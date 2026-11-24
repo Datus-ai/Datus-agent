@@ -120,30 +120,12 @@ class TestSubagentValidationHelpers:
 
 
 class TestCreateInteractiveNode:
-    @pytest.mark.parametrize(
-        "name,entry",
-        [
-            ("legacy_report", {"node_class": "gen_report"}),
-            ("legacy_report", {"type": "gen_report"}),
-            ("gen_report", {"node_class": "gen_sql"}),
-            ("gen_report", None),
-        ],
-    )
-    def test_old_report_selection_explains_how_to_migrate(self, name, entry):
-        config = _mock_agent_config(agentic_nodes={} if entry is None else {name: entry})
+    @pytest.mark.parametrize("type_field", ["node_class", "type"])
+    def test_configured_unknown_type_does_not_fall_back_to_sql(self, type_field):
+        config = _mock_agent_config(agentic_nodes={"custom_agent": {type_field: "unknown_type"}})
 
-        with pytest.raises(ValueError, match="does not exist.*Use 'gen_visual_report' instead") as exc:
-            create_interactive_node(name, config)
-
-        assert name in str(exc.value)
-
-    def test_old_workflow_report_recommends_visual_report(self):
-        with pytest.raises(ValueError, match="does not exist.*Use 'gen_visual_report' instead"):
-            Node.new_instance("report", "Report", "gen_report")
-
-    def test_old_workflow_input_recommends_visual_report(self):
-        with pytest.raises(ValueError, match="does not exist.*Use 'gen_visual_report' instead"):
-            NodeType.type_input("gen_report", {})
+        with pytest.raises(ValueError, match="Unknown subagent type 'unknown_type' configured for 'custom_agent'"):
+            create_interactive_node("custom_agent", config)
 
     @patch(
         "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode.__init__",

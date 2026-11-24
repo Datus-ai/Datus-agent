@@ -2,7 +2,7 @@
 
 ## Overview
 
-`gen_visual_report` turns a question — *"how did Q4 revenue do?"*, *"explain merchant churn in H2"* — into a self-contained **HTML report**: a scrollable web page with an executive summary, KPI cards, charts, tables, and narrative paragraphs. In Datus-CLI mode the page opens in your browser automatically; in Datus-SaaS it shows up inline in the chat.
+`gen_visual_report` turns a question — *"how did Q4 revenue do?"*, *"explain merchant churn in H2"* — into a self-contained **HTML report**: a scrollable web page with an executive summary, KPI cards, charts, tables, and narrative paragraphs. When run from the CLI, the report opens in your browser automatically.
 
 ![Sample HTML report — KPI strip, headline metrics, and a monthly growth trend chart](../assets/gen_visual_report_preview.png)
 
@@ -67,6 +67,8 @@ graph LR
 ```
 
 The agent reads your question, looks up the metrics and tables that are most relevant, runs the SQL it needs, then composes the executive summary, KPI cards, charts, tables, and recommendations into a single HTML report. You can re-invoke `gen_visual_report` later to edit the same report in place.
+
+Each report lives in `reports/<slug>/` under the project root. `manifest.json` stores its metadata, `render/app.jsx` is the React entry point, and `queries/` holds the SQL and its saved JSON results. The locally compiled `index.html` embeds the render files and query results.
 
 ## Edit Section by Section
 

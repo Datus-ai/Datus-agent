@@ -13,20 +13,13 @@ under ``<project_root>/reports/<slug>/``:
 * ``queries/<slug>.sql`` + ``queries/<slug>.json`` — per-query source + result.
 * ``manifest.json`` — ``{slug, name, description, kind, created_at}``.
 
-The artifact is consumed by:
+The CLI compiles a self-contained ``index.html`` that embeds the render files
+and queries and loads them in a sandboxed iframe.
 
-* Datus-CLI — compiles to a self-contained ``index.html`` that embeds
-  ``render/`` files + queries and loads them in a sandboxed iframe.
-* Datus-SaaS — served by the backend ``GET /api/v1/report/detail`` endpoint
-  and rendered dynamically by ``@datus/web-common/modules/report`` (also
-  iframe-sandboxed).
-
-See ``Datus-saas/design-docs/artifacts/report-dashboard-artifact.md`` for the
-full contract this node enforces. Common machinery (tool setup, prompt rendering,
-the LLM loop, action-history extraction) lives in
-:class:`BaseVisualArtifactAgenticNode`; this file owns the
-report-specific artifact wiring, result model, and the CLI HTML compile
-path that has no analogue in dashboard mode.
+See ``docs/subagent/gen_visual_report.md`` for report generation and rendering.
+Common machinery (tool setup, prompt rendering, the LLM loop, and action-history
+extraction) lives in :class:`BaseVisualArtifactAgenticNode`. This node handles
+report-specific artifact wiring, the result model, and CLI HTML compilation.
 """
 
 from __future__ import annotations

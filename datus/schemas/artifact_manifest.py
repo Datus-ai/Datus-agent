@@ -7,7 +7,7 @@
 Written once at artifact creation time (``start_new_report`` /
 ``start_new_dashboard``) to ``<root>/<id>/manifest.json``. Consumers:
 
-* Datus-SaaS list pages — pull ``name`` and ``description`` to render
+* Artifact browsers — use ``name`` and ``description`` to render
   human-friendly cards instead of raw ``rpt_<...>`` / ``dash_<...>`` ids.
 * Datus-CLI HTML compile — falls back to ``name`` for the page title.
 * IDE explorer — surface ``name`` next to the artifact directory.

@@ -31,7 +31,6 @@ from datus.schemas.node_models import (
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.loggings import get_logger
-from datus.utils.node_utils import validate_node_class
 
 logger = get_logger(__name__)
 
@@ -59,8 +58,6 @@ class Node(ABC):
         execution_mode: Literal["interactive", "workflow"] = "workflow",
     ):
         """Construct a node with workflow defaults or the delegating caller's execution mode."""
-        validate_node_class(node_type, node_name or node_id)
-
         from datus.agent.node import (
             BeginNode,
             ChatAgenticNode,

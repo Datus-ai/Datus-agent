@@ -12,7 +12,7 @@ litellm:
 * ``str`` path  -> path to a CA bundle (PEM) to trust, e.g. a private gateway CA
 * ``str`` PEM   -> the CA certificate content itself (``-----BEGIN CERTIFICATE...``)
 
-The PEM-content form lets a caller (e.g. Datus SaaS) forward a private CA inline
+The PEM-content form lets a caller forward a private CA inline
 without materializing a file on disk. It is consumed differently per path:
 
 * native httpx path -> an in-memory ``ssl.SSLContext`` (no file), via
