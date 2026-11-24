@@ -334,8 +334,8 @@ class HistoryArchive:
                         return tool_name, output
         return None
 
-    def unindexed_task_outputs(self, before: int) -> Iterator[Any]:
-        """Read unresolved results and search for gaps in older task indexes."""
+    def unindexed_task_events(self, before: int) -> Iterator[tuple[int, str, str | None, Any]]:
+        """Yield the indexed row and ID alongside its result or superseding call."""
         if not self.hidden_through:
             return
         candidates = self.conn.execute(
@@ -360,8 +360,9 @@ class HistoryArchive:
             # the next use of the call ID, skipping segments with complete indexes.
             start, end = (row_id, row_id) if child else (row_id + 1, min(next_id - 1, self.hidden_through))
             event = self._archived_tool_event(call_id, start, end, legacy_task_index=child is None)
-            if event is not None and event[0] is None:
-                yield event[1]
+            if event is not None:
+                tool_name, output = event
+                yield row_id, call_id, tool_name, output
 
     def snapshot(self) -> int:
         head = self.conn.execute(

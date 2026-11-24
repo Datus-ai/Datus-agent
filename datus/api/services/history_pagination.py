@@ -85,40 +85,56 @@ def subagent_run_offsets(manager: SessionManager, session_id: str, start_id: int
                 )
             )
             indexed_events = (
-                " UNION ALL SELECT message_id,-1,call_id,child_id IS NULL,NULL FROM chat_history_tasks "
+                " UNION ALL SELECT message_id,-1,call_id,child_id IS NULL AND (message_id,call_id) NOT IN ("
+                "SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]') FROM json_each(:settled_calls)"
+                "),NULL FROM chat_history_tasks "
                 "WHERE session_id=:session AND message_id<:before AND call_id!=''"
             )
 
-        # Match each result to the preceding event for its call ID. Keep result
-        # bodies out of the ordering step and extract only those paired to a task.
-        rows = conn.execute(
-            "WITH live AS (SELECT id,message_data FROM agent_messages "
-            "WHERE session_id=:session AND id>:hidden AND id<:before), "
-            "events(id,position,call_id,task_call,output_path) AS ("
-            "SELECT id,-1,json_extract(message_data,'$.call_id'),"
-            "json_extract(message_data,'$.type')='function_call' AND json_extract(message_data,'$.name')='task',"
-            "CASE WHEN json_extract(message_data,'$.type')='function_call_output' THEN '$.output' END "
-            "FROM live WHERE json_extract(message_data,'$.type') IN ('function_call','function_call_output') "
-            "UNION ALL SELECT live.id,CAST(b.key AS INTEGER),"
-            "CASE WHEN json_extract(b.value,'$.type')='tool_use' THEN json_extract(b.value,'$.id') "
-            "ELSE json_extract(b.value,'$.tool_use_id') END,"
-            "json_extract(b.value,'$.type')='tool_use' AND json_extract(b.value,'$.name')='task',"
-            "CASE WHEN json_extract(b.value,'$.type')='tool_result' THEN '$.content['||b.key||'].content' END "
-            "FROM live,json_each(message_data,'$.content') b "
-            "WHERE b.type='object' AND json_type(message_data,'$.content')='array' AND ("
-            "(json_extract(message_data,'$.role')='assistant' AND json_extract(b.value,'$.type')='tool_use') OR "
-            "(json_extract(message_data,'$.role')='user' AND json_extract(b.value,'$.type')='tool_result'))"
-            + indexed_events
-            + "), paired AS ("
-            "SELECT id,output_path,LAG(task_call) OVER (PARTITION BY call_id ORDER BY id,position) AS after_task "
-            "FROM events WHERE call_id IS NOT NULL AND call_id!='') "
-            "SELECT json_extract(live.message_data,paired.output_path) FROM paired "
-            "JOIN live ON live.id=paired.id WHERE paired.after_task AND paired.output_path IS NOT NULL",
-            {"session": session_id, "hidden": archive.hidden_through or 0, "before": start_id},
-        )
+        def task_outputs() -> Iterator[Any]:
+            # A legacy result or superseding call closes only that indexed occurrence.
+            settled_calls = []
+            for row_id, call_id, tool_name, output in archive.unindexed_task_events(start_id):
+                settled_calls.append((row_id, call_id))
+                if tool_name is None:
+                    yield output
+            # Match each result to the preceding event for its call ID. Keep result
+            # bodies out of the ordering step and extract only those paired to a task.
+            rows = conn.execute(
+                "WITH live AS (SELECT id,message_data FROM agent_messages "
+                "WHERE session_id=:session AND id>:hidden AND id<:before), "
+                "events(id,position,call_id,task_call,output_path) AS ("
+                "SELECT id,-1,json_extract(message_data,'$.call_id'),"
+                "json_extract(message_data,'$.type')='function_call' AND json_extract(message_data,'$.name')='task',"
+                "CASE WHEN json_extract(message_data,'$.type')='function_call_output' THEN '$.output' END "
+                "FROM live WHERE json_extract(message_data,'$.type') IN ('function_call','function_call_output') "
+                "UNION ALL SELECT live.id,CAST(b.key AS INTEGER),"
+                "CASE WHEN json_extract(b.value,'$.type')='tool_use' THEN json_extract(b.value,'$.id') "
+                "ELSE json_extract(b.value,'$.tool_use_id') END,"
+                "json_extract(b.value,'$.type')='tool_use' AND json_extract(b.value,'$.name')='task',"
+                "CASE WHEN json_extract(b.value,'$.type')='tool_result' THEN '$.content['||b.key||'].content' END "
+                "FROM live,json_each(message_data,'$.content') b "
+                "WHERE b.type='object' AND json_type(message_data,'$.content')='array' AND ("
+                "(json_extract(message_data,'$.role')='assistant' AND json_extract(b.value,'$.type')='tool_use') OR "
+                "(json_extract(message_data,'$.role')='user' AND json_extract(b.value,'$.type')='tool_result'))"
+                + indexed_events
+                + "), paired AS ("
+                "SELECT id,output_path,LAG(task_call) OVER (PARTITION BY call_id ORDER BY id,position) AS after_task "
+                "FROM events WHERE call_id IS NOT NULL AND call_id!='') "
+                "SELECT json_extract(live.message_data,paired.output_path) FROM paired "
+                "JOIN live ON live.id=paired.id WHERE paired.after_task AND paired.output_path IS NOT NULL",
+                {
+                    "session": session_id,
+                    "hidden": archive.hidden_through or 0,
+                    "before": start_id,
+                    "settled_calls": json.dumps(settled_calls),
+                },
+            )
+            yield from (raw for (raw,) in rows)
+
         archive_dir = Path(manager.session_dir).resolve() / session_id / "data"
         try:
-            for raw in chain(archive.unindexed_task_outputs(start_id), (raw for (raw,) in rows)):
+            for raw in task_outputs():
                 child = task_child_session_id(raw, archive_dir=archive_dir)
                 if child == TASK_CHILD_UNAVAILABLE:
                     return None

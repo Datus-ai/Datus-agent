@@ -843,7 +843,8 @@ async def test_non_task_result_with_reused_id_does_not_shift_subagent_runs(histo
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("native", [False, True])
-async def test_compaction_matches_live_tool_results_to_legacy_calls(history, tmp_path, native):
+@pytest.mark.parametrize("ordinary_tool", ["execute_sql", "lookup"])
+async def test_compaction_matches_live_tool_results_to_legacy_calls(history, tmp_path, native, ordinary_tool):
     service, write = history
     parent, child = "chat_legacy_call_id", "gen_job_session_child"
     write(
@@ -859,9 +860,11 @@ async def test_compaction_matches_live_tool_results_to_legacy_calls(history, tmp
     offload_result(first_result, archive, 1, native=native)
     await session.add_items(turn(1) + [first_call, first_result])
     await session.replace_items(summary)
-    sql_call, sql_result = tool("shared", "execute_sql", "unrelated", native=native)
-    offload_result(sql_result, archive, 2, native=native)
-    await session.add_items(turn(2) + [sql_call])
+    ordinary_call, ordinary_result = tool("shared", ordinary_tool, "unrelated", native=native)
+    offload_result(ordinary_result, archive, 2, native=native)
+    if ordinary_tool == "lookup":
+        next(archive.dir.glob("000002_output_*.txt")).unlink()
+    await session.add_items(turn(2) + [ordinary_call])
     await session.replace_items(summary)
 
     # The baseline writer only indexed the task call. Its offloaded result and
@@ -871,9 +874,11 @@ async def test_compaction_matches_live_tool_results_to_legacy_calls(history, tmp
         conn.execute("DELETE FROM chat_history_tasks WHERE child_id IS NOT NULL")
         assert conn.execute("SELECT call_id,child_id FROM chat_history_tasks").fetchall() == [("shared", None)]
 
-    await session.add_items([sql_result])
-    sql_result_id = manager.get_max_message_id(parent)
-    await session.add_items(turn(3) + tool("last", "task", {"session_id": child}, native=native))
+    await session.add_items([ordinary_result])
+    ordinary_result_id = manager.get_max_message_id(parent)
+    next_call_id = "shared" if ordinary_tool == "lookup" else "last"
+    await session.add_items(turn(3) + tool(next_call_id, "task", {"session_id": child}, native=native))
+    assert subagent_run_offsets(manager, parent, manager.get_max_message_id(parent) + 1) == {child: 2}
     assert child_tool_calls(get_history_page(service, parent, "alice", 1, None)) == ["child_2"]
     await session.replace_items(summary)
     session.close()
@@ -884,12 +889,12 @@ async def test_compaction_matches_live_tool_results_to_legacy_calls(history, tmp
         assert (
             conn.execute(
                 "SELECT child_id FROM chat_history_tasks WHERE session_id=? AND message_id=? AND call_id=?",
-                (parent, sql_result_id, "shared"),
+                (parent, ordinary_result_id, "shared"),
             ).fetchone()
             is None
         )
         # Tolerate an empty association persisted by the previous writer too.
-        conn.execute("INSERT INTO chat_history_tasks VALUES (?,?,?,'')", (parent, sql_result_id, "shared"))
+        conn.execute("INSERT INTO chat_history_tasks VALUES (?,?,?,'')", (parent, ordinary_result_id, "shared"))
     assert child_tool_calls(get_history_page(service, parent, "alice", 1, None)) == ["child_2"]
 
 
