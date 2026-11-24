@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from datus.schemas.node_models import ExecuteSQLResult
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.policy_runtime import PolicyRuntime
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -439,6 +440,25 @@ def test_db_read_applies_before_and_after_hooks(monkeypatch):
     assert db.execute_query.call_args.args[0] == "SELECT * FROM orders WHERE store_id = 1"
     assert result.sql_return == [{"email": "***"}]
     assert fake.contexts[-1] == cfg.policy_context
+
+
+@pytest.mark.parametrize("replacement, expected_columns", [(None, ["email"]), ([], None)])
+def test_db_read_carries_empty_projection_only_for_original_result(monkeypatch, replacement, expected_columns):
+    fake = FakeRuntime(result=replacement)
+    monkeypatch.setattr(
+        "datus.tools.policy_runtime.collect_plugin_policy_runtime_factories",
+        lambda active: {"sql-policy": lambda profile: fake},
+    )
+    db = connector()
+    db.execute_query.return_value = ExecuteSQLResult(
+        success=True, sql_return=[], result_format="list", column_names=["email"]
+    )
+
+    result = make_db_tool(db, config()).execute_read_enforced("SELECT email FROM orders WHERE 1 = 0", db)
+
+    assert result.success is True
+    assert result.sql_return == []
+    assert result.column_names == expected_columns
 
 
 @pytest.mark.parametrize("level", [logging.DEBUG, logging.INFO])

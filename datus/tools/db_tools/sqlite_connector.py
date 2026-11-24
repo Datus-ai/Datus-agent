@@ -297,15 +297,15 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
             result_list = [dict(zip(columns, row)) for row in rows]
             row_count = len(rows)
 
-            # Explicitly pass columns to preserve schema for empty results
-            df = DataFrame(result_list, columns=columns)
-
-            if result_format == "csv":
-                result = df.to_csv(index=False)
-            elif result_format == "arrow":
-                result = Table.from_pandas(df)
-            elif result_format == "pandas":
-                result = df
+            if result_format in {"csv", "arrow", "pandas"}:
+                # Keep the cursor's projection even when there are no rows.
+                df = DataFrame(result_list, columns=columns)
+                if result_format == "csv":
+                    result = df.to_csv(index=False)
+                elif result_format == "arrow":
+                    result = Table.from_pandas(df)
+                else:  # pandas
+                    result = df
             else:  # list
                 result = result_list
 
@@ -315,6 +315,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
                 sql_return=result,
                 row_count=row_count,
                 result_format=result_format,
+                column_names=columns if not rows else None,
             )
         except Exception as e:
             ex = self._handle_exception(e, sql)

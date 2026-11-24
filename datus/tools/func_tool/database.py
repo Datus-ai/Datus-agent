@@ -3347,6 +3347,9 @@ class DBFuncTool(BulkQueryTools):
                     error="Read policy transformed the reference result; complete calculation verification is unavailable.",
                     sql_query=enforced_sql,
                 )
+            if result_decision.result is not result.sql_return and getattr(result, "column_names", None) is not None:
+                # Cursor column names describe the input to the policy, not a replacement result.
+                result.column_names = None
             result.sql_return = result_decision.result
             if typed_policy_result and result_format in {"csv", "pandas"}:
                 import pandas as pd

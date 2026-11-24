@@ -31,10 +31,11 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Literal, Optional, Set
 
 import pyarrow as pa
 from agents import Tool
+from datus_db_core import BaseSqlConnector
 
 from datus.schemas.analysis_artifacts import SubjectAssetRef
 from datus.schemas.artifact_manifest import ArtifactManifest
@@ -45,7 +46,9 @@ from datus.schemas.gen_visual_report_models import (
     QueryResultFile,
     extract_query_slug,
 )
+from datus.schemas.node_models import ExecuteSQLResult
 from datus.tools.db_tools.connection_scope import connection_scope
+from datus.tools.db_tools.sqlite_connector import SQLiteConnector
 from datus.tools.func_tool._artifact_filesystem_base import ArtifactFilesystemFuncTool
 from datus.tools.func_tool._jsx_hooks_lint import format_hook_order_issues
 from datus.tools.func_tool._visual_artifact_cards import scan_render_cards
@@ -196,8 +199,14 @@ def _normalize_value(value: Any) -> Any:
     return str(value)
 
 
-def _query_rows_and_columns(result: Any) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+def _query_result_format(connector: BaseSqlConnector) -> Literal["list", "arrow"]:
+    # SQLite permits values of different types in the same column.
+    return "list" if isinstance(connector, SQLiteConnector) else "arrow"
+
+
+def _query_rows_and_columns(execute_result: ExecuteSQLResult) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """Preserve projected columns from a zero-row query or trial."""
+    result = execute_result.sql_return
     if isinstance(result, pa.Table):
         # Match the row-list result's last-value behavior for repeated labels.
         names = result.column_names
@@ -211,6 +220,11 @@ def _query_rows_and_columns(result: Any) -> tuple[list[dict[str, Any]], list[dic
         raise ValueError("Unexpected query result format; expected an Arrow table or a list of dictionaries")
     if any(not isinstance(row, dict) for row in result):
         raise ValueError("Unexpected query row format; expected one dictionary per row")
+
+    if not result:
+        # SQLite's cursor descriptions provide names, but no column types.
+        names = dict.fromkeys(getattr(execute_result, "column_names", None) or [])
+        return [], [{"name": name, "type": "string"} for name in names]
 
     rows = [{key: _normalize_value(value) for key, value in row.items()} for row in result]
     names = dict.fromkeys(key for row in rows for key in row)
@@ -760,7 +774,7 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
             # apply here too — a bare connector.execute_query would let an
             # unbounded statement reach the engine and OOM the DB backend.
             execute_result = self._db_func_tool.execute_read_enforced(
-                sql, connector, datasource=datasource, result_format="arrow"
+                sql, connector, datasource=datasource, result_format=_query_result_format(connector)
             )
         except Exception as exc:
             logger.exception("save_query execute_query crashed", extra={"name": name})
@@ -773,7 +787,7 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
             )
 
         try:
-            rows, columns_meta = _query_rows_and_columns(execute_result.sql_return)
+            rows, columns_meta = _query_rows_and_columns(execute_result)
         except ValueError as exc:
             return FuncToolResult(success=0, error=str(exc))
 

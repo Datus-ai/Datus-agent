@@ -470,6 +470,24 @@ _REVENUE_TEMPLATE = (
 
 
 class TestSaveQueryTemplate:
+    def test_preserves_mixed_sqlite_values(self, dashboard_tools: DashboardArtifactTools):
+        result = dashboard_tools.save_query_template(
+            name="mixed_values",
+            sql_template=(
+                "-- @datus-params value:integer\n"
+                "SELECT :value AS value, X'6f6b' AS detail UNION ALL SELECT 'unknown', X'ff'"
+            ),
+            sample_params={"value": 7},
+            goal="Inspect mixed data values",
+            hypothesis="The query returns a number and a status in the same column.",
+        )
+
+        assert result.success == 1, result.error
+        assert result.result["preview_rows"] == [
+            {"value": 7, "detail": "ok"},
+            {"value": "unknown", "detail": "ff"},
+        ]
+
     def test_saves_projection_when_sample_filters_match_no_rows(
         self, dashboard_tools: DashboardArtifactTools, project_root: Path
     ):

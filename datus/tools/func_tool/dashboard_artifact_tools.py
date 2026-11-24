@@ -66,6 +66,7 @@ from datus.tools.func_tool.report_artifact_tools import (
     _looks_like_select,
     _module_key,
     _normalize_value,
+    _query_result_format,
     _query_rows_and_columns,
     _resolve_relative_import,
 )
@@ -868,7 +869,7 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
             # Enforced-read path: apply SQL policy + multi-statement rejection
             # to the trial render so a runaway template can't OOM the engine.
             execute_result = self._db_func_tool.execute_read_enforced(
-                rendered_sql, connector, datasource=datasource, result_format="arrow"
+                rendered_sql, connector, datasource=datasource, result_format=_query_result_format(connector)
             )
         except Exception as exc:
             logger.exception("save_query_template trial execute crashed", extra={"name": name})
@@ -881,7 +882,7 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
             )
 
         try:
-            rows, columns_meta = _query_rows_and_columns(execute_result.sql_return)
+            rows, columns_meta = _query_rows_and_columns(execute_result)
         except ValueError as exc:
             return FuncToolResult(success=0, error=str(exc))
 

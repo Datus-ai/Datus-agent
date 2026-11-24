@@ -345,6 +345,18 @@ class TestInferColumnType:
 
 
 class TestSaveQuery:
+    def test_preserves_mixed_sqlite_values(self, report_tools: ReportArtifactTools, project_root: Path):
+        result = report_tools.save_query(
+            name="mixed_values",
+            sql="SELECT 7 AS value, X'6f6b' AS detail UNION ALL SELECT 'unknown', X'ff'",
+            goal="Inspect mixed data values",
+            hypothesis="The query returns a number and a status in the same column.",
+        )
+
+        assert result.success == 1, result.error
+        saved = json.loads((project_root / result.result["json_path"]).read_text(encoding="utf-8"))
+        assert saved["rows"] == [{"value": 7, "detail": "ok"}, {"value": "unknown", "detail": "ff"}]
+
     def test_saves_projection_when_no_rows_match(self, report_tools: ReportArtifactTools, project_root: Path):
         result = report_tools.save_query(
             name="unmatched_sales",
