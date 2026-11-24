@@ -15,6 +15,8 @@ import math
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, Optional
 
+import pyarrow as pa
+
 from datus.plugins.registry import collect_plugin_policy_runtime_factories
 from datus.utils.bounded_tool_output import bounded_text
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -104,6 +106,8 @@ class ReadResultDecision:
     result: Any = None
     reason: Optional[str] = None
     applied_policies: list[str] = field(default_factory=list)
+    # Projection of an Arrow replacement, even when the output rows are empty.
+    column_names: Optional[list[str]] = None
 
 
 @dataclass(frozen=True)
@@ -422,6 +426,7 @@ class PolicyRuntime:
         """
         context = self._normalize_context(policy_context)
         current_result = result
+        column_names = None
         applied: list[str] = []
         for plugin_name, runtime in self._runtimes:
             hook = getattr(runtime, "after_read_result", None)
@@ -436,8 +441,6 @@ class PolicyRuntime:
             list_result = hook_name == "after_read_batch" and isinstance(current_result, list)
             hook_result = current_result
             if list_result:
-                import pyarrow as pa
-
                 try:
                     columns = set(current_result[0]) if current_result else set()
                     if any(not isinstance(row, dict) or set(row) != columns for row in current_result):
@@ -473,18 +476,28 @@ class PolicyRuntime:
             decision = self._result_decision(plugin_name, raw, hook_result)
             if not decision.allowed:
                 return replace(decision, reason=_explain(context, decision.reason))
-            if list_result:
-                if not isinstance(decision.result, pa.Table):
-                    raise DatusException(
-                        ErrorCode.TOOL_INVALID_INPUT,
-                        message=f"Policy runtime {plugin_name!r} after_read_batch must return an Arrow table",
-                    )
+            if list_result and not isinstance(decision.result, pa.Table):
+                raise DatusException(
+                    ErrorCode.TOOL_INVALID_INPUT,
+                    message=f"Policy runtime {plugin_name!r} after_read_batch must return an Arrow table",
+                )
+            if isinstance(decision.result, pa.Table):
                 batch_schema = decision.result.schema
-                restored = current_result if decision.result is hook_result else decision.result.to_pylist()
-                decision = replace(decision, result=restored)
-            current_result = decision.result
+                if decision.result is not hook_result:
+                    column_names = batch_schema.names
+            elif decision.result is not hook_result:
+                column_names = None
+                if isinstance(decision.result, list) and not decision.result:
+                    # A replacement empty list cannot tell a later batch hook which columns survived.
+                    batch_schema = None
+            if list_result:
+                current_result = current_result if decision.result is hook_result else decision.result.to_pylist()
+            else:
+                current_result = decision.result
             applied.extend(decision.applied_policies)
-        return ReadResultDecision(allowed=True, result=current_result, applied_policies=applied)
+        return ReadResultDecision(
+            allowed=True, result=current_result, applied_policies=applied, column_names=column_names
+        )
 
     @staticmethod
     def _normalize_context(policy_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
