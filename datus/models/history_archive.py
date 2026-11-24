@@ -30,6 +30,21 @@ CREATE TABLE IF NOT EXISTS chat_history_segments (
     PRIMARY KEY (session_id, first_id)
 )
 """
+_RECORDS = """
+CREATE TABLE IF NOT EXISTS chat_history_records (
+    session_id TEXT NOT NULL,
+    message_id INTEGER NOT NULL,
+    byte_offset INTEGER NOT NULL,
+    byte_length INTEGER NOT NULL,
+    digest BLOB NOT NULL,
+    starts_run INTEGER NOT NULL,
+    PRIMARY KEY (session_id, message_id)
+)
+"""
+_IMPLICIT_RUN_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_chat_history_implicit_run
+ON chat_history_records(session_id, message_id) WHERE starts_run = 1
+"""
 _TASKS = """
 CREATE TABLE IF NOT EXISTS chat_history_tasks (
     session_id TEXT NOT NULL,
@@ -119,6 +134,24 @@ def prompt_anchor(row_id: int, raw: str, offset: int = 0) -> Anchor | None:
     return row_id, hashlib.sha256(raw.encode()).hexdigest(), prompt[:160], offset
 
 
+def _starts_implicit_run(item: dict[str, Any]) -> bool:
+    if item.get("type") == "function_call":
+        return True
+    content = item.get("content")
+    return (
+        item.get("role") == "assistant"
+        and isinstance(content, list)
+        and any(
+            isinstance(block, dict)
+            and (
+                block.get("type") in ("tool_use", "server_tool_use")
+                or (block.get("type") in ("text", "output_text") and block.get("text"))
+            )
+            for block in content
+        )
+    )
+
+
 class HistoryArchive:
     """Read a session's archive and live rows under the caller's SQLite snapshot."""
 
@@ -139,11 +172,11 @@ class HistoryArchive:
         )
         return int(meta.get(HISTORY_REWRITE_KEY, 0)) if meta.get(HISTORY_VERSION_KEY) == "1" else None
 
-    def _segments(self, start: int, end: int) -> Iterator[tuple[str, int, str, int]]:
+    def _segments(self, start: int, end: int) -> Iterator[tuple[str, int, int, str, int]]:
         if not self.hidden_through:
             return
         yield from self.conn.execute(
-            "SELECT filename,last_id,anchors,byte_size FROM chat_history_segments "
+            "SELECT filename,first_id,last_id,anchors,byte_size FROM chat_history_segments "
             "WHERE session_id=? AND last_id>=? AND first_id<=? ORDER BY first_id",
             (self.session_id, start, end),
         )
@@ -157,6 +190,8 @@ class HistoryArchive:
     def write_segment(self, rows: list[HistoryRow], hidden_through: int) -> None:
         """Publish a complete file before registering it in the rewrite transaction."""
         self.conn.execute(_SEGMENTS)
+        self.conn.execute(_RECORDS)
+        self.conn.execute(_IMPLICIT_RUN_INDEX)
         self.conn.execute(_TASKS)
         self.conn.execute(_TASK_CALLS_INDEX)
         if rows:
@@ -167,6 +202,7 @@ class HistoryArchive:
 
             data = bytearray()
             anchors = []
+            records = []
             for row_id, raw, created_at, turn in rows:
                 anchor = prompt_anchor(row_id, raw, len(data))
                 if anchor is not None:
@@ -174,8 +210,20 @@ class HistoryArchive:
                 item = json.loads(raw)
                 self._index_tasks(row_id, item)
                 record = {"id": row_id, "turn": turn, "created_at": created_at, "item": item}
-                data.extend(json.dumps(record, ensure_ascii=False).encode() + b"\n")
+                line = json.dumps(record, ensure_ascii=False).encode() + b"\n"
+                records.append(
+                    (
+                        self.session_id,
+                        row_id,
+                        len(data),
+                        len(line),
+                        hashlib.sha256(line).digest(),
+                        _starts_implicit_run(item),
+                    )
+                )
+                data.extend(line)
             atomic_write_bytes(path, bytes(data), mode=0o600)
+            self.conn.executemany("INSERT INTO chat_history_records VALUES (?,?,?,?,?,?)", records)
             self.conn.execute(
                 "INSERT INTO chat_history_segments VALUES (?,?,?,?,?,?)",
                 (self.session_id, filename, rows[0][0], rows[-1][0], json.dumps(anchors), len(data)),
@@ -215,30 +263,56 @@ class HistoryArchive:
         return head
 
     def archived_anchors(self, snapshot: int) -> Iterator[Anchor]:
-        for _, last, anchors, _ in self._segments(1, snapshot):
+        for _, _, last, anchors, _ in self._segments(1, snapshot):
             for row_id, digest, text, offset in json.loads(anchors):
                 if row_id <= min(last, snapshot):
                     yield row_id, digest, text, offset
 
     def archived_rows(self, start: int, end: int) -> Iterator[HistoryRow]:
-        for filename, last, anchors, byte_size in self._segments(start, end):
+        for filename, first, last, _, byte_size in self._segments(start, end):
             try:
                 path = self._segment_path(filename)
-                offset = max((a[3] for a in json.loads(anchors) if a[0] <= start), default=0)
                 with path.open("rb") as stream:
                     if os.fstat(stream.fileno()).st_size != byte_size:
                         raise ValueError("Unexpected archive size")
-                    stream.seek(offset)
-                    for line in stream:
+                    indexed = self.conn.execute(
+                        "SELECT message_id,byte_offset,byte_length,digest FROM chat_history_records "
+                        "WHERE session_id=? AND message_id BETWEEN ? AND ? ORDER BY message_id",
+                        (self.session_id, max(first, start), min(last, end)),
+                    )
+                    for row_id, offset, length, digest in indexed:
+                        stream.seek(offset)
+                        line = stream.read(length)
+                        if hashlib.sha256(line).digest() != digest:
+                            raise ValueError("Archive record checksum mismatch")
                         row = json.loads(line)
-                        if row["id"] > min(last, end):
-                            break
-                        if row["id"] >= start:
-                            if not isinstance(row["item"], dict):
-                                raise ValueError("Invalid archive message")
-                            yield row["id"], json.dumps(row["item"]), row["created_at"], row["turn"]
+                        if row["id"] != row_id or not isinstance(row["item"], dict):
+                            raise ValueError("Invalid archive message")
+                        yield row_id, json.dumps(row["item"]), row["created_at"], row["turn"]
             except (OSError, ValueError, TypeError, KeyError, RecursionError) as exc:
                 raise HistoryArchiveReadError("Chat history archive is temporarily unavailable") from exc
+
+    def implicit_run_start(self, before: int) -> int | None:
+        """Find assistant activity before the first prompt without opening an archive."""
+        if self.hidden_through:
+            row = self.conn.execute(
+                "SELECT message_id FROM chat_history_records "
+                "WHERE session_id=? AND message_id<? AND starts_run=1 ORDER BY message_id LIMIT 1",
+                (self.session_id, before),
+            ).fetchone()
+            if row:
+                return row[0]
+        row = self.conn.execute(
+            "SELECT id FROM agent_messages WHERE session_id=? AND id>? AND id<? AND ("
+            "json_extract(message_data,'$.type')='function_call' OR ("
+            "json_extract(message_data,'$.role')='assistant' AND EXISTS("
+            "SELECT 1 FROM json_each(message_data,'$.content') b WHERE b.type='object' AND ("
+            "json_extract(b.value,'$.type') IN ('tool_use','server_tool_use') OR ("
+            "json_extract(b.value,'$.type') IN ('text','output_text') "
+            "AND json_extract(b.value,'$.text')!=''))))) ORDER BY id LIMIT 1",
+            (self.session_id, self.hidden_through or 0, before),
+        ).fetchone()
+        return row[0] if row else None
 
     def rows(self, start: int, end: int) -> Iterator[HistoryRow]:
         yield from self.archived_rows(start, end)
@@ -252,6 +326,9 @@ class HistoryArchive:
     def truncate(self, last_id: int) -> None:
         """Drop archived items beyond a rollback boundary from the visible history."""
         if self.hidden_through:
+            self.conn.execute(
+                "DELETE FROM chat_history_records WHERE session_id=? AND message_id>?", (self.session_id, last_id)
+            )
             self.conn.execute(
                 "DELETE FROM chat_history_tasks WHERE session_id=? AND message_id>?", (self.session_id, last_id)
             )

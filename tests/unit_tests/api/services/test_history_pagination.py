@@ -742,7 +742,7 @@ async def test_derived_sessions_archive_their_own_transcript(history, tmp_path, 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("damage", ["missing", "truncated", "corrupt"])
+@pytest.mark.parametrize("damage", ["missing", "truncated", "corrupt", "same_size_prompt", "same_size_result"])
 async def test_unreadable_registered_archive_returns_service_unavailable(history, tmp_path, damage):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -764,12 +764,20 @@ async def test_unreadable_registered_archive_returns_service_unavailable(history
     await session.replace_items([{"role": "assistant", "content": "summary"}])
     await session.add_items(turn(2))
     segment = next((tmp_path / "alice" / session_id / "chat-history").glob("*.jsonl"))
+    original = segment.read_bytes()
     if damage == "missing":
         segment.unlink()
     elif damage == "truncated":
         segment.write_bytes(b"")
+    elif damage == "corrupt":
+        segment.write_bytes(b"[" * len(original))
     else:
-        segment.write_bytes(b"[" * segment.stat().st_size)
+        old, new = (
+            (b"question 1", b"question 9") if damage == "same_size_prompt" else (b"long result ", b"fake result ")
+        )
+        changed = original.replace(old, new, 1)
+        assert changed != original and len(changed) == len(original)
+        segment.write_bytes(changed)
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_datus_service] = lambda: SimpleNamespace(chat=service)
@@ -777,13 +785,17 @@ async def test_unreadable_registered_archive_returns_service_unavailable(history
     with TestClient(app) as client:
         latest = client.get("/api/v1/chat/history/page", params={"session_id": session_id, "limit": 1})
         assert latest.status_code == 200
-        older = client.get(
-            "/api/v1/chat/history/page",
-            params={"session_id": session_id, "limit": 1, "cursor": latest.json()["data"]["next_cursor"]},
-        )
-        assert older.status_code == 503
-        download = client.get("/api/v1/chat/history/content", params={"session_id": session_id, "reference": reference})
-        assert download.status_code == 503
+        older_params = {"session_id": session_id, "limit": 1, "cursor": latest.json()["data"]["next_cursor"]}
+        download_params = {"session_id": session_id, "reference": reference}
+        assert client.get("/api/v1/chat/history/page", params=older_params).status_code == 503
+        assert client.get("/api/v1/chat/history/content", params=download_params).status_code == 503
+
+        segment.write_bytes(original)
+        older = client.get("/api/v1/chat/history/page", params=older_params)
+        assert older.status_code == 200
+        assert older.json()["data"]["turns"][0]["text"] == "question 1"
+        download = client.get("/api/v1/chat/history/content", params=download_params)
+        assert download.status_code == 200 and download.text == "long result " * 1000
 
 
 @pytest.mark.asyncio
@@ -811,3 +823,81 @@ async def test_subagent_result_is_counted_when_call_and_result_cross_archive_seg
     assert subagent_run_offsets(manager, session_id, manager.get_max_message_id(session_id) + 1) == {child: 1}
     await session.replace_items(summary)
     assert subagent_run_offsets(manager, session_id, manager.get_max_message_id(session_id) + 1) == {child: 1}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True])
+async def test_latest_subagent_run_is_available_without_its_implicit_first_run_archive(history, tmp_path, native):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from datus.api.deps import get_app_context, get_datus_service
+    from datus.api.routes.chat_routes import router
+
+    service, _ = history
+    parent, child = "chat_archived_implicit", "dashboard_session_implicit"
+    root = tmp_path / "alice" / parent
+    child_session = SessionManager(session_dir=str(root)).get_session(child)
+    first_run = tool("implicit", "lookup", "earlier run")
+    if native:
+        first_run = [
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "implicit", "name": "lookup", "input": {}}],
+            },
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "implicit", "content": first_run[1]["output"]}],
+            },
+        ]
+    await child_session.add_items(first_run)
+    await child_session.replace_items([{"role": "assistant", "content": "summary"}])
+    await child_session.add_items(turn(2) + tool("prompted", "lookup", "latest run"))
+
+    parent_session = SessionManager(session_dir=str(tmp_path), scope="alice").get_session(parent)
+    await parent_session.add_items(
+        turn(1)
+        + tool("task_old", "task", {"session_id": child})
+        + turn(2)
+        + tool("task_new", "task", {"session_id": child})
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_datus_service] = lambda: SimpleNamespace(chat=service)
+    app.dependency_overrides[get_app_context] = lambda: SimpleNamespace(user_id="alice")
+    with TestClient(app) as client:
+        path = "/api/v1/chat/history/page"
+        params = {"session_id": parent, "limit": 1}
+        assert client.get(path, params=params).status_code == 200
+        segment = next((root / child / "chat-history").glob("*.jsonl"))
+        segment.unlink()
+
+        latest = client.get(path, params=params)
+        assert latest.status_code == 200
+        data = latest.json()["data"]
+        calls = [
+            p["payload"]["callToolId"]
+            for msg in data["messages"]
+            for p in msg["content"]
+            if msg["depth"] == 1 and p["type"] == "call-tool"
+        ]
+        assert calls == ["prompted"]
+        assert client.get(path, params={**params, "cursor": data["next_cursor"]}).status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_latest_page_checks_only_requested_records_of_the_same_archive(history, tmp_path):
+    from datus.models.history_archive import HistoryArchiveReadError
+
+    service, _ = history
+    session_id = "chat_partial_integrity"
+    session = SessionManager(session_dir=str(tmp_path), scope="alice").get_session(session_id)
+    await session.add_items(turn(1) + turn(2))
+    await session.replace_items([{"role": "assistant", "content": "summary"}])
+    segment = next((tmp_path / "alice" / session_id / "chat-history").glob("*.jsonl"))
+    segment.write_bytes(segment.read_bytes().replace(b"question 1", b"question 9", 1))
+
+    latest = get_history_page(service, session_id, "alice", 1, None)
+    assert questions(latest) == ["question 2"]
+    with pytest.raises(HistoryArchiveReadError):
+        get_history_page(service, session_id, "alice", 1, latest.next_cursor)

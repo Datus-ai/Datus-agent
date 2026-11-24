@@ -139,56 +139,18 @@ def subagent_run_window(manager: SessionManager, session_id: str, skip: int, cou
         conn.execute("BEGIN")
         archive = HistoryArchive(conn, path, session_id)
         snapshot = archive.snapshot()
-        if archive.hidden_through:
-            anchors = _turn_anchors(archive, snapshot)
-            first = next(anchors, None)
-            stop = first[0] - 1 if first else snapshot
-            prefix = next((row[0] for row in archive.rows(1, stop) if _starts_implicit_run(json.loads(row[1]))), None)
-            starts = chain(
-                [prefix] if prefix is not None else [],
-                [first[0]] if first else [],
-                (anchor[0] for anchor in anchors),
-            )
-            markers = list(islice(starts, skip, skip + count + 1))
-            if not markers:
-                return None
-            return markers[0], markers[count] - 1 if len(markers) > count else snapshot
-        turns = _user_turn_rows(conn, session_id, snapshot)
-        first = next(turns, None)
-        # Legacy/compacted sessions can start with an implicit assistant run.
-        prefix = conn.execute(
-            "SELECT id FROM agent_messages WHERE session_id=? AND id<? AND ("
-            "json_extract(message_data,'$.type')='function_call' OR ("
-            "json_extract(message_data,'$.role')='assistant' AND EXISTS("
-            "SELECT 1 FROM json_each(message_data,'$.content') b WHERE b.type='object' AND ("
-            "json_extract(b.value,'$.type') IN ('tool_use','server_tool_use') OR ("
-            "json_extract(b.value,'$.type') IN ('text','output_text') "
-            "AND json_extract(b.value,'$.text')!=''))))) ORDER BY id LIMIT 1",
-            (session_id, first[0] if first else snapshot + 1),
-        ).fetchone()
-        starts = chain([(prefix[0], "")] if prefix else [], [first] if first else [], turns)
-        markers = [row_id for row_id, _ in islice(starts, skip, skip + count + 1)]
+        anchors = _turn_anchors(archive, snapshot)
+        first = next(anchors, None)
+        prefix = archive.implicit_run_start(first[0] if first else snapshot + 1)
+        starts = chain(
+            [prefix] if prefix is not None else [],
+            [first[0]] if first else [],
+            (anchor[0] for anchor in anchors),
+        )
+        markers = list(islice(starts, skip, skip + count + 1))
         if not markers:
             return None
         return markers[0], markers[count] - 1 if len(markers) > count else snapshot
-
-
-def _starts_implicit_run(item: dict) -> bool:
-    if item.get("type") == "function_call":
-        return True
-    content = item.get("content")
-    return (
-        item.get("role") == "assistant"
-        and isinstance(content, list)
-        and any(
-            isinstance(block, dict)
-            and (
-                block.get("type") in ("tool_use", "server_tool_use")
-                or (block.get("type") in ("text", "output_text") and block.get("text"))
-            )
-            for block in content
-        )
-    )
 
 
 def _window(manager: SessionManager, session_id: str, limit: int, cursor: Optional[str], turn: Optional[int]):
