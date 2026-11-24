@@ -2,7 +2,9 @@
 
 ## 概览
 
-`gen_visual_report` 把一个问题——*"Q4 营收怎么样？"*、*"分析一下 H2 商户流失"*——直接变成一份自包含的 **HTML 报告**：一个可上下滚动浏览的网页，包含执行摘要、KPI 卡片、图表、表格和叙事段落。
+`gen_visual_report` 把一个问题——*"Q4 营收怎么样？"*、*"分析一下 H2 商户流失"*——直接变成一份 **HTML 报告**：一个可上下滚动浏览的网页，包含执行摘要、KPI 卡片、图表、表格和叙事段落。
+
+生成的 HTML 会嵌入报告的渲染文件和已保存的查询结果。浏览器默认从 CDN 加载渲染器，因此查看报告需要网络连接。要离线查看，请在生成报告时用 `--report-dist <dir>` 指定包含 `index.css` 和 `index.umd.js` 的本地渲染器目录。CLI 会将这两个文件复制到 `index.html` 旁的 `_assets/` 目录。
 
 交互式 CLI 默认在浏览器中打开报告。使用 Print 模式（`--print`）或传入 `--no-open-report` 时，会跳过自动打开。你可以根据 CLI 输出的 HTML 文件路径，在浏览器中手动打开报告。
 
@@ -70,7 +72,7 @@ graph LR
 
 agent 会先理解你的问题，找到最相关的 metric 和数据表，跑必要的 SQL，然后把执行摘要、KPI、图表、表格、建议组合成一份完整的 HTML 报告。如果之后要修改，再次调用 `gen_visual_report` 即可原地编辑同一份报告。
 
-报告保存在项目根目录下的 `reports/<slug>/`。`manifest.json` 保存元数据，`render/app.jsx` 是 React 入口，`queries/` 保存 SQL 和查询结果的 JSON 文件。本地编译生成的 `index.html` 会嵌入渲染文件和查询结果。
+报告默认保存在项目根目录下的 `reports/<slug>/`。宿主应用可以设置 `AgentConfig.artifact_output_root`，此时报告会保存在该目录下的 `reports/<slug>/`。`manifest.json` 保存元数据，`render/app.jsx` 是 React 入口，`queries/` 保存 SQL 和查询结果的 JSON 文件。
 
 ## 按模块独立修改
 
