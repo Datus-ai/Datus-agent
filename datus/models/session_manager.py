@@ -1788,10 +1788,18 @@ class SessionManager:
         return None
 
     def get_session_messages(
-        self, session_id: str, *, min_id: Optional[int] = None, max_id: Optional[int] = None
+        self,
+        session_id: str,
+        *,
+        min_id: Optional[int] = None,
+        max_id: Optional[int] = None,
+        include_archive: bool = False,
     ) -> List[Dict]:
         """
-        Get all messages from a session stored in SQLite, aggregating consecutive assistant messages.
+        Read session messages, aggregating consecutive assistant messages.
+
+        Studio includes the archive. Model-view consumers such as CLI rewind
+        keep selecting turns from the SQLite rows they can branch from.
 
         Args:
             session_id: Session ID to load messages from
@@ -1824,35 +1832,31 @@ class SessionManager:
         try:
             with sqlite3.connect(str(db_path)) as conn:
                 conn.execute("BEGIN")
-                cursor = conn.cursor()
-                conditions = ["session_id = ?"]
-                params = [session_id]
-                if min_id is not None:
-                    conditions.append("id >= ?")
-                    params.append(min_id)
-                if max_id is not None:
-                    conditions.append("id <= ?")
-                    params.append(max_id)
-                cursor.execute(
-                    "SELECT id, message_data, created_at FROM agent_messages WHERE "
-                    + " AND ".join(conditions)
-                    + " ORDER BY created_at, id",
-                    params,
-                )
-                rows = cursor.fetchall()
-                archive = HistoryArchive(conn, db_path, session_id)
-                archive_turns = {}
-                if archive.hidden_through:
+                archive = HistoryArchive(conn, db_path, session_id) if include_archive else None
+                if archive and archive.hidden_through:
                     first, last = min_id or 1, max_id if max_id is not None else archive.snapshot()
                     history_rows = list(archive.rows(first, last))
                     rows = [(row_id, raw, timestamp) for row_id, raw, timestamp, _ in history_rows]
-                    archive_turns = {row_id: turn for row_id, _, _, turn in history_rows if turn is not None}
+                    turn_map = {row_id: turn for row_id, _, _, turn in history_rows if turn is not None}
+                else:
+                    conditions = ["session_id = ?"]
+                    params = [session_id]
+                    if min_id is not None:
+                        conditions.append("id >= ?")
+                        params.append(min_id)
+                    if max_id is not None:
+                        conditions.append("id <= ?")
+                        params.append(max_id)
+                    rows = conn.execute(
+                        "SELECT id, message_data, created_at FROM agent_messages WHERE "
+                        + " AND ".join(conditions)
+                        + " ORDER BY created_at, id",
+                        params,
+                    ).fetchall()
+                    turn_map = self._read_message_turn_map(conn, session_id)
 
-                # Side-table @-context (table/metric/sql/knowledge refs) keyed by
-                # user_turn_number, plus the message_id -> turn map to attach each
-                # to the right user bubble. Empty when the session predates the
-                # feature or carried no references.
-                turn_map = archive_turns if archive.hidden_through else self._read_message_turn_map(conn, session_id)
+                # Reattach the saved @-context using the original SDK turn
+                # number, including when the message now lives in an archive.
                 context_map = self._read_user_message_context(conn, session_id)
                 content_map = self._read_message_contents(conn, session_id, min_id=min_id, max_id=max_id)
 

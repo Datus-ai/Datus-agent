@@ -18,6 +18,7 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
+from datus.models.history_archive import HISTORY_REWRITE_KEY, HISTORY_VERSION_KEY
 from datus.models.sqlite_session import SESSION_META_TABLE, SESSION_TITLE_KEY, DatusSQLiteSession
 from datus.utils.exceptions import DatusException, ErrorCode
 
@@ -32,7 +33,11 @@ class AcceptedTurnStore:
 
     def __init__(self, directory: str, session_id: str, *, namespace: str):
         """Validate the session identity and namespace without creating history."""
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id) or not namespace or namespace == SESSION_TITLE_KEY:
+        if (
+            not re.fullmatch(r"[A-Za-z0-9_-]+", session_id)
+            or not namespace
+            or namespace in (SESSION_TITLE_KEY, HISTORY_VERSION_KEY, HISTORY_REWRITE_KEY)
+        ):
             raise _invalid("Invalid accepted turn identity")
         self.session_id = session_id
         self.namespace = namespace

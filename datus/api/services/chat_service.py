@@ -119,7 +119,7 @@ def _load_subagent_runs(
             if window is None:
                 return []
             bounds = {"min_id": window[0], "max_id": window[1]}
-        raw_messages = manager.get_session_messages(sub_session_id, **bounds)
+        raw_messages = manager.get_session_messages(sub_session_id, include_archive=True, **bounds)
     except Exception as e:
         logger.warning(f"Failed to read subagent session {sub_session_id} for history: {e}")
         return []
@@ -561,7 +561,7 @@ class ChatService:
                 session_dir=self._session_dir, scope=session_user_scope(self.agent_config, user_id)
             )
             bounds = {"min_id": window[0], "max_id": window[1]} if window else {}
-            raw_messages = session_manager.get_session_messages(session_id, **bounds)
+            raw_messages = session_manager.get_session_messages(session_id, include_archive=True, **bounds)
             tool_results = session_manager.get_tool_result_contents(session_id, **bounds)
             tool_calls = session_manager.get_tool_call_contents(session_id, **bounds)
             node_responses = session_manager.get_node_response_contents(session_id, **bounds)

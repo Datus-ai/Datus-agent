@@ -613,6 +613,9 @@ async def test_paging_and_downloads_survive_multiple_context_rewrites(history, t
 
     latest = get_history_page(service, session_id, "alice", 2, None)
     assert latest.total_turns == 5
+    assert [msg["content"] for msg in manager.get_session_messages(session_id) if msg["role"] == "user"] == [
+        "question 5"
+    ]
     assert questions(latest) == ["question 4", "question 5"]
     third = get_history_page(service, session_id, "alice", 1, None, turn=3)
     assert questions(third) == ["question 3"]
