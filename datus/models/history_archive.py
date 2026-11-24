@@ -22,6 +22,8 @@ HISTORY_VERSION_KEY = "chat_history_version"
 HISTORY_REWRITE_KEY = "chat_history_hidden_through"
 # A result whose tool archive could not be read. This cannot be a session ID.
 TASK_CHILD_UNAVAILABLE = "!"
+# An ordinary tool call replaced an unfinished task with the same provider ID.
+TASK_CALL_SHADOWED = "?"
 _SEGMENT_NAME = re.compile(r"chat-[0-9a-f]{32}\.jsonl")
 _SEGMENTS = """
 CREATE TABLE IF NOT EXISTS chat_history_segments (
@@ -58,9 +60,9 @@ CREATE TABLE IF NOT EXISTS chat_history_tasks (
     PRIMARY KEY (session_id, message_id, call_id)
 )
 """
-_TASK_CALLS_INDEX = """
-CREATE INDEX IF NOT EXISTS idx_chat_history_task_calls
-ON chat_history_tasks(session_id, call_id, message_id) WHERE child_id IS NULL
+_TASK_EVENTS_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_chat_history_task_events
+ON chat_history_tasks(session_id, call_id, message_id)
 """
 _SAFE_SESSION_ID = re.compile(r"[A-Za-z0-9_.-]+")
 _TOOL_OUTPUT_NAME = re.compile(r"[0-9]{6,}_output_([0-9a-f]{8})\.txt")
@@ -125,12 +127,13 @@ def task_child_session_id(raw: Any, *, archive_dir: Path) -> str | None:
     return None
 
 
-def _task_events(item: dict[str, Any]) -> Iterator[tuple[Any, bool, Any]]:
+def _tool_events(item: dict[str, Any]) -> Iterator[tuple[Any, str | None, Any]]:
+    """Yield call ID, tool name for calls, and payload for results."""
     kind = item.get("type")
-    if kind == "function_call" and item.get("name") == "task":
-        yield item.get("call_id"), True, None
+    if kind == "function_call":
+        yield item.get("call_id"), item.get("name") or "", None
     elif kind == "function_call_output":
-        yield item.get("call_id"), False, item.get("output")
+        yield item.get("call_id"), None, item.get("output")
     content = item.get("content")
     if not isinstance(content, list):
         return
@@ -138,10 +141,10 @@ def _task_events(item: dict[str, Any]) -> Iterator[tuple[Any, bool, Any]]:
     for block in content:
         if not isinstance(block, dict):
             continue
-        if role == "assistant" and block.get("type") == "tool_use" and block.get("name") == "task":
-            yield block.get("id"), True, None
+        if role == "assistant" and block.get("type") == "tool_use":
+            yield block.get("id"), block.get("name") or "", None
         elif role == "user" and block.get("type") == "tool_result":
-            yield block.get("tool_use_id"), False, block.get("content")
+            yield block.get("tool_use_id"), None, block.get("content")
 
 
 HistoryRow = tuple[int, str, str, int | None]
@@ -208,14 +211,21 @@ class HistoryArchive:
         )
         return int(meta.get(HISTORY_REWRITE_KEY, 0)) if meta.get(HISTORY_VERSION_KEY) == "1" else None
 
-    def _segments(self, start: int, end: int) -> Iterator[tuple[str, int, int, str, int]]:
+    def _segments(
+        self, start: int, end: int, *, legacy_task_index: bool = False
+    ) -> Iterator[tuple[str, int, int, str, int]]:
         if not self.hidden_through:
             return
-        yield from self.conn.execute(
-            "SELECT filename,first_id,last_id,anchors,byte_size FROM chat_history_segments "
-            "WHERE session_id=? AND last_id>=? AND first_id<=? ORDER BY first_id",
-            (self.session_id, start, end),
+        query = (
+            "SELECT filename,first_id,last_id,anchors,byte_size FROM chat_history_segments s "
+            "WHERE session_id=? AND last_id>=? AND first_id<=?"
         )
+        if legacy_task_index:
+            query += (
+                " AND NOT EXISTS (SELECT 1 FROM chat_history_tasks t "
+                "WHERE t.session_id=s.session_id AND t.message_id=s.first_id AND t.call_id='')"
+            )
+        yield from self.conn.execute(query + " ORDER BY first_id", (self.session_id, start, end))
 
     def _segment_path(self, filename: str) -> Path:
         path = self.directory / filename
@@ -229,7 +239,7 @@ class HistoryArchive:
         self.conn.execute(_RECORDS)
         self.conn.execute(_IMPLICIT_RUN_INDEX)
         self.conn.execute(_TASKS)
-        self.conn.execute(_TASK_CALLS_INDEX)
+        self.conn.execute(_TASK_EVENTS_INDEX)
         if rows:
             filename = f"chat-{uuid.uuid4().hex}.jsonl"
             path = self._segment_path(filename)
@@ -264,32 +274,48 @@ class HistoryArchive:
                 "INSERT INTO chat_history_segments VALUES (?,?,?,?,?,?)",
                 (self.session_id, filename, rows[0][0], rows[-1][0], json.dumps(anchors), len(data)),
             )
+            # An empty call ID is reserved to mark segments with complete task indexing.
+            self.conn.execute("INSERT INTO chat_history_tasks VALUES (?,?,'','')", (self.session_id, rows[0][0]))
         self.conn.execute(
             "INSERT OR REPLACE INTO session_meta VALUES (?,?,?)",
             (self.session_id, HISTORY_REWRITE_KEY, str(hidden_through)),
         )
 
     def _index_tasks(self, row_id: int, item: dict[str, Any]) -> None:
-        for call_id, is_call, output in _task_events(item):
+        for call_id, tool_name, output in _tool_events(item):
             if not isinstance(call_id, str) or not call_id:
                 continue
             child = None
-            if not is_call:
-                task_call = self.conn.execute(
-                    "SELECT 1 FROM chat_history_tasks "
-                    "WHERE session_id=? AND call_id=? AND child_id IS NULL AND message_id<?",
+            if tool_name != "task":
+                prior = self.conn.execute(
+                    "SELECT child_id FROM chat_history_tasks "
+                    "WHERE session_id=? AND call_id=? AND message_id<? ORDER BY message_id DESC LIMIT 1",
                     (self.session_id, call_id, row_id),
                 ).fetchone()
-                if not task_call:
+                if prior != (None,):
                     continue
-                child = task_child_session_id(output, archive_dir=self.directory.parent / "data") or ""
+                child = (
+                    TASK_CALL_SHADOWED
+                    if tool_name is not None
+                    else task_child_session_id(output, archive_dir=self.directory.parent / "data") or ""
+                )
             self.conn.execute(
                 "INSERT OR IGNORE INTO chat_history_tasks VALUES (?,?,?,?)",
                 (self.session_id, row_id, call_id, child),
             )
 
+    def indexed_task_children(self, start: int, end: int) -> dict[tuple[int, str], str]:
+        return {
+            (row_id, call_id): child
+            for row_id, call_id, child in self.conn.execute(
+                "SELECT message_id,call_id,child_id FROM chat_history_tasks "
+                "WHERE session_id=? AND message_id BETWEEN ? AND ? AND child_id NOT IN ('',?,?)",
+                (self.session_id, start, end, TASK_CHILD_UNAVAILABLE, TASK_CALL_SHADOWED),
+            )
+        }
+
     def unindexed_task_outputs(self, before: int) -> Iterator[Any]:
-        """Read earlier task outputs that the index could not resolve."""
+        """Read unresolved results and search for gaps in older task indexes."""
         if not self.hidden_through:
             return
         candidates = self.conn.execute(
@@ -297,27 +323,30 @@ class HistoryArchive:
             "SELECT message_id,call_id,child_id,"
             "LEAD(message_id,1,:before) OVER call_events AS next_id,"
             "LEAD(child_id) OVER call_events AS next_child "
-            "FROM chat_history_tasks WHERE session_id=:session AND message_id<:before "
+            "FROM chat_history_tasks WHERE session_id=:session AND message_id<:before AND call_id!='' "
             "WINDOW call_events AS (PARTITION BY call_id ORDER BY message_id)) "
             "SELECT message_id,call_id,child_id,next_id FROM task_events "
-            "WHERE child_id=:unavailable OR (child_id IS NULL AND next_child IS NULL)",
-            {"session": self.session_id, "before": before, "unavailable": TASK_CHILD_UNAVAILABLE},
+            "WHERE child_id=:unavailable OR (child_id IS NULL AND (next_child IS NULL OR next_child=:shadowed))",
+            {
+                "session": self.session_id,
+                "before": before,
+                "unavailable": TASK_CHILD_UNAVAILABLE,
+                "shadowed": TASK_CALL_SHADOWED,
+            },
         )
         for row_id, call_id, child, next_id in candidates:
-            # Old writers left only the call indexed. Search until its result or the
-            # next use of this call ID. New writers can point to the exact result.
+            # Old writers left only the call indexed. Search until its result or
+            # the next use of the call ID, skipping segments with complete indexes.
             start, end = (row_id, row_id) if child else (row_id + 1, min(next_id - 1, self.hidden_through))
             if end < start:
                 continue
-            with closing(self.archived_rows(start, end)) as rows:
+            with closing(self.archived_rows(start, end, legacy_task_index=child is None)) as rows:
                 for _, raw, _, _ in rows:
-                    outputs = [
-                        output
-                        for result_id, is_call, output in _task_events(json.loads(raw))
-                        if not is_call and result_id == call_id
-                    ]
-                    if outputs:
-                        yield from outputs
+                    event = next((event for event in _tool_events(json.loads(raw)) if event[0] == call_id), None)
+                    if event:
+                        _, tool_name, output = event
+                        if tool_name is None:
+                            yield output
                         break
 
     def snapshot(self) -> int:
@@ -337,8 +366,8 @@ class HistoryArchive:
                 if row_id <= min(last, snapshot):
                     yield row_id, digest, text, offset
 
-    def archived_rows(self, start: int, end: int) -> Iterator[HistoryRow]:
-        for filename, first, last, _, byte_size in self._segments(start, end):
+    def archived_rows(self, start: int, end: int, *, legacy_task_index: bool = False) -> Iterator[HistoryRow]:
+        for filename, first, last, _, byte_size in self._segments(start, end, legacy_task_index=legacy_task_index):
             try:
                 path = self._segment_path(filename)
                 with path.open("rb") as stream:

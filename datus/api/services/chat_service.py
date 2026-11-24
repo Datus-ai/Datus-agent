@@ -576,7 +576,9 @@ class ChatService:
                     action for msg in raw_messages for action in msg.get("actions", []) if _is_task_result(action)
                 )
                 for action in task_results:
-                    child_id = task_child_session_id(action.output, archive_dir=archive_dir)
+                    child_id = action._indexed_child_session_id or task_child_session_id(
+                        action.output, archive_dir=archive_dir
+                    )
                     if child_id == TASK_CHILD_UNAVAILABLE:
                         # Its run could belong to any of the child sessions seen later.
                         break

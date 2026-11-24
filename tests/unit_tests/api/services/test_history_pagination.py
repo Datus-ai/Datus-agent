@@ -55,10 +55,34 @@ def questions(page):
     return [message.content[0].payload["content"] for message in page.messages if message.role == "user"]
 
 
-def tool(call_id, name, result):
+def tool(call_id, name, result, *, native=False):
+    output = json.dumps({"success": 1, "result": result})
+    if native:
+        return [
+            {"role": "assistant", "content": [{"type": "tool_use", "id": call_id, "name": name, "input": {}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": call_id, "content": output}]},
+        ]
     return [
         {"type": "function_call", "call_id": call_id, "name": name, "arguments": "{}"},
-        {"type": "function_call_output", "call_id": call_id, "output": json.dumps({"success": 1, "result": result})},
+        {"type": "function_call_output", "call_id": call_id, "output": output},
+    ]
+
+
+def offload_result(result, archive, index, *, native=False):
+    if native:
+        block = result["content"][0]
+        block["content"] = archive.archive(block["content"], index, "output")
+    else:
+        result["output"] = archive.archive(result["output"], index, "output")
+
+
+def child_tool_calls(data):
+    return [
+        part.payload["callToolId"]
+        for message in data.messages
+        if message.depth == 1
+        for part in message.content
+        if part.type == "call-tool"
     ]
 
 
@@ -759,6 +783,89 @@ async def test_archived_tool_display_keeps_subagent_run_alignment(history, tmp_p
     ]
     assert questions(page) == ["question 2"]
     assert children == ["child_2"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True])
+async def test_indexed_child_remains_available_when_its_tool_result_file_is_missing(history, tmp_path, native):
+    service, write = history
+    parent, child = "chat_indexed_child", "gen_job_session_child"
+    write(
+        child,
+        turn(1) + tool("child_1", "lookup", "first") + turn(2) + tool("child_2", "lookup", "second"),
+        parent=parent,
+    )
+    session = SessionManager(session_dir=str(tmp_path), scope="alice").get_session(parent)
+    archive = ToolArchive("", parent, base_dir=tmp_path / "alice" / parent / "data", preview_chars=12)
+    call, result = tool("task_1", "task", {"session_id": child}, native=native)
+    offload_result(result, archive, 1, native=native)
+    await session.add_items(turn(1) + [call, result])
+    await session.replace_items([{"role": "assistant", "content": "summary"}])
+    next(archive.dir.glob("000001_output_*.txt")).unlink()
+    await session.add_items(turn(2) + tool("task_2", "task", {"session_id": child}, native=native))
+    session.close()
+
+    assert child_tool_calls(get_history_page(service, parent, "alice", 1, None)) == ["child_2"]
+    assert child_tool_calls(get_history_page(service, parent, "alice", 2, None)) == ["child_1", "child_2"]
+    assert child_tool_calls(service.get_history(parent, "alice").data) == ["child_1", "child_2"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("storage", ["live", "archived", "split"])
+async def test_non_task_result_with_reused_id_does_not_shift_subagent_runs(history, tmp_path, native, storage):
+    service, write = history
+    parent, child = "chat_reused_tool_id", "gen_job_session_child"
+    write(
+        child,
+        turn(1) + tool("child_1", "lookup", "first") + turn(2) + tool("child_2", "lookup", "second"),
+        parent=parent,
+    )
+    session = SessionManager(session_dir=str(tmp_path), scope="alice").get_session(parent)
+    archive = ToolArchive("", parent, base_dir=tmp_path / "alice" / parent / "data", preview_chars=12)
+    summary = [{"role": "assistant", "content": "summary"}]
+    await session.add_items(turn(1) + tool("shared", "task", {"session_id": child}, native=native))
+    call, result = tool("shared", "execute_sql", "unrelated", native=native)
+    offload_result(result, archive, 1, native=native)
+    next(archive.dir.glob("000001_output_*.txt")).unlink()
+    await session.add_items(turn(2) + [call])
+    if storage == "split":
+        await session.replace_items(summary)
+    await session.add_items([result])
+    if storage == "archived":
+        await session.replace_items(summary)
+    await session.add_items(turn(3) + tool("last", "task", {"session_id": child}, native=native))
+    session.close()
+
+    assert child_tool_calls(service.get_history(parent, "alice").data) == ["child_1", "child_2"]
+    assert child_tool_calls(get_history_page(service, parent, "alice", 1, None)) == ["child_2"]
+
+
+@pytest.mark.asyncio
+async def test_unfinished_task_in_indexed_segment_does_not_open_off_page_archives(history, tmp_path, monkeypatch):
+    service, write = history
+    parent, child = "chat_unfinished_task", "gen_job_session_child"
+    write(child, turn(1) + tool("child_1", "lookup", "first"), parent=parent)
+    session = SessionManager(session_dir=str(tmp_path), scope="alice").get_session(parent)
+    summary = [{"role": "assistant", "content": "summary"}]
+    await session.add_items(turn(0) + tool("stopped", "task", None)[:1])
+    await session.replace_items(summary)
+    for index in range(1, 4):
+        await session.add_items(turn(index) + tool(f"sql_{index}", "execute_sql", "off-page output " * 1000))
+        await session.replace_items(summary)
+    await session.add_items(turn(4) + tool("latest", "task", {"session_id": child}))
+    session.close()
+
+    original_open = Path.open
+    off_page = set((tmp_path / "alice" / parent / "chat-history").glob("*.jsonl"))
+    assert len(off_page) == 4
+
+    def open_latest_only(path, *args, **kwargs):
+        assert path not in off_page, "a new index already covers these off-page segments"
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", open_latest_only)
+    assert child_tool_calls(get_history_page(service, parent, "alice", 1, None)) == ["child_1"]
 
 
 @pytest.mark.asyncio
