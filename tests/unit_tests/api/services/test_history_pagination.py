@@ -975,6 +975,47 @@ async def test_legacy_task_index_gaps_do_not_shift_the_next_subagent_run(history
 
 
 @pytest.mark.asyncio
+async def test_compaction_defers_task_attribution_when_legacy_segment_is_unreadable(history, tmp_path):
+    service, write = history
+    parent, child = "chat_unreadable_task_index", "gen_job_session_child"
+    write(
+        child,
+        turn(1) + tool("child_1", "lookup", "first") + turn(2) + tool("child_2", "lookup", "second"),
+        parent=parent,
+    )
+    session = SessionManager(session_dir=str(tmp_path), scope="alice").get_session(parent)
+    call, result = tool("first", "task", {"session_id": child})
+    summary = [{"role": "assistant", "content": "summary"}]
+    await session.add_items([turn(1)[0], call, turn(1)[1]])
+    await session.replace_items(summary)
+    db_path = tmp_path / "alice" / f"{parent}.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM chat_history_tasks WHERE call_id=''")
+    segment = next((tmp_path / "alice" / parent / "chat-history").glob("*.jsonl"))
+    parked = segment.with_suffix(".parked")
+    segment.rename(parked)
+
+    await session.add_items([result] + turn(2) + tool("last", "task", {"session_id": child}))
+    await session.replace_items(summary)
+    assert await session.get_items() == summary
+    session.close()
+
+    latest = get_history_page(service, parent, "alice", 1, None)
+    assert questions(latest) == ["question 2"]
+    assert child_tool_calls(latest) == []
+    assert any(
+        part.payload["callToolId"] == "last"
+        for message in latest.messages
+        for part in message.content
+        if part.type == "call-tool"
+    )
+
+    parked.rename(segment)
+    assert child_tool_calls(get_history_page(service, parent, "alice", 1, None)) == ["child_2"]
+    assert child_tool_calls(service.get_history(parent, "alice").data) == ["child_1", "child_2"]
+
+
+@pytest.mark.asyncio
 async def test_archive_write_failure_preserves_model_rows_and_existing_cursor(history, tmp_path, monkeypatch):
     from datus.storage.semantic_model import artifact_file
 

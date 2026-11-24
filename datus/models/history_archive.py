@@ -249,12 +249,14 @@ class HistoryArchive:
             data = bytearray()
             anchors = []
             records = []
+            task_index_complete = True
             for row_id, raw, created_at, turn in rows:
                 anchor = prompt_anchor(row_id, raw, len(data))
                 if anchor is not None:
                     anchors.append(anchor)
                 item = json.loads(raw)
-                self._index_tasks(row_id, item)
+                if not self._index_tasks(row_id, item):
+                    task_index_complete = False
                 record = {"id": row_id, "turn": turn, "created_at": created_at, "item": item}
                 line = json.dumps(record, ensure_ascii=False).encode() + b"\n"
                 records.append(
@@ -274,14 +276,16 @@ class HistoryArchive:
                 "INSERT INTO chat_history_segments VALUES (?,?,?,?,?,?)",
                 (self.session_id, filename, rows[0][0], rows[-1][0], json.dumps(anchors), len(data)),
             )
-            # An empty call ID is reserved to mark segments with complete task indexing.
-            self.conn.execute("INSERT INTO chat_history_tasks VALUES (?,?,'','')", (self.session_id, rows[0][0]))
+            # Without this marker, a deferred result can be recovered once its legacy segment is readable.
+            if task_index_complete:
+                self.conn.execute("INSERT INTO chat_history_tasks VALUES (?,?,'','')", (self.session_id, rows[0][0]))
         self.conn.execute(
             "INSERT OR REPLACE INTO session_meta VALUES (?,?,?)",
             (self.session_id, HISTORY_REWRITE_KEY, str(hidden_through)),
         )
 
-    def _index_tasks(self, row_id: int, item: dict[str, Any]) -> None:
+    def _index_tasks(self, row_id: int, item: dict[str, Any]) -> bool:
+        complete = True
         for call_id, tool_name, output in _tool_events(item):
             if not isinstance(call_id, str) or not call_id:
                 continue
@@ -297,9 +301,13 @@ class HistoryArchive:
                 if tool_name is None:
                     # Legacy indexes omit ordinary calls and some task results.
                     # A later event in those segments means this task is no longer waiting for a result.
-                    later = self._archived_tool_event(
-                        call_id, prior[0] + 1, min(row_id - 1, self.hidden_through or 0), legacy_task_index=True
-                    )
+                    try:
+                        later = self._archived_tool_event(
+                            call_id, prior[0] + 1, min(row_id - 1, self.hidden_through or 0), legacy_task_index=True
+                        )
+                    except HistoryArchiveReadError:
+                        complete = False
+                        continue
                     if later is not None:
                         continue
                 child = (
@@ -311,6 +319,7 @@ class HistoryArchive:
                 "INSERT OR IGNORE INTO chat_history_tasks VALUES (?,?,?,?)",
                 (self.session_id, row_id, call_id, child),
             )
+        return complete
 
     def indexed_task_children(self, start: int, end: int) -> dict[tuple[int, str], str]:
         return {
