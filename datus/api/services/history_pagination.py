@@ -15,7 +15,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator, Optional
 
 from datus.api.models.cli_models import ChatHistoryPageData
-from datus.models.history_archive import Anchor, HistoryArchive, child_session_id, prompt_anchor
+from datus.models.history_archive import (
+    TASK_CALL_SHADOWED,
+    TASK_CHILD_UNAVAILABLE,
+    Anchor,
+    HistoryArchive,
+    HistoryArchiveReadError,
+    prompt_anchor,
+    task_child_session_id,
+)
 from datus.models.session_manager import SessionManager, extract_user_input, is_compact_resume_text
 from datus.utils.artifact_output import session_user_scope
 
@@ -58,49 +66,83 @@ def _connect(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def subagent_run_offsets(manager: SessionManager, session_id: str, start_id: int) -> dict[str, int]:
-    """Count earlier task results using the archive index and the live SQLite tail."""
+def subagent_run_offsets(manager: SessionManager, session_id: str, start_id: int) -> dict[str, int] | None:
+    """Count earlier child runs, or return None if an earlier result cannot be attributed."""
     path = _db_path(manager, session_id)
     with _connect(path) as conn:
         conn.execute("BEGIN")
         archive = HistoryArchive(conn, path, session_id)
         counts: Counter[str] = Counter()
-        indexed_calls = ""
+        indexed_events = ""
         if archive.hidden_through:
             counts.update(
                 dict(
                     conn.execute(
                         "SELECT child_id,COUNT(*) FROM chat_history_tasks "
-                        "WHERE session_id=:session AND message_id<:before AND child_id IS NOT NULL GROUP BY child_id",
-                        {"session": session_id, "before": start_id},
+                        "WHERE session_id=? AND message_id<? AND child_id NOT IN ('',?,?) GROUP BY child_id",
+                        (session_id, start_id, TASK_CHILD_UNAVAILABLE, TASK_CALL_SHADOWED),
                     )
                 )
             )
-            indexed_calls = (
-                " UNION SELECT call_id FROM chat_history_tasks "
-                "WHERE session_id=:session AND message_id<:before AND child_id IS NULL"
+            indexed_events = (
+                " UNION ALL SELECT message_id,-1,call_id,child_id IS NULL AND (message_id,call_id) NOT IN ("
+                "SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]') FROM json_each(:settled_calls)"
+                "),NULL FROM chat_history_tasks "
+                "WHERE session_id=:session AND message_id<:before AND call_id!=''"
             )
 
-        rows = conn.execute(
-            "WITH live AS (SELECT message_data FROM agent_messages "
-            "WHERE session_id=:session AND id>:hidden AND id<:before), "
-            "task_calls(call_id) AS ("
-            "SELECT json_extract(message_data,'$.call_id') FROM live "
-            "WHERE json_extract(message_data,'$.type')='function_call' "
-            "AND json_extract(message_data,'$.name')='task' "
-            "UNION SELECT json_extract(t.value,'$.id') FROM live,json_each(message_data,'$.content') t "
-            "WHERE t.type='object' AND json_extract(t.value,'$.type')='tool_use' "
-            "AND json_extract(t.value,'$.name')='task'" + indexed_calls + ") "
-            "SELECT json_extract(message_data,'$.output') FROM live "
-            "WHERE json_extract(message_data,'$.type')='function_call_output' "
-            "AND json_extract(message_data,'$.call_id') IN task_calls "
-            "UNION ALL SELECT json_extract(r.value,'$.content') FROM live,json_each(message_data,'$.content') r "
-            "WHERE json_extract(message_data,'$.role')='user' AND r.type='object' "
-            "AND json_extract(r.value,'$.type')='tool_result' "
-            "AND json_extract(r.value,'$.tool_use_id') IN task_calls",
-            {"session": session_id, "hidden": archive.hidden_through or 0, "before": start_id},
-        )
-        counts.update(child for (raw,) in rows if (child := child_session_id(raw)))
+        def task_outputs() -> Iterator[Any]:
+            # A legacy result or superseding call closes only that indexed occurrence.
+            settled_calls = []
+            for row_id, call_id, tool_name, output in archive.unindexed_task_events(start_id):
+                settled_calls.append((row_id, call_id))
+                if tool_name is None:
+                    yield output
+            # Match each result to the preceding event for its call ID. Keep result
+            # bodies out of the ordering step and extract only those paired to a task.
+            rows = conn.execute(
+                "WITH live AS (SELECT id,message_data FROM agent_messages "
+                "WHERE session_id=:session AND id>:hidden AND id<:before), "
+                "events(id,position,call_id,task_call,output_path) AS ("
+                "SELECT id,-1,json_extract(message_data,'$.call_id'),"
+                "json_extract(message_data,'$.type')='function_call' AND json_extract(message_data,'$.name')='task',"
+                "CASE WHEN json_extract(message_data,'$.type')='function_call_output' THEN '$.output' END "
+                "FROM live WHERE json_extract(message_data,'$.type') IN ('function_call','function_call_output') "
+                "UNION ALL SELECT live.id,CAST(b.key AS INTEGER),"
+                "CASE WHEN json_extract(b.value,'$.type')='tool_use' THEN json_extract(b.value,'$.id') "
+                "ELSE json_extract(b.value,'$.tool_use_id') END,"
+                "json_extract(b.value,'$.type')='tool_use' AND json_extract(b.value,'$.name')='task',"
+                "CASE WHEN json_extract(b.value,'$.type')='tool_result' THEN '$.content['||b.key||'].content' END "
+                "FROM live,json_each(message_data,'$.content') b "
+                "WHERE b.type='object' AND json_type(message_data,'$.content')='array' AND ("
+                "(json_extract(message_data,'$.role')='assistant' AND json_extract(b.value,'$.type')='tool_use') OR "
+                "(json_extract(message_data,'$.role')='user' AND json_extract(b.value,'$.type')='tool_result'))"
+                + indexed_events
+                + "), paired AS ("
+                "SELECT id,output_path,LAG(task_call) OVER (PARTITION BY call_id ORDER BY id,position) AS after_task "
+                "FROM events WHERE call_id IS NOT NULL AND call_id!='') "
+                "SELECT json_extract(live.message_data,paired.output_path) FROM paired "
+                "JOIN live ON live.id=paired.id WHERE paired.after_task AND paired.output_path IS NOT NULL",
+                {
+                    "session": session_id,
+                    "hidden": archive.hidden_through or 0,
+                    "before": start_id,
+                    "settled_calls": json.dumps(settled_calls),
+                },
+            )
+            yield from (raw for (raw,) in rows)
+
+        archive_dir = Path(manager.session_dir).resolve() / session_id / "data"
+        try:
+            for raw in task_outputs():
+                child = task_child_session_id(raw, archive_dir=archive_dir)
+                if child == TASK_CHILD_UNAVAILABLE:
+                    return None
+                if child:
+                    counts[child] += 1
+        except HistoryArchiveReadError:
+            # Off-page task data only affects whether child runs can be attributed.
+            return None
         return dict(counts)
 
 

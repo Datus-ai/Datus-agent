@@ -1845,9 +1845,11 @@ class SessionManager:
             with sqlite3.connect(str(db_path)) as conn:
                 conn.execute("BEGIN")
                 archive = HistoryArchive(conn, db_path, session_id) if include_archive else None
+                indexed_children: dict[tuple[int, str], str] = {}
                 if archive and archive.hidden_through:
                     first, last = min_id or 1, max_id if max_id is not None else archive.snapshot()
                     history_rows = list(archive.rows(first, last))
+                    indexed_children = archive.indexed_task_children(first, last)
                     rows = [(row_id, raw, timestamp) for row_id, raw, timestamp, _ in history_rows]
                     turn_map = {row_id: turn for row_id, _, _, turn in history_rows if turn is not None}
                 else:
@@ -1908,7 +1910,13 @@ class SessionManager:
                                 if tool_results and not has_user_text:
                                     for tr in tool_results:
                                         self._attach_native_tool_result(
-                                            current_actions, tr.get("tool_use_id"), tr.get("content"), created_at
+                                            current_actions,
+                                            tr.get("tool_use_id"),
+                                            tr.get("content"),
+                                            created_at,
+                                            indexed_child_session_id=indexed_children.get(
+                                                (row_id, tr.get("tool_use_id"))
+                                            ),
                                         )
                                     continue
                             # Before adding user message, flush any pending assistant group
@@ -2047,6 +2055,7 @@ class SessionManager:
                                     start_time=last_action.start_time,
                                     end_time=datetime.fromisoformat(created_at) if created_at else datetime.now(),
                                 )
+                                success_action._indexed_child_session_id = indexed_children.get((row_id, call_id))
                                 current_actions.append(success_action)
                             continue
 
@@ -2229,6 +2238,8 @@ class SessionManager:
         tool_use_id: Optional[str],
         raw_content: Any,
         created_at: Optional[str],
+        *,
+        indexed_child_session_id: Optional[str] = None,
     ) -> None:
         """Pair a Claude-native tool result with its in-flight tool_use action.
 
@@ -2283,6 +2294,7 @@ class SessionManager:
             start_time=match.start_time,
             end_time=datetime.fromisoformat(created_at) if created_at else datetime.now(),
         )
+        success_action._indexed_child_session_id = indexed_child_session_id
         current_actions.append(success_action)
 
     def close_all_sessions(self) -> None:
