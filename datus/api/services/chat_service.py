@@ -44,6 +44,7 @@ from datus.api.services.chat_task_manager import (
 )
 from datus.api.services.turn_stats import resolve_subagent
 from datus.configuration.agent_config import AgentConfig
+from datus.models.history_archive import HistoryArchiveReadError
 from datus.models.session_manager import SessionManager, extract_agent_from_session_id, session_matches_agent
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.artifact_output import session_user_scope
@@ -120,6 +121,8 @@ def _load_subagent_runs(
                 return []
             bounds = {"min_id": window[0], "max_id": window[1]}
         raw_messages = manager.get_session_messages(sub_session_id, include_archive=True, **bounds)
+    except HistoryArchiveReadError:
+        raise
     except Exception as e:
         logger.warning(f"Failed to read subagent session {sub_session_id} for history: {e}")
         return []
@@ -719,6 +722,9 @@ class ChatService:
                 success=True, data=ChatHistoryData(messages=sse_messages, execution_context=context)
             )
 
+        except HistoryArchiveReadError as exc:
+            logger.warning("Failed to read chat history archive: %s", exc.__cause__ or exc)
+            raise
         except Exception as e:
             logger.error(f"Failed to get history for session {session_id}: {e}")
             return Result[ChatHistoryData](

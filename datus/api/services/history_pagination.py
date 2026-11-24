@@ -4,7 +4,6 @@ Cursors address persisted SQLite rows, never process-local caches, so requests
 can move between replicas sharing the session volume. Model input is untouched.
 """
 
-import ast
 import base64
 import hashlib
 import json
@@ -16,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator, Optional
 
 from datus.api.models.cli_models import ChatHistoryPageData
-from datus.models.history_archive import Anchor, HistoryArchive, prompt_anchor
+from datus.models.history_archive import Anchor, HistoryArchive, child_session_id, prompt_anchor
 from datus.models.session_manager import SessionManager, extract_user_input, is_compact_resume_text
 from datus.utils.artifact_output import session_user_scope
 
@@ -59,88 +58,50 @@ def _connect(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def _parse_output(raw: Any) -> Any:
-    if not isinstance(raw, str):
-        return raw
-    try:
-        return json.loads(raw)
-    except ValueError:
-        try:
-            return ast.literal_eval(raw)
-        except (ValueError, SyntaxError):
-            return raw
-
-
 def subagent_run_offsets(manager: SessionManager, session_id: str, start_id: int) -> dict[str, int]:
-    """Skip a reused child's runs belonging to task calls on earlier pages."""
+    """Count earlier task results using the archive index and the live SQLite tail."""
     path = _db_path(manager, session_id)
     with _connect(path) as conn:
         conn.execute("BEGIN")
         archive = HistoryArchive(conn, path, session_id)
+        counts: Counter[str] = Counter()
+        indexed_calls = ""
         if archive.hidden_through:
-            return _archived_subagent_offsets(archive, start_id)
+            counts.update(
+                dict(
+                    conn.execute(
+                        "SELECT child_id,COUNT(*) FROM chat_history_tasks "
+                        "WHERE session_id=:session AND message_id<:before AND child_id IS NOT NULL GROUP BY child_id",
+                        {"session": session_id, "before": start_id},
+                    )
+                )
+            )
+            indexed_calls = (
+                " UNION SELECT call_id FROM chat_history_tasks "
+                "WHERE session_id=:session AND message_id<:before AND child_id IS NULL"
+            )
+
         rows = conn.execute(
-            "SELECT json_extract(o.message_data, '$.output') FROM agent_messages o "
-            "WHERE o.session_id=? AND o.id<? AND json_extract(o.message_data, '$.type')='function_call_output' "
-            "AND json_extract(o.message_data, '$.call_id') IN ("
-            "SELECT json_extract(c.message_data, '$.call_id') FROM agent_messages c "
-            "WHERE c.session_id=? AND c.id<? "
-            "AND json_extract(c.message_data, '$.type')='function_call' "
-            "AND json_extract(c.message_data, '$.name')='task') ORDER BY o.id",
-            (session_id, start_id, session_id, start_id),
+            "WITH live AS (SELECT message_data FROM agent_messages "
+            "WHERE session_id=:session AND id>:hidden AND id<:before), "
+            "task_calls(call_id) AS ("
+            "SELECT json_extract(message_data,'$.call_id') FROM live "
+            "WHERE json_extract(message_data,'$.type')='function_call' "
+            "AND json_extract(message_data,'$.name')='task' "
+            "UNION SELECT json_extract(t.value,'$.id') FROM live,json_each(message_data,'$.content') t "
+            "WHERE t.type='object' AND json_extract(t.value,'$.type')='tool_use' "
+            "AND json_extract(t.value,'$.name')='task'" + indexed_calls + ") "
+            "SELECT json_extract(message_data,'$.output') FROM live "
+            "WHERE json_extract(message_data,'$.type')='function_call_output' "
+            "AND json_extract(message_data,'$.call_id') IN task_calls "
+            "UNION ALL SELECT json_extract(r.value,'$.content') FROM live,json_each(message_data,'$.content') r "
+            "WHERE json_extract(message_data,'$.role')='user' AND r.type='object' "
+            "AND json_extract(r.value,'$.type')='tool_result' "
+            "AND json_extract(r.value,'$.tool_use_id') IN task_calls",
+            {"session": session_id, "hidden": archive.hidden_through or 0, "before": start_id},
         )
-        native_rows = conn.execute(
-            "SELECT json_extract(r.value,'$.content') FROM agent_messages m, json_each(m.message_data,'$.content') r "
-            "WHERE m.session_id=? AND m.id<? AND json_extract(m.message_data,'$.role')='user' "
-            "AND r.type='object' AND json_extract(r.value,'$.type')='tool_result' "
-            "AND json_extract(r.value,'$.tool_use_id') IN ("
-            "SELECT json_extract(t.value,'$.id') FROM agent_messages c,json_each(c.message_data,'$.content') t "
-            "WHERE c.session_id=? AND c.id<? AND t.type='object' "
-            "AND json_extract(t.value,'$.name')='task')",
-            (session_id, start_id, session_id, start_id),
-        )
-        counts = Counter(
-            child for records in (rows, native_rows) for (raw,) in records if (child := _child_session_id(raw))
-        )
+        counts.update(child for (raw,) in rows if (child := child_session_id(raw)))
         return dict(counts)
-
-
-def _child_session_id(raw: Any) -> str | None:
-    output = _parse_output(raw)
-    if isinstance(output, list):
-        output = _parse_output("\n".join(str(block.get("text", "")) for block in output if isinstance(block, dict)))
-    if isinstance(output, dict):
-        result = _parse_output(output.get("result", output))
-        child = result.get("session_id") if isinstance(result, dict) else None
-        if isinstance(child, str) and SessionManager._SESSION_ID_RE.fullmatch(child) and ".." not in child:
-            return child
-    return None
-
-
-def _archived_subagent_offsets(archive: HistoryArchive, start_id: int) -> dict[str, int]:
-    calls: set[str] = set()
-    counts: Counter[str] = Counter()
-    for _, raw, _, _ in archive.rows(1, start_id - 1):
-        item = json.loads(raw)
-        role = item.get("role")
-        item_type = item.get("type")
-        if item_type == "function_call" and item.get("name") == "task":
-            calls.add(item.get("call_id"))
-        if item_type == "function_call_output" and item.get("call_id") in calls:
-            if child := _child_session_id(item.get("output")):
-                counts[child] += 1
-        content = item.get("content")
-        if not isinstance(content, list):
-            continue
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            if role == "assistant" and block.get("type") == "tool_use" and block.get("name") == "task":
-                calls.add(block.get("id"))
-            if role == "user" and block.get("type") == "tool_result" and block.get("tool_use_id") in calls:
-                if child := _child_session_id(block.get("content")):
-                    counts[child] += 1
-    return dict(counts)
 
 
 def _user_turn_rows(

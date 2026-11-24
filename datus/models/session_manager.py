@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from agents.extensions.memory import AdvancedSQLiteSession
 
-from datus.models.history_archive import HistoryArchive
+from datus.models.history_archive import HistoryArchive, HistoryArchiveReadError
 from datus.models.sqlite_session import (
     CONTEXT_USED_RESET_SQL,
     DERIVED_SESSION_META_KEYS,
@@ -558,6 +558,7 @@ class SessionManager:
         # relies on a JOIN between agent_messages and message_structure, so copying
         # agent_messages alone would result in an empty conversation history.
         with sqlite3.connect(source_db_path, timeout=5.0) as src_conn:
+            src_conn.execute("BEGIN")
             cursor = src_conn.cursor()
             cursor.execute(
                 "SELECT id, message_data, created_at FROM agent_messages WHERE session_id = ? ORDER BY id",
@@ -594,6 +595,7 @@ class SessionManager:
             # for the copy's own scan to find, so without this the new session
             # would list as untitled.
             meta_rows = self._read_session_meta(cursor, source_session_id)
+            hidden_through = HistoryArchive(src_conn, Path(source_db_path), source_session_id).hidden_through
             content_rows = self._read_message_contents(src_conn, source_session_id)
 
         # Materialize tables in the new DB first (short-lived session is released
@@ -601,7 +603,7 @@ class SessionManager:
         # for all writes. Avoids two concurrent connections on the same file and
         # is substantially faster for long histories.
         new_db_path = os.path.join(self.session_dir, f"{new_session_id}.db")
-        DatusSQLiteSession(session_id=new_session_id, db_path=new_db_path, create_tables=True, archive_history=False)
+        DatusSQLiteSession(session_id=new_session_id, db_path=new_db_path, create_tables=True)
 
         with sqlite3.connect(new_db_path, timeout=5.0) as new_conn:
             new_conn.execute(
@@ -632,6 +634,11 @@ class SessionManager:
                 [(new_session_id, *row) for row in turn_usage_rows],
             )
             self._write_session_meta(new_conn, new_session_id, meta_rows)
+            if hidden_through:
+                # The branch starts from copied model context, so its own
+                # transcript inherits the visibility boundary, not the files.
+                cutoff = min(hidden_through, max((row[0] for row in message_rows), default=0))
+                HistoryArchive(new_conn, Path(new_db_path), new_session_id).write_segment([], cutoff)
             new_conn.execute(self._MESSAGE_CONTENTS_DDL)
             new_conn.executemany(
                 "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
@@ -687,6 +694,7 @@ class SessionManager:
 
         # Read source messages ordered by creation time
         with sqlite3.connect(source_db_path, timeout=5.0) as src_conn:
+            src_conn.execute("BEGIN")
             cursor = src_conn.cursor()
             cursor.execute(
                 "SELECT id, session_id, message_data, created_at FROM agent_messages "
@@ -694,6 +702,7 @@ class SessionManager:
                 (source_session_id,),
             )
             rows = cursor.fetchall()
+            hidden_through = HistoryArchive(src_conn, Path(source_db_path), source_session_id).hidden_through
 
         # Determine the truncation boundary
         user_turn_count = 0
@@ -738,9 +747,7 @@ class SessionManager:
         # ``DatusSQLiteSession`` for the same reason as in ``copy_session``:
         # the cached object is what every later caller gets from
         # ``get_session``, and it has to carry the Datus-owned methods.
-        new_session = DatusSQLiteSession(
-            session_id=new_session_id, db_path=new_db_path, create_tables=True, archive_history=False
-        )
+        new_session = DatusSQLiteSession(session_id=new_session_id, db_path=new_db_path, create_tables=True)
         # Store in cache
         self._sessions[new_session_id] = new_session
 
@@ -834,6 +841,11 @@ class SessionManager:
                     (new_session_id, *usage_row),
                 )
             self._write_session_meta(new_conn, new_session_id, meta_rows)
+            if hidden_through:
+                # The branch starts from copied model context, so its own
+                # transcript inherits the visibility boundary, not the files.
+                cutoff = min(hidden_through, max(kept_message_ids))
+                HistoryArchive(new_conn, Path(new_db_path), new_session_id).write_segment([], cutoff)
             new_conn.execute(self._MESSAGE_CONTENTS_DDL)
             new_conn.executemany(
                 "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
@@ -2169,6 +2181,8 @@ class SessionManager:
                         current_assistant_group["actions"] = current_actions.copy()
                     messages.append(current_assistant_group)
 
+        except HistoryArchiveReadError:
+            raise
         except Exception as e:
             logger.exception(f"Failed to load session messages for {session_id}: {e}")
 

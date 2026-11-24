@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -24,12 +25,8 @@ def history(tmp_path):
         manager = SessionManager(session_dir=str(tmp_path), scope=user)
         root = manager.session_dir
         if parent:
-            from pathlib import Path
-
             root = str(Path(root) / parent)
             Path(root).mkdir(parents=True, exist_ok=True)
-        from pathlib import Path
-
         path = Path(root) / f"{session_id}.db"
         with sqlite3.connect(path) as conn:
             conn.execute(
@@ -667,7 +664,7 @@ async def test_pending_native_input_is_archived_once_and_survives_reopen(history
 
 
 @pytest.mark.asyncio
-async def test_archived_tool_display_keeps_subagent_run_alignment(history, tmp_path):
+async def test_archived_tool_display_keeps_subagent_run_alignment(history, tmp_path, monkeypatch):
     service, _ = history
     parent = "chat_parent_archive"
     child = "gen_job_session_archive"
@@ -678,8 +675,19 @@ async def test_archived_tool_display_keeps_subagent_run_alignment(history, tmp_p
         await child_session.add_items(turn(index) + tool(f"child_{index}", "lookup", str(index)))
         await child_session.replace_items([{"role": "assistant", "content": "child summary"}])
         await parent_session.add_items(turn(index) + tool(f"task_{index}", "task", {"session_id": child}))
+        if index == 1:
+            await parent_session.add_items(tool("unrelated", "execute_sql", "large unrelated output " * 3000))
         await parent_session.replace_items([{"role": "assistant", "content": "parent summary"}])
+        if index == 1:
+            old_segment = next((tmp_path / "alice" / parent / "chat-history").glob("*.jsonl"))
 
+    original_open = Path.open
+
+    def skip_off_page_archive(path, *args, **kwargs):
+        assert path != old_segment, "off-page tool results must stay on disk"
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", skip_off_page_archive)
     page = get_history_page(service, parent, "alice", 1, None)
     children = [
         part.payload["callToolId"]
@@ -709,3 +717,97 @@ async def test_archive_write_failure_preserves_model_rows_and_existing_cursor(hi
         await session.replace_items([{"role": "assistant", "content": "summary"}])
     assert await session.get_items() == turn(1) + turn(2)
     assert questions(get_history_page(service, session_id, "alice", 1, cursor)) == ["question 1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("derive", ["copy", "rewind"])
+async def test_derived_sessions_archive_their_own_transcript(history, tmp_path, derive):
+    service, _ = history
+    manager = SessionManager(session_dir=str(tmp_path), scope="alice")
+    source_id = "chat_source"
+    source = manager.get_session(source_id)
+    await source.add_items(turn(1))
+    await source.replace_items([turn(1)[0], {"role": "assistant", "content": "source summary"}])
+    await source.add_items(turn(2))
+    if derive == "copy":
+        derived_id = manager.copy_session(source_id, "chat")
+    else:
+        derived_id = manager.rewind_session(source_id, 2)
+    derived = manager.get_session(derived_id)
+    await derived.add_items(turn(3))
+    await derived.replace_items([{"role": "assistant", "content": "derived summary"}])
+    page = get_history_page(service, derived_id, "alice", 10, None)
+    assert questions(page) == ["question 2", "question 3"]
+    assert "source summary" not in page.model_dump_json()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("damage", ["missing", "truncated", "corrupt"])
+async def test_unreadable_registered_archive_returns_service_unavailable(history, tmp_path, damage):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from datus.api.deps import get_app_context, get_datus_service
+    from datus.api.routes.chat_routes import router
+
+    service, _ = history
+    session_id = "chat_unreadable_archive"
+    session = SessionManager(session_dir=str(tmp_path), scope="alice").get_session(session_id)
+    await session.add_items(turn(1) + tool("archive", "lookup", "long result " * 1000))
+    page = get_history_page(service, session_id, "alice", 1, None)
+    reference = next(
+        part.payload["result"]["historyContent"]["ref"]
+        for msg in page.messages
+        for part in msg.content
+        if part.type == "call-tool-result"
+    )
+    await session.replace_items([{"role": "assistant", "content": "summary"}])
+    await session.add_items(turn(2))
+    segment = next((tmp_path / "alice" / session_id / "chat-history").glob("*.jsonl"))
+    if damage == "missing":
+        segment.unlink()
+    elif damage == "truncated":
+        segment.write_bytes(b"")
+    else:
+        segment.write_bytes(b"[" * segment.stat().st_size)
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_datus_service] = lambda: SimpleNamespace(chat=service)
+    app.dependency_overrides[get_app_context] = lambda: SimpleNamespace(user_id="alice")
+    with TestClient(app) as client:
+        latest = client.get("/api/v1/chat/history/page", params={"session_id": session_id, "limit": 1})
+        assert latest.status_code == 200
+        older = client.get(
+            "/api/v1/chat/history/page",
+            params={"session_id": session_id, "limit": 1, "cursor": latest.json()["data"]["next_cursor"]},
+        )
+        assert older.status_code == 503
+        download = client.get("/api/v1/chat/history/content", params={"session_id": session_id, "reference": reference})
+        assert download.status_code == 503
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True])
+async def test_subagent_result_is_counted_when_call_and_result_cross_archive_segments(tmp_path, native):
+    manager = SessionManager(session_dir=str(tmp_path), scope="alice")
+    session_id, child = "chat_split_task", "dashboard_session_split"
+    session = manager.get_session(session_id)
+    call, result = tool("split", "task", {"session_id": child})
+    if native:
+        call = {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "split", "name": "task", "input": {}}],
+        }
+        result = {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "split", "content": result["output"]}],
+        }
+    summary = [{"role": "assistant", "content": "summary"}]
+    await session.add_items([turn(1)[0], call])
+    await session.replace_items(summary)
+    assert subagent_run_offsets(manager, session_id, manager.get_max_message_id(session_id) + 1) == {}
+
+    await session.add_items([result])
+    assert subagent_run_offsets(manager, session_id, manager.get_max_message_id(session_id) + 1) == {child: 1}
+    await session.replace_items(summary)
+    assert subagent_run_offsets(manager, session_id, manager.get_max_message_id(session_id) + 1) == {child: 1}
