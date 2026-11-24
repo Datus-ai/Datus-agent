@@ -86,7 +86,7 @@ async def test_tool_contents_follow_rewind_rollback_clear_and_compaction(tmp_pat
     manager.rollback_turn(session_id, checkpoint)
     assert set(manager.get_tool_result_contents(session_id)) == {"first", "second"}
     await session.replace_items([{"role": "user", "content": "compacted"}])
-    assert manager.get_tool_result_contents(session_id) == {}
+    assert set(manager.get_tool_result_contents(session_id)) == {"first", "second"}
     manager.clear_session(rewound)
     assert manager.get_tool_result_contents(rewound) == {}
 
@@ -3023,4 +3023,5 @@ async def test_plan_review_snapshots_survive_history_without_entering_model_inpu
     copied = manager.copy_session(sid, "semantic_modeling")
     assert manager.get_tool_call_contents(copied)["review"]["preview"] == preview
     await session.replace_items([{"role": "user", "content": "Compacted"}])
-    assert manager.get_tool_call_contents(sid) == {}
+    assert manager.get_tool_call_contents(sid)["review"]["preview"] == preview
+    assert "FROZEN_SNAPSHOT" not in str(await session.get_items())

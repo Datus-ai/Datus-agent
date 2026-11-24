@@ -501,6 +501,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
 
             if isinstance(session, DatusSQLiteSession):
                 session.skip_persisted_input_once([])
+                session.track_model_input(pending_original_input)
             return history + new_input
 
         async def _filter(data: CallModelData) -> ModelInputData:

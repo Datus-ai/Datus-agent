@@ -209,7 +209,12 @@ class AcceptedOpeningSession(DatusSQLiteSession):
                     break
         await super().add_items(items)
 
+    def pending_model_input(self) -> list[dict[str, Any]]:
+        return [item for item in super().pending_model_input() if not self.is_opening(item)]
+
     async def replace_items(self, items: list[dict[str, Any]], **kwargs: Any) -> None:
         """Preserve exactly one accepted opening when the SDK rewrites history."""
         opening = {"role": "user", "content": self.opening}
+        if kwargs.get("history_pending") is not None:
+            kwargs["history_pending"] = [item for item in kwargs["history_pending"] if not self.is_opening(item)]
         await super().replace_items([opening, *[item for item in items if not self.is_opening(item)]], **kwargs)

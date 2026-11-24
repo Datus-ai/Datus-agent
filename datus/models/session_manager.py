@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from agents.extensions.memory import AdvancedSQLiteSession
 
+from datus.models.history_archive import HistoryArchive
 from datus.models.sqlite_session import (
     CONTEXT_USED_RESET_SQL,
     DERIVED_SESSION_META_KEYS,
@@ -327,6 +328,7 @@ class SessionManager:
         try:
             with sqlite3.connect(db_path, timeout=5.0) as conn:
                 conn.execute("BEGIN IMMEDIATE")
+                HistoryArchive(conn, Path(db_path), session_id).truncate(checkpoint.max_message_id)
                 if self._table_exists(conn, "message_structure"):
                     conn.execute(
                         "DELETE FROM message_structure "
@@ -599,7 +601,7 @@ class SessionManager:
         # for all writes. Avoids two concurrent connections on the same file and
         # is substantially faster for long histories.
         new_db_path = os.path.join(self.session_dir, f"{new_session_id}.db")
-        DatusSQLiteSession(session_id=new_session_id, db_path=new_db_path, create_tables=True)
+        DatusSQLiteSession(session_id=new_session_id, db_path=new_db_path, create_tables=True, archive_history=False)
 
         with sqlite3.connect(new_db_path, timeout=5.0) as new_conn:
             new_conn.execute(
@@ -736,7 +738,9 @@ class SessionManager:
         # ``DatusSQLiteSession`` for the same reason as in ``copy_session``:
         # the cached object is what every later caller gets from
         # ``get_session``, and it has to carry the Datus-owned methods.
-        new_session = DatusSQLiteSession(session_id=new_session_id, db_path=new_db_path, create_tables=True)
+        new_session = DatusSQLiteSession(
+            session_id=new_session_id, db_path=new_db_path, create_tables=True, archive_history=False
+        )
         # Store in cache
         self._sessions[new_session_id] = new_session
 
@@ -1466,10 +1470,17 @@ class SessionManager:
             return
         with sqlite3.connect(db_path, timeout=5.0) as conn:
             conn.execute(self._MESSAGE_CONTENTS_DDL)
-            rows = conn.execute(
-                "SELECT id, message_data FROM agent_messages WHERE session_id = ? AND id > ? ORDER BY id",
-                (session_id, previous_message_id),
-            ).fetchall()
+            conn.execute("BEGIN IMMEDIATE")
+            archive = HistoryArchive(conn, Path(db_path), session_id)
+            if archive.hidden_through:
+                rows = [
+                    (row_id, raw) for row_id, raw, _, _ in archive.rows(previous_message_id + 1, archive.snapshot())
+                ]
+            else:
+                rows = conn.execute(
+                    "SELECT id, message_data FROM agent_messages WHERE session_id = ? AND id > ? ORDER BY id",
+                    (session_id, previous_message_id),
+                ).fetchall()
             records = [record for record in contents.values() if record.get("persist", True)]
             pending = [
                 record for record in records if not record.get("tool_call_id") and "assistant_text" not in record
@@ -1573,13 +1584,27 @@ class SessionManager:
             return {}
         with sqlite3.connect(db_path, timeout=5.0) as conn:
             try:
-                rows = conn.execute(
-                    "SELECT c.contents_json FROM chat_message_contents c "
-                    "JOIN agent_messages m ON m.id = c.message_id AND m.session_id = c.session_id "
-                    "WHERE c.session_id = ? AND (? IS NULL OR c.message_id >= ?) "
-                    "AND (? IS NULL OR c.message_id <= ?) ORDER BY c.message_id",
-                    (session_id, min_id, min_id, max_id, max_id),
-                ).fetchall()
+                conn.execute("BEGIN")
+                archive = HistoryArchive(conn, Path(db_path), session_id)
+                if archive.hidden_through:
+                    first, last = min_id or 1, max_id if max_id is not None else archive.snapshot()
+                    candidates = conn.execute(
+                        "SELECT message_id,contents_json FROM chat_message_contents "
+                        "WHERE session_id=? AND message_id BETWEEN ? AND ? ORDER BY message_id",
+                        (session_id, first, last),
+                    ).fetchall()
+                    if not candidates:
+                        return {}
+                    visible_ids = {r[0] for r in archive.rows(candidates[0][0], candidates[-1][0])}
+                    rows = [(raw,) for message_id, raw in candidates if message_id in visible_ids]
+                else:
+                    rows = conn.execute(
+                        "SELECT c.contents_json FROM chat_message_contents c "
+                        "JOIN agent_messages m ON m.id = c.message_id AND m.session_id = c.session_id "
+                        "WHERE c.session_id = ? AND (? IS NULL OR c.message_id >= ?) "
+                        "AND (? IS NULL OR c.message_id <= ?) ORDER BY c.message_id",
+                        (session_id, min_id, min_id, max_id, max_id),
+                    ).fetchall()
             except sqlite3.OperationalError:
                 return {}
         results = {}
@@ -1798,6 +1823,7 @@ class SessionManager:
 
         try:
             with sqlite3.connect(str(db_path)) as conn:
+                conn.execute("BEGIN")
                 cursor = conn.cursor()
                 conditions = ["session_id = ?"]
                 params = [session_id]
@@ -1814,12 +1840,19 @@ class SessionManager:
                     params,
                 )
                 rows = cursor.fetchall()
+                archive = HistoryArchive(conn, db_path, session_id)
+                archive_turns = {}
+                if archive.hidden_through:
+                    first, last = min_id or 1, max_id if max_id is not None else archive.snapshot()
+                    history_rows = list(archive.rows(first, last))
+                    rows = [(row_id, raw, timestamp) for row_id, raw, timestamp, _ in history_rows]
+                    archive_turns = {row_id: turn for row_id, _, _, turn in history_rows if turn is not None}
 
                 # Side-table @-context (table/metric/sql/knowledge refs) keyed by
                 # user_turn_number, plus the message_id -> turn map to attach each
                 # to the right user bubble. Empty when the session predates the
                 # feature or carried no references.
-                turn_map = self._read_message_turn_map(conn, session_id)
+                turn_map = archive_turns if archive.hidden_through else self._read_message_turn_map(conn, session_id)
                 context_map = self._read_user_message_context(conn, session_id)
                 content_map = self._read_message_contents(conn, session_id, min_id=min_id, max_id=max_id)
 

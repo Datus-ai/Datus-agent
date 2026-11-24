@@ -588,3 +588,121 @@ def test_scoped_session_directory_serves_deferred_tool_content(history):
     page = get_history_page(service, "chat_scoped_content", "alice", 10, None)
     result = next(p.payload["result"] for m in page.messages for p in m.content if p.type == "call-tool-result")
     assert get_history_content(service, "chat_scoped_content", "alice", result["historyContent"]["ref"]) == content
+
+
+@pytest.mark.asyncio
+async def test_paging_and_downloads_survive_multiple_context_rewrites(history, tmp_path):
+    service, _ = history
+    session_id = "chat_archive"
+    manager = SessionManager(session_dir=str(tmp_path), scope="alice")
+    session = manager.get_session(session_id)
+    large_output = "original tool output " * 80
+    await session.add_items(turn(1) + turn(2) + turn(3)[:1] + tool("archive", "lookup", large_output))
+    first = get_history_page(service, session_id, "alice", 1, None, inline_chars=120)
+    download = next(
+        part.payload["result"]["historyContent"]["ref"]
+        for message in first.messages
+        for part in message.content
+        if part.type == "call-tool-result"
+    )
+
+    await session.replace_items([turn(3)[0], {"role": "assistant", "content": "model-only summary"}])
+    await session.add_items([turn(3)[1]] + turn(4))
+    await session.replace_items([{"role": "assistant", "content": "second model-only summary"}])
+    await session.add_items(turn(5))
+
+    latest = get_history_page(service, session_id, "alice", 2, None)
+    assert latest.total_turns == 5
+    assert questions(latest) == ["question 4", "question 5"]
+    third = get_history_page(service, session_id, "alice", 1, None, turn=3)
+    assert questions(third) == ["question 3"]
+    assert third.turns[0].message_id == first.turns[0].message_id
+    assert any(part.payload.get("content") == "answer 3" for message in third.messages for part in message.content)
+    assert "model-only summary" not in third.model_dump_json()
+    older = get_history_page(service, session_id, "alice", 2, first.next_cursor)
+    assert questions(older) == ["question 1", "question 2"]
+    assert get_history_content(service, session_id, "alice", download) == large_output
+
+
+@pytest.mark.asyncio
+async def test_existing_database_stays_sqlite_only_after_reopen_and_compact(history, tmp_path):
+    service, write = history
+    session_id = "chat_legacy"
+    db = write(session_id, turn(1))
+    old_archive = db.parent / session_id / "data" / "history_before_upgrade.jsonl"
+    old_archive.parent.mkdir(parents=True)
+    old_archive.write_text(json.dumps(turn(99)[0]) + "\n")
+    manager = SessionManager(session_dir=str(tmp_path), scope="alice")
+    session = manager.get_session(session_id)
+    await session.add_items(turn(2))
+    await session.replace_items(turn(3))
+    assert questions(get_history_page(service, session_id, "alice", 10, None)) == ["question 3"]
+    assert manager.load_session_meta(session_id, "chat_history_version") is None
+    assert not (old_archive.parent.parent / "chat-history").exists()
+
+
+@pytest.mark.asyncio
+async def test_pending_native_input_is_archived_once_and_survives_reopen(history, tmp_path):
+    service, _ = history
+    session_id = "chat_native_archive"
+    manager = SessionManager(session_dir=str(tmp_path), scope="alice")
+    session = manager.get_session(session_id)
+    request = {"role": "user", "content": [{"type": "text", "text": "repeat this"}]}
+    await session.add_items([request, *turn(1)[1:]])
+    await session.replace_items(
+        [request, {"role": "assistant", "content": "summary"}],
+        pending_user_turns=1,
+        history_pending=[request],
+    )
+    await session.add_items([{"role": "assistant", "content": "second reply"}])
+    session.close()
+    page = get_history_page(service, session_id, "alice", 10, None)
+    assert questions(page) == ["repeat this", "repeat this"]
+    assert len({turn.message_id for turn in page.turns}) == 2
+    SessionManager(session_dir=str(tmp_path), scope="alice").clear_session(session_id)
+    assert questions(get_history_page(service, session_id, "alice", 10, None)) == []
+
+
+@pytest.mark.asyncio
+async def test_archived_tool_display_keeps_subagent_run_alignment(history, tmp_path):
+    service, _ = history
+    parent = "chat_parent_archive"
+    child = "gen_job_session_archive"
+    manager = SessionManager(session_dir=str(tmp_path), scope="alice")
+    parent_session = manager.get_session(parent)
+    child_session = SessionManager(session_dir=str(tmp_path / "alice" / parent)).get_session(child)
+    for index in (1, 2):
+        await child_session.add_items(turn(index) + tool(f"child_{index}", "lookup", str(index)))
+        await child_session.replace_items([{"role": "assistant", "content": "child summary"}])
+        await parent_session.add_items(turn(index) + tool(f"task_{index}", "task", {"session_id": child}))
+        await parent_session.replace_items([{"role": "assistant", "content": "parent summary"}])
+
+    page = get_history_page(service, parent, "alice", 1, None)
+    children = [
+        part.payload["callToolId"]
+        for msg in page.messages
+        for part in msg.content
+        if msg.depth == 1 and part.type == "call-tool"
+    ]
+    assert questions(page) == ["question 2"]
+    assert children == ["child_2"]
+
+
+@pytest.mark.asyncio
+async def test_archive_write_failure_preserves_model_rows_and_existing_cursor(history, tmp_path, monkeypatch):
+    from datus.storage.semantic_model import artifact_file
+
+    service, _ = history
+    session_id = "chat_archive_failure"
+    session = SessionManager(session_dir=str(tmp_path), scope="alice").get_session(session_id)
+    await session.add_items(turn(1) + turn(2))
+    cursor = get_history_page(service, session_id, "alice", 1, None).next_cursor
+
+    def disk_full(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(artifact_file, "atomic_write_bytes", disk_full)
+    with pytest.raises(OSError, match="disk full"):
+        await session.replace_items([{"role": "assistant", "content": "summary"}])
+    assert await session.get_items() == turn(1) + turn(2)
+    assert questions(get_history_page(service, session_id, "alice", 1, cursor)) == ["question 1"]

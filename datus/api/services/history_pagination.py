@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator, Optional
 
 from datus.api.models.cli_models import ChatHistoryPageData
+from datus.models.history_archive import Anchor, HistoryArchive, prompt_anchor
 from datus.models.session_manager import SessionManager, extract_user_input, is_compact_resume_text
 from datus.utils.artifact_output import session_user_scope
 
@@ -72,7 +73,12 @@ def _parse_output(raw: Any) -> Any:
 
 def subagent_run_offsets(manager: SessionManager, session_id: str, start_id: int) -> dict[str, int]:
     """Skip a reused child's runs belonging to task calls on earlier pages."""
-    with _connect(_db_path(manager, session_id)) as conn:
+    path = _db_path(manager, session_id)
+    with _connect(path) as conn:
+        conn.execute("BEGIN")
+        archive = HistoryArchive(conn, path, session_id)
+        if archive.hidden_through:
+            return _archived_subagent_offsets(archive, start_id)
         rows = conn.execute(
             "SELECT json_extract(o.message_data, '$.output') FROM agent_messages o "
             "WHERE o.session_id=? AND o.id<? AND json_extract(o.message_data, '$.type')='function_call_output' "
@@ -93,36 +99,63 @@ def subagent_run_offsets(manager: SessionManager, session_id: str, start_id: int
             "AND json_extract(t.value,'$.name')='task')",
             (session_id, start_id, session_id, start_id),
         )
-        counts: Counter[str] = Counter()
-        for records in (rows, native_rows):
-            for (raw,) in records:
-                output = _parse_output(raw)
-                if isinstance(output, list):
-                    output = _parse_output(
-                        "\n".join(str(block.get("text", "")) for block in output if isinstance(block, dict))
-                    )
-                if isinstance(output, dict):
-                    result = _parse_output(output.get("result", output))
-                    child = result.get("session_id") if isinstance(result, dict) else None
-                    if isinstance(child, str) and SessionManager._SESSION_ID_RE.fullmatch(child) and ".." not in child:
-                        counts[child] += 1
+        counts = Counter(
+            child for records in (rows, native_rows) for (raw,) in records if (child := _child_session_id(raw))
+        )
         return dict(counts)
 
 
+def _child_session_id(raw: Any) -> str | None:
+    output = _parse_output(raw)
+    if isinstance(output, list):
+        output = _parse_output("\n".join(str(block.get("text", "")) for block in output if isinstance(block, dict)))
+    if isinstance(output, dict):
+        result = _parse_output(output.get("result", output))
+        child = result.get("session_id") if isinstance(result, dict) else None
+        if isinstance(child, str) and SessionManager._SESSION_ID_RE.fullmatch(child) and ".." not in child:
+            return child
+    return None
+
+
+def _archived_subagent_offsets(archive: HistoryArchive, start_id: int) -> dict[str, int]:
+    calls: set[str] = set()
+    counts: Counter[str] = Counter()
+    for _, raw, _, _ in archive.rows(1, start_id - 1):
+        item = json.loads(raw)
+        role = item.get("role")
+        item_type = item.get("type")
+        if item_type == "function_call" and item.get("name") == "task":
+            calls.add(item.get("call_id"))
+        if item_type == "function_call_output" and item.get("call_id") in calls:
+            if child := _child_session_id(item.get("output")):
+                counts[child] += 1
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if role == "assistant" and block.get("type") == "tool_use" and block.get("name") == "task":
+                calls.add(block.get("id"))
+            if role == "user" and block.get("type") == "tool_result" and block.get("tool_use_id") in calls:
+                if child := _child_session_id(block.get("content")):
+                    counts[child] += 1
+    return dict(counts)
+
+
 def _user_turn_rows(
-    conn: sqlite3.Connection, session_id: str, snapshot: int, *, descending: bool = False
+    conn: sqlite3.Connection, session_id: str, snapshot: int, *, after: int = 0
 ) -> Iterator[tuple[int, str]]:
     # Exclude native tool-result bodies in SQLite before returning user prompts.
     rows = conn.execute(
-        "SELECT id,message_data FROM agent_messages WHERE session_id=? AND id<=? "
+        "SELECT id,message_data FROM agent_messages WHERE session_id=? AND id>? AND id<=? "
         "AND json_extract(message_data,'$.role')='user' AND ("
         "json_type(message_data,'$.content')!='array' OR "
         "NOT EXISTS(SELECT 1 FROM json_each(message_data,'$.content') "
         "WHERE type='object' AND json_extract(value,'$.type')='tool_result') "
         "OR EXISTS(SELECT 1 FROM json_each(message_data,'$.content') "
-        "WHERE type='object' AND json_extract(value,'$.type') IN ('text','input_text','output_text'))) ORDER BY id "
-        + ("DESC" if descending else "ASC"),
-        (session_id, snapshot),
+        "WHERE type='object' AND json_extract(value,'$.type') IN ('text','input_text','output_text'))) ORDER BY id",
+        (session_id, after, snapshot),
     )
     for row_id, raw in rows:
         content = extract_user_input(json.loads(raw).get("content", ""))
@@ -130,12 +163,35 @@ def _user_turn_rows(
             yield row_id, raw
 
 
+def _turn_anchors(archive: HistoryArchive, snapshot: int) -> Iterator[Anchor]:
+    yield from archive.archived_anchors(snapshot)
+    for row_id, raw in _user_turn_rows(archive.conn, archive.session_id, snapshot, after=archive.hidden_through or 0):
+        anchor = prompt_anchor(row_id, raw)
+        if anchor is not None:
+            yield anchor
+
+
 def subagent_run_window(manager: SessionManager, session_id: str, skip: int, count: int) -> Optional[tuple[int, int]]:
     """Resolve prompt boundaries without fetching off-page tool bodies."""
-    with _connect(_db_path(manager, session_id)) as conn:
-        snapshot = conn.execute(
-            "SELECT COALESCE(MAX(id),0) FROM agent_messages WHERE session_id=?", (session_id,)
-        ).fetchone()[0]
+    path = _db_path(manager, session_id)
+    with _connect(path) as conn:
+        conn.execute("BEGIN")
+        archive = HistoryArchive(conn, path, session_id)
+        snapshot = archive.snapshot()
+        if archive.hidden_through:
+            anchors = _turn_anchors(archive, snapshot)
+            first = next(anchors, None)
+            stop = first[0] - 1 if first else snapshot
+            prefix = next((row[0] for row in archive.rows(1, stop) if _starts_implicit_run(json.loads(row[1]))), None)
+            starts = chain(
+                [prefix] if prefix is not None else [],
+                [first[0]] if first else [],
+                (anchor[0] for anchor in anchors),
+            )
+            markers = list(islice(starts, skip, skip + count + 1))
+            if not markers:
+                return None
+            return markers[0], markers[count] - 1 if len(markers) > count else snapshot
         turns = _user_turn_rows(conn, session_id, snapshot)
         first = next(turns, None)
         # Legacy/compacted sessions can start with an implicit assistant run.
@@ -156,12 +212,30 @@ def subagent_run_window(manager: SessionManager, session_id: str, skip: int, cou
         return markers[0], markers[count] - 1 if len(markers) > count else snapshot
 
 
+def _starts_implicit_run(item: dict) -> bool:
+    if item.get("type") == "function_call":
+        return True
+    content = item.get("content")
+    return (
+        item.get("role") == "assistant"
+        and isinstance(content, list)
+        and any(
+            isinstance(block, dict)
+            and (
+                block.get("type") in ("tool_use", "server_tool_use")
+                or (block.get("type") in ("text", "output_text") and block.get("text"))
+            )
+            for block in content
+        )
+    )
+
+
 def _window(manager: SessionManager, session_id: str, limit: int, cursor: Optional[str], turn: Optional[int]):
     path = _db_path(manager, session_id)
     with _connect(path) as conn:
-        snapshot = conn.execute(
-            "SELECT COALESCE(MAX(id),0) FROM agent_messages WHERE session_id=?", (session_id,)
-        ).fetchone()[0]
+        conn.execute("BEGIN")
+        archive = HistoryArchive(conn, path, session_id)
+        snapshot = archive.snapshot()
         before = snapshot + 1
         if cursor and turn is not None:
             raise ValueError("Use either a cursor or a target turn")
@@ -172,12 +246,9 @@ def _window(manager: SessionManager, session_id: str, limit: int, cursor: Option
             before, snapshot = saved.get("before"), saved.get("snapshot")
             if type(before) is not int or type(snapshot) is not int or not 1 <= before <= snapshot:
                 raise ValueError("Invalid history cursor")
-            anchor = conn.execute(
-                "SELECT message_data FROM agent_messages WHERE session_id=? AND id=?", (session_id, before)
-            ).fetchone()
-            if not anchor or hashlib.sha256(anchor[0].encode()).hexdigest() != saved.get("anchor"):
-                raise HistoryChangedError("History changed; reload the latest messages")
-        turns = list(_user_turn_rows(conn, session_id, snapshot, descending=True))
+        turns = list(reversed(list(_turn_anchors(archive, snapshot))))
+        if cursor and not any(row_id == before and digest == saved.get("anchor") for row_id, digest, _, _ in turns):
+            raise HistoryChangedError("History changed; reload the latest messages")
         total = len(turns)
         if turn is not None:
             if not 1 <= turn <= total:
@@ -190,8 +261,8 @@ def _window(manager: SessionManager, session_id: str, limit: int, cursor: Option
             selected = [row for row in turns if row[0] < before][:limit]
         if not selected:
             return ((1, snapshot) if not cursor and snapshot else None), False, None, total, []
-        first_id, first_raw = selected[-1]
-        indices = {row_id: total - index for index, (row_id, _) in enumerate(turns)}
+        first_id, first_digest, _, _ = selected[-1]
+        indices = {row[0]: total - index for index, row in enumerate(turns)}
         has_more = indices[first_id] > 1
         next_cursor = (
             _encode(
@@ -200,7 +271,7 @@ def _window(manager: SessionManager, session_id: str, limit: int, cursor: Option
                     "s": session_id,
                     "before": first_id,
                     "snapshot": snapshot,
-                    "anchor": hashlib.sha256(first_raw.encode()).hexdigest(),
+                    "anchor": first_digest,
                 }
             )
             if has_more
@@ -210,9 +281,9 @@ def _window(manager: SessionManager, session_id: str, limit: int, cursor: Option
             {
                 "message_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"{session_id}:{row_id}")),
                 "index": indices[row_id],
-                "text": extract_user_input(json.loads(raw).get("content", ""))[:160],
+                "text": text,
             }
-            for row_id, raw in reversed(selected)
+            for row_id, _, text, _ in reversed(selected)
         ]
         return (first_id, min(snapshot, before - 1)), has_more, next_cursor, total, anchors
 

@@ -5,10 +5,13 @@
 
 import asyncio
 import json
+import sqlite3
+from pathlib import Path
 from typing import Any
 
 from agents.extensions.memory import AdvancedSQLiteSession
 
+from datus.models.history_archive import HISTORY_VERSION_KEY, HistoryArchive
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import extract_user_input, is_compact_resume_text
 
@@ -59,6 +62,33 @@ CONTEXT_USED_RESET_SQL = (
 
 
 class DatusSQLiteSession(AdvancedSQLiteSession):
+    def __init__(self, *, archive_history: bool = True, **kwargs: Any):
+        self._enable_history_archive = archive_history
+        super().__init__(**kwargs)
+
+    def _init_db_for_connection(self, conn: sqlite3.Connection) -> None:
+        if not self._enable_history_archive or self._is_memory_db:
+            super()._init_db_for_connection(conn)
+            return
+        # Serialize creation across replicas. Existing files with the SDK's
+        # schema keep their original history mode, even when empty.
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name IN (?,?)",
+                (self.sessions_table, self.messages_table),
+            ).fetchone()
+            if not existing:
+                conn.execute(SESSION_META_TABLE)
+                conn.execute("INSERT INTO session_meta VALUES (?,?,?)", (self.session_id, HISTORY_VERSION_KEY, "1"))
+            super()._init_db_for_connection(conn)
+
+    def track_model_input(self, items: list[dict[str, Any]]) -> None:
+        self._pending_model_input = list(items)
+
+    def pending_model_input(self) -> list[dict[str, Any]]:
+        return getattr(self, "_pending_model_input", [])
+
     def _is_user_message(self, item: dict[str, Any]) -> bool:
         if not super()._is_user_message(item):
             return False
@@ -88,6 +118,9 @@ class DatusSQLiteSession(AdvancedSQLiteSession):
         if persisted and items[: len(persisted)] == persisted:
             appended = items[len(persisted) :]
         await super().add_items(appended)
+        pending = self.pending_model_input()
+        if pending and items[: len(pending)] == pending:
+            self.track_model_input([])
         # After the write, so the scan below sees this batch too: when
         # compaction ran on the very first request, the opening message is the
         # part skipped here and only the stored history still holds it.
@@ -176,7 +209,25 @@ class DatusSQLiteSession(AdvancedSQLiteSession):
         """
         self._title_recorded = False
 
-    async def replace_items(self, items: list[dict[str, Any]], *, pending_user_turns: int = 0) -> None:
+    async def clear_session(self) -> None:
+        """Clear model and archived messages under the same transaction."""
+
+        def clear() -> None:
+            with self._locked_connection() as conn, conn:
+                conn.execute("BEGIN IMMEDIATE")
+                HistoryArchive(conn, Path(self.db_path), self.session_id).truncate(0)
+                conn.execute(f"DELETE FROM {self.messages_table} WHERE session_id=?", (self.session_id,))
+                conn.execute(f"DELETE FROM {self.sessions_table} WHERE session_id=?", (self.session_id,))
+
+        await asyncio.to_thread(clear)
+
+    async def replace_items(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        pending_user_turns: int = 0,
+        history_pending: list[dict[str, Any]] | None = None,
+    ) -> None:
         """Replace history and invalidate its measurement in one transaction.
 
         Usage records and monotonic turn numbers survive compaction. A failed
@@ -210,14 +261,40 @@ class DatusSQLiteSession(AdvancedSQLiteSession):
                         "SELECT COALESCE(MAX(user_turn_number), 0) FROM turn_usage WHERE session_id = ?",
                         (self.session_id,),
                     ).fetchone()[0]
-                    users = sum(row[3] for row in prepared)
-                    turn = max(0, max(turn, usage_turn) + pending_user_turns - users)
-                    branch_turn = max(0, branch_turn + pending_user_turns - users)
-                    conn.execute("DELETE FROM message_structure WHERE session_id = ?", (self.session_id,))
-                    conn.execute(f"DELETE FROM {self.messages_table} WHERE session_id = ?", (self.session_id,))
                     conn.execute(
                         f"INSERT OR IGNORE INTO {self.sessions_table} (session_id) VALUES (?)", (self.session_id,)
                     )
+                    archive = HistoryArchive(conn, Path(self.db_path), self.session_id)
+                    if archive.hidden_through is not None:
+                        archive_rows = list(
+                            conn.execute(
+                                f"SELECT m.id,m.message_data,m.created_at,s.user_turn_number FROM {self.messages_table} m "
+                                "LEFT JOIN message_structure s ON s.session_id=m.session_id AND s.message_id=m.id "
+                                "WHERE m.session_id=? AND m.id>? ORDER BY m.id",
+                                (self.session_id, archive.hidden_through),
+                            )
+                        )
+                        # Allocate real SQLite IDs for uncommitted model input before
+                        # installing the replacement. The IDs never get reused.
+                        pending_turn = max(turn, usage_turn)
+                        pending = self.pending_model_input() if history_pending is None else history_pending
+                        for item in pending:
+                            pending_turn += int(self._is_user_message(item))
+                            row_id, raw, timestamp = conn.execute(
+                                f"INSERT INTO {self.messages_table}(session_id,message_data) VALUES (?,?) "
+                                "RETURNING id,message_data,created_at",
+                                (self.session_id, json.dumps(item)),
+                            ).fetchone()
+                            archive_rows.append((row_id, raw, timestamp, pending_turn))
+                        pending_user_count = max(0, pending_turn - max(turn, usage_turn))
+                    else:
+                        pending_user_count = pending_user_turns
+                    users = sum(row[3] for row in prepared)
+                    turn = max(0, max(turn, usage_turn) + pending_user_count - users)
+                    branch_turn = max(0, branch_turn + pending_user_count - users)
+                    conn.execute("DELETE FROM message_structure WHERE session_id = ?", (self.session_id,))
+                    conn.execute(f"DELETE FROM {self.messages_table} WHERE session_id = ?", (self.session_id,))
+                    last_id = archive_rows[-1][0] if archive.hidden_through is not None and archive_rows else 0
                     for data, kind, tool, is_user in prepared:
                         seq += 1
                         turn += int(is_user)
@@ -226,6 +303,7 @@ class DatusSQLiteSession(AdvancedSQLiteSession):
                             f"INSERT INTO {self.messages_table} (session_id, message_data) VALUES (?, ?)",
                             (self.session_id, data),
                         )
+                        last_id = cursor.lastrowid
                         conn.execute(
                             "INSERT INTO message_structure (session_id, message_id, branch_id, message_type, "
                             "sequence_number, user_turn_number, branch_turn_number, tool_name) "
@@ -241,6 +319,8 @@ class DatusSQLiteSession(AdvancedSQLiteSession):
                                 tool,
                             ),
                         )
+                    if archive.hidden_through is not None:
+                        archive.write_segment(archive_rows, max(last_id, archive.hidden_through))
                     # The occupancy reading describes the history just deleted.
                     # Zeroed in this same transaction so the compaction gate
                     # and the status bar can never see it outlive its subject.
@@ -286,4 +366,6 @@ class DatusSQLiteSession(AdvancedSQLiteSession):
             await asyncio.shield(task)
         except asyncio.CancelledError:
             await task
+            self.track_model_input([])
             raise
+        self.track_model_input([])
