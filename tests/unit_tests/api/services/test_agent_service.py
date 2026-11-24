@@ -849,19 +849,16 @@ class TestGetAgent:
 class TestCreateAgent:
     """Tests for create_agent — agent creation with YAML persistence."""
 
-    @pytest.mark.parametrize("name,node_class", [("legacy_report", "gen_report"), ("gen_report", "gen_sql")])
-    async def test_removed_report_type_returns_migration_error(
-        self, real_agent_config, agent_yml_with_singleton, name, node_class
-    ):
+    async def test_unknown_type_is_rejected_before_persistence(self, real_agent_config, agent_yml_with_singleton):
         from datus.api.models.agent_models import CreateAgentInput
 
         original_config = agent_yml_with_singleton.read_text(encoding="utf-8")
-        result = await AgentService().create_agent(CreateAgentInput(name=name, type=node_class), real_agent_config)
+        request = CreateAgentInput(name="custom_agent", type="unknown_type")
+        result = await AgentService().create_agent(request, real_agent_config)
 
         assert result.success is False
         assert result.errorCode == "INVALID_AGENT_TYPE"
-        assert "Subagent 'gen_report' does not exist" in result.errorMessage
-        assert "Use 'gen_visual_report' instead" in result.errorMessage
+        assert "Unknown subagent type 'unknown_type'" in result.errorMessage
         assert agent_yml_with_singleton.read_text(encoding="utf-8") == original_config
 
     async def test_create_agent_success(self, real_agent_config, agent_yml_with_singleton):

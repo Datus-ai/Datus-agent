@@ -1475,25 +1475,23 @@ class TestStartChat:
     """Tests for start_chat — background task creation."""
 
     @pytest.mark.parametrize("type_field", ["node_class", "type"])
-    async def test_old_custom_report_streams_migration_error(self, real_agent_config, type_field):
+    async def test_unknown_custom_type_streams_an_error(self, real_agent_config, type_field):
         from datus.api.models.cli_models import StreamChatInput
 
-        real_agent_config.agentic_nodes["legacy_report"] = {
-            "id": "legacy-report-id",
-            type_field: "gen_report",
+        real_agent_config.agentic_nodes["custom_agent"] = {
+            "id": "custom-agent-id",
+            type_field: "unknown_type",
         }
         manager = ChatTaskManager()
-        request = StreamChatInput(message="Create a sales report", session_id="legacy-report-session")
+        request = StreamChatInput(message="Analyze sales", session_id="custom-agent-session")
 
-        task = await manager.start_chat(real_agent_config, request, sub_agent_id="legacy-report-id")
+        task = await manager.start_chat(real_agent_config, request, sub_agent_id="custom-agent-id")
         await task.asyncio_task
         events = [event async for event in manager.consume_events(task)]
 
         assert task.status == "error"
         error = next(event.data for event in events if event.event == "error")
-        assert "legacy_report" in error.error
-        assert "Subagent 'gen_report' does not exist" in error.error
-        assert "Use 'gen_visual_report' instead" in error.error
+        assert "Unknown subagent type 'unknown_type' configured for 'custom_agent'" in error.error
 
     @pytest.mark.parametrize(
         ("subagent_id", "interactive", "injected"),

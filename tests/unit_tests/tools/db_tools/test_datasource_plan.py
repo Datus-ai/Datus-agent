@@ -4,10 +4,8 @@
 """The plan a run needs before it writes a generator.
 
 ``report()`` has always printed the engine's whole plan, but it is a method on ``DDLEngine``, so
-reaching it meant authoring ``data/gen.py`` first. A measured production run (Datus-saas-dev,
-trace e2c917f9b380db89efedb580b28e9369) skipped it, tried to divide the row budget across five
-tables by hand, could not make the total come out, opened ``ddl_engine.py`` to find the allocator,
-and spent 36 turns and 19,885 output tokens in the source without generating a single row.
+reaching it meant authoring ``data/gen.py`` first. Without a plan, the agent can
+spend turns reading the engine to work out the row allocation before generating any data.
 
 These tests pin what that one call must answer, and that a broken or absent bundle degrades to a
 message rather than an exception escaping the tool.

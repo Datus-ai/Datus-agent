@@ -20,8 +20,6 @@ The wizard writes two things:
 1. A new entry under `agent.agentic_nodes`
 2. A prompt template file named like `{agent_name}_system_{prompt_version}.j2`
 
-`gen_report` is no longer available. Configurations referencing it return a subagent-not-found error and recommend `gen_visual_report`.
-
 The wizard currently supports three custom node styles:
 
 - `gen_sql` (default)

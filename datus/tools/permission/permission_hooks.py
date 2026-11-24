@@ -747,10 +747,8 @@ class PermissionHooks(AgentHooks):
     # defeats the purpose: the artifact only makes sense as a whole and
     # the user reviews it via the rendered preview, not per-file diffs.
     # Mirror of ``_FS_DEPENDENT_NODES`` in ``datus.tools.proxy.proxy_tool``
-    # (which exempts the same nodes from the IDE proxy round-trip) and the
-    # ``isAutoConfirmFilePath`` carve-out in ``Datus-saas`` (which silences
-    # the per-tool Accept bar in the chat panel). All three layers must
-    # agree or one of them keeps gating the user.
+    # (which exempts the same nodes from the IDE proxy round-trip). Clients
+    # that prompt for tool approval should apply the same exception.
     _ARTIFACT_AUTOALLOW_NODES = frozenset({"gen_visual_report", "gen_visual_dashboard"})
 
     # Relative-to-project-root path prefixes the carve-out applies to.

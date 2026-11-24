@@ -20,8 +20,6 @@
 1. `agent.agentic_nodes` 下的新配置项
 2. 一个名为 `{agent_name}_system_{prompt_version}.j2` 的提示词模板文件
 
-`gen_report` 已移除。旧配置引用它时会直接报 subagent 不存在，并提示使用 `gen_visual_report`。
-
 当前向导支持三类自定义节点：
 
 - `gen_sql`（默认）

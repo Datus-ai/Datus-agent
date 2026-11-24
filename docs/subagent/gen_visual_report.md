@@ -2,7 +2,11 @@
 
 ## Overview
 
-`gen_visual_report` turns a question — *"how did Q4 revenue do?"*, *"explain merchant churn in H2"* — into a self-contained **HTML report**: a scrollable web page with an executive summary, KPI cards, charts, tables, and narrative paragraphs. In Datus-CLI mode the page opens in your browser automatically; in Datus-SaaS it shows up inline in the chat.
+`gen_visual_report` turns a question — *"how did Q4 revenue do?"*, *"explain merchant churn in H2"* — into an **HTML report**: a scrollable web page with an executive summary, KPI cards, charts, tables, and narrative paragraphs.
+
+The generated HTML embeds the report's render files and saved query results. By default, the browser loads the renderer from a CDN, so viewing the report requires network access. For offline viewing, generate the report with `--report-dist <dir>` pointing to a local renderer bundle containing `index.css` and `index.umd.js`. The CLI copies both assets into `_assets/` next to `index.html`.
+
+The interactive CLI opens the report in your browser by default. Print mode (`--print`) and `--no-open-report` skip automatic opening. You can open the HTML file in your browser using the path shown in the CLI output.
 
 ![Sample HTML report — KPI strip, headline metrics, and a monthly growth trend chart](../assets/gen_visual_report_preview.png)
 
@@ -67,6 +71,8 @@ graph LR
 ```
 
 The agent reads your question, looks up the metrics and tables that are most relevant, runs the SQL it needs, then composes the executive summary, KPI cards, charts, tables, and recommendations into a single HTML report. You can re-invoke `gen_visual_report` later to edit the same report in place.
+
+By default, each report is saved to `reports/<slug>/` under the project root. If a host sets `AgentConfig.artifact_output_root`, the report is saved to `reports/<slug>/` under that configured root. `manifest.json` stores its metadata, `render/app.jsx` is the React entry point, and `queries/` holds the SQL and its saved JSON results.
 
 ## Edit Section by Section
 
