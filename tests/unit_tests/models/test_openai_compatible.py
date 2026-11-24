@@ -2319,11 +2319,11 @@ class TestBuildRunConfigInputFilter:
 
     @pytest.mark.asyncio
     async def test_filter_appends_queued_items_and_persists_to_session(self):
-        """When the queue has pending text, the filter appends each as a
-        structured Responses user message AND calls ``session.add_items``
-        once per item so future runs see them. With a broker plumbed in,
-        each drained item also flows out as a USER ``user_insert``
-        ActionHistory so the TUI and API SSE see the injection live."""
+        """Persist queued user messages in one ordered batch.
+
+        Each drained item also emits a USER ``user_insert`` ActionHistory so
+        the TUI and API SSE see the injection live.
+        """
         from datus.cli.execution_state import InteractionBroker, PendingInputQueue
         from datus.schemas.action_history import ActionRole
 
@@ -2349,8 +2349,7 @@ class TestBuildRunConfigInputFilter:
             assert injected["content"][0]["type"] == "input_text"
             assert injected["content"][0]["text"] == expected
 
-        # Session persistence: once per drained item.
-        assert session.add_items.await_count == 2
+        session.add_items.assert_awaited_once_with(result.input[1:])
         # Queue drained.
         assert len(queue) == 0
         # Instructions passed through untouched.
