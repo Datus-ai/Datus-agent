@@ -55,15 +55,6 @@ on:
         default: ""
         type: string
     secrets:
-      DATUS_NIGHTLY_AGENT_CONFIG:
-        description: "Private raw agent.yml configuration for Nightly."
-        required: true
-      DATUS_NIGHTLY_CI_ENV:
-        description: "Private raw ci.env NAME=value configuration for Nightly."
-        required: true
-      DATUS_NIGHTLY_SERVICE_ENV:
-        description: "Private raw nightly.env NAME=value service configuration."
-        required: true
       RELEASE_BOT_TOKEN:
         description: "Read token for private repositories required by Nightly."
         required: true
@@ -83,9 +74,8 @@ concurrency:
 
 jobs:
   run-nightly:
-    runs-on: codebuild-datus-agent-nightly-${{ github.run_id }}-${{ github.run_attempt }}
+    runs-on: [self-hosted, Linux, X64]
     env:
-      PYTEST_XDIST_AUTO_NUM_WORKERS: "8"
       DATUS_AGENT_REF: ${{ inputs.datus_agent_ref || github.ref_name }}
       NIGHTLY_GROUP_FILTER: ${{ inputs.nightly_group_filter || '' }}
       PRODUCT_TEST_BASE_REF: ${{ inputs.product_test_base_ref || '' }}
@@ -363,9 +353,6 @@ jobs:
 
           docker compose version
 
-      - name: Prepare CodeBuild nightly host
-        run: bash ci/prepare-codebuild-nightly-host.sh
-
       # On cache miss the extraction needs Docker (it pulls the pinned
       # openGauss image), so this runs after the Docker runtime check; the
       # adapter was already installed without the libraries, so reinstall it.
@@ -404,11 +391,10 @@ jobs:
           key: gaussdb-vendor-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('external/datus-db-adapters/datus-gaussdb/scripts/fetch_vendor_libpq.py') }}
 
       - name: Setup config file
-        env:
-          DATUS_NIGHTLY_AGENT_CONFIG: ${{ secrets.DATUS_NIGHTLY_AGENT_CONFIG }}
-          DATUS_NIGHTLY_CI_ENV: ${{ secrets.DATUS_NIGHTLY_CI_ENV }}
-          DATUS_NIGHTLY_SERVICE_ENV: ${{ secrets.DATUS_NIGHTLY_SERVICE_ENV }}
-        run: uv run --no-sync python ci/prepare_nightly_config.py
+        run: |
+          cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
+          cp /home/datus_ci/ci_template/ci.env .env
+          cp /home/datus_ci/ci_template/nightly.env .nightly.env
 
       - name: Restore tracked test config
         run: git restore --source=HEAD --worktree --staged tests/conf/agent.yml
@@ -458,6 +444,7 @@ jobs:
               if [[ ! -z "$line" && ! "$line" =~ ^[[:space:]]*# ]]; then
                 var_name=$(echo "$line" | cut -d'=' -f1)
                 var_value=$(echo "$line" | cut -d'=' -f2-)
+                echo "::add-mask::$var_value"
                 echo "Loading variable: $var_name"
                 echo "$line" >> $GITHUB_ENV
               fi

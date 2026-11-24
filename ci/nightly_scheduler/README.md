@@ -9,7 +9,7 @@ with `FlexibleTimeWindow: OFF`.
 EventBridge Scheduler (04:17 Asia/Shanghai)
   -> Lambda handler.py   (reads token from Secrets Manager)
     -> POST /actions/workflows/run-nightly.yml/dispatches  ref=main, schedule_key=nightly-YYYY-MM-DD
-      -> run-nightly.yml on the CodeBuild runner
+      -> run-nightly.yml on the self-hosted runner
 ```
 
 ## Once per day
@@ -33,7 +33,7 @@ if one exists.
 `GitHubSecretId` (default `datus/ci/nightly-github`) holds JSON with
 `datus-nightly-token` and, optionally, `FEISHU_NOTIFY_CI_URL`. A plain-text token
 also works. The token needs Actions read/write on `Datus-ai/Datus-agent`. Its owner
-becomes the run actor, so it must match the CodeBuild runner webhook's actor filter.
+becomes the run actor of the dispatched workflow.
 The Lambda role can read only this secret. Token values never appear in logs,
 results or alerts.
 
