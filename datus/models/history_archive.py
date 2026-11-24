@@ -288,12 +288,20 @@ class HistoryArchive:
             child = None
             if tool_name != "task":
                 prior = self.conn.execute(
-                    "SELECT child_id FROM chat_history_tasks "
+                    "SELECT message_id,child_id FROM chat_history_tasks "
                     "WHERE session_id=? AND call_id=? AND message_id<? ORDER BY message_id DESC LIMIT 1",
                     (self.session_id, call_id, row_id),
                 ).fetchone()
-                if prior != (None,):
+                if prior is None or prior[1] is not None:
                     continue
+                if tool_name is None:
+                    # Legacy indexes omit ordinary calls and some task results.
+                    # A later event in those segments means this task is no longer waiting for a result.
+                    later = self._archived_tool_event(
+                        call_id, prior[0] + 1, min(row_id - 1, self.hidden_through or 0), legacy_task_index=True
+                    )
+                    if later is not None:
+                        continue
                 child = (
                     TASK_CALL_SHADOWED
                     if tool_name is not None
@@ -314,6 +322,18 @@ class HistoryArchive:
             )
         }
 
+    def _archived_tool_event(
+        self, call_id: str, start: int, end: int, *, legacy_task_index: bool
+    ) -> tuple[str | None, Any] | None:
+        if start > end:
+            return None
+        with closing(self.archived_rows(start, end, legacy_task_index=legacy_task_index)) as rows:
+            for _, raw, _, _ in rows:
+                for event_id, tool_name, output in _tool_events(json.loads(raw)):
+                    if event_id == call_id:
+                        return tool_name, output
+        return None
+
     def unindexed_task_outputs(self, before: int) -> Iterator[Any]:
         """Read unresolved results and search for gaps in older task indexes."""
         if not self.hidden_through:
@@ -326,7 +346,8 @@ class HistoryArchive:
             "FROM chat_history_tasks WHERE session_id=:session AND message_id<:before AND call_id!='' "
             "WINDOW call_events AS (PARTITION BY call_id ORDER BY message_id)) "
             "SELECT message_id,call_id,child_id,next_id FROM task_events "
-            "WHERE child_id=:unavailable OR (child_id IS NULL AND (next_child IS NULL OR next_child=:shadowed))",
+            "WHERE child_id=:unavailable OR "
+            "(child_id IS NULL AND (next_child IS NULL OR next_child IN ('',:shadowed)))",
             {
                 "session": self.session_id,
                 "before": before,
@@ -338,16 +359,9 @@ class HistoryArchive:
             # Old writers left only the call indexed. Search until its result or
             # the next use of the call ID, skipping segments with complete indexes.
             start, end = (row_id, row_id) if child else (row_id + 1, min(next_id - 1, self.hidden_through))
-            if end < start:
-                continue
-            with closing(self.archived_rows(start, end, legacy_task_index=child is None)) as rows:
-                for _, raw, _, _ in rows:
-                    event = next((event for event in _tool_events(json.loads(raw)) if event[0] == call_id), None)
-                    if event:
-                        _, tool_name, output = event
-                        if tool_name is None:
-                            yield output
-                        break
+            event = self._archived_tool_event(call_id, start, end, legacy_task_index=child is None)
+            if event is not None and event[0] is None:
+                yield event[1]
 
     def snapshot(self) -> int:
         head = self.conn.execute(

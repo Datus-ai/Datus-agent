@@ -842,6 +842,58 @@ async def test_non_task_result_with_reused_id_does_not_shift_subagent_runs(histo
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True])
+async def test_compaction_matches_live_tool_results_to_legacy_calls(history, tmp_path, native):
+    service, write = history
+    parent, child = "chat_legacy_call_id", "gen_job_session_child"
+    write(
+        child,
+        turn(1) + tool("child_1", "lookup", "first") + turn(3) + tool("child_2", "lookup", "second"),
+        parent=parent,
+    )
+    manager = SessionManager(session_dir=str(tmp_path), scope="alice")
+    session = manager.get_session(parent)
+    archive = ToolArchive("", parent, base_dir=tmp_path / "alice" / parent / "data", preview_chars=12)
+    summary = [{"role": "assistant", "content": "summary"}]
+    first_call, first_result = tool("shared", "task", {"session_id": child}, native=native)
+    offload_result(first_result, archive, 1, native=native)
+    await session.add_items(turn(1) + [first_call, first_result])
+    await session.replace_items(summary)
+    sql_call, sql_result = tool("shared", "execute_sql", "unrelated", native=native)
+    offload_result(sql_result, archive, 2, native=native)
+    await session.add_items(turn(2) + [sql_call])
+    await session.replace_items(summary)
+
+    # The baseline writer only indexed the task call. Its offloaded result and
+    # the ordinary call with the same ID were present in the segments.
+    db_path = tmp_path / "alice" / f"{parent}.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM chat_history_tasks WHERE child_id IS NOT NULL")
+        assert conn.execute("SELECT call_id,child_id FROM chat_history_tasks").fetchall() == [("shared", None)]
+
+    await session.add_items([sql_result])
+    sql_result_id = manager.get_max_message_id(parent)
+    await session.add_items(turn(3) + tool("last", "task", {"session_id": child}, native=native))
+    assert child_tool_calls(get_history_page(service, parent, "alice", 1, None)) == ["child_2"]
+    await session.replace_items(summary)
+    session.close()
+
+    assert child_tool_calls(service.get_history(parent, "alice").data) == ["child_1", "child_2"]
+    assert child_tool_calls(get_history_page(service, parent, "alice", 1, None)) == ["child_2"]
+    with sqlite3.connect(db_path) as conn:
+        assert (
+            conn.execute(
+                "SELECT child_id FROM chat_history_tasks WHERE session_id=? AND message_id=? AND call_id=?",
+                (parent, sql_result_id, "shared"),
+            ).fetchone()
+            is None
+        )
+        # Tolerate an empty association persisted by the previous writer too.
+        conn.execute("INSERT INTO chat_history_tasks VALUES (?,?,?,'')", (parent, sql_result_id, "shared"))
+    assert child_tool_calls(get_history_page(service, parent, "alice", 1, None)) == ["child_2"]
+
+
+@pytest.mark.asyncio
 async def test_unfinished_task_in_indexed_segment_does_not_open_off_page_archives(history, tmp_path, monkeypatch):
     service, write = history
     parent, child = "chat_unfinished_task", "gen_job_session_child"
@@ -1018,29 +1070,25 @@ async def test_unreadable_registered_archive_returns_service_unavailable(history
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("native", [False, True])
-async def test_subagent_result_is_counted_when_call_and_result_cross_archive_segments(tmp_path, native):
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_subagent_result_is_counted_when_call_and_result_cross_archive_segments(tmp_path, native, legacy):
     manager = SessionManager(session_dir=str(tmp_path), scope="alice")
     session_id, child = "chat_split_task", "dashboard_session_split"
     session = manager.get_session(session_id)
-    call, result = tool("split", "task", {"session_id": child})
-    if native:
-        call = {
-            "role": "assistant",
-            "content": [{"type": "tool_use", "id": "split", "name": "task", "input": {}}],
-        }
-        result = {
-            "role": "user",
-            "content": [{"type": "tool_result", "tool_use_id": "split", "content": result["output"]}],
-        }
+    call, result = tool("split", "task", {"session_id": child}, native=native)
     summary = [{"role": "assistant", "content": "summary"}]
     await session.add_items([turn(1)[0], call])
     await session.replace_items(summary)
+    if legacy:
+        with sqlite3.connect(tmp_path / "alice" / f"{session_id}.db") as conn:
+            conn.execute("DELETE FROM chat_history_tasks WHERE call_id=''")
     assert subagent_run_offsets(manager, session_id, manager.get_max_message_id(session_id) + 1) == {}
 
     await session.add_items([result])
     assert subagent_run_offsets(manager, session_id, manager.get_max_message_id(session_id) + 1) == {child: 1}
     await session.replace_items(summary)
     assert subagent_run_offsets(manager, session_id, manager.get_max_message_id(session_id) + 1) == {child: 1}
+    session.close()
 
 
 @pytest.mark.asyncio
