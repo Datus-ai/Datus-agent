@@ -2403,17 +2403,24 @@ class AgenticNode(Node):
         )
 
     async def _replace_session_items(
-        self, items: List[Dict[str, Any]], *, mode: str = "minor", pending_user_turns: int = 0
+        self,
+        items: List[Dict[str, Any]],
+        *,
+        mode: str = "minor",
+        pending_user_turns: int = 0,
+        history_pending: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """Atomically replace history and complete rewrite bookkeeping before cancellation."""
         if self._session is None:
             raise DatusException(ErrorCode.COMMON_FIELD_REQUIRED, message_args={"field_name": "session"})
 
         async def replace() -> None:
+            options: Dict[str, Any] = {}
             if pending_user_turns:
-                await self._session.replace_items(items, pending_user_turns=pending_user_turns)
-            else:
-                await self._session.replace_items(items)
+                options["pending_user_turns"] = pending_user_turns
+            if history_pending:
+                options["history_pending"] = history_pending
+            await self._session.replace_items(items, **options)
             self._invalidate_context_usage()
             self._refresh_turn_checkpoint_after_rewrite()
             if mode == "major":
@@ -2493,6 +2500,7 @@ class AgenticNode(Node):
         first_call: bool = False,
         archive_history: bool = False,
         pending_user_turns: int = 0,
+        history_pending: Optional[List[Dict[str, Any]]] = None,
         output_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Two-stage compaction of the transcript a running turn is about to send.
@@ -2626,7 +2634,12 @@ class AgenticNode(Node):
                     return result
 
                 try:
-                    await self._replace_session_items(view, mode=result["mode"], pending_user_turns=pending_user_turns)
+                    await self._replace_session_items(
+                        view,
+                        mode=result["mode"],
+                        pending_user_turns=pending_user_turns,
+                        history_pending=history_pending,
+                    )
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Failed to persist mid-turn compact rewrite: %s", exc)
                     raise ContextCapacityError("SESSION_PERSIST_FAILED", "Cannot persist the prepared context") from exc

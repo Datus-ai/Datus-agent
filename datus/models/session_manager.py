@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from agents.extensions.memory import AdvancedSQLiteSession
 
+from datus.models.history_archive import HistoryArchive, HistoryArchiveReadError
 from datus.models.sqlite_session import (
     CONTEXT_USED_RESET_SQL,
     DERIVED_SESSION_META_KEYS,
@@ -327,6 +328,7 @@ class SessionManager:
         try:
             with sqlite3.connect(db_path, timeout=5.0) as conn:
                 conn.execute("BEGIN IMMEDIATE")
+                HistoryArchive(conn, Path(db_path), session_id).truncate(checkpoint.max_message_id)
                 if self._table_exists(conn, "message_structure"):
                     conn.execute(
                         "DELETE FROM message_structure "
@@ -556,6 +558,7 @@ class SessionManager:
         # relies on a JOIN between agent_messages and message_structure, so copying
         # agent_messages alone would result in an empty conversation history.
         with sqlite3.connect(source_db_path, timeout=5.0) as src_conn:
+            src_conn.execute("BEGIN")
             cursor = src_conn.cursor()
             cursor.execute(
                 "SELECT id, message_data, created_at FROM agent_messages WHERE session_id = ? ORDER BY id",
@@ -592,6 +595,7 @@ class SessionManager:
             # for the copy's own scan to find, so without this the new session
             # would list as untitled.
             meta_rows = self._read_session_meta(cursor, source_session_id)
+            hidden_through = HistoryArchive(src_conn, Path(source_db_path), source_session_id).hidden_through
             content_rows = self._read_message_contents(src_conn, source_session_id)
 
         # Materialize tables in the new DB first (short-lived session is released
@@ -630,6 +634,11 @@ class SessionManager:
                 [(new_session_id, *row) for row in turn_usage_rows],
             )
             self._write_session_meta(new_conn, new_session_id, meta_rows)
+            if hidden_through:
+                # The branch starts from copied model context, so its own
+                # transcript inherits the visibility boundary, not the files.
+                cutoff = min(hidden_through, max((row[0] for row in message_rows), default=0))
+                HistoryArchive(new_conn, Path(new_db_path), new_session_id).write_segment([], cutoff)
             new_conn.execute(self._MESSAGE_CONTENTS_DDL)
             new_conn.executemany(
                 "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
@@ -685,6 +694,7 @@ class SessionManager:
 
         # Read source messages ordered by creation time
         with sqlite3.connect(source_db_path, timeout=5.0) as src_conn:
+            src_conn.execute("BEGIN")
             cursor = src_conn.cursor()
             cursor.execute(
                 "SELECT id, session_id, message_data, created_at FROM agent_messages "
@@ -692,6 +702,7 @@ class SessionManager:
                 (source_session_id,),
             )
             rows = cursor.fetchall()
+            hidden_through = HistoryArchive(src_conn, Path(source_db_path), source_session_id).hidden_through
 
         # Determine the truncation boundary
         user_turn_count = 0
@@ -830,6 +841,11 @@ class SessionManager:
                     (new_session_id, *usage_row),
                 )
             self._write_session_meta(new_conn, new_session_id, meta_rows)
+            if hidden_through:
+                # The branch starts from copied model context, so its own
+                # transcript inherits the visibility boundary, not the files.
+                cutoff = min(hidden_through, max(kept_message_ids))
+                HistoryArchive(new_conn, Path(new_db_path), new_session_id).write_segment([], cutoff)
             new_conn.execute(self._MESSAGE_CONTENTS_DDL)
             new_conn.executemany(
                 "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
@@ -1466,10 +1482,17 @@ class SessionManager:
             return
         with sqlite3.connect(db_path, timeout=5.0) as conn:
             conn.execute(self._MESSAGE_CONTENTS_DDL)
-            rows = conn.execute(
-                "SELECT id, message_data FROM agent_messages WHERE session_id = ? AND id > ? ORDER BY id",
-                (session_id, previous_message_id),
-            ).fetchall()
+            conn.execute("BEGIN IMMEDIATE")
+            archive = HistoryArchive(conn, Path(db_path), session_id)
+            if archive.hidden_through:
+                rows = [
+                    (row_id, raw) for row_id, raw, _, _ in archive.rows(previous_message_id + 1, archive.snapshot())
+                ]
+            else:
+                rows = conn.execute(
+                    "SELECT id, message_data FROM agent_messages WHERE session_id = ? AND id > ? ORDER BY id",
+                    (session_id, previous_message_id),
+                ).fetchall()
             records = [record for record in contents.values() if record.get("persist", True)]
             pending = [
                 record for record in records if not record.get("tool_call_id") and "assistant_text" not in record
@@ -1573,13 +1596,27 @@ class SessionManager:
             return {}
         with sqlite3.connect(db_path, timeout=5.0) as conn:
             try:
-                rows = conn.execute(
-                    "SELECT c.contents_json FROM chat_message_contents c "
-                    "JOIN agent_messages m ON m.id = c.message_id AND m.session_id = c.session_id "
-                    "WHERE c.session_id = ? AND (? IS NULL OR c.message_id >= ?) "
-                    "AND (? IS NULL OR c.message_id <= ?) ORDER BY c.message_id",
-                    (session_id, min_id, min_id, max_id, max_id),
-                ).fetchall()
+                conn.execute("BEGIN")
+                archive = HistoryArchive(conn, Path(db_path), session_id)
+                if archive.hidden_through:
+                    first, last = min_id or 1, max_id if max_id is not None else archive.snapshot()
+                    candidates = conn.execute(
+                        "SELECT message_id,contents_json FROM chat_message_contents "
+                        "WHERE session_id=? AND message_id BETWEEN ? AND ? ORDER BY message_id",
+                        (session_id, first, last),
+                    ).fetchall()
+                    if not candidates:
+                        return {}
+                    visible_ids = {r[0] for r in archive.rows(candidates[0][0], candidates[-1][0])}
+                    rows = [(raw,) for message_id, raw in candidates if message_id in visible_ids]
+                else:
+                    rows = conn.execute(
+                        "SELECT c.contents_json FROM chat_message_contents c "
+                        "JOIN agent_messages m ON m.id = c.message_id AND m.session_id = c.session_id "
+                        "WHERE c.session_id = ? AND (? IS NULL OR c.message_id >= ?) "
+                        "AND (? IS NULL OR c.message_id <= ?) ORDER BY c.message_id",
+                        (session_id, min_id, min_id, max_id, max_id),
+                    ).fetchall()
             except sqlite3.OperationalError:
                 return {}
         results = {}
@@ -1763,10 +1800,18 @@ class SessionManager:
         return None
 
     def get_session_messages(
-        self, session_id: str, *, min_id: Optional[int] = None, max_id: Optional[int] = None
+        self,
+        session_id: str,
+        *,
+        min_id: Optional[int] = None,
+        max_id: Optional[int] = None,
+        include_archive: bool = False,
     ) -> List[Dict]:
         """
-        Get all messages from a session stored in SQLite, aggregating consecutive assistant messages.
+        Read session messages, aggregating consecutive assistant messages.
+
+        Studio includes the archive. Model-view consumers such as CLI rewind
+        keep selecting turns from the SQLite rows they can branch from.
 
         Args:
             session_id: Session ID to load messages from
@@ -1798,28 +1843,32 @@ class SessionManager:
 
         try:
             with sqlite3.connect(str(db_path)) as conn:
-                cursor = conn.cursor()
-                conditions = ["session_id = ?"]
-                params = [session_id]
-                if min_id is not None:
-                    conditions.append("id >= ?")
-                    params.append(min_id)
-                if max_id is not None:
-                    conditions.append("id <= ?")
-                    params.append(max_id)
-                cursor.execute(
-                    "SELECT id, message_data, created_at FROM agent_messages WHERE "
-                    + " AND ".join(conditions)
-                    + " ORDER BY created_at, id",
-                    params,
-                )
-                rows = cursor.fetchall()
+                conn.execute("BEGIN")
+                archive = HistoryArchive(conn, db_path, session_id) if include_archive else None
+                if archive and archive.hidden_through:
+                    first, last = min_id or 1, max_id if max_id is not None else archive.snapshot()
+                    history_rows = list(archive.rows(first, last))
+                    rows = [(row_id, raw, timestamp) for row_id, raw, timestamp, _ in history_rows]
+                    turn_map = {row_id: turn for row_id, _, _, turn in history_rows if turn is not None}
+                else:
+                    conditions = ["session_id = ?"]
+                    params = [session_id]
+                    if min_id is not None:
+                        conditions.append("id >= ?")
+                        params.append(min_id)
+                    if max_id is not None:
+                        conditions.append("id <= ?")
+                        params.append(max_id)
+                    rows = conn.execute(
+                        "SELECT id, message_data, created_at FROM agent_messages WHERE "
+                        + " AND ".join(conditions)
+                        + " ORDER BY created_at, id",
+                        params,
+                    ).fetchall()
+                    turn_map = self._read_message_turn_map(conn, session_id)
 
-                # Side-table @-context (table/metric/sql/knowledge refs) keyed by
-                # user_turn_number, plus the message_id -> turn map to attach each
-                # to the right user bubble. Empty when the session predates the
-                # feature or carried no references.
-                turn_map = self._read_message_turn_map(conn, session_id)
+                # Reattach the saved @-context using the original SDK turn
+                # number, including when the message now lives in an archive.
                 context_map = self._read_user_message_context(conn, session_id)
                 content_map = self._read_message_contents(conn, session_id, min_id=min_id, max_id=max_id)
 
@@ -2132,6 +2181,8 @@ class SessionManager:
                         current_assistant_group["actions"] = current_actions.copy()
                     messages.append(current_assistant_group)
 
+        except HistoryArchiveReadError:
+            raise
         except Exception as e:
             logger.exception(f"Failed to load session messages for {session_id}: {e}")
 

@@ -18,6 +18,7 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
+from datus.models.history_archive import HISTORY_REWRITE_KEY, HISTORY_VERSION_KEY
 from datus.models.sqlite_session import SESSION_META_TABLE, SESSION_TITLE_KEY, DatusSQLiteSession
 from datus.utils.exceptions import DatusException, ErrorCode
 
@@ -32,7 +33,11 @@ class AcceptedTurnStore:
 
     def __init__(self, directory: str, session_id: str, *, namespace: str):
         """Validate the session identity and namespace without creating history."""
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id) or not namespace or namespace == SESSION_TITLE_KEY:
+        if (
+            not re.fullmatch(r"[A-Za-z0-9_-]+", session_id)
+            or not namespace
+            or namespace in (SESSION_TITLE_KEY, HISTORY_VERSION_KEY, HISTORY_REWRITE_KEY)
+        ):
             raise _invalid("Invalid accepted turn identity")
         self.session_id = session_id
         self.namespace = namespace
@@ -209,7 +214,12 @@ class AcceptedOpeningSession(DatusSQLiteSession):
                     break
         await super().add_items(items)
 
+    def pending_model_input(self) -> list[dict[str, Any]]:
+        return [item for item in super().pending_model_input() if not self.is_opening(item)]
+
     async def replace_items(self, items: list[dict[str, Any]], **kwargs: Any) -> None:
         """Preserve exactly one accepted opening when the SDK rewrites history."""
         opening = {"role": "user", "content": self.opening}
+        if kwargs.get("history_pending") is not None:
+            kwargs["history_pending"] = [item for item in kwargs["history_pending"] if not self.is_opening(item)]
         await super().replace_items([opening, *[item for item in items if not self.is_opening(item)]], **kwargs)

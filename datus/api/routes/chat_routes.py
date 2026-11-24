@@ -52,6 +52,7 @@ from datus.api.services.background_drain import track_background_task
 from datus.api.services.chat_extensions import ChatToolProvider
 from datus.api.utils.service_stream import ServiceStreamingResponse
 from datus.api.utils.stream_errors import humanize_stream_error
+from datus.models.history_archive import HistoryArchiveReadError
 from datus.tools.policy_runtime import PolicyRuntime
 from datus.utils.exceptions import DatusException
 from datus.utils.feedback_prompt import build_reaction_feedback_prompt
@@ -415,6 +416,8 @@ async def get_chat_history(
             asyncio.to_thread(svc.chat.get_history, session_id, user_id=ctx.user_id),
             timeout=_FUSE_IO_TIMEOUT,
         )
+    except HistoryArchiveReadError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except TimeoutError:
         return Result[ChatHistoryData](
             success=False, errorCode="REQUEST_TIMEOUT", errorMessage="History fetch timed out"
@@ -441,6 +444,8 @@ async def get_chat_history_page(
         return Result(success=True, data=data)
     except HistoryChangedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except HistoryArchiveReadError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except TimeoutError as exc:
@@ -474,6 +479,8 @@ async def get_chat_history_content(
         )
     except HistoryChangedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except HistoryArchiveReadError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:

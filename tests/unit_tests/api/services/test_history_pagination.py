@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -24,12 +25,8 @@ def history(tmp_path):
         manager = SessionManager(session_dir=str(tmp_path), scope=user)
         root = manager.session_dir
         if parent:
-            from pathlib import Path
-
             root = str(Path(root) / parent)
             Path(root).mkdir(parents=True, exist_ok=True)
-        from pathlib import Path
-
         path = Path(root) / f"{session_id}.db"
         with sqlite3.connect(path) as conn:
             conn.execute(
@@ -588,3 +585,319 @@ def test_scoped_session_directory_serves_deferred_tool_content(history):
     page = get_history_page(service, "chat_scoped_content", "alice", 10, None)
     result = next(p.payload["result"] for m in page.messages for p in m.content if p.type == "call-tool-result")
     assert get_history_content(service, "chat_scoped_content", "alice", result["historyContent"]["ref"]) == content
+
+
+@pytest.mark.asyncio
+async def test_paging_and_downloads_survive_multiple_context_rewrites(history, tmp_path):
+    service, _ = history
+    session_id = "chat_archive"
+    manager = SessionManager(session_dir=str(tmp_path), scope="alice")
+    session = manager.get_session(session_id)
+    large_output = "original tool output " * 80
+    await session.add_items(turn(1) + turn(2) + turn(3)[:1] + tool("archive", "lookup", large_output))
+    first = get_history_page(service, session_id, "alice", 1, None, inline_chars=120)
+    download = next(
+        part.payload["result"]["historyContent"]["ref"]
+        for message in first.messages
+        for part in message.content
+        if part.type == "call-tool-result"
+    )
+
+    await session.replace_items([turn(3)[0], {"role": "assistant", "content": "model-only summary"}])
+    await session.add_items([turn(3)[1]] + turn(4))
+    await session.replace_items([{"role": "assistant", "content": "second model-only summary"}])
+    await session.add_items(turn(5))
+
+    latest = get_history_page(service, session_id, "alice", 2, None)
+    assert latest.total_turns == 5
+    assert [msg["content"] for msg in manager.get_session_messages(session_id) if msg["role"] == "user"] == [
+        "question 5"
+    ]
+    assert questions(latest) == ["question 4", "question 5"]
+    third = get_history_page(service, session_id, "alice", 1, None, turn=3)
+    assert questions(third) == ["question 3"]
+    assert third.turns[0].message_id == first.turns[0].message_id
+    assert any(part.payload.get("content") == "answer 3" for message in third.messages for part in message.content)
+    assert "model-only summary" not in third.model_dump_json()
+    older = get_history_page(service, session_id, "alice", 2, first.next_cursor)
+    assert questions(older) == ["question 1", "question 2"]
+    assert get_history_content(service, session_id, "alice", download) == large_output
+
+
+@pytest.mark.asyncio
+async def test_existing_database_stays_sqlite_only_after_reopen_and_compact(history, tmp_path):
+    service, write = history
+    session_id = "chat_legacy"
+    db = write(session_id, turn(1))
+    old_archive = db.parent / session_id / "data" / "history_before_upgrade.jsonl"
+    old_archive.parent.mkdir(parents=True)
+    old_archive.write_text(json.dumps(turn(99)[0]) + "\n")
+    manager = SessionManager(session_dir=str(tmp_path), scope="alice")
+    session = manager.get_session(session_id)
+    await session.add_items(turn(2))
+    await session.replace_items(turn(3))
+    assert questions(get_history_page(service, session_id, "alice", 10, None)) == ["question 3"]
+    assert manager.load_session_meta(session_id, "chat_history_version") is None
+    assert not (old_archive.parent.parent / "chat-history").exists()
+
+
+@pytest.mark.asyncio
+async def test_pending_native_input_is_archived_once_and_survives_reopen(history, tmp_path):
+    service, _ = history
+    session_id = "chat_native_archive"
+    manager = SessionManager(session_dir=str(tmp_path), scope="alice")
+    session = manager.get_session(session_id)
+    request = {"role": "user", "content": [{"type": "text", "text": "repeat this"}]}
+    await session.add_items([request, *turn(1)[1:]])
+    await session.replace_items(
+        [request, {"role": "assistant", "content": "summary"}],
+        pending_user_turns=1,
+        history_pending=[request],
+    )
+    await session.add_items([{"role": "assistant", "content": "second reply"}])
+    session.close()
+    page = get_history_page(service, session_id, "alice", 10, None)
+    assert questions(page) == ["repeat this", "repeat this"]
+    assert len({turn.message_id for turn in page.turns}) == 2
+    SessionManager(session_dir=str(tmp_path), scope="alice").clear_session(session_id)
+    assert questions(get_history_page(service, session_id, "alice", 10, None)) == []
+
+
+@pytest.mark.asyncio
+async def test_archived_tool_display_keeps_subagent_run_alignment(history, tmp_path, monkeypatch):
+    service, _ = history
+    parent = "chat_parent_archive"
+    child = "gen_job_session_archive"
+    manager = SessionManager(session_dir=str(tmp_path), scope="alice")
+    parent_session = manager.get_session(parent)
+    child_session = SessionManager(session_dir=str(tmp_path / "alice" / parent)).get_session(child)
+    for index in (1, 2):
+        await child_session.add_items(turn(index) + tool(f"child_{index}", "lookup", str(index)))
+        await child_session.replace_items([{"role": "assistant", "content": "child summary"}])
+        await parent_session.add_items(turn(index) + tool(f"task_{index}", "task", {"session_id": child}))
+        if index == 1:
+            await parent_session.add_items(tool("unrelated", "execute_sql", "large unrelated output " * 3000))
+        await parent_session.replace_items([{"role": "assistant", "content": "parent summary"}])
+        if index == 1:
+            old_segment = next((tmp_path / "alice" / parent / "chat-history").glob("*.jsonl"))
+
+    original_open = Path.open
+
+    def skip_off_page_archive(path, *args, **kwargs):
+        assert path != old_segment, "off-page tool results must stay on disk"
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", skip_off_page_archive)
+    page = get_history_page(service, parent, "alice", 1, None)
+    children = [
+        part.payload["callToolId"]
+        for msg in page.messages
+        for part in msg.content
+        if msg.depth == 1 and part.type == "call-tool"
+    ]
+    assert questions(page) == ["question 2"]
+    assert children == ["child_2"]
+
+
+@pytest.mark.asyncio
+async def test_archive_write_failure_preserves_model_rows_and_existing_cursor(history, tmp_path, monkeypatch):
+    from datus.storage.semantic_model import artifact_file
+
+    service, _ = history
+    session_id = "chat_archive_failure"
+    session = SessionManager(session_dir=str(tmp_path), scope="alice").get_session(session_id)
+    await session.add_items(turn(1) + turn(2))
+    cursor = get_history_page(service, session_id, "alice", 1, None).next_cursor
+
+    def disk_full(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(artifact_file, "atomic_write_bytes", disk_full)
+    with pytest.raises(OSError, match="disk full"):
+        await session.replace_items([{"role": "assistant", "content": "summary"}])
+    assert await session.get_items() == turn(1) + turn(2)
+    assert questions(get_history_page(service, session_id, "alice", 1, cursor)) == ["question 1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("derive", ["copy", "rewind"])
+async def test_derived_sessions_archive_their_own_transcript(history, tmp_path, derive):
+    service, _ = history
+    manager = SessionManager(session_dir=str(tmp_path), scope="alice")
+    source_id = "chat_source"
+    source = manager.get_session(source_id)
+    await source.add_items(turn(1))
+    await source.replace_items([turn(1)[0], {"role": "assistant", "content": "source summary"}])
+    await source.add_items(turn(2))
+    if derive == "copy":
+        derived_id = manager.copy_session(source_id, "chat")
+    else:
+        derived_id = manager.rewind_session(source_id, 2)
+    derived = manager.get_session(derived_id)
+    await derived.add_items(turn(3))
+    await derived.replace_items([{"role": "assistant", "content": "derived summary"}])
+    page = get_history_page(service, derived_id, "alice", 10, None)
+    assert questions(page) == ["question 2", "question 3"]
+    assert "source summary" not in page.model_dump_json()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("damage", ["missing", "truncated", "corrupt", "same_size_prompt", "same_size_result"])
+async def test_unreadable_registered_archive_returns_service_unavailable(history, tmp_path, damage):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from datus.api.deps import get_app_context, get_datus_service
+    from datus.api.routes.chat_routes import router
+
+    service, _ = history
+    session_id = "chat_unreadable_archive"
+    session = SessionManager(session_dir=str(tmp_path), scope="alice").get_session(session_id)
+    await session.add_items(turn(1) + tool("archive", "lookup", "long result " * 1000))
+    page = get_history_page(service, session_id, "alice", 1, None)
+    reference = next(
+        part.payload["result"]["historyContent"]["ref"]
+        for msg in page.messages
+        for part in msg.content
+        if part.type == "call-tool-result"
+    )
+    await session.replace_items([{"role": "assistant", "content": "summary"}])
+    await session.add_items(turn(2))
+    segment = next((tmp_path / "alice" / session_id / "chat-history").glob("*.jsonl"))
+    original = segment.read_bytes()
+    if damage == "missing":
+        segment.unlink()
+    elif damage == "truncated":
+        segment.write_bytes(b"")
+    elif damage == "corrupt":
+        segment.write_bytes(b"[" * len(original))
+    else:
+        old, new = (
+            (b"question 1", b"question 9") if damage == "same_size_prompt" else (b"long result ", b"fake result ")
+        )
+        changed = original.replace(old, new, 1)
+        assert changed != original and len(changed) == len(original)
+        segment.write_bytes(changed)
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_datus_service] = lambda: SimpleNamespace(chat=service)
+    app.dependency_overrides[get_app_context] = lambda: SimpleNamespace(user_id="alice")
+    with TestClient(app) as client:
+        latest = client.get("/api/v1/chat/history/page", params={"session_id": session_id, "limit": 1})
+        assert latest.status_code == 200
+        older_params = {"session_id": session_id, "limit": 1, "cursor": latest.json()["data"]["next_cursor"]}
+        download_params = {"session_id": session_id, "reference": reference}
+        assert client.get("/api/v1/chat/history/page", params=older_params).status_code == 503
+        assert client.get("/api/v1/chat/history/content", params=download_params).status_code == 503
+
+        segment.write_bytes(original)
+        older = client.get("/api/v1/chat/history/page", params=older_params)
+        assert older.status_code == 200
+        assert older.json()["data"]["turns"][0]["text"] == "question 1"
+        download = client.get("/api/v1/chat/history/content", params=download_params)
+        assert download.status_code == 200 and download.text == "long result " * 1000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True])
+async def test_subagent_result_is_counted_when_call_and_result_cross_archive_segments(tmp_path, native):
+    manager = SessionManager(session_dir=str(tmp_path), scope="alice")
+    session_id, child = "chat_split_task", "dashboard_session_split"
+    session = manager.get_session(session_id)
+    call, result = tool("split", "task", {"session_id": child})
+    if native:
+        call = {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "split", "name": "task", "input": {}}],
+        }
+        result = {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "split", "content": result["output"]}],
+        }
+    summary = [{"role": "assistant", "content": "summary"}]
+    await session.add_items([turn(1)[0], call])
+    await session.replace_items(summary)
+    assert subagent_run_offsets(manager, session_id, manager.get_max_message_id(session_id) + 1) == {}
+
+    await session.add_items([result])
+    assert subagent_run_offsets(manager, session_id, manager.get_max_message_id(session_id) + 1) == {child: 1}
+    await session.replace_items(summary)
+    assert subagent_run_offsets(manager, session_id, manager.get_max_message_id(session_id) + 1) == {child: 1}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True])
+async def test_latest_subagent_run_is_available_without_its_implicit_first_run_archive(history, tmp_path, native):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from datus.api.deps import get_app_context, get_datus_service
+    from datus.api.routes.chat_routes import router
+
+    service, _ = history
+    parent, child = "chat_archived_implicit", "dashboard_session_implicit"
+    root = tmp_path / "alice" / parent
+    child_session = SessionManager(session_dir=str(root)).get_session(child)
+    first_run = tool("implicit", "lookup", "earlier run")
+    if native:
+        first_run = [
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "implicit", "name": "lookup", "input": {}}],
+            },
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "implicit", "content": first_run[1]["output"]}],
+            },
+        ]
+    await child_session.add_items(first_run)
+    await child_session.replace_items([{"role": "assistant", "content": "summary"}])
+    await child_session.add_items(turn(2) + tool("prompted", "lookup", "latest run"))
+
+    parent_session = SessionManager(session_dir=str(tmp_path), scope="alice").get_session(parent)
+    await parent_session.add_items(
+        turn(1)
+        + tool("task_old", "task", {"session_id": child})
+        + turn(2)
+        + tool("task_new", "task", {"session_id": child})
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_datus_service] = lambda: SimpleNamespace(chat=service)
+    app.dependency_overrides[get_app_context] = lambda: SimpleNamespace(user_id="alice")
+    with TestClient(app) as client:
+        path = "/api/v1/chat/history/page"
+        params = {"session_id": parent, "limit": 1}
+        assert client.get(path, params=params).status_code == 200
+        segment = next((root / child / "chat-history").glob("*.jsonl"))
+        segment.unlink()
+
+        latest = client.get(path, params=params)
+        assert latest.status_code == 200
+        data = latest.json()["data"]
+        calls = [
+            p["payload"]["callToolId"]
+            for msg in data["messages"]
+            for p in msg["content"]
+            if msg["depth"] == 1 and p["type"] == "call-tool"
+        ]
+        assert calls == ["prompted"]
+        assert client.get(path, params={**params, "cursor": data["next_cursor"]}).status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_latest_page_checks_only_requested_records_of_the_same_archive(history, tmp_path):
+    from datus.models.history_archive import HistoryArchiveReadError
+
+    service, _ = history
+    session_id = "chat_partial_integrity"
+    session = SessionManager(session_dir=str(tmp_path), scope="alice").get_session(session_id)
+    await session.add_items(turn(1) + turn(2))
+    await session.replace_items([{"role": "assistant", "content": "summary"}])
+    segment = next((tmp_path / "alice" / session_id / "chat-history").glob("*.jsonl"))
+    segment.write_bytes(segment.read_bytes().replace(b"question 1", b"question 9", 1))
+
+    latest = get_history_page(service, session_id, "alice", 1, None)
+    assert questions(latest) == ["question 2"]
+    with pytest.raises(HistoryArchiveReadError):
+        get_history_page(service, session_id, "alice", 1, latest.next_cursor)

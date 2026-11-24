@@ -307,6 +307,7 @@ class MidTurnCompactor(AgentHooks):
         self._instruction_rebuilt = False
         self._init_instruction = ""
         self.pending_user_turns = 0
+        self.history_pending: Optional[List[Dict[str, Any]]] = None
         self._output_tokens: Optional[int] = None
         self._capacity_pressure: Optional[int] = None
         self._max_failures = max(1, int(max_failures))
@@ -579,6 +580,7 @@ class MidTurnCompactor(AgentHooks):
         self.anchor_turn(view)
 
         base_tokens, tail_start = self._base_tokens(view)
+        archive_options = {"history_pending": self.history_pending} if self.history_pending else {}
         result = await self._node.compact_mid_turn(
             view,
             item_format=item_format,
@@ -591,6 +593,7 @@ class MidTurnCompactor(AgentHooks):
             archive_history=self._calls == 0 and not self._turn_state.get("history_archived", False),
             pending_user_turns=self.pending_user_turns,
             output_tokens=self._output_tokens,
+            **archive_options,
         )
         if self._calls == 0 and isinstance(result, dict) and result.get("success"):
             self._turn_state["history_archived"] = True

@@ -64,10 +64,8 @@ async def test_failed_receipt_insert_rolls_back_message_and_turn(tmp_path):
     session = DatusSQLiteSession(session_id="stable", db_path=str(store.path), create_tables=True)
     with sqlite3.connect(store.path) as connection:
         connection.execute(
-            "CREATE TABLE session_meta(session_id TEXT, key TEXT, value TEXT, PRIMARY KEY(session_id,key))"
-        )
-        connection.execute(
-            "CREATE TRIGGER reject_receipt BEFORE INSERT ON session_meta BEGIN SELECT RAISE(ABORT, 'receipt rejected'); END"
+            "CREATE TRIGGER reject_receipt BEFORE INSERT ON session_meta WHEN NEW.key = 'host' "
+            "BEGIN SELECT RAISE(ABORT, 'receipt rejected'); END"
         )
     with pytest.raises(sqlite3.IntegrityError, match="receipt rejected"):
         accept(store)

@@ -2090,12 +2090,14 @@ execution:
       paths:
         - datus/api/services/chat_task_manager.py
         - datus/api/services/chat_service.py
+        - datus/api/services/history_pagination.py
         - datus/api/routes/chat_routes.py
         - datus/cli/chat_commands.py
       targets:
         - tests/unit_tests/api/
         - tests/unit_tests/cli/
         - tests/unit_tests/gateway/adapters/test_wecom.py
+        - tests/unit_tests/models/test_base.py
     - id: skill-payloads
       paths:
         - datus/resources/skills/

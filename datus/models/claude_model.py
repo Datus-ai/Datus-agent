@@ -940,8 +940,9 @@ class ClaudeModel(OpenAICompatibleModel):
                     if context_rewriter is not None:
                         from datus.agent.node.context_rewriter import extract_user_text
 
+                        context_rewriter.history_pending = messages[persisted_message_index:]
                         context_rewriter.pending_user_turns = sum(
-                            extract_user_text(item) is not None for item in messages[persisted_message_index:]
+                            extract_user_text(item) is not None for item in context_rewriter.history_pending
                         )
                         context_rewriter.set_request_context(
                             instruction, tools, kwargs.get("max_tokens") or self.max_tokens() or 20480

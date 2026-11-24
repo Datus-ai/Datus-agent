@@ -501,6 +501,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
 
             if isinstance(session, DatusSQLiteSession):
                 session.skip_persisted_input_once([])
+                session.track_model_input(pending_original_input)
             return history + new_input
 
         async def _filter(data: CallModelData) -> ModelInputData:
@@ -517,6 +518,9 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
                 )
                 if context_rewriter is None and not pending:
                     return data.model_data
+                from datus.models.sqlite_session import DatusSQLiteSession
+
+                inserted_items = []
                 for text in pending:
                     user_item = {
                         "type": "message",
@@ -524,16 +528,23 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
                         "content": [{"type": "input_text", "text": text}],
                     }
                     view.append(user_item)
+                    inserted_items.append(user_item)
                     if context_rewriter is not None:
                         try:
                             context_rewriter.pin_insert(len(raw), user_item)
                         except Exception:  # noqa: BLE001 — pinning is best-effort
                             logger.exception("Failed to pin injected user item on the context rewriter.")
-                    if session is not None:
-                        try:
-                            await session.add_items([user_item])
-                        except Exception:  # noqa: BLE001 — never abort the run on a session write
-                            logger.exception("Failed to persist injected user item; in-memory only.")
+                if inserted_items and session is not None:
+                    # The SDK can defer its opening until after this filter.
+                    # Save it with the inserts so persisted IDs follow the
+                    # order sent to the model, even if this call compacts.
+                    opening = session.pending_model_input() if isinstance(session, DatusSQLiteSession) else []
+                    try:
+                        await session.add_items([*opening, *inserted_items])
+                        if opening and isinstance(session, DatusSQLiteSession):
+                            session.skip_persisted_input_once(opening)
+                    except Exception:  # noqa: BLE001 — keep the inputs in the model view
+                        logger.exception("Failed to persist queued user input; keeping it in memory.")
                 instructions = data.model_data.instructions
                 if context_rewriter is not None:
                     from agents import RunContextWrapper
@@ -561,10 +572,14 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
                     # Inserts are already pinned. Pass the original SDK list so
                     # the overlay remains aligned across subsequent calls.
                     from datus.agent.node.context_rewriter import extract_user_text
-                    from datus.models.sqlite_session import DatusSQLiteSession
 
+                    unsaved_input = (
+                        session.pending_model_input()
+                        if isinstance(session, DatusSQLiteSession)
+                        else pending_original_input
+                    )
                     context_rewriter.pending_user_turns = sum(
-                        extract_user_text(item) is not None for item in pending_original_input
+                        extract_user_text(item) is not None for item in unsaved_input
                     )
                     before = context_rewriter.compactions
                     view = await context_rewriter.rewrite_sdk_input(list(data.model_data.input))

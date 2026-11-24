@@ -961,3 +961,33 @@ class TestUnifiedRequestCompaction:
         assert sent[0] == {"role": "user", "content": "start"}
         assert inserted in json.dumps(sent[1])
         assert "SUMMARY" in json.dumps(sent)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("compact", [False, True])
+    async def test_first_request_keeps_the_question_before_queued_inserts(
+        self, tmp_path, scripted_agents_model, compact
+    ):
+        from types import SimpleNamespace
+
+        from datus.api.services.chat_service import ChatService
+        from datus.api.services.history_pagination import get_history_page
+        from datus.cli.execution_state import PendingInputQueue
+        from tests.unit_tests.agent.node.test_compact_helpers import TestMeasuredContextContracts
+
+        node = TestMeasuredContextContracts._node(tmp_path)
+        await node._session.add_items(
+            [
+                {"role": "user", "content": "old question"},
+                {"role": "assistant", "content": "OLD_HISTORY " * (40000 if compact else 1)},
+            ]
+        )
+        queue = PendingInputQueue()
+        queue.push("queued instruction")
+        model = scripted_agents_model(["final"])
+        rewriter = TestBuildRunConfigCompactsMidRun._rewriter(node)
+        await TestBuildRunConfigCompactsMidRun._run(model, rewriter, queue=queue, session=node._session)
+        assert rewriter.compactions == int(compact)
+        service = ChatService(SimpleNamespace(session_dir=node.session_manager.session_dir))
+        page = get_history_page(service, node.session_id, None, 10, None)
+        assert [turn.text for turn in page.turns] == ["old question", "start", "queued instruction"]
+        node._session.close()
