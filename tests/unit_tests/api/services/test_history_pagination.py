@@ -15,6 +15,7 @@ from datus.api.services.history_pagination import (
     subagent_run_offsets,
 )
 from datus.models.session_manager import SessionManager
+from datus.utils.tool_archive import ToolArchive
 
 
 @pytest.fixture
@@ -145,7 +146,8 @@ def test_cursor_is_scoped_and_rejects_rewritten_anchor(history):
 
 
 @pytest.mark.parametrize("native", [False, True])
-def test_subagent_reused_on_an_older_page_does_not_replay_the_wrong_run(history, native):
+@pytest.mark.parametrize("archived", [False, True])
+def test_subagent_reused_on_an_older_page_does_not_replay_the_wrong_run(history, tmp_path, native, archived):
     service, write = history
     parent = "chat_parent"
     child = "gen_job_session_child"
@@ -160,9 +162,13 @@ def test_subagent_reused_on_an_older_page_does_not_replay_the_wrong_run(history,
         parent=parent,
     )
 
-    def parent_task(call_id):
+    def parent_task(call_id, index):
+        call, result = tool(call_id, "task", {"session_id": child})
+        if archived:
+            archive = ToolArchive("", parent, base_dir=tmp_path / "alice" / parent / "data", preview_chars=12)
+            result["output"] = archive.archive(result["output"], index, "output")
         if not native:
-            return tool(call_id, "task", {"session_id": child})
+            return [call, result]
         return [
             {"role": "assistant", "content": [{"type": "tool_use", "id": call_id, "name": "task", "input": {}}]},
             {
@@ -171,19 +177,54 @@ def test_subagent_reused_on_an_older_page_does_not_replay_the_wrong_run(history,
                     {
                         "type": "tool_result",
                         "tool_use_id": call_id,
-                        "content": json.dumps({"success": 1, "result": {"session_id": child}}),
+                        "content": [{"type": "text", "text": result["output"]}],
                     }
                 ],
             },
         ]
 
-    write(parent, [*turn(0), *parent_task("task_old"), *turn(1), *parent_task("task_new")])
+    write(parent, [*turn(0), *parent_task("task_old", 0), *turn(1), *parent_task("task_new", 1)])
+
+    def child_calls(messages):
+        return [p.payload["callToolId"] for m in messages if m.depth == 1 for p in m.content if p.type == "call-tool"]
+
     page = get_history_page(service, parent, "alice", 1, None)
-    parts = [p for m in page.messages for p in m.content]
-    call_ids = [p.payload["callToolId"] for p in parts if p.type == "call-tool"]
-    assert "child_new" in call_ids
-    assert "child_old" not in call_ids
+    assert child_calls(page.messages) == ["child_new"]
     assert questions(page) == ["question 1"]
+    older = get_history_page(service, parent, "alice", 1, page.next_cursor)
+    assert child_calls(older.messages) == ["child_old"]
+    assert child_calls(service.get_history(parent, "alice").data.messages) == ["child_old", "child_new"]
+
+
+@pytest.mark.parametrize("invalid", ["missing", "outside", "symlink", "changed"])
+def test_unavailable_archived_task_result_leaves_parent_tool_card(history, tmp_path, invalid):
+    service, write = history
+    parent = "chat_parent"
+    child = "gen_job_session_child"
+    write(child, turn(0) + tool("child_step", "execute_sql", "child output"), parent=parent)
+    call, result = tool("task_parent", "task", {"session_id": child})
+    data_dir = tmp_path / "alice" / parent / "data"
+    if invalid == "outside":
+        data_dir = tmp_path / "bob" / parent / "data"
+    archive = ToolArchive("", parent, base_dir=data_dir)
+    result["output"] = archive.archive(result["output"], 1, "output")
+    path = next(data_dir.iterdir())
+    if invalid == "changed":
+        path.write_text(path.read_text() + " ")
+    elif invalid in ("missing", "symlink"):
+        if invalid == "symlink":
+            external = tmp_path / "bob" / path.name
+            external.parent.mkdir()
+            path.rename(external)
+            path.symlink_to(external)
+        else:
+            path.unlink()
+    write(parent, [*turn(0), call, result])
+
+    page = get_history_page(service, parent, "alice", 1, None)
+    assert [p.payload["callToolId"] for m in page.messages for p in m.content if p.type == "call-tool"] == [
+        "task_parent"
+    ]
 
 
 def test_large_parameters_and_nested_results_have_on_demand_references(history):
@@ -664,7 +705,8 @@ async def test_pending_native_input_is_archived_once_and_survives_reopen(history
 
 
 @pytest.mark.asyncio
-async def test_archived_tool_display_keeps_subagent_run_alignment(history, tmp_path, monkeypatch):
+@pytest.mark.parametrize("offloaded", [False, True])
+async def test_archived_tool_display_keeps_subagent_run_alignment(history, tmp_path, monkeypatch, offloaded):
     service, _ = history
     parent = "chat_parent_archive"
     child = "gen_job_session_archive"
@@ -674,7 +716,11 @@ async def test_archived_tool_display_keeps_subagent_run_alignment(history, tmp_p
     for index in (1, 2):
         await child_session.add_items(turn(index) + tool(f"child_{index}", "lookup", str(index)))
         await child_session.replace_items([{"role": "assistant", "content": "child summary"}])
-        await parent_session.add_items(turn(index) + tool(f"task_{index}", "task", {"session_id": child}))
+        call, result = tool(f"task_{index}", "task", {"session_id": child})
+        if offloaded:
+            archive = ToolArchive("", parent, base_dir=tmp_path / "alice" / parent / "data", preview_chars=12)
+            result["output"] = archive.archive(result["output"], index, "output")
+        await parent_session.add_items(turn(index) + [call, result])
         if index == 1:
             await parent_session.add_items(tool("unrelated", "execute_sql", "large unrelated output " * 3000))
         await parent_session.replace_items([{"role": "assistant", "content": "parent summary"}])

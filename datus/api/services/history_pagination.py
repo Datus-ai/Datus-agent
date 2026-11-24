@@ -100,7 +100,8 @@ def subagent_run_offsets(manager: SessionManager, session_id: str, start_id: int
             "AND json_extract(r.value,'$.tool_use_id') IN task_calls",
             {"session": session_id, "hidden": archive.hidden_through or 0, "before": start_id},
         )
-        counts.update(child for (raw,) in rows if (child := child_session_id(raw)))
+        archive_dir = Path(manager.session_dir).resolve() / session_id / "data"
+        counts.update(child for (raw,) in rows if (child := child_session_id(raw, archive_dir=archive_dir)))
         return dict(counts)
 
 

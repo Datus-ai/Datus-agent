@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from datus.utils.message_utils import extract_user_input, is_compact_resume_text
+from datus.utils.tool_archive import parse_archived_marker
 
 HISTORY_VERSION_KEY = "chat_history_version"
 HISTORY_REWRITE_KEY = "chat_history_hidden_through"
@@ -59,6 +60,7 @@ CREATE INDEX IF NOT EXISTS idx_chat_history_task_calls
 ON chat_history_tasks(session_id, call_id, message_id) WHERE child_id IS NULL
 """
 _SAFE_SESSION_ID = re.compile(r"[A-Za-z0-9_.-]+")
+_TOOL_OUTPUT_NAME = re.compile(r"[0-9]{6,}_output_([0-9a-f]{8})\.txt")
 
 
 class HistoryArchiveReadError(RuntimeError):
@@ -77,15 +79,41 @@ def _parse_output(raw: Any) -> Any:
             return raw
 
 
-def child_session_id(raw: Any) -> str | None:
+def _archived_task_output(raw: str, directory: Path) -> str | None:
+    marker = parse_archived_marker(raw)
+    if marker is None:
+        return None
+    path = Path(marker["path"])
+    filename = _TOOL_OUTPUT_NAME.fullmatch(path.name)
+    if not path.is_absolute() or not filename:
+        return None
+
+    # The marker is tool output. Only open a result written inside this session's data directory.
+    try:
+        if path.resolve() != directory / path.name or not path.is_file():
+            return None
+        payload = path.read_bytes()
+        if not hashlib.sha256(payload).hexdigest().startswith(filename[1]):
+            return None
+        return payload.decode("utf-8")
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _task_result(raw: Any) -> Any:
     output = _parse_output(raw)
     if isinstance(output, list):
         output = _parse_output("\n".join(str(block.get("text", "")) for block in output if isinstance(block, dict)))
-    if isinstance(output, dict):
-        result = _parse_output(output.get("result", output))
-        child = result.get("session_id") if isinstance(result, dict) else None
-        if isinstance(child, str) and _SAFE_SESSION_ID.fullmatch(child) and ".." not in child:
-            return child
+    return _parse_output(output.get("result", output)) if isinstance(output, dict) else output
+
+
+def child_session_id(raw: Any, *, archive_dir: Path | None = None) -> str | None:
+    result = _task_result(raw)
+    if isinstance(result, str) and archive_dir is not None:
+        result = _task_result(_archived_task_output(result, archive_dir))
+    child = result.get("session_id") if isinstance(result, dict) else None
+    if isinstance(child, str) and _SAFE_SESSION_ID.fullmatch(child) and ".." not in child:
+        return child
     return None
 
 
@@ -244,7 +272,7 @@ class HistoryArchive:
                     "WHERE session_id=? AND call_id=? AND child_id IS NULL AND message_id<?",
                     (self.session_id, call_id, row_id),
                 ).fetchone()
-                if not task_call or not (child := child_session_id(output)):
+                if not task_call or not (child := child_session_id(output, archive_dir=self.directory.parent / "data")):
                     continue
             self.conn.execute(
                 "INSERT OR IGNORE INTO chat_history_tasks VALUES (?,?,?,?)",

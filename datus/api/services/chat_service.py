@@ -12,6 +12,7 @@ import uuid
 from collections import Counter
 from functools import lru_cache
 from importlib.resources import files
+from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -44,7 +45,7 @@ from datus.api.services.chat_task_manager import (
 )
 from datus.api.services.turn_stats import resolve_subagent
 from datus.configuration.agent_config import AgentConfig
-from datus.models.history_archive import HistoryArchiveReadError
+from datus.models.history_archive import HistoryArchiveReadError, child_session_id
 from datus.models.session_manager import SessionManager, extract_agent_from_session_id, session_matches_agent
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.artifact_output import session_user_scope
@@ -80,18 +81,6 @@ def _is_task_result(action: ActionHistory) -> bool:
         and action.status != ActionStatus.PROCESSING
         and input_data.get("function_name") == "task"
     )
-
-
-def _subagent_session_id(result_action: ActionHistory) -> Optional[str]:
-    output = result_action.output if isinstance(result_action.output, dict) else {}
-    result = output.get("result", output)
-    if isinstance(result, str):
-        try:
-            result = json.loads(result)
-        except (TypeError, ValueError):
-            return None
-    sub_session_id = result.get("session_id") if isinstance(result, dict) else None
-    return sub_session_id if isinstance(sub_session_id, str) and sub_session_id else None
 
 
 def _is_safe_session_id(session_id: str) -> bool:
@@ -142,7 +131,7 @@ def _load_subagent_runs(
 def _subagent_run_actions(
     session_dir: str,
     call_id: str,
-    result_action: ActionHistory,
+    sub_session_id: str | None,
     runs_cache: Dict[str, List[List[ActionHistory]]],
     agent_config: Any = None,
     node_responses: Optional[Dict[str, dict]] = None,
@@ -153,8 +142,7 @@ def _subagent_run_actions(
     session, inside the user's scope. A resumed session holds several runs, and each
     ``task`` result takes the next one; ``runs_cache`` reads each session once per request.
     """
-    sub_session_id = _subagent_session_id(result_action)
-    if not sub_session_id or not _is_safe_session_id(sub_session_id):
+    if not sub_session_id:
         return []
     if sub_session_id not in runs_cache:
         runs_cache[sub_session_id] = _load_subagent_runs(session_dir, sub_session_id)
@@ -581,23 +569,25 @@ class ChatService:
                 os.path.join(session_manager.session_dir, session_id) if _is_safe_session_id(session_id) else None
             )
             subagent_runs: Dict[str, List[List[ActionHistory]]] = {}
-            if window and subagent_dir:
-                from datus.api.services.history_pagination import subagent_run_offsets
-
-                run_counts = Counter(
-                    child_id
+            child_sessions: dict[str, str] = {}
+            if subagent_dir:
+                archive_dir = Path(session_manager.session_dir).resolve() / session_id / "data"
+                child_sessions = {
+                    action.action_id: child_id
                     for msg in raw_messages
                     for action in msg.get("actions", [])
                     if _is_task_result(action)
-                    and (child_id := _subagent_session_id(action))
-                    and _is_safe_session_id(child_id)
-                )
-                if run_counts:
-                    offsets = subagent_run_offsets(session_manager, session_id, window[0])
-                    for child_id, count in run_counts.items():
-                        subagent_runs[child_id] = _load_subagent_runs(
-                            subagent_dir, child_id, skip=offsets.get(child_id, 0), count=count
-                        )
+                    and (child_id := child_session_id(action.output, archive_dir=archive_dir))
+                }
+            if window and child_sessions and subagent_dir:
+                from datus.api.services.history_pagination import subagent_run_offsets
+
+                run_counts = Counter(child_sessions.values())
+                offsets = subagent_run_offsets(session_manager, session_id, window[0])
+                for child_id, count in run_counts.items():
+                    subagent_runs[child_id] = _load_subagent_runs(
+                        subagent_dir, child_id, skip=offsets.get(child_id, 0), count=count
+                    )
             pending_review_messages: List[SSEMessagePayload] = []
 
             for idx, msg in enumerate(raw_messages):
@@ -666,7 +656,7 @@ class ChatService:
                                     lambda call_id, result_action: _subagent_run_actions(
                                         subagent_dir,
                                         call_id,
-                                        result_action,
+                                        child_sessions.get(result_action.action_id),
                                         subagent_runs,
                                         self.agent_config,
                                         node_responses,
