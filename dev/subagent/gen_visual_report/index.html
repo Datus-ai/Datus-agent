@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/subagent/gen_visual_report/">
       
       
         <link rel="prev" href="../gen_job/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/subagent/gen_visual_report/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/subagent/gen_visual_report/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/subagent/gen_visual_report/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/subagent/gen_visual_report/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -5135,7 +5129,9 @@
 
 <h1 id="html-report-generation-guide">HTML Report Generation Guide<a class="headerlink" href="#html-report-generation-guide" title="Permanent link">&para;</a></h1>
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
-<p><code>gen_visual_report</code> turns a question — <em>"how did Q4 revenue do?"</em>, <em>"explain merchant churn in H2"</em> — into a self-contained <strong>HTML report</strong>: a scrollable web page with an executive summary, KPI cards, charts, tables, and narrative paragraphs. In Datus-CLI mode the page opens in your browser automatically; in Datus-SaaS it shows up inline in the chat.</p>
+<p><code>gen_visual_report</code> turns a question — <em>"how did Q4 revenue do?"</em>, <em>"explain merchant churn in H2"</em> — into an <strong>HTML report</strong>: a scrollable web page with an executive summary, KPI cards, charts, tables, and narrative paragraphs.</p>
+<p>The generated HTML embeds the report's render files and saved query results. By default, the browser loads the renderer from a CDN, so viewing the report requires network access. For offline viewing, generate the report with <code>--report-dist &lt;dir&gt;</code> pointing to a local renderer bundle containing <code>index.css</code> and <code>index.umd.js</code>. The CLI copies both assets into <code>_assets/</code> next to <code>index.html</code>.</p>
+<p>The interactive CLI opens the report in your browser by default. Print mode (<code>--print</code>) and <code>--no-open-report</code> skip automatic opening. You can open the HTML file in your browser using the path shown in the CLI output.</p>
 <p><img alt="Sample HTML report — KPI strip, headline metrics, and a monthly growth trend chart" src="../../assets/gen_visual_report_preview.png" /></p>
 <p>An HTML report is a long-form, narrative answer with the data baked in at build time. There are no filters and no live re-querying once the report is built. For interactive BI dashboards on Superset or another external platform, ask the main agent to use the installed BI plugin directly.</p>
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
@@ -5177,6 +5173,7 @@
     C --&gt; D[Compose the&lt;br/&gt;narrative + charts]
     D --&gt; E[Open in your browser]</code></pre>
 <p>The agent reads your question, looks up the metrics and tables that are most relevant, runs the SQL it needs, then composes the executive summary, KPI cards, charts, tables, and recommendations into a single HTML report. You can re-invoke <code>gen_visual_report</code> later to edit the same report in place.</p>
+<p>By default, each report is saved to <code>reports/&lt;slug&gt;/</code> under the project root. If a host sets <code>AgentConfig.artifact_output_root</code>, the report is saved to <code>reports/&lt;slug&gt;/</code> under that configured root. <code>manifest.json</code> stores its metadata, <code>render/app.jsx</code> is the React entry point, and <code>queries/</code> holds the SQL and its saved JSON results.</p>
 <h2 id="edit-section-by-section">Edit Section by Section<a class="headerlink" href="#edit-section-by-section" title="Permanent link">&para;</a></h2>
 <p>Every report is built out of independent modules — KPI banner, individual charts, data tables, recommendations block, footer. You can iterate on <strong>just one</strong> without touching anything else:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Swap<span class="w"> </span>the<span class="w"> </span>revenue<span class="w"> </span>trend<span class="w"> </span>chart<span class="w"> </span><span class="k">in</span><span class="w"> </span>q4_2025_revenue_analysis<span class="w"> </span>to<span class="w"> </span>monthly<span class="w"> </span>aggregation
