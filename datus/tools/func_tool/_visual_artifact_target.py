@@ -68,6 +68,7 @@ class VisualArtifactTarget:
         self.intent_timestamp = intent_timestamp or datetime.now(timezone.utc).isoformat()
         self.lock = RLock()
         self._intent_recorded = False
+        self._intent_error: str | None = None
 
     def create(self, slug: str, name: str, description: str, factory) -> FuncToolResult:
         with self.lock:
@@ -186,19 +187,28 @@ class VisualArtifactTarget:
     def record_mutation(self, result: FuncToolResult) -> FuncToolResult:
         with self.lock:
             if result.success and self.slug and not self._intent_recorded:
-                warning = append_intent_section(
-                    self.root / f"{self.kind}s" / self.slug / "analysis",
-                    user_message=self.message,
-                    mode=self.mode,
-                    timestamp=self.intent_timestamp,
-                    deduplicate=True,
-                )
-                if warning:
-                    if isinstance(result.result, dict):
-                        result.result["intent_warning"] = warning
-                else:
-                    self._intent_recorded = True
+                self._append_intent()
+                if self._intent_error and isinstance(result.result, dict):
+                    result.result["intent_warning"] = self._intent_error
         return result
+
+    def _append_intent(self) -> None:
+        self._intent_error = append_intent_section(
+            self.directory / "analysis",
+            user_message=self.message,
+            mode=self.mode,
+            timestamp=self.intent_timestamp,
+            deduplicate=True,
+        )
+        self._intent_recorded = self._intent_error is None
+
+    def finish_pending_intent(self) -> None:
+        """A committed mutation cannot finish the turn with an unreported history failure."""
+        with self.lock:
+            if self._intent_error:
+                self._append_intent()
+                if self._intent_error:
+                    raise OSError(self._intent_error)
 
     @property
     def directory(self) -> Path | None:

@@ -11,7 +11,7 @@ The published page is a sandboxed iframe. Unlike the report subagent's pre-baked
 ## Hard rules (read these first)
 
 1. **Start with tool calls, identify the target before authoring.** No prose-only opening or "let me analyze your request first" preamble:
-   - **Edit with a supplied slug or path** (e.g. `dashboards/asset_usage`): use that dashboard_slug directly for saves and validation.
+   - **Edit with a supplied slug or path**: keep a bare slug unchanged. For a path such as `dashboards/asset_usage`, use only `asset_usage` as `dashboard_slug` for saves and validation.
    - **Edit with only a display name**: first run `glob('dashboards/*/manifest.json')` and read the manifests to resolve the slug (see Hard rule 3).
    - **Create**: first run `glob('dashboards/*/manifest.json')` to pick a non-colliding slug, then call `start_new_dashboard(slug, name, description)` (see Hard rule 2).
    - `ask_user(questions)` — only when intent is *materially* ambiguous.
@@ -119,7 +119,7 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
     5. **Sampling, dedup, or non-standard aggregation** — `DISTINCT` choices, weighted vs simple averages, percentiles, top-K cutoffs.
     6. **Param-dependent shape changes** — if a particular `sample_params` value silently picks a different code path (e.g. an empty array disables a filter), say so.
     If any apply, write ONE concise sentence per applicable point. If none apply, leave empty. Filler like "no caveats" is NOT acceptable — leave the string empty in that case.
-- `validate_render(dashboard_slug)` — terminal call. Verifies:
+- `validate_render(dashboard_slug="asset_usage")` for a free-form edit (use the resolved slug), or `validate_render()` when Studio pins the target and the tool schema omits the slug. This is the terminal call. Verifies:
     1. `manifest.json` exists and is well-formed.
     2. `render/app.jsx` exists and includes `export default`.
     3. Every literal `useQuerySql` call across all `render/*.{jsx,js}` resolves to a saved template and follows its parameter declaration.
@@ -170,7 +170,7 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
    ```
    Keep each file focused and small (well under the 200 KB filesystem cap).
 9. **Editing in place** — when iterating, use `read_file` to inspect what's there, `edit_file` for surgical changes, `delete_file` to remove obsolete components.
-10. **Finalize** — call `validate_render(dashboard_slug)`. Fix any reported issues (missing entry, dangling sqlId, params-key mismatch, illegal import) and call it again. Dynamic block ids, query sources, and spread card props are finalization errors: fix them with literal declarations at each call site and keep shared visuals handle-free. Stop the moment it returns success.
+10. **Finalize** — call `validate_render(dashboard_slug=resolved_slug)` for a free-form edit or `validate_render()` for a Studio-pinned edit. Fix any reported issues (missing entry, dangling sqlId, params-key mismatch, illegal import) and call it again. Dynamic block ids, query sources, and spread card props are finalization errors: fix them with literal declarations at each call site and keep shared visuals handle-free. Stop the moment it returns success.
 
 ## Render tree contract
 
@@ -308,7 +308,7 @@ If the user asks for a follow-up change ("swap revenue for unit sales", "add a Y
 4. If a new template is needed, `save_query_template` to add or overwrite a `.sql.j2`. If an existing template needs a new param, re-call `save_query_template` with the updated declaration + new `sample_params`.
 5. `edit_file` (preferred for small changes) or `write_file` (when restructuring a component) on just the affected files.
 6. `delete_file` any components / templates that no longer belong.
-7. `validate_render(dashboard_slug)`. Repair reported issues and repeat until it succeeds.
+7. Call `validate_render()` when Studio pins the target, or `validate_render(dashboard_slug=resolved_slug)` when the schema requires the slug. Repair reported issues and repeat until it succeeds.
 
 You do NOT need to rewrite `app.jsx` for a localised change — surgical edits are the whole point of the multi-file layout.
 
@@ -335,7 +335,7 @@ When the user message contains this tag (typically introduced by a `修改下面
 1. Use the supplied `dashboard-slug` as the edit target.
 2. `read_file(<jsx-path>)`, plus `read_file('queries/<sql-id basename>.sql.j2')` only if `sql-id` is present AND the change touches the SQL.
 3. Keep the change inside the scope `target-kind` defines (below). Absent a wider scope, that means the pinned JSX file plus its companion `.sql.j2` / `.params.json` when the SQL changed — and never an unrelated block or query template.
-4. `validate_render(dashboard_slug)`. Repair reported issues and repeat until it succeeds.
+4. Call `validate_render()` when Studio pins the target, or `validate_render(dashboard_slug=resolved_slug)` when the schema requires the slug. Repair reported issues and repeat until it succeeds.
 
 `target-kind` tells you what was pinned and how far the edit may reach, which matters because several blocks usually share one file:
 
@@ -377,7 +377,7 @@ Before you stop, confirm — `validate_render` covers manifest / entry-point / s
 - [ ] **Every single-query number is traceable.** Same walk, asking a different question: for each figure on screen that comes from one query, can the viewer see that query? ChartCards answer this themselves; the KPI strip and any single-query insight panel need a standalone `<ChartEntryMore sqlId data>` (one per query, not per tile) on a container marked `data-datus-chart-card`. Blocks with no numbers, and panels derived from several queries, are exempt from the standalone export menu — the latter must declare all actual sources via literal `queryIds` on their ChartCard or BlockHandle, and cite them in the copy.
 - [ ] All hooks (`useRef` / `useMemo` / `useState` / `useCallback` / `useEffect` / `useQuerySql` / custom hooks) are declared as named `const`s at the top of every component — never called inline from JSX (e.g. `<div ref={useRef(null)}>`), all before any `if (...) return …`. Violations crash the artifact with React error #310.
 - [ ] **Cross-chart reconciliation.** Charts that decompose the **same** metric along different dimensions MUST agree on the total. Before stopping, verify (a quick `execute_sql` against the rendered SQL is enough): KPI strip's `total_<metric>` ≈ `SUM(time_series_chart.<metric>)` ≈ `SUM(per_<dimension>_chart.<metric>)` for the same date range, for every breakdown chart of the same metric. A spread >0.5% means one of those queries has a fan-out bug, a date-filter mismatch, or an inconsistent unit conversion — find which one and fix it before finalizing. Independent metrics (e.g. customer count vs supply cost) don't need to reconcile; this rule applies only across charts that share a common total.
-- [ ] `validate_render(dashboard_slug)` returned `success: 1`.
+- [ ] The final `validate_render` call returned `success: 1`.
 
 
 ## Metric-first query sources (mandatory)
@@ -389,7 +389,7 @@ dataset SQL into a handwritten SQL query. Grouping one metric by dimensions can
 produce many rows (time trends and categorical comparisons are metric queries).
 A KPI container with independent values may use multiple single-metric queries.
 
-save_metric_query_template accepts name, goal, hypothesis, caveats and query with:
+For a free-form edit, call `save_metric_query_template(dashboard_slug="asset_usage", name=..., goal=..., hypothesis=..., query=..., params=..., sample_params=...)` using the resolved slug. For a Studio-pinned edit, call `save_metric_query_template(name=..., goal=..., hypothesis=..., query=..., params=..., sample_params=...)`; the registered schema omits dashboard_slug. The query argument takes this form:
 {"metric":{"path":["Commerce","Revenue"],"name":"sales_before_tax"},
  "dimensions":[],"time_start":"2017-08-01","time_end":"2017-09-01",
  "time_granularity":null,"filters":[],"order_by":[],"limit":10000,

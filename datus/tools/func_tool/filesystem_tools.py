@@ -13,6 +13,7 @@ from wcmatch import glob as wc_glob
 from datus.storage.semantic_model.artifact_file import path_mutation_lock
 from datus.tools import BaseTool
 from datus.tools.func_tool import FuncToolResult
+from datus.tools.func_tool._visual_artifact_helpers import artifact_write_lock, is_intent_file
 from datus.tools.func_tool.fs_path_policy import (
     PathAllowlist,
     PathZone,
@@ -65,6 +66,12 @@ class FilesystemConfig:
     ):
         self.root_path = root_path or os.getcwd()
         self.max_file_size = max_file_size
+
+
+def _file_mutation_lock(path: Path):
+    if is_intent_file(path):
+        return artifact_write_lock(path)
+    return path_mutation_lock(path)
 
 
 @mcp_tool_class(
@@ -509,8 +516,8 @@ class FilesystemFuncTool(BaseTool):
                 return guard_error
 
             try:
-                with path_mutation_lock(target_path):
-                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                with _file_mutation_lock(target_path):
                     target_path.write_text(content, encoding="utf-8")
                 self._notify_mutation(target_path)
                 return FuncToolResult(result=f"File written successfully: {resolved.display}")
@@ -555,21 +562,22 @@ class FilesystemFuncTool(BaseTool):
             guard_error = self._mutation_guard_error(target_path)
             if guard_error is not None:
                 return guard_error
-            if not target_path.exists():
-                return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
-            if target_path.is_dir():
-                return FuncToolResult(
-                    success=0,
-                    error=(
-                        f"Path is a directory, not a file: {resolved.display}. "
-                        "delete_file refuses to remove directories — handle them explicitly."
-                    ),
-                )
-            if not target_path.is_file():
-                return FuncToolResult(success=0, error=f"Path is not a regular file: {resolved.display}")
-
             try:
-                with path_mutation_lock(target_path):
+                if not target_path.parent.is_dir():
+                    return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
+                with _file_mutation_lock(target_path):
+                    if not target_path.exists():
+                        return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
+                    if target_path.is_dir():
+                        return FuncToolResult(
+                            success=0,
+                            error=(
+                                f"Path is a directory, not a file: {resolved.display}. "
+                                "delete_file refuses to remove directories — handle them explicitly."
+                            ),
+                        )
+                    if not target_path.is_file():
+                        return FuncToolResult(success=0, error=f"Path is not a regular file: {resolved.display}")
                     target_path.unlink()
                 self._notify_mutation(target_path)
                 return FuncToolResult(result=f"File deleted successfully: {resolved.display}")
@@ -614,12 +622,6 @@ class FilesystemFuncTool(BaseTool):
             guard_error = self._mutation_guard_error(target_path)
             if guard_error is not None:
                 return guard_error
-            if not target_path.exists():
-                return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
-
-            if not target_path.is_file():
-                return FuncToolResult(success=0, error=f"Path is not a file: {resolved.display}")
-
             try:
                 # read -> replace -> write is one critical section. The agent framework dispatches
                 # tool calls with ``asyncio.gather``, so two edits of the same file can interleave:
@@ -627,7 +629,14 @@ class FilesystemFuncTool(BaseTool):
                 # successfully". A measured production run lost a `tier_bands` change that way and
                 # spent five turns plus a full regeneration cycle working out why the file still
                 # held the old value.
-                with path_mutation_lock(target_path):
+                if not target_path.parent.is_dir():
+                    return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
+                with _file_mutation_lock(target_path):
+                    if not target_path.exists():
+                        return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
+
+                    if not target_path.is_file():
+                        return FuncToolResult(success=0, error=f"Path is not a file: {resolved.display}")
                     content = target_path.read_text(encoding="utf-8")
                     new_content, error = apply_single_replacement(content, old_string, new_string)
                     if error is not None:

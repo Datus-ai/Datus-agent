@@ -28,6 +28,7 @@ import datetime as _dt
 import json
 import os
 import re
+import shutil
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -38,7 +39,7 @@ from agents import FunctionTool
 from datus.schemas.action_history import ActionHistory
 from datus.schemas.analysis_artifacts import QueryBrief, SubjectRefs
 from datus.schemas.artifact_manifest import ArtifactManifest
-from datus.storage.semantic_model.artifact_file import path_mutation_lock
+from datus.storage.semantic_model.artifact_file import path_mutation_lock, windows_file_lock
 from datus.tools.func_tool.base import trans_to_function_tool
 from datus.utils.loggings import get_logger
 
@@ -154,12 +155,8 @@ def extract_artifact_result_field(action: ActionHistory, field: str) -> Optional
 #     query write; finalize owns the derived query-index fields.
 #   * ``write_query_brief`` — write ``queries/<name>.brief.json``.
 #
-# Each helper is best-effort: failures are logged and surfaced as a string
-# error message but never raise, so the caller can decide whether to bubble
-# the issue up as a hard FuncToolResult error (e.g. for save_query, where
-# missing brief metadata makes the artifact incomplete) or treat it as
-# a soft warning (e.g. for intent.md, where the SQL is the load-bearing
-# artifact and the prompt log is bonus).
+# The helpers report validation and I/O errors to their callers. A visual turn
+# retries a pending intent append before it can report success.
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
@@ -180,12 +177,20 @@ def _atomic_write_text(path: Path, content: str) -> None:
         raise
 
 
+def is_intent_file(path: Path) -> bool:
+    return path.name.casefold() == "intent.md" and path.parent.name.casefold() == "analysis"
+
+
 @contextmanager
 def artifact_write_lock(path: Path):
     """Serialize writes to an artifact file or query bundle across workers."""
     if os.name != "posix":
         with path_mutation_lock(path):
-            yield
+            if os.name == "nt" and is_intent_file(path):
+                with windows_file_lock(path.with_name(".intent.md.lock")):
+                    yield
+            else:
+                yield
         return
     import fcntl
 
@@ -202,8 +207,9 @@ def artifact_write_lock(path: Path):
 def staged_query_files(queries_dir: Path, name: str, *, remove_suffixes: tuple[str, ...]):
     """Publish a validated query bundle, restoring the previous files if a replacement fails."""
     queries_dir.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=queries_dir) as tmp:
-        staging = Path(tmp)
+    staging = Path(tempfile.mkdtemp(dir=queries_dir))
+    keep_backups = False
+    try:
         yield staging
         staged = list(staging.iterdir())
         obsolete = [queries_dir / f"{name}{suffix}" for suffix in remove_suffixes]
@@ -214,22 +220,37 @@ def staged_query_files(queries_dir: Path, name: str, *, remove_suffixes: tuple[s
             try:
                 for src in staged:
                     dst = queries_dir / src.name
-                    if dst.exists():
-                        os.link(dst, backup / dst.name)
+                    saved = backup / dst.name if dst.exists() else None
+                    if saved is not None:
+                        os.link(dst, saved)
                     os.replace(src, dst)
-                    changed.append(dst)
+                    changed.append((dst, saved))
                 for dst in obsolete:
                     if dst.exists():
-                        dst.rename(backup / dst.name)
-                        changed.append(dst)
-            except OSError:
-                for dst in reversed(changed):
-                    saved = backup / dst.name
-                    if saved.exists():
-                        os.replace(saved, dst)
-                    else:
-                        dst.unlink()
+                        saved = backup / dst.name
+                        dst.rename(saved)
+                        changed.append((dst, saved))
+            except OSError as publish_error:
+                keep_backups = True
+                restore_errors = []
+                for dst, saved in reversed(changed):
+                    try:
+                        if saved is not None:
+                            os.replace(saved, dst)
+                        else:
+                            dst.unlink(missing_ok=True)
+                    except OSError as exc:
+                        restore_errors.append(f"{dst.name}: {exc}")
+                if restore_errors:
+                    raise OSError(
+                        f"Query publication failed ({publish_error}); rollback incomplete "
+                        f"({', '.join(restore_errors)}). Recovery files retained at {staging}"
+                    ) from publish_error
+                keep_backups = False
                 raise
+    finally:
+        if not keep_backups:
+            shutil.rmtree(staging)
 
 
 def append_intent_section(
@@ -284,7 +305,10 @@ def append_intent_section(
         section = _format_intent_section(user_message=user_message, mode=mode, timestamp=timestamp)
         with artifact_write_lock(path):
             existing = path.read_text(encoding="utf-8") if path.is_file() else ""
-            if deduplicate and section in existing:
+            if deduplicate and any(
+                match["timestamp"] == timestamp and match["message"] == user_message.strip()
+                for match in _INTENT_SECTION.finditer(existing)
+            ):
                 return None
             if existing and not existing.endswith("\n"):
                 existing += "\n"
@@ -317,6 +341,13 @@ def _pick_code_fence(text: str) -> str:
         else:
             current = 0
     return "`" * max(3, longest + 1)
+
+
+# Match complete sections so a quoted heading inside a multi-line prompt is not a turn.
+_INTENT_SECTION = re.compile(
+    r"^### \[(?P<timestamp>[^\]\n]+)\] mode: [^\n]+\n(?P<fence>`{3,})\n(?P<message>.*?)\n(?P=fence)$",
+    re.MULTILINE | re.DOTALL,
+)
 
 
 def _format_intent_section(*, user_message: str, mode: str, timestamp: str) -> str:

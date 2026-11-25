@@ -580,6 +580,7 @@ def _build_typed_node_input(
         from datus.schemas.chat_agentic_node_models import ChatNodeInput
 
         return ChatNodeInput(
+            artifact_slug=artifact_slug,
             user_message=user_message,
             catalog=catalog,
             database=database,

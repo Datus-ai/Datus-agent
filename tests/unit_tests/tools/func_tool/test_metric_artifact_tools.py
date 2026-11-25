@@ -1389,6 +1389,7 @@ def test_first_query_save_on_existing_artifact_records_one_intent(environment, k
     assert not notes.exists()
     result = raw(**target, **brief, **source, fallback_reason="A fixed baseline for the comparison")
     assert result.success == 1, result.error
+    assert notes.read_text().count("Compare net revenue.") == 1
     result = metric(**target, **brief, **kwargs, query={"metric": REF})
     assert result.success == 1, result.error
     assert notes.read_text().count("Compare net revenue.") == 1

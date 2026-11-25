@@ -375,6 +375,11 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         """
         return f"{self.ARTIFACT_KIND}_slug"
 
+    def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
+        meta = super()._system_prompt_snapshot_meta(prompt_version)
+        meta.update(artifact_kind=self.ARTIFACT_KIND, artifact_slug=self._active_artifact_slug or "")
+        return meta
+
     def _get_system_prompt(
         self,
         prompt_version: Optional[str] = None,
@@ -713,6 +718,8 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         self._prepare_artifacts(ctx.user_input)
 
     def _build_success_result(self, ctx: "StreamRunContext") -> ResultT:
+        if self.artifact_tools is not None:
+            self.artifact_tools.target.finish_pending_intent()
         all_actions = ctx.get_run_actions()
         run_start = int(ctx.extras.get("artifact_run_action_start") or 0)
         tool_calls = [

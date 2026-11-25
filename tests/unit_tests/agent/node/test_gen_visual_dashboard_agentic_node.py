@@ -1049,3 +1049,70 @@ async def test_card_target_survives_run_boundary_insert(real_agent_config, mock_
     assert writes[0].success == 1, writes[0].error
     assert writes[1].success == 0
     assert neighbor.read_bytes() == before
+
+
+def test_selected_target_changes_cached_prompt(real_agent_config, mock_llm_create, monkeypatch):
+    node = _make_node(real_agent_config)
+    node.session_id = "test-dashboard-target-cache"
+    renders = []
+
+    def render(**kwargs):
+        renders.append(node._active_artifact_slug)
+        return str(node._active_artifact_slug)
+
+    monkeypatch.setattr(node, "_get_system_prompt", render)
+    for slug in ("a", "a", "b", "a", None, None):
+        node.input = GenVisualDashboardNodeInput(user_message="Show the chart", dashboard_slug=slug)
+        node._prepare_artifacts(node.input)
+        assert node._get_session_system_prompt() == str(slug)
+    assert renders == ["a", "b", "a", None]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recovers", [False, True])
+async def test_turn_requires_pending_intent_before_completion(
+    real_agent_config, mock_llm_create, monkeypatch, recovers
+):
+    from datus.tools.func_tool import _visual_artifact_target as targets
+
+    slug = "existing"
+    _seed_dashboard_on_disk(Path(real_agent_config.project_root), slug)
+    node = _make_node(real_agent_config)
+    message = "Add a net revenue summary."
+    node.input = GenVisualDashboardNodeInput(user_message=message, dashboard_slug=slug)
+    append = targets.append_intent_section
+    attempts = []
+
+    def fail_then_retry(*args, **kwargs):
+        attempts.append(kwargs["timestamp"])
+        if len(attempts) == 1 or not recovers:
+            return "intent log is unavailable"
+        return append(*args, **kwargs)
+
+    monkeypatch.setattr(targets, "append_intent_section", fail_then_retry)
+    mock_llm_create.reset(
+        responses=[
+            build_tool_then_response(
+                tool_calls=[
+                    MockToolCall(
+                        "write_file",
+                        {
+                            "path": f"dashboards/{slug}/render/app.jsx",
+                            "content": "export default function App(){return null;}",
+                        },
+                    ),
+                    MockToolCall("validate_render", {}),
+                ],
+                content="Updated.",
+            )
+        ]
+    )
+    actions = [a async for a in node.execute_stream(ActionHistoryManager())]
+    result = actions[-1].output
+    assert result["success"] is recovers
+    assert len(attempts) == 2 and attempts[0] == attempts[1]
+    if recovers:
+        assert (node._artifact_dir(slug) / "analysis/intent.md").read_text().count(message) == 1
+    else:
+        assert "intent log is unavailable" in result["error"]
+        assert not result.get("app_jsx_path")

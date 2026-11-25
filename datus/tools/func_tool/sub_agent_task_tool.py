@@ -1169,10 +1169,14 @@ class SubAgentTaskTool:
                     self._visual_intent_timestamp = node_input.intent_timestamp
                 node_input.intent_timestamp = self._visual_intent_timestamp
                 node_input.intent_message = original
-                if isinstance(node_input, GenVisualReportNodeInput):
-                    node_input.report_slug = selected_visual_slug(parent_input, "report")
-                else:
-                    node_input.dashboard_slug = selected_visual_slug(parent_input, "dashboard")
+            kind = "report" if isinstance(node_input, GenVisualReportNodeInput) else "dashboard"
+            target = selected_visual_slug(parent_input, kind)
+            fallback = self._string_attr(parent_input, "artifact_slug")
+            if not target and fallback:
+                other = "dashboard" if kind == "report" else "report"
+                if not selected_visual_slug(parent_input, other):
+                    target = fallback
+            setattr(node_input, f"{kind}_slug", target)
         at_ctx = self._parent_at_context()
         node_input = apply_at_context(
             node_input,

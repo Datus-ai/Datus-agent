@@ -481,3 +481,122 @@ def test_failed_query_publish_restores_previous_files(tmp_path, monkeypatch, exi
             (staging / "q.sql").write_bytes(b"new SQL")
             (staging / "q.json").write_bytes(b"new result")
     assert {p.name: p.read_bytes() for p in queries.iterdir()} == old
+
+
+def test_retry_keeps_first_mode_and_separates_new_turns(tmp_path):
+    args = dict(user_message="Check net sales", timestamp="2026-06-01T00:00:00.123456Z", deduplicate=True)
+    assert append_intent_section(tmp_path, mode="new", **args) is None
+    original = (tmp_path / "intent.md").read_bytes()
+    assert append_intent_section(tmp_path, mode="edit", **args) is None
+    assert (tmp_path / "intent.md").read_bytes() == original
+    assert append_intent_section(tmp_path, mode="edit", **{**args, "timestamp": "2026-06-02T00:00:00Z"}) is None
+    assert append_intent_section(tmp_path, mode="edit", **{**args, "user_message": "Show gross sales"}) is None
+    text = (tmp_path / "intent.md").read_text()
+    assert text.count("Check net sales") == 2
+    assert text.count("Show gross sales") == 1
+
+
+def test_rollback_retains_unrestored_backup_and_restores_remaining_files(tmp_path, monkeypatch):
+    queries = tmp_path / "queries"
+    queries.mkdir()
+    for name in ("a", "b", "c"):
+        (queries / name).write_text("old")
+    replace = os.replace
+    published = []
+    unrestored = []
+
+    def fail_publish_and_rollback(src, dst):
+        if dst.parent == queries:
+            if src.parent.name == "backup":
+                if not unrestored:
+                    unrestored.append(src)
+                    raise OSError("injected restore failure")
+            else:
+                if len(published) == 2:
+                    raise OSError("injected publish failure")
+                published.append(dst)
+        replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", fail_publish_and_rollback)
+    with pytest.raises(OSError) as exc:
+        with staged_query_files(queries, "q", remove_suffixes=()) as staging:
+            for name in ("a", "b", "c"):
+                (staging / name).write_text("new")
+    assert str(staging) in str(exc.value)
+    assert unrestored[0].read_text() == "old"
+    assert published[0].read_text() == "old"
+
+
+@pytest.mark.parametrize("operation", ["edit_file", "write_file", "delete_file"])
+def test_direct_intent_mutation_excludes_append(tmp_path, monkeypatch, operation):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+    fs = FilesystemFuncTool(root_path=str(tmp_path))
+    relative = "dashboards/demo/analysis/intent.md"
+    path = tmp_path / relative
+    path.parent.mkdir(parents=True)
+    path.write_text("Initial content")
+    entered, release, appending = Event(), Event(), Event()
+    method = {"edit_file": "read_text", "write_file": "write_text", "delete_file": "unlink"}[operation]
+    original = getattr(Path, method)
+
+    def pause_once(target, *args, **kwargs):
+        result = original(target, *args, **kwargs)
+        if target == path and not entered.is_set():
+            entered.set()
+            release.wait(timeout=5)
+        return result
+
+    def append():
+        appending.set()
+        return append_intent_section(path.parent, user_message="Review revenue", timestamp="t", mode="edit")
+
+    monkeypatch.setattr(Path, method, pause_once)
+    args = {"edit_file": ("Initial", "Revised"), "write_file": ("Revised content",), "delete_file": ()}[operation]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        write = pool.submit(getattr(fs, operation), relative, *args)
+        try:
+            assert entered.wait(5)
+            add = pool.submit(append)
+            assert appending.wait(5)
+            with pytest.raises(TimeoutError):
+                add.result(timeout=0.25)
+        finally:
+            release.set()
+        assert write.result().success == 1 and add.result() is None
+    text = path.read_text()
+    assert "Review revenue" in text
+    assert ("Revised content" in text) == (operation != "delete_file")
+
+
+def test_windows_intent_writers_use_one_persistent_lock_file(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from datus.tools.func_tool import _visual_artifact_helpers as helpers
+    from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+    fs = FilesystemFuncTool(root_path=str(tmp_path))
+    relative = "dashboards/demo/analysis/intent.md"
+    path = tmp_path / relative
+    locks = []
+    windows_os = Mock(wraps=os)
+    windows_os.name = "nt"
+    monkeypatch.setattr(helpers, "os", windows_os)
+    monkeypatch.setitem(
+        sys.modules,
+        "msvcrt",
+        SimpleNamespace(
+            LK_LOCK=1, LK_UNLCK=0, locking=lambda fd, mode, n: locks.append((os.fstat(fd).st_ino, mode, n))
+        ),
+    )
+    assert fs.write_file(relative, "original").success == 1
+    assert fs.edit_file(relative, "original", "updated").success == 1
+    assert append_intent_section(path.parent, user_message="Review sales", timestamp="t", mode="edit") is None
+    assert fs.delete_file(relative).success == 1
+    inode = path.with_name(".intent.md.lock").stat().st_ino
+    assert locks == [(inode, 1, 1), (inode, 0, 1)] * 4
