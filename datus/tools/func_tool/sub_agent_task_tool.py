@@ -239,6 +239,8 @@ class SubAgentTaskTool:
         self.agent_config = agent_config
         self._allowed_subagents = allowed_subagents
         self._parent_node_name = parent_node_name
+        self._visual_parent_input = None
+        self._visual_intent_timestamp = ""
         self._action_bus: Optional["ActionBus"] = None
         self._interaction_broker: Optional["InteractionBroker"] = None
         self._parent_node: Optional["AgenticNode"] = None
@@ -1152,6 +1154,25 @@ class SubAgentTaskTool:
         sees the same @Table/@Metric/@Sql references the parent turn carried.
         """
         node_input = self._build_typed_subagent_input(node, prompt, db_ctx=db_ctx)
+        from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeInput
+        from datus.schemas.gen_visual_report_models import GenVisualReportNodeInput
+        from datus.tools.func_tool._visual_artifact_target import studio_edit_slug
+
+        if isinstance(node_input, (GenVisualReportNodeInput, GenVisualDashboardNodeInput)):
+            parent_input = getattr(self._parent_node, "input", None)
+            original = self._string_attr(parent_input, "user_message")
+            if original:
+                # A parent can rephrase the task, drop the Studio attachment or retry
+                # the child entirely. Preserve the originating turn for edit history.
+                if self._visual_parent_input is not parent_input:
+                    self._visual_parent_input = parent_input
+                    self._visual_intent_timestamp = node_input.intent_timestamp
+                node_input.intent_timestamp = self._visual_intent_timestamp
+                node_input.intent_message = original
+                if isinstance(node_input, GenVisualReportNodeInput):
+                    node_input.report_slug = studio_edit_slug(original, "report")
+                else:
+                    node_input.dashboard_slug = studio_edit_slug(original, "dashboard")
         at_ctx = self._parent_at_context()
         node_input = apply_at_context(
             node_input,

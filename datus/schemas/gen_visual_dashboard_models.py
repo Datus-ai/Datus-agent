@@ -135,6 +135,9 @@ class GenVisualDashboardNodeInput(AtContextInput):
     dashboard_slug: Optional[str] = Field(
         None, pattern=DASHBOARD_SLUG_RE.pattern, description="Caller-selected edit target"
     )
+    intent_message: Optional[str] = Field(
+        None, description="Original user request when the generator is delegated a task"
+    )
     intent_timestamp: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat(),
         pattern=r"^[0-9T:.+Z-]{19,35}$",

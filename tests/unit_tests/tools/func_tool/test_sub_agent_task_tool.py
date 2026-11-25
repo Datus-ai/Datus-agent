@@ -3449,3 +3449,19 @@ def test_semantic_result_keeps_host_validation_and_reconciliation(task_tool, out
     for key, value in evidence.items():
         assert result.result[key] == value
     assert result.result["session_id"] == "semantic_session"
+
+
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+def test_visual_handoff_preserves_original_target_and_turn_across_retries(task_tool, tmp_path, kind):
+    from types import SimpleNamespace
+
+    original = f'Compare net revenue. <artifact-chart-card {kind}-slug="sales" chart-id="net" />'
+    task_tool.agent_config.workspace_root = str(tmp_path)
+    task_tool.set_parent_node(SimpleNamespace(input=SimpleNamespace(user_message=original)))
+    node = task_tool._create_builtin_node(f"gen_visual_{kind}")
+    first = task_tool._build_node_input(node, "Adjust the chart.", db_ctx={})
+    retry = task_tool._build_node_input(node, "Retry the previous edit.", db_ctx={})
+    assert getattr(retry, f"{kind}_slug") == "sales"
+    assert retry.intent_timestamp == first.intent_timestamp
+    assert retry.intent_message == original
+    assert retry.user_message == "Retry the previous edit."

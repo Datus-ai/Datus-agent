@@ -97,7 +97,7 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
             agent_config=self.agent_config,
             db_func_tool=self.db_func_tool,
             semantic_tools=self.semantic_tools,
-            user_message=message,
+            user_message=getattr(user_input, "intent_message", None) or message,
             intent_timestamp=getattr(user_input, "intent_timestamp", None),
             requested_slug=getattr(user_input, "report_slug", None) or studio_edit_slug(message, "report"),
         )
