@@ -829,6 +829,56 @@ class TestValidateRender:
         assert result.success == 0
         assert "second `params` argument" in (result.error or "")
 
+    @pytest.mark.parametrize("argument_suffix", ["", ","])
+    def test_accepts_omitted_params_for_zero_param_template(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path, argument_suffix: str
+    ):
+        saved = dashboard_tools.save_query_template(
+            name="filter_options",
+            sql_template="-- @datus-params\nSELECT DISTINCT region FROM sales",
+            sample_params={},
+            goal="List filter options",
+            hypothesis="The dashboard filter can list every region without input.",
+        )
+        assert saved.success == 1, saved.error
+        app = (
+            "import { useDatusArtifact } from '@datus/web-artifact';\n"
+            "export default function App() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            f"  useQuerySql('queries/filter_options'{argument_suffix});\n"
+            "  return null;\n"
+            "}\n"
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+        assert result.result["query_refs"] == ["queries/filter_options"]
+
+    @pytest.mark.parametrize(
+        ("sql_id", "expected_error"),
+        [
+            ("queries/unsaved", "not produced via save_query_template"),
+            ("queries/bad-name", "invalid literal sqlId"),
+        ],
+    )
+    def test_omitted_params_still_validates_query_reference(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path, sql_id: str, expected_error: str
+    ):
+        app = (
+            "import { useDatusArtifact } from '@datus/web-artifact';\n"
+            "export default function App() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            f"  useQuerySql('{sql_id}');\n"
+            "  return null;\n"
+            "}\n"
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert expected_error in (result.error or "")
+
     def test_rejects_missing_required_param_key(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
         _seed_template(dashboard_tools)
         app_missing_key = (

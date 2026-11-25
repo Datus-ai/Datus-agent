@@ -13,9 +13,8 @@ Three complementary tools live here:
   ``<slug>.params.json`` under the dashboard's ``queries/`` directory.
 * ``DashboardArtifactTools.validate_render`` — the terminal action of
   this subagent. Walks ``dashboards/<id>/render/`` and verifies the
-  entry point, import graph, every ``useQuerySql(sqlId, params)``
-  literal's slug existence, and the params-key contract against the
-  template's declaration.
+  entry point and import graph, then checks each literal ``useQuerySql``
+  call against its saved template and parameter declaration.
 * ``DashboardFilesystemFuncTool`` wraps the standard
   ``FilesystemFuncTool`` to reject writes/edits targeting ``queries/*``
   (use ``save_query_template``) and keep ``render/*`` writes limited to
@@ -79,25 +78,19 @@ logger = get_logger(__name__)
 _MAX_TEMPLATE_BYTES = 256 * 1024  # 256 KB hard cap per template body
 _MAX_PARAMS_META_BYTES = 64 * 1024  # 64 KB hard cap per params.json
 
-# Capture every `useQuerySql(...)` call with **both** arguments. The second
-# argument is matched as a balanced ``{...}`` block (with a permissive depth
-# of 4 so simple nested object literals work) plus the trailing close paren.
-# Calls without a second argument are surfaced as a separate issue — a
-# dashboard always parameterizes its queries.
+# Match a literal query ID and an optional params object literal. The
+# validator checks whether the referenced template permits omitting params.
 _USE_QUERY_SQL_LITERAL_RE = re.compile(
     r"""
     useQuery(?:Sql)?\s*\(\s*
     ['"]([^'"\\\n]+)['"]                 # 1: sqlId literal
-    \s*,\s*
-    (\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[^{}]*)*\})  # 2: params object literal (depth ≤ 3)
+    (?:\s*,
+        (?:\s*(\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[^{}]*)*\}))?  # 2: params object literal (depth ≤ 3)
+    )?
     \s*\)
     """,
     re.VERBOSE,
 )
-
-# A useQuerySql call with only one argument — the dashboard subagent rejects
-# this; pass an explicit params object (use `{}` when the template takes none).
-_USE_QUERY_SQL_NO_PARAMS_RE = re.compile(r"useQuery(?:Sql)?\s*\(\s*['\"][^'\"\\\n]+['\"]\s*\)")
 
 # Property keys in the params object literal — only static string / bare
 # identifier keys are statically checked. Computed keys or spread syntax
@@ -811,9 +804,9 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
         Walks ``dashboards/<id>/render/`` and verifies:
 
         * ``render/app.jsx`` exists and contains an ``export default``.
-        * Every ``useQuerySql('queries/<slug>', {params})`` literal across
-          all files resolves to a saved template **and** the keys of
-          ``params`` exactly match the template's declared parameters.
+        * Every literal ``useQuerySql`` call resolves to a saved template.
+          Declared parameters determine the allowed and required keys.
+          Only templates with no declared parameters may omit ``params``.
         * Every ``import`` / ``export ... from`` path is either a bare
           specifier in the allowed list or a relative path that resolves
           to a file under ``render/``.
@@ -968,17 +961,8 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
         for key, mod in modules.items():
             source = mod["source"]
 
-            # ---- 1-arg useQuerySql calls (no params) — always rejected.
-            for match in _USE_QUERY_SQL_NO_PARAMS_RE.finditer(source):
-                issues.append(
-                    f"render/{mod['rel']}: {match.group(0)!r} — useQuerySql in a dashboard requires "
-                    "a second `params` argument (use `{}` when the template takes no params)."
-                )
-
-            # ---- 2-arg useQuerySql calls — slug + params keys
             for match in _USE_QUERY_SQL_LITERAL_RE.finditer(source):
-                literal = match.group(1)
-                params_literal = match.group(2)
+                literal, params_literal = match.groups()
                 slug = extract_query_slug(literal)
                 if slug is None:
                     issues.append(
@@ -993,6 +977,14 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
                         f"render/{mod['rel']}: useQuerySql('queries/{slug}', ...) points to a template "
                         "not produced via save_query_template."
                     )
+                    continue
+
+                if params_literal is None:
+                    if decl:
+                        issues.append(
+                            f"render/{mod['rel']}: useQuerySql('queries/{slug}', ...) requires "
+                            "a second `params` argument because the template declares parameters."
+                        )
                     continue
 
                 # Statically pull the keys out of the params object literal.

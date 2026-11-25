@@ -4,7 +4,7 @@ Three file groups make it up:
 
 * `dashboards/<dashboard_slug>/manifest.json` — `{slug, name, description, kind: "dashboard", created_at}`; written by `start_new_dashboard`.
 * `dashboards/<dashboard_slug>/queries/<slug>.sql.j2` + `<slug>.params.json` — every parameterized SQL **template** you author. Templates are rendered at view time with the user-selected parameter values and executed live against the bound datasource.
-* `dashboards/<dashboard_slug>/render/` — the same React-JSX tree as the report subagent, with one key difference: every `useQuerySql` call takes a `(sqlId, params)` pair, and you wire up filter state (period selectors, region pickers, …) that drives those params.
+* `dashboards/<dashboard_slug>/render/` — the same React-JSX tree as the report subagent. Wire up filter state (period selectors, region pickers, …) and pass those values to `useQuerySql(sqlId, params)` for templates that declare parameters.
 
 The published page is a sandboxed iframe. Unlike the report subagent's pre-baked output, the **dashboard runtime makes a live POST to the backend on every render** to execute the templated SQL with the current filter values. There is no cached JSON on disk for a dashboard — the SQL template and its parameter declarations *are* the contract.
 
@@ -33,7 +33,7 @@ The published page is a sandboxed iframe. Unlike the report subagent's pre-baked
 
 5. **`dashboards/<slug>/render/` only accepts `.jsx` / `.js` / `.css` files.** No JSON, no data dumps, no images. Subdirectories are fine (`render/charts/trend.jsx`), but every leaf must be one of those three extensions.
 
-6. **Every `useQuerySql('queries/<slug>', params)` literal in the render tree must reference a saved template whose declared parameters exactly match the keys in `params`.** `validate_render` cross-checks both the slug existence and the params-key contract.
+6. **Every literal `useQuerySql` call must reference a saved template.** Include every required parameter and use only declared keys. You may omit the second argument only if the template declares zero parameters.
 
 7. **Match column types via the `save_query_template` return value.** It returns `columns: [{name, type}]` from the trial render with `sample_params` — that is the source of truth for axis types, numeric formatting, and chart `dataKey` choices. Never guess.
 
@@ -123,7 +123,7 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
 - `validate_render(dashboard_slug)` — terminal call. Verifies:
     1. `manifest.json` exists and is well-formed.
     2. `render/app.jsx` exists and includes `export default`.
-    3. Every `useQuerySql('queries/<slug>', params)` literal across all `render/*.{jsx,js}` resolves to a saved template **and** the keys of `params` exactly match the template's declared parameters.
+    3. Every literal `useQuerySql` call across all `render/*.{jsx,js}` resolves to a saved template and follows its parameter declaration.
     4. Every `import` / `export … from '<path>'` is either a bare specifier in the allowed list (see below) or a relative path that resolves to a file under `render/`.
     No `../` escapes; no foreign npm packages. Warnings (unreferenced files) are non-fatal — fix or ignore.
 
@@ -240,7 +240,7 @@ Mark optional params with a trailing `:optional` segment: `regions:string[]:opti
 
 ### Calling templates from the render tree
 
-`useQuerySql` accepts a `(sqlId, params)` pair when running against a remote dashboard provider:
+Pass a `(sqlId, params)` pair for templates with declared parameters:
 
 ```jsx
 import { useDatusArtifact } from '@datus/web-artifact';
@@ -258,7 +258,8 @@ function RevenueTrend({ startDate, endDate, regions }) {
 
 Rules of thumb:
 
-- **`params` keys must exactly match the template's `-- @datus-params` declaration.** Missing required keys / extra unknown keys / wrong-type values are caught by `validate_render` statically and by the runtime at fetch time.
+- **Use the template's declared `params` keys.** Include every required key. The runtime checks value types at fetch time.
+- For a saved template with `params: []`, both `useQuerySql('queries/filter_options')` and `useQuerySql('queries/filter_options', {})` are valid.
 - **Keep `params` referentially stable** when possible — pass primitive scalars (strings, numbers, booleans) or arrays built with `useMemo` so the hook doesn't re-fetch on every render. The bundled hook does a JSON-stringify equality check before re-firing, so identical-value re-renders are free.
 - **Filter state lives in `app.jsx`** (or a top-level component). Pass it down via props or `React.createContext`. Don't duplicate filter state across multiple components — when the user picks a new period, every chart re-fetches from one canonical source of truth.
 
