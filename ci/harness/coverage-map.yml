@@ -2566,6 +2566,7 @@ execution:
         - datus/tools/func_tool/metric_artifact_tools.py
         - datus/tools/func_tool/dashboard_artifact_tools.py
         - datus/tools/func_tool/report_artifact_tools.py
+        - datus/tools/func_tool/_visual_artifact_target.py
         - datus/tools/func_tool/_artifact_filesystem_base.py
       targets:
         - tests/unit_tests/agent/node/test_ask_artifact_agentic_node.py
@@ -2592,6 +2593,7 @@ execution:
         - tests/unit_tests/tools/func_tool/test_semantic_tools.py
         - tests/unit_tests/tools/func_tool/test_visual_artifact_cards.py
         - tests/unit_tests/tools/func_tool/test_visual_artifact_helpers.py
+        - tests/unit_tests/tools/func_tool/test_visual_artifact_target.py
         - tests/unit_tests/tools/registry/
         - tests/unit_tests/utils/test_artifact_insight.py
         - tests/unit_tests/utils/test_artifact_metadata.py
