@@ -1373,16 +1373,14 @@ class ChatTaskManager:
                     artifact_slug=request.artifact_slug,
                 )
                 if isinstance(previous_input, AtContextInput) and isinstance(node.input, AtContextInput):
-                    from datus.tools.func_tool._visual_artifact_target import studio_edit_targets
+                    from datus.tools.func_tool._visual_artifact_target import selected_visual_slug
 
-                    # Only the queued text becomes the next user message. Keep the
-                    # original Studio selections available to direct and delegated edits.
                     for kind in ("report", "dashboard"):
-                        targets = previous_input.studio_edit_targets.get(kind) or studio_edit_targets(
-                            previous_input.user_message, kind
-                        )
-                        if targets:
-                            node.input.studio_edit_targets[kind] = targets
+                        previous_slug = selected_visual_slug(previous_input, kind)
+                        if previous_slug:
+                            node.input.studio_edit_targets[kind] = [previous_slug]
+                            # Reject conflicting cards before even a chat parent can issue a write.
+                            selected_visual_slug(node.input, kind)
 
             # 6.5 Persist this turn's @-context (table/metric/sql/knowledge refs)
             # so the history API can re-render them. Best-effort and off the

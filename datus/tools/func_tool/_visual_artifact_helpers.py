@@ -302,6 +302,8 @@ def append_intent_section(
         path = analysis_dir / "intent.md"
         # One blank line as a separator between sections — keeps the file
         # readable in any markdown renderer and easy to diff in git.
+        # Match the universal newline decoding used to read existing sections.
+        user_message = user_message.replace("\r\n", "\n").replace("\r", "\n")
         section = _format_intent_section(user_message=user_message, mode=mode, timestamp=timestamp)
         with artifact_write_lock(path):
             existing = path.read_text(encoding="utf-8") if path.is_file() else ""

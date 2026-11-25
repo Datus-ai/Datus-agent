@@ -750,13 +750,17 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             validation_error = extract_artifact_result_field(tc, "error")
             if tc.status != ActionStatus.SUCCESS or validation_error:
                 break
-            candidate = extract_artifact_result_field(tc, "app_jsx_path")
             validated_slug = extract_artifact_result_field(tc, "artifact_slug")
-            if candidate and validated_slug:
-                self._active_artifact_slug = validated_slug
-                app_jsx_rel_path = candidate
-                render_files = extract_artifact_result_list(tc, "render_files")
-                render_file_count = len(render_files) if render_files else 0
+            if validated_slug and self.artifact_tools is not None:
+                # SDK batches report in call order, which can differ from execution order.
+                # All tools have finished now. Only finalize the tree that is actually on disk.
+                final_check = self.artifact_tools.validate_render(validated_slug)
+                if final_check.success:
+                    self._active_artifact_slug = validated_slug
+                    app_jsx_rel_path = final_check.result["app_jsx_path"]
+                    render_file_count = len(final_check.result["render_files"])
+                else:
+                    validation_error = final_check.error
             break
 
         if app_jsx_rel_path is None:

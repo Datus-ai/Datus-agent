@@ -811,3 +811,49 @@ async def test_mutation_invalidates_previous_render(real_agent_config, mock_llm_
     assert result["app_jsx_path"] is None
     assert "validate_render" in result["error"]
     assert finalized == []
+
+
+@pytest.mark.asyncio
+async def test_final_result_validates_disk_after_parallel_write_and_validation(real_agent_config, mock_llm_create):
+    import asyncio
+
+    from datus.agent.node.stream_run_context import StreamRunContext
+
+    slug = "editable"
+    root = Path(real_agent_config.project_root)
+    _seed_render_on_disk(root, slug)
+    node = _make_node(real_agent_config)
+    node.input = GenVisualReportNodeInput(user_message="Edit this report", report_slug=slug)
+    node._prepare_artifacts(node.input)
+    entry = f"reports/{slug}/render/app.jsx"
+    validated = asyncio.Event()
+
+    async def write():
+        await validated.wait()
+        return await asyncio.to_thread(node.filesystem_func_tool.write_file, entry, "export const title = 'Draft';")
+
+    async def validate():
+        result = await asyncio.to_thread(node.artifact_tools.validate_render, slug)
+        validated.set()
+        return result
+
+    # gather returns results in call order, even though validation saw the old entry.
+    results = await asyncio.gather(write(), validate())
+    assert [r.success for r in results] == [1, 1]
+    manager = ActionHistoryManager()
+    for name, result in zip(("write_file", "validate_render"), results):
+        manager.add_action(
+            ActionHistory(
+                action_id=name,
+                role=ActionRole.TOOL,
+                action_type=name,
+                status=ActionStatus.SUCCESS,
+                output=result.model_dump(),
+            )
+        )
+    ctx = StreamRunContext(user_input=node.input, action_history_manager=manager)
+    final = node._build_success_result(ctx)
+    assert final.success is False
+    assert "export default" in final.error
+    assert final.app_jsx_path is None
+    assert ctx.extras["artifact_app_jsx_rel_path"] is None

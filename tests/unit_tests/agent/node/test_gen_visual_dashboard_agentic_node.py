@@ -980,6 +980,7 @@ def test_narrative_refresh_after_earlier_save(real_agent_config, mock_llm_create
             output={"result": {"app_jsx_path": "dashboards/demo/render/app.jsx", "artifact_slug": "demo"}},
         )
     )
+    _seed_dashboard_on_disk(Path(real_agent_config.project_root), "demo")
     questions = node._artifact_dir("demo") / "analysis/suggested_questions.json"
     questions.parent.mkdir(parents=True)
     questions.write_text("[]")
@@ -996,7 +997,17 @@ def test_narrative_refresh_after_earlier_save(real_agent_config, mock_llm_create
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("delegated", [False, True])
-async def test_card_target_survives_run_boundary_insert(real_agent_config, mock_llm_create, delegated):
+@pytest.mark.parametrize(
+    "followup,expected_writes,expected_status",
+    [
+        ("Change the title again.", [1, 0], "completed"),
+        ('Change <artifact-chart-card dashboard-slug="selected" />', [1, 0], "completed"),
+        ('Change <artifact-chart-card dashboard-slug="neighbor" />', [1], "error"),
+    ],
+)
+async def test_card_target_survives_run_boundary_insert(
+    real_agent_config, mock_llm_create, delegated, followup, expected_writes, expected_status
+):
     from datus.api.models.cli_models import StreamChatInput
     from datus.api.services.chat_task_manager import ChatTask, ChatTaskManager
     from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
@@ -1018,7 +1029,7 @@ async def test_card_target_survives_run_boundary_insert(real_agent_config, mock_
         user_input = task_tool._build_node_input(visual, "Update the title", db_ctx={}) if delegated else node.input
         visual._prepare_artifacts(user_input)
         if len(writes) == 0:
-            node.pending_input_queue.push("Change the title again.")
+            node.pending_input_queue.push(followup)
             target = "selected"
         else:
             target = "neighbor"
@@ -1045,9 +1056,12 @@ async def test_card_target_survives_run_boundary_insert(real_agent_config, mock_
             session_id="s-cont-card",
         ),
     )
-    assert len(writes) == 2
-    assert writes[0].success == 1, writes[0].error
-    assert writes[1].success == 0
+    assert [write.success for write in writes] == expected_writes
+    assert task.status == expected_status, task.error
+    assert (task.error or "") == {
+        "completed": "",
+        "error": "Choose one dashboard to edit per turn. Please confirm the target: neighbor, selected.",
+    }[expected_status]
     assert neighbor.read_bytes() == before
 
 

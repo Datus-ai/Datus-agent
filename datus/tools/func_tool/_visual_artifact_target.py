@@ -38,15 +38,17 @@ def studio_edit_targets(message: str, kind: str) -> list[str]:
 
 
 def selected_visual_slug(user_input, kind: str) -> str | None:
+    targets = set(studio_edit_targets(getattr(user_input, "user_message", "") or "", kind))
+    inherited = getattr(user_input, "studio_edit_targets", None)
+    if isinstance(inherited, dict):
+        targets.update(inherited.get(kind, ()))
     explicit = getattr(user_input, f"{kind}_slug", None)
     if isinstance(explicit, str) and explicit:
-        return explicit
-    inherited = getattr(user_input, "studio_edit_targets", None)
-    targets = inherited.get(kind) if isinstance(inherited, dict) else None
-    if not targets:
-        targets = studio_edit_targets(getattr(user_input, "user_message", "") or "", kind)
+        targets.add(explicit)
     if len(targets) > 1:
-        raise ValueError(f"Choose one {kind} to edit per turn")
+        raise ValueError(
+            f"Choose one {kind} to edit per turn. Please confirm the target: {', '.join(sorted(targets))}."
+        )
     return next(iter(targets), None)
 
 

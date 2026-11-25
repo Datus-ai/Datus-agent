@@ -484,7 +484,9 @@ def test_failed_query_publish_restores_previous_files(tmp_path, monkeypatch, exi
 
 
 def test_retry_keeps_first_mode_and_separates_new_turns(tmp_path):
-    args = dict(user_message="Check net sales", timestamp="2026-06-01T00:00:00.123456Z", deduplicate=True)
+    args = dict(
+        user_message="Check net sales\r\nby category", timestamp="2026-06-01T00:00:00.123456Z", deduplicate=True
+    )
     assert append_intent_section(tmp_path, mode="new", **args) is None
     original = (tmp_path / "intent.md").read_bytes()
     assert append_intent_section(tmp_path, mode="edit", **args) is None
