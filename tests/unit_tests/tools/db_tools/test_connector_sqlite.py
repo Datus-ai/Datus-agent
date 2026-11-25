@@ -349,6 +349,7 @@ def test_get_schema(sqlite_connector):
         ("PRAGMA table_list", 1, "SELECT"),
         ("EXPLAIN SELECT 1", 1, "SELECT"),
         ("CREATE TABLE should_not_exist (id INT)", 1, "SELECT"),
+        ("SELECT 1; CREATE TABLE should_not_exist (id INT); SELECT 42", 1, "single SELECT"),
         ("SELECT 1", 0, "positive integer"),
         ("SELECT 1", -1, "positive integer"),
         ("SELECT 1", True, "positive integer"),

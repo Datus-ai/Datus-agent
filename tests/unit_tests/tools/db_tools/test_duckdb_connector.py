@@ -620,6 +620,7 @@ def test_iceberg_rejects_invalid_catalog_alias(monkeypatch):
         ("SHOW TABLES", 1, "SELECT"),
         ("EXPLAIN SELECT 1", 1, "SELECT"),
         ("CREATE TABLE should_not_exist (id INT)", 1, "SELECT"),
+        ("SELECT 1; CREATE TABLE should_not_exist (id INT); SELECT 42", 1, "single SELECT"),
         ("SELECT 1", 0, "positive integer"),
         ("SELECT 1", -1, "positive integer"),
         ("SELECT 1", True, "positive integer"),

@@ -664,12 +664,12 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             scope = nullcontext()
             if query_timeout_seconds is not None:
                 from datus.utils.constants import SQLType
-                from datus.utils.sql_utils import parse_sql_type
+                from datus.utils.sql_utils import is_single_statement, parse_sql_type
 
                 if type(query_timeout_seconds) is not int or query_timeout_seconds <= 0:
                     raise ValueError("query_timeout_seconds must be a positive integer")
-                if parse_sql_type(sql, self.dialect) != SQLType.SELECT:
-                    raise ValueError("A per-query timeout can only be set on SELECT queries")
+                if not is_single_statement(sql) or parse_sql_type(sql, self.dialect) != SQLType.SELECT:
+                    raise ValueError("A per-query timeout can only be set on a single SELECT query")
                 from datus_db_core.query_timeout import duckdb_query_timeout
 
                 scope = duckdb_query_timeout(cursor, query_timeout_seconds, duckdb.InterruptException)
