@@ -54,6 +54,7 @@ from datus.tools.func_tool._visual_artifact_cards import scan_render_cards
 from datus.tools.func_tool._visual_artifact_helpers import (
     coerce_uses_arg,
     raw_sql_save_tool,
+    staged_query_files,
     touch_manifest_after_save,
     utc_now_iso,
     write_query_brief,
@@ -646,26 +647,21 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
         sql_text = "\n".join(header_parts) + "\n" + sql.rstrip() + "\n"
 
         try:
-            _atomic_write_text(sql_path, sql_text)
-            _atomic_write_text(json_path, json_blob)
-        except OSError as exc:
+            with staged_query_files(self.queries_dir, name, remove_suffixes=(".metric.json",)) as staging:
+                brief_err = write_query_brief(
+                    staging,
+                    name=name,
+                    hypothesis=hypothesis.strip(),
+                    uses=uses_obj,
+                    caveats=caveats.strip() if caveats else "",
+                    source_selection=source_selection,
+                )
+                if brief_err:
+                    raise ValueError(brief_err)
+                _atomic_write_text(staging / sql_path.name, sql_text)
+                _atomic_write_text(staging / json_path.name, json_blob)
+        except (OSError, ValueError) as exc:
             return FuncToolResult(success=0, error=f"Failed to persist query files: {exc}")
-
-        # Brief sidecar — write next, so the three-file bundle stays
-        # in sync. If this fails, the SQL+JSON pair already exists on
-        # disk; we surface the error so the LLM can retry without losing
-        # the query result.
-        brief_err = write_query_brief(
-            self.queries_dir,
-            name=name,
-            hypothesis=hypothesis.strip(),
-            uses=uses_obj,
-            caveats=caveats.strip() if caveats else "",
-            source_selection=source_selection,
-        )
-        if brief_err:
-            return FuncToolResult(success=0, error=brief_err)
-        (self.queries_dir / f"{name}.metric.json").unlink(missing_ok=True)
 
         # Refresh recency; finalize derives sources from the saved query files.
         # Failure is a warning: log it without failing the

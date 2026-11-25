@@ -573,6 +573,18 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
 
     def _prepare_artifacts(self, user_input: InputT) -> None:
         """Install tools for one visual artifact turn."""
+        self.artifact_tools = None
+        self._active_artifact_slug = None
+        if self.filesystem_func_tool is not None:
+            self.filesystem_func_tool.artifact_target = None
+        registered = {
+            f"start_new_{self.ARTIFACT_KIND}",
+            self.QUERY_SAVE_ACTION_TYPE,
+            "save_metric_query",
+            "save_metric_query_template",
+            "validate_render",
+        }
+        self.tools = [tool for tool in self.tools if getattr(tool, "name", None) not in registered]
         if not self.agent_config or not getattr(self.agent_config, "project_root", None):
             raise ValueError(f"agent_config.project_root is required for gen_visual_{self.ARTIFACT_KIND}")
         if not self.db_func_tool:
@@ -594,15 +606,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         self._active_artifact_slug = self.artifact_tools.target.requested_slug
         if self.filesystem_func_tool is not None:
             self.filesystem_func_tool.artifact_target = self.artifact_tools.target
-        # Repeated ``execute_stream`` calls on the same node instance
-        # would otherwise stack stale tool wrappers bound to the previous
-        # artifact tools instance, which could resolve calls against an
-        # outdated artifact id. Replace any prior registration by name
-        # before extending with the freshly-built tools.
-        new_tools = self.artifact_tools.available_tools()
-        replaced_names = {getattr(t, "name", None) for t in new_tools} | {f"start_new_{self.ARTIFACT_KIND}"}
-        self.tools = [t for t in self.tools if getattr(t, "name", None) not in replaced_names]
-        self.tools.extend(new_tools)
+        self.tools.extend(self.artifact_tools.available_tools())
 
     # ── Result construction (subclass overrides) ──────────────────────────
 
@@ -784,12 +788,36 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         ctx.extras["artifact_app_jsx_rel_path"] = app_jsx_rel_path
         ctx.extras["artifact_slug"] = self._active_artifact_slug
         ctx.extras["artifact_all_actions"] = all_actions
-        # save_query[_template] is the only path that mutates queries/ during a
-        # run, so "no query saved this run" ⟺ underlying data unchanged (a
-        # render-only edit like a chart-type swap). Insights / suggested
-        # questions stay valid in that case — let finalize skip its LLM stage.
-        ctx.extras["artifact_data_changed"] = len(query_actions) > 0
+        ctx.extras["artifact_data_changed"] = False
+        if app_jsx_rel_path and self._active_artifact_slug:
+            ctx.extras["artifact_data_changed"] = self._queries_changed_since_narrative(
+                ctx, self._active_artifact_slug, ctx.action_start + run_start
+            )
         return result
+
+    def _queries_changed_since_narrative(self, ctx: "StreamRunContext", slug: str, run_start: int) -> bool:
+        """A continuation may validate a query saved in an earlier run on the same manager."""
+        queries = Path(self.ARTIFACT_ROOT_DIR_NAME) / slug / "queries"
+        save_types = {self.QUERY_SAVE_ACTION_TYPE, "save_metric_query", "save_metric_query_template"}
+        last_save = None
+        for index, action in enumerate(ctx.action_history_manager.get_actions()):
+            if (
+                action.role != ActionRole.TOOL
+                or action.status != ActionStatus.SUCCESS
+                or action.action_type not in save_types
+            ):
+                continue
+            field = "sql_path" if action.action_type == self.QUERY_SAVE_ACTION_TYPE else "metric_path"
+            path = extract_artifact_result_field(action, field)
+            if not path or Path(path).parent != queries:
+                continue
+            if index >= run_start:
+                return True
+            saved_at = (action.end_time or action.start_time).timestamp()
+            last_save = saved_at if last_save is None else max(last_save, saved_at)
+        return last_save is not None and not narrative_outputs_present(
+            self._artifact_dir(slug) / "analysis", artifact_kind=self.ARTIFACT_KIND, since=last_save
+        )
 
     def _build_error_result(self, exc: BaseException, ctx: "StreamRunContext") -> ResultT:
         # Visual-artifact subclasses pre-existed the unified base error helper

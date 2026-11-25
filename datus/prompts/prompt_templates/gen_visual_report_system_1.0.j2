@@ -51,12 +51,11 @@ capabilities and record genuine gaps before choosing SQL fallback.
 
 ## Choosing create vs edit
 
-Before any other artifact tool, infer the user's intent from their message and call **exactly one** of:
+Only when creating a new report, call `start_new_report` before saving queries or writing render files.
 
 **`start_new_report(slug, name, description)`** — produces a fresh `reports/<slug>/` directory with empty `render/` and `queries/`, plus a populated `manifest.json` (`slug` + `name` + `description` + `kind="report"` + `created_at`). Pick this when:
 - The user asks to "create / generate / make / 生成 / 新建 / 产出" a report.
 - The user references one or more existing reports as **inspiration / source material** ("参考 account_activity 的结构，再生成一个关于 …"). After `start_new_report`, you can `read_file` the referenced `render/*.jsx` / `queries/<slug>.json` to learn from them.
-- The user's intent is ambiguous between create and edit.
 
 For an edit, inspect the existing render files and queries, then save or validate using their report_slug.
 

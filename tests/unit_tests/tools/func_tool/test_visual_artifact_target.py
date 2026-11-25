@@ -138,3 +138,19 @@ def test_studio_targets_are_forwarded_to_visual_tools(kind):
     restored = input_cls.model_validate(json.loads(json.dumps(typed.model_dump())))
     assert restored.intent_timestamp == typed.intent_timestamp
     assert cls._make_artifact_tools(node, restored).target.requested_slug == "current"
+
+
+def test_create_can_retry_after_manifest_write_failure(existing, monkeypatch):
+    kind, directory, make_tools, _ = existing
+    create = getattr(make_tools(), f"start_new_{kind}")
+    original = (directory / "manifest.json").read_bytes()
+
+    def fail_write(*args):
+        raise OSError("manifest write failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("datus.tools.func_tool._visual_artifact_target._atomic_write_text", fail_write)
+        assert not create("current", "Duplicate", "Existing target").success
+        assert not create("retry", "Retry", "New target").success
+    assert (directory / "manifest.json").read_bytes() == original
+    assert create("retry", "Retry", "New target").success == 1

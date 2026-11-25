@@ -323,6 +323,16 @@ class TestInferColumnType:
 
 
 class TestSaveQuery:
+    def test_invalid_brief_preserves_existing_query(self, report_tools):
+        save = report_tools.save_query
+        args = dict(name="sales", goal="Compare sales", hypothesis="Sales increased")
+        assert save(sql="SELECT 1 AS total", **args).success == 1
+        queries = report_tools.queries_dir
+        before = {p.name: p.read_bytes() for p in queries.iterdir()}
+        failed = save(sql="SELECT 2 AS total", caveats="x" * 501, **args)
+        assert failed.success == 0 and "brief" in failed.error
+        assert {p.name: p.read_bytes() for p in queries.iterdir()} == before
+
     def test_preserves_mixed_sqlite_values(self, report_tools: ReportArtifactTools, project_root: Path):
         result = report_tools.save_query(
             name="mixed_values",

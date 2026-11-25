@@ -416,7 +416,7 @@ class MetricArtifactToolsMixin:
     ) -> FuncToolResult:
         """Persist a metric recipe and query result, then refresh the manifest timestamp."""
         from datus.api.services.dashboard_service import _validate_params
-        from datus.tools.func_tool._visual_artifact_helpers import touch_manifest_after_save
+        from datus.tools.func_tool._visual_artifact_helpers import staged_query_files, touch_manifest_after_save
         from datus.tools.func_tool.report_artifact_tools import _MAX_QUERY_BYTES, _atomic_write_text
 
         kind = "dashboard" if params is not None else "report"
@@ -495,10 +495,9 @@ class MetricArtifactToolsMixin:
                 _atomic_write_text(model_file, model_content, overwrite=False)
             except FileExistsError:
                 resolve_metric_query_snapshot(saved, artifact_dir=artifact_dir)
-            for filename, content in files.items():
-                _atomic_write_text(self.queries_dir / filename, content + "\n")
-            for suffix in (".sql", ".sql.j2"):
-                (self.queries_dir / f"{name}{suffix}").unlink(missing_ok=True)
+            with staged_query_files(self.queries_dir, name, remove_suffixes=(".sql", ".sql.j2")) as staging:
+                for filename, content in files.items():
+                    _atomic_write_text(staging / filename, content + "\n")
             artifact_dir = self.dashboard_dir if kind == "dashboard" else self.report_dir
             warning = touch_manifest_after_save(artifact_dir / "manifest.json", timestamp=payload.executed_at)
             return self.target.record_mutation(

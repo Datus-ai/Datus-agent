@@ -181,21 +181,55 @@ def _atomic_write_text(path: Path, content: str) -> None:
 
 
 @contextmanager
-def intent_write_lock(path: Path):
-    """Serialize intent appends and curation commits across workers on a shared volume."""
+def artifact_write_lock(path: Path):
+    """Serialize writes to an artifact file or query bundle across workers."""
     if os.name != "posix":
         with path_mutation_lock(path):
             yield
         return
     import fcntl
 
-    # Lock the directory: the log itself is replaced by atomic writes.
+    # Lock the directory because published files are replaced by atomic writes.
     descriptor = os.open(path.parent, os.O_RDONLY)
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
         yield
     finally:
         os.close(descriptor)
+
+
+@contextmanager
+def staged_query_files(queries_dir: Path, name: str, *, remove_suffixes: tuple[str, ...]):
+    """Publish a validated query bundle, restoring the previous files if a replacement fails."""
+    queries_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=queries_dir) as tmp:
+        staging = Path(tmp)
+        yield staging
+        staged = list(staging.iterdir())
+        obsolete = [queries_dir / f"{name}{suffix}" for suffix in remove_suffixes]
+        backup = staging / "backup"
+        backup.mkdir()
+        with artifact_write_lock(queries_dir / name):
+            changed = []
+            try:
+                for src in staged:
+                    dst = queries_dir / src.name
+                    if dst.exists():
+                        os.link(dst, backup / dst.name)
+                    os.replace(src, dst)
+                    changed.append(dst)
+                for dst in obsolete:
+                    if dst.exists():
+                        dst.rename(backup / dst.name)
+                        changed.append(dst)
+            except OSError:
+                for dst in reversed(changed):
+                    saved = backup / dst.name
+                    if saved.exists():
+                        os.replace(saved, dst)
+                    else:
+                        dst.unlink()
+                raise
 
 
 def append_intent_section(
@@ -248,7 +282,7 @@ def append_intent_section(
         # One blank line as a separator between sections — keeps the file
         # readable in any markdown renderer and easy to diff in git.
         section = _format_intent_section(user_message=user_message, mode=mode, timestamp=timestamp)
-        with intent_write_lock(path):
+        with artifact_write_lock(path):
             existing = path.read_text(encoding="utf-8") if path.is_file() else ""
             if deduplicate and section in existing:
                 return None

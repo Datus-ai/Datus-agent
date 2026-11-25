@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
@@ -11,7 +12,12 @@ from xml.etree.ElementTree import ParseError, fromstring
 from agents import FunctionTool
 
 from datus.schemas.artifact_manifest import ARTIFACT_SLUG_RE, ArtifactKind, ArtifactManifest
-from datus.tools.func_tool._visual_artifact_helpers import _atomic_write_text, append_intent_section, utc_now_iso
+from datus.tools.func_tool._visual_artifact_helpers import (
+    _atomic_write_text,
+    append_intent_section,
+    artifact_write_lock,
+    utc_now_iso,
+)
 from datus.tools.func_tool.base import FuncToolResult
 
 
@@ -73,13 +79,19 @@ class VisualArtifactTarget:
             relative = f"{self.kind}s/{slug}"
             directory = self.root / relative
             try:
-                directory.mkdir(parents=True, exist_ok=False)
-            except FileExistsError:
-                return FuncToolResult(success=0, error=f"{relative} already exists. Use its slug to edit it.")
-            try:
-                for child in ("render", "queries", "analysis"):
-                    (directory / child).mkdir()
-                _atomic_write_text(directory / "manifest.json", manifest.model_dump_json(indent=2) + "\n")
+                directory.parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.TemporaryDirectory(dir=directory.parent, prefix=".create-") as tmp:
+                    staged = Path(tmp) / slug
+                    staged.mkdir()
+                    for child in ("render", "queries", "analysis"):
+                        (staged / child).mkdir()
+                    _atomic_write_text(staged / "manifest.json", manifest.model_dump_json(indent=2) + "\n")
+                    with artifact_write_lock(directory):
+                        if directory.exists():
+                            return FuncToolResult(
+                                success=0, error=f"{relative} already exists. Use its slug to edit it."
+                            )
+                        staged.rename(directory)
             except OSError as exc:
                 return FuncToolResult(success=0, error=f"Failed to create {relative}: {exc}")
             self.slug = slug

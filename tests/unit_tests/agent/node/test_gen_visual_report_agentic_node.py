@@ -701,16 +701,15 @@ async def test_execute_stream_bound_but_no_validate_marks_failure(real_agent_con
 
 @pytest.mark.asyncio
 async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_config, mock_llm_create):
-    """Binding + reading + a prose answer is a valid turn, not an incomplete artifact.
-
-    Hard rule 1 of the system prompt makes the model bind before answering
-    anything — meta-discussion included — so a "should I keep this section?"
-    question binds, reads the render tree, and replies with options. Nothing
-    was written, so there is no render to validate and no error to surface.
-    """
+    """A read-only consultation on a selected artifact preserves its intent history."""
     project_root = Path(real_agent_config.project_root)
     existing_slug = "consult_demo"
     _seed_render_on_disk(project_root, existing_slug)
+
+    intent = project_root / "reports" / existing_slug / "analysis/intent.md"
+    intent.parent.mkdir(exist_ok=True)
+    prior_intent = b"Original creation request.\n"
+    intent.write_bytes(prior_intent)
 
     answer = "That section restates the KPI strip. Three options: drop it, merge it, or make it a callout."
     mock_llm_create.reset(
@@ -728,7 +727,7 @@ async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_c
     )
 
     node = _make_node(real_agent_config)
-    node.input = GenVisualReportNodeInput(user_message="is this section worth keeping?")
+    node.input = GenVisualReportNodeInput(report_slug=existing_slug, user_message="is this section worth keeping?")
 
     actions = []
     async for action in node.execute_stream(ActionHistoryManager()):
@@ -742,6 +741,7 @@ async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_c
     assert not result.get("error")
     assert result["app_jsx_path"] is None
     assert result["response"] == answer
+    assert intent.read_bytes() == prior_intent
 
 
 class TestReportDistFromAgentConfig:

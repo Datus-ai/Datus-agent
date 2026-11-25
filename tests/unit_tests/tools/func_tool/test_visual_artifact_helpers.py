@@ -14,6 +14,7 @@ pure I/O so we want deterministic, isolated state for each case.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,7 @@ from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.tools.func_tool._visual_artifact_helpers import (
     append_intent_section,
     coerce_uses_arg,
+    staged_query_files,
     touch_manifest_after_save,
     utc_now_iso,
     write_query_brief,
@@ -452,3 +454,30 @@ class TestUtcNowIso:
         assert ts[10] == "T"
         assert ts[13] == ":" and ts[16] == ":"
         assert ts.endswith("Z")
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_failed_query_publish_restores_previous_files(tmp_path, monkeypatch, existing):
+    queries = tmp_path / "queries"
+    queries.mkdir()
+    old = {"q.metric.json": b"old recipe"}
+    if existing:
+        old.update({"q.sql": b"old SQL", "q.json": b"old result"})
+    for name, content in old.items():
+        (queries / name).write_bytes(content)
+    replace = os.replace
+    published = []
+
+    def fail_second_replace(src, dst):
+        if dst.parent == queries and src.parent.name != "backup":
+            published.append(dst)
+            if len(published) == 2:
+                raise OSError("injected publish failure")
+        replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", fail_second_replace)
+    with pytest.raises(OSError, match="injected publish failure"):
+        with staged_query_files(queries, "q", remove_suffixes=(".metric.json",)) as staging:
+            (staging / "q.sql").write_bytes(b"new SQL")
+            (staging / "q.json").write_bytes(b"new result")
+    assert {p.name: p.read_bytes() for p in queries.iterdir()} == old

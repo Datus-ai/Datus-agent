@@ -451,6 +451,16 @@ _REVENUE_TEMPLATE = (
 
 
 class TestSaveQueryTemplate:
+    def test_invalid_brief_preserves_existing_query(self, dashboard_tools):
+        save = dashboard_tools.save_query_template
+        args = dict(name="sales", goal="Compare sales", hypothesis="Sales increased", sample_params={})
+        assert save(sql_template="-- @datus-params\nSELECT 1 AS total", **args).success == 1
+        queries = dashboard_tools.queries_dir
+        before = {p.name: p.read_bytes() for p in queries.iterdir()}
+        failed = save(sql_template="-- @datus-params\nSELECT 2 AS total", caveats="x" * 501, **args)
+        assert failed.success == 0 and "brief" in failed.error
+        assert {p.name: p.read_bytes() for p in queries.iterdir()} == before
+
     def test_preserves_mixed_sqlite_values(self, dashboard_tools: DashboardArtifactTools):
         result = dashboard_tools.save_query_template(
             name="mixed_values",

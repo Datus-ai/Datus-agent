@@ -18,11 +18,14 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeInput
@@ -727,13 +730,7 @@ async def test_execute_stream_fails_when_validate_render_not_called(real_agent_c
 
 @pytest.mark.asyncio
 async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_config, mock_llm_create):
-    """Binding + reading + a prose answer is a valid turn, not an incomplete artifact.
-
-    Hard rule 1 of the system prompt makes the model bind before answering
-    anything — meta-discussion included — so "is this chart worth keeping?"
-    binds, reads the render tree, and replies with options. Nothing was
-    written, so there is no render to validate and no error to surface.
-    """
+    """A read-only consultation on a selected artifact preserves its intent history."""
     project_root = Path(real_agent_config.project_root)
     existing_slug = "consult_demo"
     dash_dir = project_root / "dashboards" / existing_slug
@@ -747,6 +744,11 @@ async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_c
         '"kind":"dashboard","created_at":"2026-05-14T00:00:00Z"}\n',
         encoding="utf-8",
     )
+
+    intent = project_root / "dashboards" / existing_slug / "analysis/intent.md"
+    intent.parent.mkdir(exist_ok=True)
+    prior_intent = b"Original creation request.\n"
+    intent.write_bytes(prior_intent)
 
     answer = "That chart tracks a step nobody owns. Three options: drop it, demote it to text, or refocus it."
     mock_llm_create.reset(
@@ -765,6 +767,7 @@ async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_c
 
     node = _make_node(real_agent_config)
     node.input = GenVisualDashboardNodeInput(
+        dashboard_slug=existing_slug,
         user_message="this chart doesn't look useful — is it worth keeping?",
         database="california_schools",
     )
@@ -779,6 +782,7 @@ async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_c
     assert not result.get("error")
     assert result["app_jsx_path"] is None
     assert result["response"] == answer
+    assert intent.read_bytes() == prior_intent
 
 
 @pytest.mark.asyncio
@@ -934,3 +938,57 @@ class TestFinalizeLanguageDirective:
         assert "Chinese (zh-CN)" in prompt
         analysis_dir = dashboard_dir / "analysis"
         assert (analysis_dir / "suggested_questions.json").is_file()
+
+
+def test_preparation_failure_clears_previous_artifact(real_agent_config, mock_llm_create):
+    node = _make_node(real_agent_config)
+    node._prepare_artifacts(GenVisualDashboardNodeInput(user_message="Edit", dashboard_slug="previous"))
+    with pytest.raises(ValueError, match="Choose one"):
+        node._prepare_artifacts(
+            GenVisualDashboardNodeInput(user_message="dashboard slug: first\ndashboard slug: second")
+        )
+    error = node._finalize_artifact_error(ValueError("ambiguous target"))
+    assert error.dashboard_slug is None
+    assert node.artifact_tools is None
+    assert node.filesystem_func_tool.artifact_target is None
+
+
+@pytest.mark.parametrize(
+    "save_type,field", [("save_query_template", "sql_path"), ("save_metric_query_template", "metric_path")]
+)
+def test_narrative_refresh_after_earlier_save(real_agent_config, mock_llm_create, save_type, field):
+    node = _make_node(real_agent_config)
+    user_input = GenVisualDashboardNodeInput(user_message="Update render", dashboard_slug="demo")
+    node._prepare_artifacts(user_input)
+    manager = ActionHistoryManager()
+    earlier = ActionHistory(
+        action_id="save",
+        role=ActionRole.TOOL,
+        action_type=save_type,
+        status=ActionStatus.SUCCESS,
+        output={"result": {field: "dashboards/demo/queries/sales"}},
+        end_time=datetime.fromtimestamp(2000),
+    )
+    manager.add_action(earlier)
+    ctx = StreamRunContext(user_input=user_input, action_history_manager=manager, action_start=manager.checkpoint())
+    manager.add_action(
+        ActionHistory(
+            action_id="validate",
+            role=ActionRole.TOOL,
+            action_type="validate_render",
+            status=ActionStatus.SUCCESS,
+            output={"result": {"app_jsx_path": "dashboards/demo/render/app.jsx", "artifact_slug": "demo"}},
+        )
+    )
+    questions = node._artifact_dir("demo") / "analysis/suggested_questions.json"
+    questions.parent.mkdir(parents=True)
+    questions.write_text("[]")
+    for modified, changed in [(1000, True), (3000, False)]:
+        os.utime(questions, (modified, modified))
+        result = node._build_success_result(ctx)
+        assert ctx.extras["artifact_data_changed"] is changed
+        assert result.template_count == 0
+    os.utime(questions, (1000, 1000))
+    earlier.output = {"result": {field: "dashboards/other/queries/sales"}}
+    node._build_success_result(ctx)
+    assert ctx.extras["artifact_data_changed"] is False
