@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from datus.api.models.message_contents import ChatMessageContent
+from datus.schemas.artifact_manifest import ARTIFACT_SLUG_PATTERN
 from datus.utils.time_utils import now_utc_iso
 
 
@@ -138,6 +139,12 @@ class ChatInput(BaseModel):
                 "max_turns": 200,
             }
         }
+    )
+
+    artifact_slug: Optional[str] = Field(
+        default=None,
+        pattern=ARTIFACT_SLUG_PATTERN,
+        description="Edit target when invoking a visual report or dashboard generator.",
     )
 
     # Core message fields
@@ -483,8 +490,7 @@ class IArtifactPayload(IMessageContentPayload):
     field that the card needs to render is included here.
 
     ``mode`` reuses the backend artifact-tools vocabulary (``'new'`` when
-    the LLM called ``start_new_*``, ``'edit'`` when it called
-    ``bind_existing_*``) so there is no mapping layer between the
+    the generator created the artifact, ``'edit'`` when it used an existing slug) so there is no mapping layer between the
     NodeResult and the wire payload.
     """
 

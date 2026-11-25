@@ -11,7 +11,7 @@ Covers:
 * ``ReportFilesystemFuncTool`` replaces the default filesystem tool.
 * ``_prepare_artifacts`` registers the artifact tools but leaves the
   report slug unbound — the LLM owns the new/edit decision at runtime.
-* End-to-end streaming run: LLM calls bind_existing_report (against a
+* End-to-end streaming run: LLM calls validate_render (against a
   pre-seeded dir) and validate_render.
 * CLI mode compiles ``index.html`` after a successful validate_render.
 * Binding-required failure when the LLM never calls start/bind_report.
@@ -207,7 +207,6 @@ class TestPrepareReportArtifacts:
 
         tool_names = {t.name for t in node.tools}
         assert "start_new_report" in tool_names
-        assert "bind_existing_report" in tool_names
         assert "save_query" in tool_names
         assert "validate_render" in tool_names
 
@@ -229,7 +228,7 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
     without needing the mock LLM to author a fresh render tree end-to-end
     (that path is exercised in the artifact-tools tests). Pre-seeding
     ``render/`` + ``queries/`` + ``manifest.json`` and using
-    ``bind_existing_report`` keeps the test purely additive over the unit
+    ``validate_render`` keeps the test purely additive over the unit
     coverage.
     """
     project_root = Path(real_agent_config.project_root)
@@ -240,11 +239,7 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
         responses=[
             build_tool_then_response(
                 tool_calls=[
-                    MockToolCall(
-                        name="bind_existing_report",
-                        arguments=json.dumps({"report_slug": existing_slug}),
-                    ),
-                    MockToolCall(name="validate_render", arguments="{}"),
+                    MockToolCall(name="validate_render", arguments=json.dumps({"report_slug": existing_slug})),
                 ],
                 content="Report validated.",
             ),
@@ -293,7 +288,7 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
     # Artifact card fields surface through the result so the SSE artifact
     # event can be built without touching disk a second time.
     assert result["artifact_kind"] == "report"
-    assert result["artifact_mode"] == "edit"  # bind_existing_report path
+    assert result["artifact_mode"] == "edit"
     assert result["name"] == "seeded report"
     assert result["description"] == "Unit-test seeded report."
     assert result["created_at"] == "2026-05-13T00:00:00Z"
@@ -606,8 +601,7 @@ async def test_execute_stream_without_binding_and_no_answer_marks_failure(real_a
     assert result["report_slug"] is None
     assert result["query_count"] == 0
     error = result.get("error") or ""
-    assert "start_new_report" in error
-    assert "bind_existing_report" in error
+    assert "report_slug" in error
     # When no binding ever happened, the artifact-card fields stay None —
     # the SSE dispatcher then skips the artifact event and falls through
     # to the regular error path.
@@ -723,10 +717,6 @@ async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_c
         responses=[
             build_tool_then_response(
                 tool_calls=[
-                    MockToolCall(
-                        name="bind_existing_report",
-                        arguments=json.dumps({"report_slug": existing_slug}),
-                    ),
                     MockToolCall(
                         name="read_file",
                         arguments=json.dumps({"path": f"reports/{existing_slug}/render/app.jsx"}),

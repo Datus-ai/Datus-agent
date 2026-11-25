@@ -25,6 +25,7 @@ import re
 from pathlib import Path
 from typing import ClassVar, Optional
 
+from datus.tools.func_tool._visual_artifact_target import VisualArtifactTarget
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.registry.contracts import tool_contract
@@ -71,6 +72,34 @@ class ArtifactFilesystemFuncTool(FilesystemFuncTool):
         slug = r"[a-z0-9_]{1,80}"
         cls._RENDER_PATH_RE = re.compile(rf"^{root}/{slug}/render(?:/.+)?$")
         cls._QUERIES_PATH_RE = re.compile(rf"^{root}/{slug}/(?:queries|models)(?:/.+)?$")
+
+    artifact_target: VisualArtifactTarget | None = None
+
+    def _artifact_path_slug(self, path: Path) -> str | None:
+        target = self.artifact_target
+        if target is None or not path.is_relative_to(target.root):
+            return None
+        parts = path.relative_to(target.root).parts
+        if len(parts) >= 3 and parts[0] == self.ARTIFACT_ROOT_DIR_NAME:
+            return parts[1]
+        return None
+
+    def _mutation_guard_error(self, path: Path) -> FuncToolResult | None:
+        error = super()._mutation_guard_error(path)
+        slug = self._artifact_path_slug(path)
+        target = self.artifact_target
+        if error is None and target is not None and path.is_relative_to(target.root):
+            parts = path.relative_to(target.root).parts
+            if len(parts) >= 2 and parts[0] in {"reports", "dashboards"} and parts[0] != self.ARTIFACT_ROOT_DIR_NAME:
+                return FuncToolResult(success=0, error=f"This turn edits a {self.ARTIFACT_KIND} artifact")
+        if error is None and slug is not None:
+            return self.artifact_target.select(slug)
+        return error
+
+    def _notify_mutation(self, path: Optional[Path] = None) -> None:
+        if path is not None and self._artifact_path_slug(path) is not None:
+            self.artifact_target.record_mutation(FuncToolResult())
+        super()._notify_mutation(path)
 
     # ── Path classification ──────────────────────────────────────────────
 

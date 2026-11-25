@@ -1,16 +1,6 @@
 {
   "schema_version": 1,
   "tools": {
-    "artifact_tools.bind_existing_dashboard": {
-      "access": "restricted",
-      "companion_of": null,
-      "direct_call": false
-    },
-    "artifact_tools.bind_existing_report": {
-      "access": "restricted",
-      "companion_of": null,
-      "direct_call": false
-    },
     "artifact_tools.save_metric_query": {
       "access": "restricted",
       "companion_of": null,

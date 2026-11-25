@@ -10,6 +10,7 @@ See ``docs/subagent/gen_visual_report.md`` for the artifact format.
 """
 
 import re
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -85,6 +86,12 @@ class QueryResultFile(ArtifactDatasource):
 class GenVisualReportNodeInput(AtContextInput):
     """Input model for GenVisualReportAgenticNode."""
 
+    report_slug: Optional[str] = Field(None, pattern=REPORT_SLUG_RE.pattern, description="Caller-selected edit target")
+    intent_timestamp: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+        pattern=r"^[0-9T:.+Z-]{19,35}$",
+        description="Stable timestamp for this logical turn, preserved when retrying its input.",
+    )
     user_message: str = Field(..., description="User's analysis question (required)")
     catalog: Optional[str] = Field(None, description="Database catalog")
     database: Optional[str] = Field(None, description="Database name")
@@ -108,7 +115,7 @@ class GenVisualReportNodeResult(BaseResult):
     )
     artifact_mode: Optional[Literal["new", "edit"]] = Field(
         default=None,
-        description="Whether the LLM chose start_new_report (new) or bind_existing_report (edit). None when the run failed before binding.",
+        description="Whether the turn created or edited the artifact.",
     )
     name: Optional[str] = Field(
         default=None,

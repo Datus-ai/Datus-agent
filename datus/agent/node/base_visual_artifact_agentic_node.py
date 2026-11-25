@@ -527,16 +527,8 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
     def _make_artifact_tools(self, user_input: InputT) -> Any:
         """Build the artifact-specific tools instance (subclass implements).
 
-        The tools instance must expose ``available_tools()`` returning the
-        list of bound function-tools to add to ``self.tools``; the active
-        artifact slug (after ``start_new_*`` / ``bind_existing_*``) must
-        live on an attribute the subclass knows how to read (it is fetched
-        via :meth:`_read_artifact_slug_from_tools`).
-
-        ``user_input`` is passed through so subclasses can forward the
-        raw ``user_message`` to the tools instance — the analysis-artifact
-        layer needs it verbatim to seed ``analysis/intent.md`` on
-        ``start_new_*`` / ``bind_existing_*``.
+        Each turn shares its target with the filesystem writer so a JSX-only edit
+        records the same intent as a saved query.
         """
         raise NotImplementedError
 
@@ -580,13 +572,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         return data if isinstance(data, dict) else {}
 
     def _prepare_artifacts(self, user_input: InputT) -> None:
-        """Wire artifact tools into ``self.tools`` and reset the active slug.
-
-        The LLM decides between ``start_new_<kind>`` (create) and
-        ``bind_existing_<kind>`` (edit) at execution time; we just make
-        both tools available. ``_active_artifact_slug`` stays ``None``
-        until the LLM commits to one or the other.
-        """
+        """Install tools for one visual artifact turn."""
         if not self.agent_config or not getattr(self.agent_config, "project_root", None):
             raise ValueError(f"agent_config.project_root is required for gen_visual_{self.ARTIFACT_KIND}")
         if not self.db_func_tool:
@@ -604,15 +590,17 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 "(DEFAULT_TOOLS includes db_tools.*)."
             )
 
-        self._active_artifact_slug = None
         self.artifact_tools = self._make_artifact_tools(user_input)
+        self._active_artifact_slug = self.artifact_tools.target.requested_slug
+        if self.filesystem_func_tool is not None:
+            self.filesystem_func_tool.artifact_target = self.artifact_tools.target
         # Repeated ``execute_stream`` calls on the same node instance
         # would otherwise stack stale tool wrappers bound to the previous
         # artifact tools instance, which could resolve calls against an
         # outdated artifact id. Replace any prior registration by name
         # before extending with the freshly-built tools.
         new_tools = self.artifact_tools.available_tools()
-        replaced_names = {getattr(t, "name", None) for t in new_tools}
+        replaced_names = {getattr(t, "name", None) for t in new_tools} | {f"start_new_{self.ARTIFACT_KIND}"}
         self.tools = [t for t in self.tools if getattr(t, "name", None) not in replaced_names]
         self.tools.extend(new_tools)
 
@@ -659,18 +647,10 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         """
         return None
 
-    def _binding_tool_action_types(self) -> set:
-        """Tool action types that bind an artifact for this run."""
-        return {f"start_new_{self.ARTIFACT_KIND}", f"bind_existing_{self.ARTIFACT_KIND}"}
-
     def _build_attempt_action_types(self) -> set:
         """Tool action types that prove the run actually started building.
 
-        Binding alone doesn't: the system prompt requires a bind on turn 1
-        even for meta-discussion, so a consultative turn ("is this chart
-        worth keeping?") binds, reads, and answers in prose. Only a write
-        into the artifact tree — or a validate attempt — means the model
-        was mid-build and owes a successful ``validate_render``.
+        File reads and prose-only answers do not require a render.
         """
         return {
             "write_file",
@@ -684,11 +664,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
 
     def _missing_binding_error(self) -> str:
         kind = self.ARTIFACT_KIND
-        return (
-            f"Run finished without binding a {kind}. The LLM must call either "
-            f"start_new_{kind}(...) or bind_existing_{kind}(...) before producing "
-            "the artifact."
-        )
+        return f"Run finished without a target {kind}. Supply {kind}_slug when saving or validating the artifact."
 
     def _incomplete_render_error(self) -> str:
         return (
@@ -734,7 +710,10 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
 
     def _build_success_result(self, ctx: "StreamRunContext") -> ResultT:
         all_actions = ctx.get_run_actions()
-        tool_calls = [a for a in all_actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
+        run_start = int(ctx.extras.get("artifact_run_action_start") or 0)
+        tool_calls = [
+            a for a in all_actions[run_start:] if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS
+        ]
         tokens_used = self._extract_total_tokens(all_actions)
 
         query_actions = [
@@ -748,17 +727,16 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             if tc.action_type != "validate_render":
                 continue
             candidate = extract_artifact_result_field(tc, "app_jsx_path")
-            if candidate:
+            validated_slug = extract_artifact_result_field(tc, "artifact_slug")
+            if candidate and validated_slug:
+                self._active_artifact_slug = validated_slug
                 app_jsx_rel_path = candidate
                 render_files = extract_artifact_result_list(tc, "render_files")
                 render_file_count = len(render_files) if render_files else 0
                 break
 
-        # The LLM picked the active artifact slug by calling
-        # start_new_<kind> / bind_existing_<kind>; the tools instance owns it.
-        picked = self._read_artifact_slug_from_tools()
-        if picked:
-            self._active_artifact_slug = picked
+        if app_jsx_rel_path is None:
+            self._active_artifact_slug = self._read_artifact_slug_from_tools()
 
         response_content = ctx.response_content
         if not isinstance(response_content, str):
@@ -779,12 +757,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         if app_jsx_rel_path is None:
             # No render produced. Separate a genuine "forgot to render" failure
             # from a legitimate informational turn: a run that never wrote into
-            # the artifact tree and answered the user in prose ("what changes
-            # did I make?", "is this chart worth keeping?") is a valid response
-            # — end normally instead of forcing an artifact error. Binding is
-            # not the discriminator: Hard rule 1 of the system prompt makes the
-            # model bind before any answer, consultative turns included.
-            run_start = int(ctx.extras.get("artifact_run_action_start") or 0)
+            # the artifact tree and answered in prose can end normally.
             build_attempted = any(a.action_type in self._build_attempt_action_types() for a in all_actions[run_start:])
             informational_answer = not build_attempted and bool(response_content.strip())
             if informational_answer:

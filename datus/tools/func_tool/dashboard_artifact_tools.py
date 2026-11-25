@@ -37,7 +37,6 @@ from jinja2.sandbox import SandboxedEnvironment
 from datus.schemas.analysis_artifacts import SubjectAssetRef
 from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.schemas.gen_visual_dashboard_models import (
-    DASHBOARD_SLUG_RE,
     QUERY_SLUG_RE,
     QueryTemplateMetaFile,
     TemplateParamDecl,
@@ -49,13 +48,13 @@ from datus.tools.func_tool._artifact_filesystem_base import ArtifactFilesystemFu
 from datus.tools.func_tool._jsx_hooks_lint import format_hook_order_issues
 from datus.tools.func_tool._visual_artifact_cards import scan_render_cards
 from datus.tools.func_tool._visual_artifact_helpers import (
-    append_intent_section,
     coerce_uses_arg,
     raw_sql_save_tool,
     touch_manifest_after_save,
     utc_now_iso,
     write_query_brief,
 )
+from datus.tools.func_tool._visual_artifact_target import VisualArtifactTarget
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.metric_artifact_tools import MetricArtifactToolsMixin
 from datus.tools.func_tool.report_artifact_tools import (
@@ -351,23 +350,7 @@ class DashboardFilesystemFuncTool(ArtifactFilesystemFuncTool):
 
 
 class DashboardArtifactTools(MetricArtifactToolsMixin):
-    """LLM-facing tools that produce the dashboard artifact tree.
-
-    Lifecycle mirrors :class:`ReportArtifactTools`:
-
-    1. The owning node constructs one instance per execution with no
-       active dashboard id.
-    2. The LLM declares intent and binds the active dashboard by calling
-       **exactly one** of ``start_new_dashboard`` or
-       ``bind_existing_dashboard``.
-    3. ``save_query_template`` persists Jinja2 SQL templates after a
-       trial render against ``sample_params``. ``write_file`` /
-       ``edit_file`` / ``delete_file`` (from the filesystem tool) put
-       JSX/JS/CSS under ``dashboards/<id>/render/``.
-    4. ``validate_render`` walks the render tree, checks the entry
-       point, verifies every ``useQuerySql`` slug exists, and confirms
-       every ``params`` literal's keys match the template's declaration.
-    """
+    """Create dashboards and save or validate an explicitly targeted artifact."""
 
     permission_category: str = "artifact_tools"
 
@@ -377,37 +360,52 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
         agent_config,
         db_func_tool,
         user_message: str = "",
+        requested_slug: str | None = None,
+        intent_timestamp: str | None = None,
         semantic_tools=None,
     ) -> None:
         self.agent_config = agent_config
         self._db_func_tool = db_func_tool
         self._semantic_tools = semantic_tools
-        # See ReportArtifactTools.__init__ for the rationale — mirror logic.
-        self._user_message = user_message or ""
+        self._project_root = artifact_output_root(agent_config)
+        self.target = VisualArtifactTarget(
+            self._project_root, "dashboard", user_message, requested_slug, intent_timestamp
+        )
 
-        project_root = artifact_output_root(agent_config)
-        if not project_root or str(project_root) == ".":
-            raise ValueError("agent_config.project_root must be a non-empty directory")
-        self._project_root = project_root
+    @property
+    def dashboard_slug(self):
+        return self.target.slug
 
-        # Lazy state — populated by start_new_dashboard / bind_existing_dashboard.
-        self.dashboard_slug: Optional[str] = None
-        self.dashboard_dir: Optional[Path] = None
-        self.queries_dir: Optional[Path] = None
-        self.render_dir: Optional[Path] = None
-        self.analysis_dir: Optional[Path] = None
-        self.mode: Optional[str] = None
+    @property
+    def mode(self):
+        return self.target.mode
+
+    @property
+    def dashboard_dir(self):
+        return self.target.directory
+
+    @property
+    def queries_dir(self):
+        return self.target.directory / "queries" if self.target.slug else None
+
+    @property
+    def render_dir(self):
+        return self.target.directory / "render" if self.target.slug else None
+
+    @property
+    def analysis_dir(self):
+        return self.target.directory / "analysis" if self.target.slug else None
 
     # -- public --------------------------------------------------------------
 
     def available_tools(self) -> List[Tool]:
-        return [
+        tools = [
             trans_to_function_tool(self.start_new_dashboard),
-            trans_to_function_tool(self.bind_existing_dashboard),
             raw_sql_save_tool(self.save_query_template, require_fallback_reason=self._semantic_tools is not None),
             trans_to_function_tool(self.save_metric_query_template, strict_mode=False),
             trans_to_function_tool(self.validate_render),
         ]
+        return self.target.configure_tools(tools)
 
     # -- intent declaration --------------------------------------------------
 
@@ -452,180 +450,7 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
 
             ``analysis/intent.md`` is seeded with the user's original prompt.
         """
-        if not slug or not DASHBOARD_SLUG_RE.fullmatch(slug):
-            return FuncToolResult(
-                success=0,
-                error=(
-                    f"slug must match {DASHBOARD_SLUG_RE.pattern} (lowercase letters / digits / underscores, "
-                    f"1–80 chars); got {slug!r}. Pick a semantic identifier; the LLM is responsible for "
-                    "uniqueness within dashboards/."
-                ),
-            )
-        if not name or not name.strip():
-            return FuncToolResult(success=0, error="name must be a non-empty display name (any language).")
-        if not description or not description.strip():
-            return FuncToolResult(
-                success=0,
-                error="description must be a non-empty one-paragraph description of what the dashboard covers.",
-            )
-        factory = current_artifact_slug_factory(self.agent_config)
-        if factory is not None:
-            slug = factory("dashboard", slug)
-            if not DASHBOARD_SLUG_RE.fullmatch(slug):
-                return FuncToolResult(success=0, error="Host returned an invalid artifact slug")
-        candidate = self._project_root / "dashboards" / slug
-        if candidate.exists():
-            return FuncToolResult(
-                success=0,
-                error=(
-                    f"dashboards/{slug}/ already exists. Pick a different slug — first `glob('dashboards/*')` "
-                    "to see what's taken, or call `bind_existing_dashboard` if you meant to edit it."
-                ),
-            )
-        try:
-            manifest = ArtifactManifest(
-                slug=slug,
-                name=name.strip(),
-                description=description.strip(),
-                kind="dashboard",
-                created_at=utc_now_iso(),
-            )
-        except Exception as exc:
-            return FuncToolResult(success=0, error=f"Manifest validation failed: {exc}")
-        return self._activate(slug, mode="new", create_dirs=True, manifest=manifest)
-
-    @tool_contract(access="restricted", direct_call=False)
-    def bind_existing_dashboard(self, dashboard_slug: str) -> FuncToolResult:
-        """
-        Switch the active dashboard to an existing one and bind subsequent saves there.
-
-        Call this when the user asks to **modify / update / edit /
-        append to** a specific named dashboard. ``save_query_template``
-        overwrites same-named queries; ``write_file`` / ``edit_file`` /
-        ``delete_file`` mutate ``render/`` in-place. Use ``read_file`` +
-        ``glob`` to inspect the existing tree before mutating it.
-
-        When the user references the dashboard by its display name rather
-        than its slug (``"update the revenue overview dashboard"``), the
-        LLM should first ``glob('dashboards/*/manifest.json')`` and read
-        each manifest's ``name`` to find the matching slug, then call this
-        tool with that slug.
-
-        Args:
-            dashboard_slug: target dashboard slug, e.g. ``"revenue_overview"``.
-                Must match ``^[a-z0-9_]{1,80}$`` and the directory
-                (including ``render/app.jsx``) must already exist under
-                ``<project_root>/dashboards/``.
-
-        Returns:
-            FuncToolResult.result is a dict like::
-
-                {
-                    "dashboard_slug": "<slug>",
-                    "dashboard_dir": "dashboards/<slug>",
-                    "render_dir": "dashboards/<slug>/render",
-                    "queries_dir": "dashboards/<slug>/queries",
-                    "analysis_dir": "dashboards/<slug>/analysis",
-                    "mode": "edit",
-                }
-
-            ``analysis/intent.md`` gets a new ``### [timestamp] mode: edit``
-            section appended with the user's latest prompt.
-        """
-        if not dashboard_slug or not DASHBOARD_SLUG_RE.fullmatch(dashboard_slug):
-            return FuncToolResult(
-                success=0,
-                error=f"dashboard_slug must match {DASHBOARD_SLUG_RE.pattern}; got {dashboard_slug!r}",
-            )
-        candidate = self._project_root / "dashboards" / dashboard_slug
-        if not candidate.is_dir():
-            return FuncToolResult(
-                success=0,
-                error=(
-                    f"Dashboard directory not found: dashboards/{dashboard_slug}. "
-                    "Use start_new_dashboard() if you intended to create a new dashboard."
-                ),
-            )
-        if not (candidate / "render" / "app.jsx").is_file():
-            return FuncToolResult(
-                success=0,
-                error=(
-                    f"dashboards/{dashboard_slug}/render/app.jsx is missing — the dashboard is "
-                    "incomplete. Cannot bind for editing."
-                ),
-            )
-        return self._activate(dashboard_slug, mode="edit", create_dirs=False)
-
-    def _activate(
-        self,
-        dashboard_slug: str,
-        *,
-        mode: str,
-        create_dirs: bool,
-        manifest: Optional[ArtifactManifest] = None,
-    ) -> FuncToolResult:
-        dashboard_dir = self._project_root / "dashboards" / dashboard_slug
-        queries_dir = dashboard_dir / "queries"
-        render_dir = dashboard_dir / "render"
-        analysis_dir = dashboard_dir / "analysis"
-        manifest_path = dashboard_dir / "manifest.json"
-        if create_dirs:
-            queries_dir.mkdir(parents=True, exist_ok=True)
-            render_dir.mkdir(parents=True, exist_ok=True)
-            analysis_dir.mkdir(parents=True, exist_ok=True)
-        manifest_rel: Optional[str] = None
-        if manifest is not None:
-            try:
-                _atomic_write_text(
-                    manifest_path,
-                    json.dumps(manifest.model_dump(), ensure_ascii=False, indent=2) + "\n",
-                )
-            except OSError as exc:
-                return FuncToolResult(success=0, error=f"Failed to write manifest.json: {exc}")
-            manifest_rel = manifest_path.relative_to(self._project_root).as_posix()
-        self.dashboard_slug = dashboard_slug
-        self.dashboard_dir = dashboard_dir
-        self.queries_dir = queries_dir
-        self.render_dir = render_dir
-        self.analysis_dir = analysis_dir
-        self.mode = mode
-
-        # Mirror of ReportArtifactTools._activate: append the raw user
-        # prompt to analysis/intent.md as a best-effort log.
-        intent_warning = append_intent_section(
-            analysis_dir,
-            user_message=self._user_message,
-            mode=mode,
-            timestamp=utc_now_iso(),
-        )
-
-        result: Dict[str, Any] = {
-            "dashboard_slug": dashboard_slug,
-            "dashboard_dir": f"dashboards/{dashboard_slug}",
-            "render_dir": f"dashboards/{dashboard_slug}/render",
-            "queries_dir": f"dashboards/{dashboard_slug}/queries",
-            "analysis_dir": f"dashboards/{dashboard_slug}/analysis",
-            "mode": mode,
-        }
-        if manifest_rel:
-            result["manifest_path"] = manifest_rel
-        if intent_warning:
-            result["intent_warning"] = intent_warning
-        return FuncToolResult(result=result)
-
-    def _require_active(self, tool_name: str) -> Optional[FuncToolResult]:
-        if self.dashboard_slug is None or self.dashboard_dir is None or self.queries_dir is None:
-            return FuncToolResult(
-                success=0,
-                error=(
-                    f"No active dashboard bound. Call start_new_dashboard(slug=..., name=..., description=...) "
-                    f"to create one, or bind_existing_dashboard(dashboard_slug=...) to edit an "
-                    f"existing one, before calling {tool_name}()."
-                ),
-            )
-        return None
-
-    # -- save_query_template --------------------------------------------------
+        return self.target.create(slug, name, description, current_artifact_slug_factory(self.agent_config))
 
     @connection_scope(owner_attr="_db_func_tool")
     @tool_contract(access="restricted", direct_call=False)
@@ -641,6 +466,7 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
         datasource: str = "",
         fallback_reason: str = "",
         candidate_metrics: Optional[List[SubjectAssetRef]] = None,
+        dashboard_slug: str = "",
     ) -> FuncToolResult:
         """
         Persist a parameterized Jinja2 SQL template after a trial render,
@@ -713,9 +539,9 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
                     "preview_rows": [{ ... }],
                 }
         """
-        not_bound = self._require_active("save_query_template")
-        if not_bound is not None:
-            return not_bound
+        error = self.target.select(dashboard_slug)
+        if error is not None:
+            return error
         if not name or not QUERY_SLUG_RE.fullmatch(name):
             return FuncToolResult(
                 success=0,
@@ -973,12 +799,12 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
         }
         if manifest_warning:
             result["manifest_warning"] = manifest_warning
-        return FuncToolResult(result=result)
+        return self.target.record_mutation(FuncToolResult(result=result))
 
     # -- validate_render -----------------------------------------------------
 
     @tool_contract(access="restricted", direct_call=False)
-    def validate_render(self) -> FuncToolResult:
+    def validate_render(self, dashboard_slug: str = "") -> FuncToolResult:
         """
         Validate the assembled render/ tree. Terminal action of this subagent.
 
@@ -1013,9 +839,9 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
             live preview as soon as the validator passes, without waiting for
             the (multi-second) post-validate finalize LLM calls.
         """
-        not_bound = self._require_active("validate_render")
-        if not_bound is not None:
-            return not_bound
+        error = self.target.select(dashboard_slug)
+        if error is not None:
+            return error
 
         metric_error = self._validate_metric_queries("dashboard")
         if metric_error:

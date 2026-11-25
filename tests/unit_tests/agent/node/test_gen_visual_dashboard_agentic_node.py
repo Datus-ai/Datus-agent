@@ -179,7 +179,6 @@ class TestPrepareDashboardArtifacts:
 
         tool_names = {t.name for t in node.tools}
         assert "start_new_dashboard" in tool_names
-        assert "bind_existing_dashboard" in tool_names
         assert "save_query_template" in tool_names
         assert "validate_render" in tool_names
 
@@ -211,7 +210,7 @@ class TestPrepareDashboardArtifacts:
         assert len(names) == len(set(names))
 
         # All four artifact-tool names are still present after the swap.
-        artifact_names = {"start_new_dashboard", "bind_existing_dashboard", "save_query_template", "validate_render"}
+        artifact_names = {"start_new_dashboard", "save_query_template", "validate_render"}
         assert artifact_names.issubset(set(names))
 
 
@@ -285,11 +284,7 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
         responses=[
             build_tool_then_response(
                 tool_calls=[
-                    MockToolCall(
-                        name="bind_existing_dashboard",
-                        arguments=json.dumps({"dashboard_slug": existing_slug}),
-                    ),
-                    MockToolCall(name="validate_render", arguments="{}"),
+                    MockToolCall(name="validate_render", arguments=json.dumps({"dashboard_slug": existing_slug})),
                 ],
                 content="Dashboard validated.",
             ),
@@ -372,7 +367,7 @@ async def test_execute_stream_fails_when_no_binding_and_no_answer(real_agent_con
     result = final.output
     assert isinstance(result, dict)
     assert result["success"] is False
-    assert "start_new_dashboard" in (result.get("error") or "")
+    assert "dashboard_slug" in (result.get("error") or "")
 
 
 @pytest.mark.asyncio
@@ -759,10 +754,6 @@ async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_c
             build_tool_then_response(
                 tool_calls=[
                     MockToolCall(
-                        name="bind_existing_dashboard",
-                        arguments=json.dumps({"dashboard_slug": existing_slug}),
-                    ),
-                    MockToolCall(
                         name="read_file",
                         arguments=json.dumps({"path": f"dashboards/{existing_slug}/render/app.jsx"}),
                     ),
@@ -819,10 +810,6 @@ async def test_reused_action_manager_does_not_leak_a_prior_runs_write(real_agent
             ),
             build_tool_then_response(
                 tool_calls=[
-                    MockToolCall(
-                        name="bind_existing_dashboard",
-                        arguments=json.dumps({"dashboard_slug": slug}),
-                    ),
                     MockToolCall(
                         name="read_file",
                         arguments=json.dumps({"path": f"dashboards/{slug}/render/app.jsx"}),

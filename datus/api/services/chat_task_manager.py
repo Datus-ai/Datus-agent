@@ -1087,6 +1087,7 @@ class ChatTaskManager:
                 db_schema=request.db_schema,
                 plan_mode=request.plan_mode or False,
                 source_session_id=request.source_session_id,
+                artifact_slug=request.artifact_slug,
             )
             node.input = node_input
 
@@ -1367,6 +1368,7 @@ class ChatTaskManager:
                     db_schema=request.db_schema,
                     plan_mode=request.plan_mode or False,
                     source_session_id=None,
+                    artifact_slug=request.artifact_slug,
                 )
 
             # 6.5 Persist this turn's @-context (table/metric/sql/knowledge refs)
@@ -1899,6 +1901,7 @@ class ChatTaskManager:
         db_schema: Optional[str] = None,
         plan_mode: bool = False,
         source_session_id: Optional[str] = None,
+        artifact_slug: Optional[str] = None,
     ):
         """Create node input based on node type.
 
@@ -1930,6 +1933,7 @@ class ChatTaskManager:
             prompt_language="en",
             plan_mode=plan_mode,
             source_session_id=source_session_id,
+            artifact_slug=artifact_slug,
         )
 
     # ------------------------------------------------------------------

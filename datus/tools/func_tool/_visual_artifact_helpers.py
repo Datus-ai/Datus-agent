@@ -29,6 +29,7 @@ import json
 import os
 import re
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, List, Optional
 
@@ -37,6 +38,7 @@ from agents import FunctionTool
 from datus.schemas.action_history import ActionHistory
 from datus.schemas.analysis_artifacts import QueryBrief, SubjectRefs
 from datus.schemas.artifact_manifest import ArtifactManifest
+from datus.storage.semantic_model.artifact_file import path_mutation_lock
 from datus.tools.func_tool.base import trans_to_function_tool
 from datus.utils.loggings import get_logger
 
@@ -178,17 +180,36 @@ def _atomic_write_text(path: Path, content: str) -> None:
         raise
 
 
+@contextmanager
+def intent_write_lock(path: Path):
+    """Serialize intent appends and curation commits across workers on a shared volume."""
+    if os.name != "posix":
+        with path_mutation_lock(path):
+            yield
+        return
+    import fcntl
+
+    # Lock the directory: the log itself is replaced by atomic writes.
+    descriptor = os.open(path.parent, os.O_RDONLY)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def append_intent_section(
     analysis_dir: Path,
     *,
     user_message: str,
     mode: str,
     timestamp: str,
+    deduplicate: bool = False,
 ) -> Optional[str]:
     """Append a timestamped fenced-code-block section to ``analysis/intent.md``.
 
     The file is the raw record of every user prompt that drove a
-    start_new / bind_existing call against this artifact — see
+    creation or successful edit of this artifact — see
     ``docs/analysis_artifacts.md`` §3.3. Always append; never rewrite.
 
     Each section is rendered as a fenced code block (not a blockquote)
@@ -227,11 +248,14 @@ def append_intent_section(
         # One blank line as a separator between sections — keeps the file
         # readable in any markdown renderer and easy to diff in git.
         section = _format_intent_section(user_message=user_message, mode=mode, timestamp=timestamp)
-        existing = path.read_text(encoding="utf-8") if path.is_file() else ""
-        if existing and not existing.endswith("\n"):
-            existing += "\n"
-        new_text = existing + ("\n" if existing else "") + section
-        _atomic_write_text(path, new_text)
+        with intent_write_lock(path):
+            existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+            if deduplicate and section in existing:
+                return None
+            if existing and not existing.endswith("\n"):
+                existing += "\n"
+            new_text = existing + ("\n" if existing else "") + section
+            _atomic_write_text(path, new_text)
         return None
     except Exception as exc:
         # Honour the "best-effort: never raise" contract documented above.

@@ -157,7 +157,7 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "For external dashboard conversion, accept only the bounded visualization phase "
         "after the main agent has followed the conversion workflow. "
         "The subagent picks a fresh slug "
-        "via start_new_dashboard (or reuses one via bind_existing_dashboard), "
+        "via start_new_dashboard (or edits an existing slug directly), "
         "persists each query via save_query_template, write_file's the render/*.jsx "
         "components, then finalizes with validate_render. "
         "Prompt: provide the dashboard question/topic plus the filter dimensions "

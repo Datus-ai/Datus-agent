@@ -5,13 +5,7 @@
 """Unit tests for report artifact tools.
 
 Covers:
-* ``ReportArtifactTools.start_new_report`` / ``bind_existing_report`` — the
-  LLM-driven intent declaration that picks "create new" vs "edit existing"
-  before any write tool runs. ``start_new_report`` takes an LLM-supplied
-  ``slug`` that doubles as the directory name; ``bind_existing_report``
-  takes the same slug.
-* ``_require_active`` guard — save_query / validate_render fail-fast when no
-  report is bound.
+* Create and explicitly target existing report artifacts.
 * ``save_query`` — column inference, SQL persistence, schema validation,
   datasource resolution failures, slug overwrite.
 * ``validate_render`` — entry point check, sqlId cross-check, allowed bare
@@ -167,7 +161,7 @@ class TestResolveRelativeImport:
 
 
 # ----------------------------------------------------------------------------- #
-# start_new_report / bind_existing_report                                       #
+# start_new_report / report_slug                                       #
 # ----------------------------------------------------------------------------- #
 
 
@@ -252,23 +246,9 @@ class TestStartNewReport:
         assert "already exists" in (result.error or "").lower()
 
 
-class TestBindExistingReport:
-    def test_binds_when_directory_and_app_jsx_exist(self, unbound_tools: ReportArtifactTools, project_root: Path):
-        existing = project_root / "reports" / "existing_demo"
-        (existing / "queries").mkdir(parents=True)
-        (existing / "render").mkdir()
-        (existing / "render" / "app.jsx").write_text("export default function R() { return null; }\n")
-
-        result = unbound_tools.bind_existing_report("existing_demo")
-        assert result.success == 1, result.error
-        assert result.result["mode"] == "edit"
-        assert result.result["report_slug"] == "existing_demo"
-        assert unbound_tools.report_slug == "existing_demo"
-        assert unbound_tools.mode == "edit"
-        assert unbound_tools.render_dir == existing / "render"
-
+class TestExistingReportTarget:
     def test_rejects_missing_directory(self, unbound_tools: ReportArtifactTools):
-        result = unbound_tools.bind_existing_report("nope")
+        result = unbound_tools.validate_render("nope")
         assert result.success == 0
         assert "not found" in (result.error or "").lower()
         assert unbound_tools.report_slug is None
@@ -277,13 +257,13 @@ class TestBindExistingReport:
         incomplete = project_root / "reports" / "partial"
         (incomplete / "queries").mkdir(parents=True)
         (incomplete / "render").mkdir()
-        result = unbound_tools.bind_existing_report("partial")
+        result = unbound_tools.validate_render("partial")
         assert result.success == 0
         assert "render/app.jsx" in (result.error or "")
         assert unbound_tools.report_slug is None
 
     def test_rejects_invalid_slug_format(self, unbound_tools: ReportArtifactTools):
-        result = unbound_tools.bind_existing_report("Not-A-Valid-Slug!")
+        result = unbound_tools.validate_render("Not-A-Valid-Slug!")
         assert result.success == 0
         assert "match" in (result.error or "").lower()
 
@@ -301,14 +281,12 @@ class TestRequireActive:
         )
         assert result.success == 0
         error = (result.error or "").lower()
-        assert "no active report" in error
-        assert "start_new_report" in error
-        assert "bind_existing_report" in error
+        assert "report_slug" in error
 
     def test_validate_render_rejects_when_unbound(self, unbound_tools: ReportArtifactTools):
         result = unbound_tools.validate_render()
         assert result.success == 0
-        assert "no active report" in (result.error or "").lower()
+        assert "report_slug" in (result.error or "").lower()
 
 
 # ----------------------------------------------------------------------------- #
