@@ -107,11 +107,18 @@ class TestGenVisualReportInit:
         assert node.report_artifact_tools is None
         assert node._active_report_slug is None
 
-    def test_tools_include_filesystem_and_db(self, real_agent_config, mock_llm_create):
+    @pytest.mark.parametrize("db_tools", ["db_tools.*", "db_tools.list_tables, db_tools.execute_sql"])
+    def test_tools_include_filesystem_and_db(self, real_agent_config, mock_llm_create, monkeypatch, db_tools):
+        from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+
+        monkeypatch.setattr(SQLiteConnector, "supports_query_timeout_override", True)
+        real_agent_config.agentic_nodes["gen_visual_report"]["tools"] = db_tools
         node = _make_node(real_agent_config)
-        tool_names = {t.name for t in node.tools}
+        tools = {tool.name: tool for tool in node.tools}
+        tool_names = tools.keys()
         # DB tool surface
         assert "list_tables" in tool_names
+        assert "timeout" in tools["execute_sql"].params_json_schema["properties"]
         # Filesystem tool surface — write_file is how the LLM authors render/
         assert "read_file" in tool_names
         assert "write_file" in tool_names

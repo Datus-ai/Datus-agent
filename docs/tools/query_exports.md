@@ -24,6 +24,33 @@ workspace lives on the client are refused before querying or writing files.
 SQL-file inputs are limited to 16 MiB, including permission inspection, and
 must resolve to regular project files.
 
+## Wait longer for a SELECT
+
+Agent `execute_sql` accepts an optional positive integer `timeout` in seconds for
+MySQL, TiDB, StarRocks, Doris, PostgreSQL, Greenplum, Apache Hive, Spark,
+ClickHouse, Trino, SQLite, and DuckDB. The first rollout covers the Docker
+development editions and embedded databases. Use `timeout` on a known slow
+SELECT when the deployment allows a longer wait.
+
+The Agent waits for at most the requested time and the adapter replaces the
+datasource's default query timeout for that SELECT. SQL-level settings and hints
+follow the database's own precedence rules and can take precedence over the
+adapter's value. Leave out timeout hints or settings in the SQL when relying on
+the tool argument.
+
+With no value, the Agent waits at most 300 seconds and the adapter uses its
+datasource settings. Set `DATUS_SQL_TOOL_MAX_TIMEOUT_SECONDS` on the Agent process
+to allow values above 300. Driver and server limits can still end the query
+sooner. If the Agent's wait expires, the tool returns an error and the
+conversation can continue while the database may still be running the query.
+
+The tool exposes the argument when an installed connector for an available
+datasource supports it. Built-in SQLite and DuckDB require
+`datus-db-core>=0.1.12`. For other databases, install an adapter release that
+supports per-query timeouts and its required dependencies.
+
+## Export result metadata
+
 The tool returns only a project-relative path, byte/row counts, SQL hashes,
 policy scope and completion status. Query rows never enter the tool response.
 SQL read permissions and the uploads catalog file-access restrictions also apply

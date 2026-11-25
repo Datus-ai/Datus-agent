@@ -69,6 +69,20 @@ async def test_sql_result_reaches_followup_request(product):
 
 
 @pytest.mark.asyncio
+async def test_sql_tool_timeout_returns_to_model_in_the_same_turn(product, monkeypatch):
+    config, server = product
+    monkeypatch.setattr("datus.tools.func_tool.database.SQL_TOOL_TIMEOUT_SECONDS", 0.25)
+    slow_sql = (
+        "WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n < 10000000) SELECT SUM(n) FROM seq"
+    )
+    server.enqueue(tool_call("execute_sql", {"sql": slow_sql}), answer("The query timed out."))
+    node, _ = await run_chat(config, "Run the query and report the outcome.")
+    results = [message for message in server.requests[-1]["messages"] if message.get("role") == "tool"]
+    assert "SQL tool timed out after 0.25 seconds" in json.dumps(results)
+    assert "timed out" in node.result.response
+
+
+@pytest.mark.asyncio
 async def test_multiturn_retains_question_and_tool_results(product):
     config, server = product
     server.enqueue(tool_call("execute_sql", {"sql": "SELECT SUM(amount) AS total FROM orders"}), answer("Total: 350."))

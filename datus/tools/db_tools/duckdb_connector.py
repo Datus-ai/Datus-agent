@@ -6,11 +6,12 @@ import functools
 import os
 import re
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from importlib.util import find_spec
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, TypeVar, override
 
 import duckdb
-from datus_db_core import BaseSqlConnector, SchemaNamespaceMixin, list_to_in_str
+from datus_db_core import BaseSqlConnector, DatusDbException, SchemaNamespaceMixin, list_to_in_str
 from pydantic import BaseModel, Field
 
 from datus.schemas.base import TABLE_TYPE
@@ -78,6 +79,8 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
     """
     Connector for DuckDB databases with schema support using native DuckDB SDK.
     """
+
+    supports_query_timeout_override = find_spec("datus_db_core.query_timeout") is not None
 
     supports_streaming_read = True
 
@@ -637,7 +640,11 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
     @override
     @_serialised
     def execute_query(
-        self, sql: str, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"
+        self,
+        sql: str,
+        result_format: Literal["csv", "arrow", "pandas", "list"] = "csv",
+        *,
+        query_timeout_seconds: int | None = None,
     ) -> ExecuteSQLResult:
         """Execute a SELECT query.
 
@@ -654,46 +661,61 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             search_path = self.connection.execute("SELECT current_setting('search_path')").fetchone()[0]
             cursor = self.connection.cursor()
             cursor.execute(f"SET search_path={self._sql_literal(search_path)}")
-            result = cursor.execute(sql)
+            scope = nullcontext()
+            if query_timeout_seconds is not None:
+                from datus.utils.constants import SQLType
+                from datus.utils.sql_utils import parse_sql_type
 
-            if result_format == "csv":
-                df = result.df()
-                return ExecuteSQLResult(
-                    success=True,
-                    sql_query=sql,
-                    sql_return=df.to_csv(index=False),
-                    row_count=len(df),
-                    result_format=result_format,
-                )
-            elif result_format == "arrow":
-                arrow_table = result.fetch_arrow_table()
-                return ExecuteSQLResult(
-                    success=True,
-                    sql_query=sql,
-                    sql_return=arrow_table,
-                    row_count=arrow_table.num_rows,
-                    result_format=result_format,
-                )
-            elif result_format == "pandas":
-                df = result.df()
-                return ExecuteSQLResult(
-                    success=True,
-                    sql_query=sql,
-                    sql_return=df,
-                    row_count=len(df),
-                    result_format=result_format,
-                )
-            else:  # list
-                rows = result.fetchall()
-                columns = [desc[0] for desc in result.description]
-                result_list = [dict(zip(columns, row)) for row in rows]
-                return ExecuteSQLResult(
-                    success=True,
-                    sql_query=sql,
-                    sql_return=result_list,
-                    row_count=len(rows),
-                    result_format=result_format,
-                )
+                if type(query_timeout_seconds) is not int or query_timeout_seconds <= 0:
+                    raise ValueError("query_timeout_seconds must be a positive integer")
+                if parse_sql_type(sql, self.dialect) != SQLType.SELECT:
+                    raise ValueError("A per-query timeout can only be set on SELECT queries")
+                from datus_db_core.query_timeout import duckdb_query_timeout
+
+                scope = duckdb_query_timeout(cursor, query_timeout_seconds, duckdb.InterruptException)
+            with scope:
+                result = cursor.execute(sql)
+
+                if result_format == "csv":
+                    df = result.df()
+                    return ExecuteSQLResult(
+                        success=True,
+                        sql_query=sql,
+                        sql_return=df.to_csv(index=False),
+                        row_count=len(df),
+                        result_format=result_format,
+                    )
+                elif result_format == "arrow":
+                    arrow_table = result.fetch_arrow_table()
+                    return ExecuteSQLResult(
+                        success=True,
+                        sql_query=sql,
+                        sql_return=arrow_table,
+                        row_count=arrow_table.num_rows,
+                        result_format=result_format,
+                    )
+                elif result_format == "pandas":
+                    df = result.df()
+                    return ExecuteSQLResult(
+                        success=True,
+                        sql_query=sql,
+                        sql_return=df,
+                        row_count=len(df),
+                        result_format=result_format,
+                    )
+                else:  # list
+                    rows = result.fetchall()
+                    columns = [desc[0] for desc in result.description]
+                    result_list = [dict(zip(columns, row)) for row in rows]
+                    return ExecuteSQLResult(
+                        success=True,
+                        sql_query=sql,
+                        sql_return=result_list,
+                        row_count=len(rows),
+                        result_format=result_format,
+                    )
+        except DatusDbException as exc:
+            return ExecuteSQLResult(success=False, error=str(exc), sql_query=sql)
         except Exception as e:
             ex = self._handle_exception(e, sql)
             return ExecuteSQLResult(
