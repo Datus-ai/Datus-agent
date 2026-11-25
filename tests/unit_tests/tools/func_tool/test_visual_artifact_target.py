@@ -30,7 +30,7 @@ def existing(request, tmp_path):
     for slug in ("current", "other"):
         creator = tools_cls(agent_config=config, db_func_tool=None, user_message="Create revenue analysis.")
         result = getattr(creator, f"start_new_{kind}")(slug, "Revenue analysis", "Revenue by month")
-        assert result.success, result.error
+        assert result.success == 1, result.error
         (creator.render_dir / "app.jsx").write_text("export default function App() { return null; }")
     return kind, tmp_path / f"{kind}s/current", tools, fs_cls(root_path=str(tmp_path))
 
@@ -45,10 +45,9 @@ async def test_sdk_can_validate_an_existing_slug_before_any_write(existing):
         tools = make_tools(requested_slug="current") if pinned else make_tools()
         validation = next(tool for tool in tools.available_tools() if tool.name == "validate_render")
         args = {} if pinned else {slug_field: "current"}
-        if not pinned:
-            assert slug_field in validation.params_json_schema["required"]
+        assert (slug_field in validation.params_json_schema["properties"]) == (not pinned)
         result = await validation.on_invoke_tool(None, json.dumps(args))
-        assert result["success"], result["error"]
+        assert result["success"] == 1, result["error"]
         assert result["result"]["artifact_slug"] == "current"
         assert result["result"]["app_jsx_path"] == f"{kind}s/current/render/app.jsx"
         assert notes.read_bytes() == before
@@ -64,7 +63,7 @@ def test_successful_file_edits_record_one_intent_even_when_retried(existing):
     assert not fs.edit_file(target, "unknown", "replacement").success
     assert not fs.write_file(f"{kind}s/other/render/app.jsx", "wrong target").success
     assert notes.read_bytes() == before
-    assert fs.edit_file(target, "return null", "return <main/>").success
+    assert fs.edit_file(target, "return null", "return <main/>").success == 1
     assert notes.read_bytes().startswith(before)
     assert "return <main/>" in (directory / "render/app.jsx").read_text()
 
@@ -74,10 +73,10 @@ def test_successful_file_edits_record_one_intent_even_when_retried(existing):
     with ThreadPoolExecutor(max_workers=4) as pool:
         assert all(result.success for result in pool.map(write_component, range(8)))
     fs.artifact_target = make_tools(requested_slug="current", intent_timestamp=tools.target.intent_timestamp).target
-    assert fs.delete_file(f"{kind}s/current/render/cards/parts/item0.jsx").success
+    assert fs.delete_file(f"{kind}s/current/render/cards/parts/item0.jsx").success == 1
     assert notes.read_text().count("Show net revenue.") == 1
     fs.artifact_target = make_tools(requested_slug="current").target
-    assert fs.delete_file(f"{kind}s/current/render/cards/parts/item1.jsx").success
+    assert fs.delete_file(f"{kind}s/current/render/cards/parts/item1.jsx").success == 1
     assert notes.read_text().count("Show net revenue.") == 2
 
 

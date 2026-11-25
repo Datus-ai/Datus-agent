@@ -1371,7 +1371,7 @@ def test_first_query_save_on_existing_artifact_records_one_intent(environment, k
     env = environment
     kwargs = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
     original, saved = _save(env, kind, **kwargs)
-    assert saved.success, saved.error
+    assert saved.success == 1, saved.error
     (original.render_dir / "app.jsx").write_text("export default function App() { return null; }")
     tools = type(original)(
         agent_config=env.config, db_func_tool=env.db, semantic_tools=env.semantic, user_message="Compare net revenue."
@@ -1388,7 +1388,7 @@ def test_first_query_save_on_existing_artifact_records_one_intent(environment, k
     notes = original.analysis_dir / "intent.md"
     assert not notes.exists()
     result = raw(**target, **brief, **source, fallback_reason="A fixed baseline for the comparison")
-    assert result.success, result.error
+    assert result.success == 1, result.error
     result = metric(**target, **brief, **kwargs, query={"metric": REF})
-    assert result.success, result.error
+    assert result.success == 1, result.error
     assert notes.read_text().count("Compare net revenue.") == 1
