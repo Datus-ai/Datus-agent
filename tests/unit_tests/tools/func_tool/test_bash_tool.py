@@ -10,6 +10,11 @@ timeout, output limits, and the ``allowed_patterns`` semantics that decide
 whether the tool is exposed.
 """
 
+import json
+import os
+import signal
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -442,6 +447,59 @@ class TestBashToolOutputOffload:
         assert result.result.strip() == "ok"
 
 
+def _run_sigpipe_pipeline(workspace, *, offload, blocked, inherited_pipefail=False, explicit_pipefail=False):
+    """Give the real tool an explicit signal precondition in an isolated process."""
+    # An empty set queries the mask without changing the pytest process.
+    parent_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+    program = """
+import json
+import signal
+import sys
+from pathlib import Path
+from datus.tools.func_tool.bash_tool import BashTool
+
+workspace, offload, blocked, inherited, explicit = json.loads(sys.argv[1])
+signal.pthread_sigmask(signal.SIG_BLOCK if blocked else signal.SIG_UNBLOCK, {signal.SIGPIPE})
+assert (signal.SIGPIPE in signal.pthread_sigmask(signal.SIG_BLOCK, set())) is blocked
+root = Path(workspace)
+env = {"LC_ALL": "C"}
+if inherited:
+    env["SHELLOPTS"] = "braceexpand:hashall:interactive-comments:pipefail"
+tool = BashTool(workspace_root=workspace, allowed_patterns=["*"], timeout=10,
+                extra_env=env, output_dir_provider=(lambda: root / "output") if offload else None)
+command = ("set -o pipefail; " if explicit else "") + "yes | head -1"
+if blocked:
+    # Finish the pipeline before emitting its stdout. GNU yes writes its error
+    # in fragments, which could otherwise interleave with head's output.
+    # Keep stderr untouched and return the actual pipeline's exit status.
+    command += ' > .sigpipe-head; status=$?; cat .sigpipe-head; exit "$status"'
+result = tool.bash(command)
+print("SIGPIPE_RESULT " + json.dumps({"success": result.success, "result": result.result, "error": result.error}))
+"""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            program,
+            json.dumps([str(workspace), offload, blocked, inherited_pipefail, explicit_pipefail]),
+        ],
+        cwd=workspace,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[4])},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert signal.pthread_sigmask(signal.SIG_BLOCK, set()) == parent_mask
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    records = [
+        line.removeprefix("SIGPIPE_RESULT ")
+        for line in completed.stdout.splitlines()
+        if line.startswith("SIGPIPE_RESULT ")
+    ]
+    assert len(records) == 1, completed.stdout
+    return json.loads(records[0])
+
+
 class TestPipelineExecution:
     """Real-shell execution: pipelines, operators, pipefail, timeout, gate."""
 
@@ -486,13 +544,40 @@ class TestPipelineExecution:
         assert result.success == 1
         assert result.result.strip() == "a|b"
 
-    def test_sigpipe_upstream_terminates(self, unrestricted_tool):
-        # `yes` would run forever; `head -1` closes the pipe → upstream dies.
-        # With a short timeout this must still return promptly, not hang.
-        tool = BashTool(workspace_root=str(unrestricted_tool.workspace_root), allowed_patterns=["*"], timeout=10)
-        result = tool.bash("yes | head -1")
-        assert result.success == 1
-        assert result.result.strip() == "y"
+    @pytest.mark.parametrize("offload", [False, True])
+    def test_sigpipe_upstream_terminates(self, temp_workspace, offload):
+        # A blocked SIGPIPE produces an EPIPE diagnostic instead of termination.
+        # Establish the normal shell signal precondition only in our child.
+        result = _run_sigpipe_pipeline(temp_workspace, offload=offload, blocked=False)
+        assert result["success"] == 1, result["error"]
+        assert result["result"].strip() == "y"
+
+    @pytest.mark.parametrize("offload", [False, True])
+    def test_inherited_pipefail_does_not_change_pipeline_exit_semantics(self, temp_workspace, offload):
+        result = _run_sigpipe_pipeline(temp_workspace, offload=offload, blocked=False, inherited_pipefail=True)
+        assert result["success"] == 1, result["error"]
+        assert result["result"].strip() == "y"
+
+    @pytest.mark.parametrize("offload", [False, True])
+    @pytest.mark.parametrize("explicit_pipefail", [False, True])
+    def test_blocked_sigpipe_preserves_broken_pipe_diagnostic(self, temp_workspace, offload, explicit_pipefail):
+        result = _run_sigpipe_pipeline(
+            temp_workspace, offload=offload, blocked=True, explicit_pipefail=explicit_pipefail
+        )
+        assert result["success"] == (0 if explicit_pipefail else 1)
+        assert result["error"] == ("Command exited with code 1" if explicit_pipefail else None)
+        # GNU and BSD yes name the failing output stream differently.
+        stream = "stdout" if sys.platform == "darwin" else "standard output"
+        diagnostic = f"yes: {stream}: Broken pipe"
+        # The command emits captured stdout only after the pipeline finishes;
+        # stderr remains untouched and both streams must be preserved verbatim.
+        expected = f"{diagnostic}\ny\n" if offload else f"y\n\n[stderr]\n{diagnostic}\n"
+        assert result["result"] == expected
+
+    def test_explicit_pipeline_failure_option_remains_effective(self, unrestricted_tool):
+        result = unrestricted_tool.bash("set -o pipefail; false | true")
+        assert result.success == 0
+        assert result.error == "Command exited with code 1"
 
     def test_timeout_kills_whole_pipeline(self, temp_workspace):
         tool = BashTool(workspace_root=str(temp_workspace), allowed_patterns=["*"], timeout=1)

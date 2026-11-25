@@ -14,6 +14,8 @@ import argparse
 import asyncio
 import json
 import os
+import threading
+import time
 import webbrowser
 
 import uvicorn
@@ -167,8 +169,6 @@ def _schedule_browser_open(url: str, delay: float = 1.5) -> None:
     the patch is lifted as soon as the mocked ``uvicorn.run`` returns, while the
     daemon thread is still asleep and would then call the real ``webbrowser``.
     """
-    import threading
-    import time
 
     def _open():
         time.sleep(delay)

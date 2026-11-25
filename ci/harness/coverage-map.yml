@@ -233,6 +233,8 @@ flow_groups:
             status: covered
             nodeids:
               - tests/integration/api/test_api_chat.py
+              - tests/integration/api/test_chat_acceptance.py::test_http_running_session_consumes_queued_message_once
+              - tests/integration/api/test_semantic_session_acceptance.py::test_http_semantic_generation_finishes_and_releases_session
           weekly_benchmark:
             status: not_applicable
         gaps:
@@ -370,6 +372,9 @@ flow_groups:
               - tests/integration/adapters/test_hive.py
               - tests/integration/adapters/test_spark.py
               - tests/integration/adapters/test_gaussdb.py
+              - tests/integration/tools/test_hana_semantic_verification.py::test_hana_derived_metric_bindings_and_business_verification
+              - tests/integration/agent/test_hana_chat_agentic.py::test_hana_chat_join_aggregate
+              - tests/integration/agent/test_hana_chat_agentic.py::test_hana_chat_multi_turn
           weekly_benchmark:
             status: covered
             notes: Baisheng weekly benchmark runs Datus queries against StarRocks.
@@ -586,6 +591,8 @@ flow_groups:
               - tests/unit_tests/tools/func_tool/test_semantic_tools.py::TestRuntimeDbContext::test_runtime_change_rebuilds_dosi_runtime
               - tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm
               - tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm
+              - tests/integration/agent/test_datasource_switch_acceptance.py::test_same_session_switches_source_before_querying_and_authoring_metrics
+              - tests/integration/api/test_semantic_session_acceptance.py::test_http_semantic_generation_finishes_and_releases_session
               - tests/integration/storage/test_postgresql_semantic_kb.py::test_postgresql_semantic_kb_reconcile_is_idempotent
               - tests/integration/tools/test_dosi_ontology.py
             notes: >
@@ -1126,8 +1133,14 @@ flow_groups:
           merge_queue:
             status: not_applicable
           nightly:
-            status: external
-            notes: Live image interpretation depends on provider credentials and network access.
+            status: partial
+            nodeids:
+              - tests/integration/models/test_custom_model_preflight.py::test_self_hosted_model_reads_code_from_image
+            notes: >
+              The required Docker vision suite verifies real local-image interpretation
+              with a pinned self-hosted model. Resuming an image-bearing agent session
+              still has deterministic coverage only; provider-specific image support
+              remains dependent on external credentials and network access.
           weekly_benchmark:
             status: not_applicable
         gaps:
@@ -1258,6 +1271,7 @@ flow_groups:
               - tests/integration/models/test_qwen_model.py
               - tests/integration/models/test_other_models.py
               - tests/integration/models/test_deepseek_model.py
+              - tests/integration/models/test_custom_model_preflight.py::test_self_hosted_model_reads_code_from_image
           weekly_benchmark:
             status: covered
             notes: Weekly benchmark records model/target metadata for quality trend tracking.
@@ -1288,6 +1302,9 @@ execution:
     - tests/integration/api/test_chat_acceptance.py::test_chat_http_sql_multiturn_history_and_delete
     - tests/integration/api/test_chat_acceptance.py::test_chat_history_is_isolated_by_user
     - tests/integration/api/test_chat_acceptance.py::test_stop_releases_session_for_the_next_request
+    - tests/integration/agent/test_datasource_switch_acceptance.py::test_same_session_switches_source_before_querying_and_authoring_metrics
+    - tests/integration/api/test_chat_acceptance.py::test_http_running_session_consumes_queued_message_once
+    - tests/integration/api/test_semantic_session_acceptance.py::test_http_semantic_generation_finishes_and_releases_session
   integration_rules:
     - id: api
       paths:
@@ -1518,6 +1535,7 @@ execution:
       paths:
         - datus/agent/node/
       targets:
+        - tests/unit_tests/ci/test_llm_skill_fixture.py
         - tests/unit_tests/ci/test_bi_diagnostics.py
         - tests/unit_tests/agent/
         - tests/unit_tests/api/
@@ -1531,6 +1549,7 @@ execution:
       paths:
         - datus/agent/
       targets:
+        - tests/unit_tests/ci/test_llm_skill_fixture.py
         - tests/unit_tests/ci/test_bi_diagnostics.py
         - tests/unit_tests/agent/
         - tests/unit_tests/api/
@@ -1834,6 +1853,7 @@ execution:
       paths:
         - datus/tools/skill_tools/
       targets:
+        - tests/unit_tests/ci/test_llm_skill_fixture.py
         - tests/unit_tests/agent/
         - tests/unit_tests/cli/
         - tests/unit_tests/tools/skill_tools/

@@ -40,6 +40,7 @@ PACKAGE_NAMES = (
     "datus-trino",
     "datus-greenplum",
     "datus-hive",
+    "datus-hana",
     "datus-spark",
     "datus-gaussdb",
     "datus-tidb",
@@ -130,6 +131,84 @@ def env_value(name: str) -> str:
     return os.environ.get(name, "")
 
 
+def nightly_case_scope() -> list[dict[str, str]]:
+    """Declare daily requirements and deliberate frequency/protocol exclusions.
+
+    Credentials never determine applicability. Explicit capacity opt-ins bring
+    the weekly scenarios into this run and make them ordinary required tests.
+    """
+    cases = [
+        {
+            "nodeid": "tests/integration/cli/test_init_live.py::test_qwen_scoped_init_supplements_existing_documents",
+            "status": "required",
+            "frequency": "nightly",
+            "reason": "Scoped init is a core user-facing flow in the daily product baseline.",
+        }
+    ]
+    for nodeid, target in (
+        (
+            "tests/integration/tools/test_hana_semantic_verification.py::test_hana_derived_metric_bindings_and_business_verification",
+            "hana-express",
+        ),
+        ("tests/integration/agent/test_hana_chat_agentic.py::test_hana_chat_join_aggregate", "hana-express"),
+        ("tests/integration/agent/test_hana_chat_agentic.py::test_hana_chat_multi_turn", "hana-express"),
+        (
+            "tests/integration/models/test_custom_model_preflight.py::test_self_hosted_model_reads_code_from_image",
+            "self-hosted-vision",
+        ),
+    ):
+        cases.append(
+            {
+                "nodeid": nodeid,
+                "status": "required",
+                "frequency": "nightly",
+                "reason": "A dedicated service group provisions the required real Docker test dependency.",
+                "target": target,
+            }
+        )
+    for nodeid, opt_in, reason in (
+        (
+            "tests/integration/cli/test_init_live.py::test_qwen_init_large_catalog_in_one_loop",
+            "DATUS_RUN_LIVE_INIT_SCALE",
+            "The 20,000-table catalog extends the daily init flow as a weekly capacity scenario.",
+        ),
+        (
+            "tests/integration/models/test_qwen_capacity_live.py::test_qwen_long_input_and_automatic_compaction",
+            "DATUS_RUN_LIVE_CAPACITY",
+            "Long-input and compaction capacity extend the daily model baseline on the weekly schedule.",
+        ),
+    ):
+        cases.append(
+            {
+                "nodeid": nodeid,
+                "status": "required" if os.environ.get(opt_in) == "1" else "scheduled_out",
+                "frequency": "weekly",
+                "opt_in_env": opt_in,
+                "reason": reason,
+            }
+        )
+    cases.append(
+        {
+            "nodeid": "tests/integration/tools/test_dosi_hive.py::test_native_inceptor_system_varchar2_metrics",
+            "status": "not_applicable",
+            "frequency": "nightly",
+            "reason": "The provisioned compose target is Apache Hive; Inceptor system views require an Inceptor target.",
+            "target": "apache-hive",
+        }
+    )
+    return cases
+
+
+def print_case_scope(args: argparse.Namespace) -> None:
+    scope = nightly_case_scope()
+    if args.deselected_nodeids:
+        for case in scope:
+            if case["status"] in {"scheduled_out", "not_applicable"}:
+                print(case["nodeid"])
+    else:
+        print(json.dumps(scope, indent=2))
+
+
 def init_manifest(args: argparse.Namespace) -> None:
     repo_root = Path(args.repo_root).resolve()
     external_root = Path(args.external_repos_root).resolve()
@@ -184,6 +263,7 @@ def init_manifest(args: argparse.Namespace) -> None:
             if os.environ.get("DATUS_SQL_POLICY_RECEIPT")
             else None
         ),
+        "case_scope": nightly_case_scope(),
         "compose_projects": [],
         "suites": [],
     }
@@ -317,6 +397,16 @@ def record_collection(args: argparse.Namespace) -> None:
     write_manifest(path, manifest)
 
 
+def record_execution(args: argparse.Namespace) -> None:
+    path = Path(args.output)
+    manifest = load_manifest(path)
+    execution = json.loads(Path(args.execution_report).read_text(encoding="utf-8"))
+    if not isinstance(execution, dict) or not isinstance(execution.get("outcomes"), dict):
+        raise ValueError("Invalid pytest execution report")
+    find_suite(manifest, args.name)["execution"] = execution
+    write_manifest(path, manifest)
+
+
 def record_compose_project(args: argparse.Namespace) -> None:
     path = Path(args.output)
     manifest = load_manifest(path)
@@ -368,6 +458,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    scope_parser = subparsers.add_parser("case-scope")
+    scope_parser.add_argument("--deselected-nodeids", action="store_true")
+    scope_parser.set_defaults(func=print_case_scope)
+
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--output", required=True)
     init_parser.add_argument("--repo-root", required=True)
@@ -395,6 +489,12 @@ def build_parser() -> argparse.ArgumentParser:
     collection_parser.add_argument("--exit-code", required=True, type=int)
     collection_parser.add_argument("--collection-output", required=True)
     collection_parser.set_defaults(func=record_collection)
+
+    execution_parser = subparsers.add_parser("record-execution")
+    execution_parser.add_argument("--output", required=True)
+    execution_parser.add_argument("--name", required=True)
+    execution_parser.add_argument("--execution-report", required=True)
+    execution_parser.set_defaults(func=record_execution)
 
     compose_parser = subparsers.add_parser("record-compose-project")
     compose_parser.add_argument("--output", required=True)

@@ -6,7 +6,9 @@
 
 import argparse
 import os
-from unittest.mock import MagicMock, patch
+import threading
+import time
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -490,11 +492,18 @@ class TestScheduleBrowserOpen:
     def test_delays_then_calls_webbrowser_open(self):
         from datus.cli.web.chatbot import _schedule_browser_open
 
+        original_sleep = time.sleep
+        original_thread = threading.Thread
         with (
             patch("datus.cli.web.chatbot.webbrowser") as mock_webbrowser,
-            patch("time.sleep") as mock_sleep,
-            patch("threading.Thread") as mock_thread,
+            patch("datus.cli.web.chatbot.time") as mock_time,
+            patch("datus.cli.web.chatbot.threading") as mock_threading,
         ):
+            mock_sleep = mock_time.sleep
+            mock_thread = mock_threading.Thread
+            actions = MagicMock()
+            actions.attach_mock(mock_sleep, "sleep")
+            actions.attach_mock(mock_webbrowser.open, "open")
             _schedule_browser_open("http://example.test:1234", delay=0.25)
 
             mock_thread.assert_called_once()
@@ -503,8 +512,13 @@ class TestScheduleBrowserOpen:
             inner = kwargs["target"]
 
             mock_thread.return_value.start.assert_called_once()
+            mock_sleep.assert_not_called()
+            mock_webbrowser.open.assert_not_called()
+            assert time.sleep is original_sleep
+            assert threading.Thread is original_thread
 
             # Invoke the inner thread target directly to cover the sleep+open path.
             inner()
             mock_sleep.assert_called_once_with(0.25)
             mock_webbrowser.open.assert_called_once_with("http://example.test:1234")
+            assert actions.mock_calls == [call.sleep(0.25), call.open("http://example.test:1234")]

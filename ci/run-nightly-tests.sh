@@ -50,6 +50,18 @@ NIGHTLY_PYTEST_ROOTS=(tests/integration tests/regression)
 # import so strict collection does not require its explicitly opt-in credentials.
 NIGHTLY_OPTIONAL_CLOUD_IGNORES=(--ignore tests/integration/adapters/test_snowflake_secrets.py)
 
+prepare_nightly_case_scope() {
+  local deselected_nodeids
+  local nodeid
+  NIGHTLY_FREQUENCY_DESELECTS=()
+  deselected_nodeids="$(uv run python ci/nightly_manifest.py case-scope --deselected-nodeids)" || return 1
+  while IFS= read -r nodeid; do
+    if [ -n "$nodeid" ]; then
+      NIGHTLY_FREQUENCY_DESELECTS+=(--deselect "$nodeid")
+    fi
+  done <<< "$deselected_nodeids"
+}
+
 default_repo_root() {
   local explicit_root="$1"
   local repo_name="$2"
@@ -81,6 +93,7 @@ GREENPLUM_COMPOSE="${GREENPLUM_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-greenplum/dock
 HIVE_COMPOSE="${HIVE_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-hive/docker-compose.yml}"
 SPARK_COMPOSE="${SPARK_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-spark/docker-compose.yml}"
 GAUSSDB_COMPOSE="${GAUSSDB_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-gaussdb/docker-compose.yml}"
+HANA_COMPOSE="${HANA_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-hana/docker-compose.yml}"
 SUPERSET_COMPOSE="${SUPERSET_COMPOSE:-${BI_ADAPTERS_ROOT}/datus-bi-superset/tests/integration/docker-compose.yml}"
 GRAFANA_COMPOSE="${GRAFANA_COMPOSE:-${BI_ADAPTERS_ROOT}/datus-bi-grafana/tests/integration/docker-compose.yml}"
 AIRFLOW_COMPOSE="${AIRFLOW_COMPOSE:-${SCHEDULER_ADAPTERS_ROOT}/datus-scheduler-airflow/tests/integration/docker-compose.yml}"
@@ -103,6 +116,9 @@ COMPOSE_FILES=(
 
 COMPOSE_GROUPS=(
   "Superset Product Tests"
+  "Superset Product Tests - Chart Lifecycle"
+  "Superset Product Tests - Bootstrap"
+  "Superset Product Tests - Dashboard"
   "BI Orchestration Contracts"
   "Grafana Nightly Tests"
   "Airflow Nightly Tests"
@@ -117,11 +133,13 @@ COMPOSE_GROUPS=(
   "Hive Adapter Tests"
   "Spark Adapter Tests"
   "GaussDB Adapter Tests"
+  "HANA Agent Tests"
 )
 
 DOCKER_GROUPS=(
   "PostgreSQL Agent Storage Tests"
   "PostgreSQL Storage Adapter Tests"
+  "Self-hosted Vision Tests"
   "${COMPOSE_GROUPS[@]}"
 )
 
@@ -152,6 +170,7 @@ manifest_update() {
   local status=$?
   if [ "$status" -ne 0 ]; then
     echo "WARNING: nightly manifest update failed: ci/nightly_manifest.py $*" | tee -a "$LOG_FILE" >&2
+    test_exit_code=1
     return 0
   fi
 }
@@ -337,7 +356,12 @@ should_run_group() {
     return 0
   fi
 
-  [[ "$group_name" =~ $NIGHTLY_GROUP_FILTER ]]
+  if [[ "$group_name" =~ $NIGHTLY_GROUP_FILTER ]]; then
+    return 0
+  fi
+  # Preserve parent filters (including an anchored exact name) for the full
+  # nightly's isolated children, without broadening other profile selection.
+  [[ "$group_name" == "Superset Product Tests - "* && "Superset Product Tests" =~ $NIGHTLY_GROUP_FILTER ]]
 }
 
 validate_nightly_group_filter() {
@@ -507,6 +531,9 @@ compose_project_slug() {
   local group_name="$1"
 
   case "$group_name" in
+    "Superset Product Tests - Chart Lifecycle") echo "superset-chart-lifecycle" ;;
+    "Superset Product Tests - Bootstrap") echo "superset-bootstrap" ;;
+    "Superset Product Tests - Dashboard") echo "superset-dashboard" ;;
     "Superset Product Tests" | "BI Orchestration Contracts") echo "superset" ;;
     "Grafana Nightly Tests") echo "grafana" ;;
     "Airflow Nightly Tests") echo "airflow" ;;
@@ -521,6 +548,7 @@ compose_project_slug() {
     "Hive Adapter Tests") echo "hive" ;;
     "Spark Adapter Tests") echo "spark" ;;
     "GaussDB Adapter Tests") echo "gaussdb" ;;
+    "HANA Agent Tests") echo "hana-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}" ;;
     *)
       echo "$group_name" \
         | tr '[:upper:]' '[:lower:]' \
@@ -551,7 +579,7 @@ compose_cmd() {
 compose_down() {
   local compose_file="$1"
   local project_name="$2"
-  compose_cmd "$project_name" "$compose_file" down -v --remove-orphans >/dev/null 2>&1 || true
+  compose_cmd "$project_name" "$compose_file" down -v --remove-orphans
 }
 
 cleanup_all_compose() {
@@ -563,9 +591,14 @@ cleanup_all_compose() {
   local group_name
   local compose_file
   local project_name
+  local cleanup_status=0
   for group_name in "${COMPOSE_GROUPS[@]}"; do
+    if [ "$group_name" = "HANA Agent Tests" ]; then
+      cleanup_hana_nightly_environment || cleanup_status=1
+      continue
+    fi
     case "$group_name" in
-      "Superset Product Tests" | "BI Orchestration Contracts") compose_file="$SUPERSET_COMPOSE" ;;
+      "Superset Product Tests" | "Superset Product Tests - "* | "BI Orchestration Contracts") compose_file="$SUPERSET_COMPOSE" ;;
       "Grafana Nightly Tests") compose_file="$GRAFANA_COMPOSE" ;;
       "Airflow Nightly Tests") compose_file="$AIRFLOW_COMPOSE" ;;
       "PostgreSQL Adapter Tests") compose_file="$POSTGRES_COMPOSE" ;;
@@ -584,9 +617,10 @@ cleanup_all_compose() {
     if [ -f "$compose_file" ]; then
       project_name="$(compose_project_name "$group_name")"
       echo "Stopping services from $compose_file (project=$project_name)"
-      compose_cmd "$project_name" "$compose_file" down -v --remove-orphans || true
+      compose_down "$compose_file" "$project_name" || cleanup_status=1
     fi
   done
+  return "$cleanup_status"
 }
 
 backup_agent_test_config() {
@@ -711,8 +745,11 @@ nightly_trace_expected_for_group() {
       "Web UI Nightly Tests" | \
       "Product E2E Nightly Tests" | \
       "Superset Product Tests" | \
+      "Superset Product Tests - "* | \
       "Grafana Nightly Tests" | \
       "Airflow Nightly Tests" | \
+      "HANA Agent Tests" | \
+      "Self-hosted Vision Tests" | \
       "Provider Health Tests")
       return 0
       ;;
@@ -833,6 +870,169 @@ cleanup_gaussdb_tls_host_artifacts() {
   GAUSSDB_TLS_HOST_DIR=""
 }
 
+hana_nightly_state_root() {
+  local project_name
+  project_name="$(compose_project_name "HANA Agent Tests")" || return 1
+  printf '%s/datus-agent-hana-%s\n' "${RUNNER_TEMP:-${TMPDIR:-/tmp}}" "$project_name"
+}
+
+cleanup_hana_nightly_environment() {
+  local state_root
+  local project_name
+  local marker
+  state_root="$(hana_nightly_state_root)" || return 1
+  project_name="$(compose_project_name "HANA Agent Tests")" || return 1
+  if [ ! -e "$state_root" ] && [ ! -L "$state_root" ]; then
+    return 0
+  fi
+  marker="$state_root/.nightly-project"
+  if [ -L "$state_root" ] || [ ! -d "$state_root" ] || [ ! -f "$marker" ] || [ -L "$marker" ] || [ "$(cat "$marker")" != "$project_name" ]; then
+    log "Refusing to clean unowned HANA nightly state: $state_root"
+    test_exit_code=1
+    return 1
+  fi
+  if [ -f "$state_root/docker-compose.yml" ]; then
+    if ! DATUS_TEST_HANA_PASSWORD=unused-for-compose-down compose_cmd "$project_name" "$state_root/docker-compose.yml" down -v --remove-orphans; then
+      log "HANA service cleanup failed; preserving private state for recovery: $state_root"
+      test_exit_code=1
+      return 1
+    fi
+  fi
+  if [ -e "$state_root/.express" ] || [ -L "$state_root/.express" ]; then
+    if ! sudo -n python3 "$state_root/scripts/prepare_express.py" --cleanup; then
+      log "HANA bootstrap cleanup failed; preserving private state for recovery: $state_root"
+      test_exit_code=1
+      return 1
+    fi
+  fi
+  rm -f -- "$state_root/docker-compose.yml" "$state_root/scripts/prepare_express.py" "$state_root/scripts/wait_for_hana.py"
+  if [ -d "$state_root/scripts" ] && ! rmdir "$state_root/scripts"; then
+    log "HANA private state contains unexpected files; preserving it for inspection: $state_root"
+    test_exit_code=1
+    return 1
+  fi
+  if [ -n "$(find "$state_root" -mindepth 1 -maxdepth 1 ! -name .nightly-project -print -quit)" ]; then
+    log "HANA private state contains unexpected files; preserving it for inspection: $state_root"
+    test_exit_code=1
+    return 1
+  fi
+  rm -f -- "$marker"
+  if ! rmdir "$state_root"; then
+    (umask 077; printf '%s\n' "$project_name" > "$marker")
+    test_exit_code=1
+    return 1
+  fi
+  if [ "${HANA_NIGHTLY_GENERATED_PASSWORD:-0}" = "1" ]; then
+    unset DATUS_TEST_HANA_PASSWORD HANA_PASSWORD
+    HANA_NIGHTLY_GENERATED_PASSWORD=0
+  fi
+  return 0
+}
+
+prepare_hana_nightly_environment() {
+  local state_root
+  local source_root="${DB_ADAPTERS_ROOT}/datus-hana"
+  local project_name
+  state_root="$(hana_nightly_state_root)" || return 1
+  project_name="$(compose_project_name "HANA Agent Tests")" || return 1
+  # Stop only the same run's stale project before touching its private data.
+  cleanup_hana_nightly_environment || return 1
+  mkdir -m 700 "$state_root" || return 1
+  (umask 077; printf '%s\n' "$project_name" > "$state_root/.nightly-project") || return 1
+  mkdir -m 700 "$state_root/scripts" || return 1
+  cp "$source_root/docker-compose.yml" "$state_root/docker-compose.yml" || return 1
+  cp "$source_root/scripts/prepare_express.py" "$source_root/scripts/wait_for_hana.py" "$state_root/scripts/" || return 1
+  HANA_COMPOSE="$state_root/docker-compose.yml"
+
+  if [ -z "${DATUS_TEST_HANA_PASSWORD:-}" ]; then
+    DATUS_TEST_HANA_PASSWORD="$(python3 -c 'import secrets; print("Datus9_" + secrets.token_hex(18))')" || return 1
+    HANA_NIGHTLY_GENERATED_PASSWORD=1
+  fi
+  export DATUS_TEST_HANA_PASSWORD
+  if [ "${GITHUB_ACTIONS:-false}" = "true" ]; then
+    printf '::add-mask::%s\n' "$DATUS_TEST_HANA_PASSWORD"
+  fi
+  export HANA_HOST_PORT="${HANA_HOST_PORT:-23942}"
+  export HANA_HOST=127.0.0.1 HANA_PORT="$HANA_HOST_PORT"
+  export HANA_USER=DATUS_TEST HANA_SCHEMA=DATUS_TEST
+  export HANA_PASSWORD="$DATUS_TEST_HANA_PASSWORD" HANA_ENCRYPT=false
+  export HANA_REQUIRE_AGENT_E2E=1
+  export HANA_AGENT_E2E_ARTIFACT_DIR="${REPO_ROOT}/test-results/hana"
+  unset HANA_USERKEY HANA_DATABASE
+  # Reuse the adapter's Linux/x86_64, RAM/disk and kernel prerequisite checks.
+  # The helper only stages this run's bootstrap files; it never changes sysctls.
+  sudo -n --preserve-env=DATUS_TEST_HANA_PASSWORD,HANA_MEMORY_LIMIT_GIB,HANA_MIN_FREE_DISK_GIB \
+    python3 "$state_root/scripts/prepare_express.py"
+}
+
+vision_nightly_state_root() {
+  local project_name
+  project_name="$(compose_project_name "Self-hosted Vision Tests")" || return 1
+  printf '%s/datus-agent-nightly-vision-%s-%s-%s\n' "${RUNNER_TEMP:-${TMPDIR:-/tmp}}" "$project_name" "${GITHUB_RUN_ID:-local}" "${GITHUB_RUN_ATTEMPT:-0}"
+}
+
+cleanup_vision_nightly_environment() {
+  local state_root artifact_root cleanup_status=0
+  state_root="$(vision_nightly_state_root)" || return 1
+  [ -f "$state_root/evidence.json" ] || return 0
+  uv run python ci/self_hosted_vision.py cleanup --work "$state_root" >>"$LOG_FILE" 2>&1 || cleanup_status=1
+  artifact_root="${REPO_ROOT}/nightly-vision-evidence/$(compose_project_name "Self-hosted Vision Tests")"
+  mkdir -p "$artifact_root" || return 1
+  cp "$state_root/evidence.json" "$artifact_root/evidence.json" || cleanup_status=1
+  if [ -f "$state_root/server.log" ]; then
+    cp "$state_root/server.log" "$artifact_root/server.log" || cleanup_status=1
+  fi
+  # Runtime configuration may contain an externally supplied authenticated URL.
+  rm -f "$state_root/environment.sh" || cleanup_status=1
+  return "$cleanup_status"
+}
+
+run_self_hosted_vision_suite() {
+  local state_root started_at prepare_status
+  if ! should_run_group "Self-hosted Vision Tests"; then
+    started_at="$(utc_now)"
+    manifest_record_suite "Self-hosted Vision Tests" blocking command skipped 0 "$started_at" "$started_at"
+    return 0
+  fi
+  state_root="$(vision_nightly_state_root)" || { test_exit_code=1; return 0; }
+  started_at="$(utc_now)"
+  # Provision before run_logged performs collection: absent configuration must
+  # never turn this required real-model case into a collection-time skip.
+  (umask 077; uv run python ci/self_hosted_vision.py prepare --work "$state_root" \
+    --cache "${NIGHTLY_HOME}/vision-models" --memory "${DATUS_NIGHTLY_VISION_MEMORY:-8g}" \
+    --cpus "${DATUS_NIGHTLY_VISION_CPUS:-4}" --ready-timeout "${DATUS_NIGHTLY_VISION_READY_TIMEOUT:-600}") 2>&1 | tee -a "$LOG_FILE"
+  prepare_status=${PIPESTATUS[0]}
+  if [ "$prepare_status" -ne 0 ] || [ ! -f "$state_root/environment.sh" ]; then
+    test_exit_code=1
+    manifest_record_suite "Self-hosted Vision Tests" blocking provisioning failed 1 "$started_at" "$(utc_now)"
+    cleanup_vision_nightly_environment || test_exit_code=1
+    return 0
+  fi
+  # shellcheck source=/dev/null
+  source "$state_root/environment.sh"
+  run_logged "Self-hosted Vision Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest tests/integration/models/test_custom_model_preflight.py::test_self_hosted_model_reads_code_from_image -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread
+  cleanup_vision_nightly_environment || test_exit_code=1
+}
+
+finish_compose_suite() {
+  local group_name="$1"
+  local compose_file="$2"
+  local project_name="$3"
+  local previous_test_exit_code="$test_exit_code"
+  local cleanup_status
+  if [ "$group_name" = "HANA Agent Tests" ]; then
+    cleanup_hana_nightly_environment
+    cleanup_status=$?
+  else
+    compose_down "$compose_file" "$project_name"
+    cleanup_status=$?
+  fi
+  if [ "$previous_test_exit_code" -ne 0 ]; then
+    test_exit_code="$previous_test_exit_code"
+  fi
+  return "$cleanup_status"
+}
+
 cleanup_all() {
   set +e
   if [ "${NIGHTLY_SKIP_MANIFEST_FINALIZE:-0}" != "1" ]; then
@@ -848,7 +1048,18 @@ cleanup_all() {
     rm -rf "$NIGHTLY_PYTEST_BASETEMP"
   fi
   cleanup_all_compose
+  local compose_cleanup_status=$?
+  cleanup_vision_nightly_environment
+  local vision_cleanup_status=$?
   "$REPO_ROOT/ci/cleanup-run-testcontainers.sh"
+  local containers_cleanup_status=$?
+  if [ "$compose_cleanup_status" -ne 0 ]; then
+    return "$compose_cleanup_status"
+  fi
+  if [ "$vision_cleanup_status" -ne 0 ]; then
+    return "$vision_cleanup_status"
+  fi
+  return "$containers_cleanup_status"
 }
 
 if [ "${1:-}" = "--cleanup-only" ]; then
@@ -863,11 +1074,66 @@ handle_interrupt() {
   exit 130
 }
 
-trap cleanup_all EXIT
+finalize_nightly_exit() {
+  local initial_status="$1" cleanup_status final_status
+  # cleanup_all records this value in the manifest before teardown, and teardown
+  # (e.g. HANA cleanup) may change test_exit_code; compare against the recorded one.
+  local recorded_exit_code="${test_exit_code:-$initial_status}"
+  trap - EXIT
+  cleanup_all
+  cleanup_status=$?
+  final_status="$initial_status"
+  # Preserve the original failing code; a cleanup failure can only turn success
+  # into failure, never replace the first failure or make it green.
+  if [ "$final_status" -eq 0 ] && [ "$cleanup_status" -ne 0 ]; then
+    final_status="$cleanup_status"
+  fi
+  # cleanup_all finalized the evidence before tearing resources down. When the
+  # outcome changed afterwards, rewrite the manifest and its derived reports so
+  # they carry the final exit code instead of the pre-cleanup one.
+  if [ "${NIGHTLY_SKIP_MANIFEST_FINALIZE:-0}" != "1" ] && [ "$final_status" -ne "$recorded_exit_code" ]; then
+    test_exit_code="$final_status"
+    NIGHTLY_MANIFEST_FINALIZED=0
+    PROVIDER_COVERAGE_MANIFEST_FINALIZED=0
+    NIGHTLY_FAILURE_CLASSIFICATION_FINALIZED=0
+    manifest_finalize
+    provider_coverage_finalize
+    failure_classification_finalize
+  fi
+  python3 - "${NIGHTLY_CLEANUP_STATUS_FILE:-${REPO_ROOT}/nightly-cleanup-status.json}" \
+    "$initial_status" "$cleanup_status" "$final_status" <<'CLEANUP_STATUS'
+import json
+import sys
+from pathlib import Path
+
+initial, cleanup, final = map(int, sys.argv[2:])
+Path(sys.argv[1]).write_text(json.dumps({
+    "status": "passed" if final == 0 else "failed",
+    "cleanup_status": "passed" if cleanup == 0 else "failed",
+    "initial_exit_code": initial,
+    "cleanup_exit_code": cleanup,
+    "final_exit_code": final,
+}, indent=2) + "\n")
+CLEANUP_STATUS
+  if [ "$?" -ne 0 ] && [ "$final_status" -eq 0 ]; then
+    final_status=1
+  fi
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    # This final value supersedes the pre-cleanup result written by main.
+    printf 'test_exit_code=%s\n' "$final_status" >> "$GITHUB_OUTPUT" || {
+      if [ "$final_status" -eq 0 ]; then final_status=1; fi
+    }
+  fi
+  exit "$final_status"
+}
+
+trap 'finalize_nightly_exit "$?"' EXIT
 trap handle_interrupt INT TERM
 rm -f "$AGENT_TEST_CONFIG_BACKUP"
 
 export DATUS_STRICT_NIGHTLY_REQUIREMENTS="${DATUS_STRICT_NIGHTLY_REQUIREMENTS:-1}"
+# The daily scoped-init product flow is required; scale/capacity remain weekly.
+export DATUS_RUN_LIVE_INIT="${DATUS_RUN_LIVE_INIT:-1}"
 export ADAPTERS_PG="${ADAPTERS_PG:-1}"
 export ADAPTERS_MYSQL="${ADAPTERS_MYSQL:-1}"
 export ADAPTERS_CH="${ADAPTERS_CH:-1}"
@@ -992,8 +1258,21 @@ run_logged_unfiltered() {
   local started_at
   started_at="$(utc_now)"
   collect_pytest_suite "$group_name" "$@"
-  if [ -n "${PRODUCT_EXECUTION_DIR:-}" ] && command_contains_pytest "$@"; then
-    set -- "$@" -p ci.pytest_gate_plugin --gate-report "${PRODUCT_EXECUTION_DIR}/${group_name//[^A-Za-z0-9_-]/_}.json"
+  local execution_report=""
+  if command_contains_pytest "$@"; then
+    local execution_dir="${PRODUCT_EXECUTION_DIR:-${NIGHTLY_MANIFEST_FILE}.execution}"
+    mkdir -p "$execution_dir"
+    execution_report="${execution_dir}/${group_name//[^A-Za-z0-9_-]/_}.json"
+    rm -f "$execution_report"
+    set -- "$@" -p ci.pytest_gate_plugin --gate-report "$execution_report"
+    # Unit suites include deliberately platform/optional-dependency gated tests.
+    # Every selected nightly integration/product case is required to execute.
+    if [ "$group_name" != "Full Unit Tests" ]; then
+      # Dedicated groups may already carry this explicit option.
+      if [[ " $* " != *" --fail-on-skip "* ]]; then
+        set -- "$@" -p ci.pytest_fail_on_skip_plugin --fail-on-skip
+      fi
+    fi
   fi
   local trace_expected=0
   if nightly_trace_expected_for_group "$group_name"; then
@@ -1016,6 +1295,14 @@ run_logged_unfiltered() {
     status="failed"
   fi
   manifest_record_suite "$group_name" "blocking" "command" "$status" "$cmd_status" "$started_at" "$ended_at" "$@"
+  if [ -n "$execution_report" ]; then
+    if [ ! -s "$execution_report" ]; then
+      log "ERROR: missing execution evidence for ${group_name}"
+      test_exit_code=1
+    else
+      manifest_update record-execution --output "$NIGHTLY_MANIFEST_FILE" --name "$group_name" --execution-report "$execution_report"
+    fi
+  fi
   return 0
 }
 
@@ -1044,6 +1331,14 @@ run_logged_warn_only_unfiltered() {
   local started_at
   started_at="$(utc_now)"
   collect_pytest_suite "$group_name" "$@"
+  local execution_report=""
+  if command_contains_pytest "$@"; then
+    local execution_dir="${NIGHTLY_MANIFEST_FILE}.execution"
+    mkdir -p "$execution_dir"
+    execution_report="${execution_dir}/${group_name//[^A-Za-z0-9_-]/_}.json"
+    rm -f "$execution_report"
+    set -- "$@" -p ci.pytest_gate_plugin --gate-report "$execution_report"
+  fi
   local trace_expected=0
   if nightly_trace_expected_for_group "$group_name"; then
     trace_expected=1
@@ -1065,6 +1360,9 @@ run_logged_warn_only_unfiltered() {
     status="failed"
   fi
   manifest_record_suite "$group_name" "warn-only" "command" "$status" "$cmd_status" "$started_at" "$ended_at" "$@"
+  if [ -s "$execution_report" ]; then
+    manifest_update record-execution --output "$NIGHTLY_MANIFEST_FILE" --name "$group_name" --execution-report "$execution_report"
+  fi
   return 0
 }
 
@@ -1187,7 +1485,7 @@ compose_host_port_specs() {
   local group_name="$1"
 
   case "$group_name" in
-    "Superset Product Tests" | "BI Orchestration Contracts")
+    "Superset Product Tests" | "Superset Product Tests - "* | "BI Orchestration Contracts")
       printf 'Superset web:%s\nSuperset PostgreSQL:%s\n' "${SUPERSET_PORT:-18088}" "${SUPERSET_POSTGRES_PORT:-15433}"
       ;;
     "Grafana Nightly Tests")
@@ -1225,6 +1523,9 @@ compose_host_port_specs() {
       ;;
     "Spark Adapter Tests")
       printf 'Spark thrift:%s\nSpark UI:%s\n' "${SPARK_THRIFT_HOST_PORT:-31000}" "${SPARK_UI_HOST_PORT:-24040}"
+      ;;
+    "HANA Agent Tests")
+      printf 'HANA SQL:%s\n' "${HANA_HOST_PORT:-23942}"
       ;;
   esac
 }
@@ -1543,7 +1844,7 @@ wait_for_compose_client_readiness() {
   local airflow_base
 
   case "$group_name" in
-    "Superset Product Tests" | "BI Orchestration Contracts")
+    "Superset Product Tests" | "Superset Product Tests - "* | "BI Orchestration Contracts")
       wait_for_http_readiness "Superset" "${SUPERSET_URL%/}/health" 300
       ;;
     "Grafana Nightly Tests")
@@ -1584,7 +1885,47 @@ wait_for_compose_client_readiness() {
     "Spark Adapter Tests")
       wait_for_tcp_readiness "Spark Thrift" "${SPARK_HOST:-localhost}" "${SPARK_PORT:-10000}" 300
       ;;
+    "HANA Agent Tests")
+      uv run --no-sync python "$(hana_nightly_state_root)/scripts/wait_for_hana.py"
+      ;;
   esac
+}
+
+
+run_hive_adapter_tests() {
+  local connections_file
+  local suite_status
+
+  connections_file="$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-agent-hive-connections.XXXXXX")" || return 1
+  # JSON is valid YAML and avoids interpolating connection values into shell code.
+  if ! python3 - "$connections_file" <<'PYHIVE'
+import json
+import os
+import sys
+from pathlib import Path
+
+profile = {
+    "type": "hive",
+    "server_type": "hive",
+    "host": os.environ.get("HIVE_HOST", "localhost"),
+    "port": int(os.environ.get("HIVE_PORT", "10000")),
+    "username": os.environ.get("HIVE_USERNAME", "hive"),
+    "password": os.environ.get("HIVE_PASSWORD", ""),
+    "database": os.environ.get("HIVE_DATABASE", "default"),
+}
+Path(sys.argv[1]).write_text(json.dumps({"datasources": {"hive": profile}}), encoding="utf-8")
+PYHIVE
+  then
+    rm -f -- "$connections_file"
+    return 1
+  fi
+
+  run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env \
+    DOSI_TEST_HIVE_CONNECTIONS="$connections_file" DOSI_TEST_HIVE_CONNECTION=hive \
+    "$@"
+  suite_status=$?
+  rm -f -- "$connections_file"
+  return "$suite_status"
 }
 
 run_gaussdb_adapter_tests() {
@@ -1609,8 +1950,7 @@ run_gaussdb_adapter_tests() {
     DATUS_TEST_LAYER=nightly \
     GAUSSDB_SSLMODE=verify-ca \
     GAUSSDB_SSLROOTCERT="$tls_rootcert" \
-    uv run pytest -m nightly tests/integration/adapters/test_gaussdb.py \
-    --tb=short --verbose --timeout=300 --timeout-method=thread
+    "$@"
   suite_status=$?
 
   cleanup_gaussdb_tls_host_artifacts
@@ -1646,6 +1986,17 @@ run_compose_suite() {
     return 0
   fi
 
+  if [ "$group_name" = "HANA Agent Tests" ]; then
+    if ! prepare_hana_nightly_environment; then
+      log "HANA Docker prerequisites or bootstrap preparation failed"
+      test_exit_code=1
+      manifest_record_suite "$group_name" "blocking" "compose" "failed" 1 "$started_at" "$(utc_now)" "$@"
+      cleanup_hana_nightly_environment || test_exit_code=1
+      return 0
+    fi
+    compose_file="$HANA_COMPOSE"
+  fi
+
   project_name="$(compose_project_name "$group_name")"
   local host_ports
   host_ports="$(compose_host_port_specs "$group_name")"
@@ -1656,15 +2007,24 @@ run_compose_suite() {
   log "Host ports:"
   printf '%s\n' "$host_ports" | sed 's/^/  /' | tee -a "$LOG_FILE"
 
-  compose_down "$compose_file" "$project_name"
+  if ! compose_down "$compose_file" "$project_name"; then
+    if [ "$test_exit_code" -eq 0 ]; then test_exit_code=1; fi
+    manifest_record_suite "$group_name" "blocking" "compose" "failed" 1 "$started_at" "$(utc_now)" "$@"
+    return 0
+  fi
   if ! check_compose_host_ports_available "$group_name"; then
     log "Skipping ${group_name} startup because required host ports are unavailable"
     manifest_record_suite "$group_name" "blocking" "compose" "failed" "$test_exit_code" "$started_at" "$(utc_now)" "$@"
+    finish_compose_suite "$group_name" "$compose_file" "$project_name" || {
+      if [ "$test_exit_code" -eq 0 ]; then test_exit_code=1; fi
+    }
     return 0
   fi
 
   if ! compose_up "$project_name" "$compose_file"; then
-    compose_down "$compose_file" "$project_name"
+    finish_compose_suite "$group_name" "$compose_file" "$project_name" || {
+      if [ "$test_exit_code" -eq 0 ]; then test_exit_code=1; fi
+    }
     manifest_record_suite "$group_name" "blocking" "compose" "failed" "$test_exit_code" "$started_at" "$(utc_now)" "$@"
     return 0
   fi
@@ -1674,7 +2034,9 @@ run_compose_suite() {
     local service_name="${spec%%:*}"
     local timeout_seconds="${spec##*:}"
     if ! wait_for_service_health "$project_name" "$compose_file" "$service_name" "$timeout_seconds"; then
-      compose_down "$compose_file" "$project_name"
+      finish_compose_suite "$group_name" "$compose_file" "$project_name" || {
+        if [ "$test_exit_code" -eq 0 ]; then test_exit_code=1; fi
+      }
       manifest_record_suite "$group_name" "blocking" "compose" "failed" "$test_exit_code" "$started_at" "$(utc_now)" "$@"
       return 0
     fi
@@ -1682,7 +2044,10 @@ run_compose_suite() {
 
   if ! wait_for_compose_client_readiness "$group_name"; then
     dump_compose_diagnostics "$project_name" "$compose_file" "$group_name"
-    compose_down "$compose_file" "$project_name"
+    test_exit_code=1
+    finish_compose_suite "$group_name" "$compose_file" "$project_name" || {
+      if [ "$test_exit_code" -eq 0 ]; then test_exit_code=1; fi
+    }
     manifest_record_suite "$group_name" "blocking" "compose" "failed" "$test_exit_code" "$started_at" "$(utc_now)" "$@"
     return 0
   fi
@@ -1700,7 +2065,10 @@ run_compose_suite() {
 
   log ""
   log "=== Stopping ${group_name} Services (project=${project_name}) ==="
-  compose_down "$compose_file" "$project_name"
+  if ! finish_compose_suite "$group_name" "$compose_file" "$project_name"; then
+    if [ "$test_exit_code" -eq 0 ]; then test_exit_code=1; fi
+    manifest_record_suite "$group_name" "blocking" "compose" "failed" 1 "$started_at" "$(utc_now)" "$@"
+  fi
   return 0
 }
 
@@ -1730,6 +2098,7 @@ NIGHTLY_STARTED_AT="$(utc_now)"
 export NIGHTLY_STARTED_AT
 rm -f "$NIGHTLY_TRACE_REFERENCES_FILE" "$NIGHTLY_TRACE_SUMMARY_FILE" "$NIGHTLY_PROCESS_DIAGNOSTICS_FILE"
 
+prepare_nightly_case_scope || exit 1
 manifest_init
 
 log "Nightly log: $LOG_FILE"
@@ -1795,7 +2164,7 @@ run_logged "Gen Agent Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJE
   --deselect tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm \
   --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
-run_logged "Core Acceptance Tests" run_with_agent_home "${NIGHTLY_HOME}/core-acceptance/home" "${NIGHTLY_HOME}/core-acceptance/workspace" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/unit_tests/tools/registry/test_capabilities.py::test_generated_catalog_matches_source tests/integration/agent/test_core_acceptance.py tests/integration/api/test_chat_acceptance.py tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/core-acceptance"
+run_logged "Core Acceptance Tests" run_with_agent_home "${NIGHTLY_HOME}/core-acceptance/home" "${NIGHTLY_HOME}/core-acceptance/workspace" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/unit_tests/tools/registry/test_capabilities.py::test_generated_catalog_matches_source tests/integration/agent/test_core_acceptance.py tests/integration/agent/test_datasource_switch_acceptance.py tests/integration/api/test_chat_acceptance.py tests/integration/api/test_semantic_session_acceptance.py tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/core-acceptance"
 run_logged "Core Real Model Tests" run_with_agent_home "${NIGHTLY_HOME}/core-real-model/home" "${NIGHTLY_HOME}/core-real-model/workspace" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/agent/test_core_live.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/core-real-model"
 run_logged "PostgreSQL Agent Storage Tests" run_with_agent_home "${NIGHTLY_HOME}/postgresql-agent-storage/home" "${NIGHTLY_HOME}/postgresql-agent-storage/workspace" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/storage/test_postgresql_semantic_kb.py tests/integration/storage/test_postgresql_feedback_store.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/postgresql-agent-storage"
 run_logged "SQL Policy Plugin Tests" run_with_agent_home "${NIGHTLY_HOME}/sql-policy-plugin/home" "${NIGHTLY_HOME}/sql-policy-plugin/workspace" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/plugins/test_sql_policy_plugin.py::test_managed_sql_policy_enforces_sql_semantic_and_api_reads -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/sql-policy-plugin"
@@ -1830,6 +2199,10 @@ NIGHTLY_DEDICATED_SUITE_DESELECTS=(
   --deselect tests/integration/adapters/test_trino.py
   --deselect tests/integration/adapters/test_greenplum.py
   --deselect tests/integration/adapters/test_hive.py
+  --deselect tests/integration/tools/test_dosi_hive.py
+  --deselect tests/integration/tools/test_hana_semantic_verification.py
+  --deselect tests/integration/agent/test_hana_chat_agentic.py
+  --deselect tests/integration/models/test_custom_model_preflight.py::test_self_hosted_model_reads_code_from_image
   --deselect tests/integration/adapters/test_spark.py
   --deselect tests/integration/adapters/test_gaussdb.py
   --deselect tests/regression/test_regression_web_e2e.py
@@ -1839,16 +2212,21 @@ if [ -z "${PRODUCT_TEST_BASE_REF:-}" ]; then
   NIGHTLY_DEDICATED_SUITE_DESELECTS+=(--deselect tests/integration/agent/test_core_live.py)
 fi
 
-run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and not provider_health and not product_e2e" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
+run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and not provider_health and not product_e2e" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" "${NIGHTLY_FREQUENCY_DESELECTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
 
-run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and product_e2e and not provider_health" "${PRODUCT_E2E_ROOTS[@]}" "${PRODUCT_REQUIRED_ARGS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
+run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and product_e2e and not provider_health" "${PRODUCT_E2E_ROOTS[@]}" "${PRODUCT_REQUIRED_ARGS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" "${NIGHTLY_FREQUENCY_DESELECTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
 # Scheduled Nightly runs the explicit Superset export/bootstrap
 # contracts. A targeted evaluation also retains the other affected node cases.
 if [ -n "${PRODUCT_TEST_BASE_REF:-}" ]; then
   run_compose_suite "Superset Product Tests" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest -m "$DASHBOARD_MARK_EXPR" tests/integration/tools/test_bi_chart_lifecycle.py tests/integration/plugins/test_dashboard_bootstrap_plugin.py tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread
 else
-  run_compose_suite "Superset Product Tests" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "${NIGHTLY_HOME}/superset-product/home" "${NIGHTLY_HOME}/superset-product/workspace" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/tools/test_bi_chart_lifecycle.py::test_table_grouping_repair_and_deleted_chart_validation tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticExecution::test_creates_a_persisted_queryable_dashboard -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/superset-product"
+  # Each contract gets a fresh global limiter bucket, metadata DB and volumes.
+  # Keep Superset's production 50/s limit; earlier contracts must not consume
+  # the next contract's budget or leak persisted dashboard/plugin state.
+  run_compose_suite "Superset Product Tests - Chart Lifecycle" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "${NIGHTLY_HOME}/superset-chart-lifecycle/home" "${NIGHTLY_HOME}/superset-chart-lifecycle/workspace" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/tools/test_bi_chart_lifecycle.py::test_table_grouping_repair_and_deleted_chart_validation -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/superset-chart-lifecycle"
+  run_compose_suite "Superset Product Tests - Bootstrap" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "${NIGHTLY_HOME}/superset-bootstrap/home" "${NIGHTLY_HOME}/superset-bootstrap/workspace" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/superset-bootstrap"
+  run_compose_suite "Superset Product Tests - Dashboard" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "${NIGHTLY_HOME}/superset-dashboard/home" "${NIGHTLY_HOME}/superset-dashboard/workspace" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticExecution::test_creates_a_persisted_queryable_dashboard -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/superset-dashboard"
 fi
 run_compose_suite "BI Orchestration Contracts" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/tools/test_bi_dashboard.py::TestPartialIntegration::test_workflow_without_llm --tb=short --verbose --timeout=600 --timeout-method=thread
 
@@ -1865,9 +2243,14 @@ run_compose_suite "Doris Adapter Tests" "$DORIS_COMPOSE" "doris:600" -- run_with
 run_compose_suite "TiDB Adapter Tests" "$TIDB_COMPOSE" "tidb:120" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_tidb.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Trino Adapter Tests" "$TRINO_COMPOSE" "trino:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_trino.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Greenplum Adapter Tests" "$GREENPLUM_COMPOSE" "greenplum:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_greenplum.py --tb=short --verbose --timeout=300 --timeout-method=thread
-run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_hive.py --tb=short --verbose --timeout=300 --timeout-method=thread
+run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- run_hive_adapter_tests env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_hive.py tests/integration/tools/test_dosi_hive.py --deselect tests/integration/tools/test_dosi_hive.py::test_native_inceptor_system_varchar2_metrics --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Spark Adapter Tests" "$SPARK_COMPOSE" "spark-thrift:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300 --timeout-method=thread
-run_compose_suite "GaussDB Adapter Tests" "$GAUSSDB_COMPOSE" "gaussdb:600" -- run_gaussdb_adapter_tests
+run_compose_suite "GaussDB Adapter Tests" "$GAUSSDB_COMPOSE" "gaussdb:600" -- run_gaussdb_adapter_tests env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_gaussdb.py --tb=short --verbose --timeout=300 --timeout-method=thread
+
+# Express has a dedicated memory budget and starts after other heavy services stop.
+run_compose_suite "HANA Agent Tests" "$HANA_COMPOSE" "hana:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest tests/integration/tools/test_hana_semantic_verification.py tests/integration/agent/test_hana_chat_agentic.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread
+
+run_self_hosted_vision_suite
 
 run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
 

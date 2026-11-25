@@ -28,6 +28,7 @@ import pytest
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools import SkillFuncTool, SkillManager
 from datus.utils.loggings import get_logger
+from tests.helpers.skill_actions import successful_skill_loads
 
 logger = get_logger(__name__)
 
@@ -80,9 +81,9 @@ class TestLocalSkillDiscoveryAndExecutionGate:
 class TestRealLLMSkillExecution:
     """Real-LLM execution of an installed local skill via ChatAgenticNode.
 
-    Reuses the ``llm_agent_config`` fixture (skips automatically when the
-    DEEPSEEK key, california_schools DB, or the local report-generator skill is
-    missing). No marketplace network is touched.
+    Reuses ``llm_agent_config`` with isolated, versioned california_schools
+    and report-generator fixtures. The model transport stays real; no
+    marketplace network is touched.
     """
 
     QUESTION = (
@@ -127,7 +128,8 @@ class TestRealLLMSkillExecution:
         has_load_skill = "load_skill" in action_types
         assert has_load_skill, f"Agent should invoke load_skill for a local skill. Action types: {action_types}"
 
+        successful_loads = successful_skill_loads(all_actions, "report-generator")
+        assert successful_loads, "Loading report-generator must actually succeed; another skill does not count"
         final_action = all_actions[-1]
-        assert final_action.status in ("success", "failed"), (
-            f"Run must reach a terminal status, got {final_action.status}"
-        )
+        assert final_action.status == "success", f"Skill execution failed: {final_action.output}"
+        assert node.result.success, node.result.error

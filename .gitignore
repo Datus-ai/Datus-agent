@@ -67,6 +67,9 @@ ci/pytest-coverage.txt
 ci/test-report.md
 ci/dir-cover.json
 ci/.coverage
+/nightly-cleanup-status.json
+/nightly-vision-evidence/
+/test-results/hana/
 
 # Scratch/debug scripts
 test.py

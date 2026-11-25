@@ -60,12 +60,12 @@ deterministic HTTP and database cases are selected through the existing map.
 ## Selection and evidence
 
 `coverage-map.yml` contains mandatory `execution.core_nodeids`, unit ownership
-rules and additive product impact rules. The 16 exact core nodeids run for runtime changes and changes to test selection,
+rules and additive product impact rules. The 19 exact core nodeids run for runtime changes and changes to test selection,
 execution or shared fixtures. Ordinary CI/workflow changes and test-only changes
 select their owners without adding the runtime core. Core and affected tests execute in one pytest session with file-level
 xdist distribution; whole-file selections subsume their core nodeids to prevent
 duplicate execution. Recollecting the previous 71-file fixed list on this tree
-selects 1,069 cases; the fixed requirement is now the 16 core cases, with the
+selects 1,069 cases; the fixed requirement is now the 19 core cases, with the
 remaining deterministic contracts selected by impact.
 For each changed source file, `execution.unit_rules` selects the exact file or
 longest matching directory prefix, including the consumers listed by that owner.

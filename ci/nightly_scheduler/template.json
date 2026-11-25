@@ -1,0 +1,405 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Datus-agent nightly: EventBridge Scheduler fires on time and a Lambda dispatches run-nightly.yml on main once per Beijing day. No secret values are embedded.",
+  "Parameters": {
+    "ScheduleExpression": {
+      "Type": "String",
+      "Default": "cron(17 4 * * ? *)",
+      "Description": "EventBridge Scheduler expression, evaluated in ScheduleTimezone."
+    },
+    "ScheduleTimezone": {
+      "Type": "String",
+      "Default": "Asia/Shanghai"
+    },
+    "ScheduleState": {
+      "Type": "String",
+      "Default": "DISABLED",
+      "AllowedValues": [
+        "ENABLED",
+        "DISABLED"
+      ],
+      "Description": "Enable only after the workflow without the GitHub cron is on main."
+    },
+    "GitHubSecretId": {
+      "Type": "String",
+      "Default": "datus/ci/nightly-github",
+      "Description": "Secrets Manager name holding the dispatch token (and optional Feishu alert webhook)."
+    },
+    "Repository": {
+      "Type": "String",
+      "Default": "Datus-ai/Datus-agent"
+    },
+    "WorkflowFile": {
+      "Type": "String",
+      "Default": "run-nightly.yml"
+    },
+    "WorkflowRef": {
+      "Type": "String",
+      "Default": "main"
+    },
+    "AlarmEmail": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Optional e-mail subscribed to scheduler failure alarms."
+    }
+  },
+  "Conditions": {
+    "HasAlarmEmail": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "AlarmEmail"
+            },
+            ""
+          ]
+        }
+      ]
+    }
+  },
+  "Resources": {
+    "FailedEvents": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": {
+          "Fn::Sub": "${AWS::StackName}-failed-events"
+        },
+        "MessageRetentionPeriod": 1209600,
+        "SqsManagedSseEnabled": true
+      }
+    },
+    "FunctionLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/aws/lambda/${AWS::StackName}"
+        },
+        "RetentionInDays": 90
+      }
+    },
+    "FunctionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "dispatch",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "FunctionLogs",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "secretsmanager:GetSecretValue",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${GitHubSecretId}-??????"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "sqs:SendMessage",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "FailedEvents",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "Function": {
+      "Type": "AWS::Lambda::Function",
+      "DependsOn": [
+        "FunctionLogs"
+      ],
+      "Properties": {
+        "FunctionName": {
+          "Ref": "AWS::StackName"
+        },
+        "Description": "Dispatch the Datus-agent nightly workflow once per scheduled day.",
+        "Runtime": "python3.12",
+        "Architectures": [
+          "arm64"
+        ],
+        "Handler": "index.handler",
+        "MemorySize": 128,
+        "Timeout": 180,
+        "Role": {
+          "Fn::GetAtt": [
+            "FunctionRole",
+            "Arn"
+          ]
+        },
+        "Environment": {
+          "Variables": {
+            "REPOSITORY": {
+              "Ref": "Repository"
+            },
+            "WORKFLOW_FILE": {
+              "Ref": "WorkflowFile"
+            },
+            "WORKFLOW_REF": {
+              "Ref": "WorkflowRef"
+            },
+            "GITHUB_SECRET_ID": {
+              "Ref": "GitHubSecretId"
+            }
+          }
+        },
+        "Code": {
+          "ZipFile": "__DATUS_NIGHTLY_SCHEDULER_HANDLER__"
+        }
+      }
+    },
+    "FunctionAsyncConfig": {
+      "Type": "AWS::Lambda::EventInvokeConfig",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "Function"
+        },
+        "Qualifier": "$LATEST",
+        "MaximumRetryAttempts": 2,
+        "MaximumEventAgeInSeconds": 3600,
+        "DestinationConfig": {
+          "OnFailure": {
+            "Destination": {
+              "Fn::GetAtt": [
+                "FailedEvents",
+                "Arn"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "ScheduleRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "scheduler.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "invoke",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "lambda:InvokeFunction",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "Function",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "sqs:SendMessage",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "FailedEvents",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "DailySchedule": {
+      "Type": "AWS::Scheduler::Schedule",
+      "Properties": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}-dispatch"
+        },
+        "Description": "Fire the Datus-agent nightly at a fixed Beijing time.",
+        "ScheduleExpression": {
+          "Ref": "ScheduleExpression"
+        },
+        "ScheduleExpressionTimezone": {
+          "Ref": "ScheduleTimezone"
+        },
+        "FlexibleTimeWindow": {
+          "Mode": "OFF"
+        },
+        "State": {
+          "Ref": "ScheduleState"
+        },
+        "Target": {
+          "Arn": {
+            "Fn::GetAtt": [
+              "Function",
+              "Arn"
+            ]
+          },
+          "RoleArn": {
+            "Fn::GetAtt": [
+              "ScheduleRole",
+              "Arn"
+            ]
+          },
+          "Input": "{\"scheduled_time\": \"<aws.scheduler.scheduled-time>\"}",
+          "RetryPolicy": {
+            "MaximumRetryAttempts": 3,
+            "MaximumEventAgeInSeconds": 900
+          },
+          "DeadLetterConfig": {
+            "Arn": {
+              "Fn::GetAtt": [
+                "FailedEvents",
+                "Arn"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "AlarmTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "TopicName": {
+          "Fn::Sub": "${AWS::StackName}-alarms"
+        }
+      }
+    },
+    "AlarmSubscription": {
+      "Type": "AWS::SNS::Subscription",
+      "Condition": "HasAlarmEmail",
+      "Properties": {
+        "TopicArn": {
+          "Ref": "AlarmTopic"
+        },
+        "Protocol": "email",
+        "Endpoint": {
+          "Ref": "AlarmEmail"
+        }
+      }
+    },
+    "FunctionErrorAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "The nightly dispatch Lambda raised an error.",
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "Function"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "AlarmTopic"
+          }
+        ]
+      }
+    },
+    "FailedEventsAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "A scheduled nightly dispatch exhausted its retries.",
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "FailedEvents",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "AlarmTopic"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "FunctionName": {
+      "Value": {
+        "Ref": "Function"
+      }
+    },
+    "ScheduleName": {
+      "Value": {
+        "Fn::Sub": "${AWS::StackName}-dispatch"
+      }
+    },
+    "FailedEventsQueueUrl": {
+      "Value": {
+        "Ref": "FailedEvents"
+      }
+    },
+    "AlarmTopicArn": {
+      "Value": {
+        "Ref": "AlarmTopic"
+      }
+    }
+  }
+}

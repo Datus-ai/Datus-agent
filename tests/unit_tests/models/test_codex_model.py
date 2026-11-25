@@ -781,6 +781,7 @@ class TestCodexModelGenerateWithToolsStream:
     ):
         from types import SimpleNamespace
 
+        import structlog
         from structlog.testing import capture_logs
 
         from datus.models.codex_model import CodexModel
@@ -828,10 +829,16 @@ class TestCodexModelGenerateWithToolsStream:
             assert hooks.delegate is supplied_hooks
             context = SimpleNamespace(tool_call_id="codex-call")
             tool = SimpleNamespace(name="lookup")
-            with capture_logs() as records:
+            # Earlier tests may cache this module logger before reconfiguring
+            # structlog. A fresh proxy observes capture_logs' active processors.
+            with (
+                capture_logs() as records,
+                patch("datus.observability.tool_calls.logger", structlog.get_logger("datus.observability.tool_calls")),
+            ):
                 await hooks.on_tool_start(context, None, tool)
                 await hooks.on_tool_end(context, None, tool, '{"success": true}')
-            finished = next(record for record in records if record["event"] == "tool.finished")
+            assert [record["event"] for record in records] == ["tool.started", "tool.finished"]
+            finished = records[1]
             assert finished["tool_call_id"] == "codex-call"
             assert finished["status"] == "success"
             assert delegate.on_tool_start.await_args_list == ([call(context, None, tool)] if with_delegate else [])

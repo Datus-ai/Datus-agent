@@ -17,6 +17,7 @@ from datus.tools.permission.permission_config import PermissionLevel
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools import SkillManager
 from datus.utils.loggings import get_logger
+from tests.helpers.skill_actions import successful_skill_loads
 
 logger = get_logger(__name__)
 
@@ -277,5 +278,10 @@ class TestRealLLMSkillIntegration:
 
         assert has_load_skill, f"Expected load_skill in action history. Action types found: {action_types}"
 
+        successful_loads = successful_skill_loads(all_actions, "report-generator")
+        assert successful_loads, (
+            "Loading report-generator must succeed, not merely appear in history or load another skill"
+        )
         final_action = all_actions[-1]
-        assert final_action.status in ("success", "failed"), f"Unexpected final status: {final_action.status}"
+        assert final_action.status == "success", f"Skill integration failed: {final_action.output}"
+        assert node.result.success, node.result.error

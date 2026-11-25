@@ -179,7 +179,7 @@ def test_real_dependency_upgrade_still_selects_all_units_and_integration_groups(
     plan = pr_test_plan(["pyproject.toml", "uv.lock", "requirements.txt"])
     assert plan["targets"] == ["tests/unit_tests/"]
     assert set(plan["integration_groups"]) == {r["id"] for r in load_map()["execution"]["integration_rules"]}
-    assert len(plan["core_nodeids"]) == 16
+    assert len(plan["core_nodeids"]) == 19
 
 
 @pytest.mark.parametrize(

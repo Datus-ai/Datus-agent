@@ -1,10 +1,17 @@
 name: Run Nightly Tests
+# The daily trigger is AWS EventBridge Scheduler (ci/nightly_scheduler), which
+# dispatches main at 04:17 Beijing time with a per-day schedule_key. GitHub cron
+# is intentionally absent: it can start late or be dropped under load.
+run-name: ${{ inputs.schedule_key && format('Run Nightly Tests · {0}', inputs.schedule_key) || 'Run Nightly Tests' }}
 
 on:
-  schedule:
-    - cron: '17 20 * * *' # 20:17 UTC daily (04:17 Beijing time the next day)
   workflow_dispatch:
     inputs:
+      schedule_key:
+        description: "Set by the AWS nightly scheduler (nightly-YYYY-MM-DD) for once-per-day dispatch. Leave empty for manual runs."
+        required: false
+        default: ""
+        type: string
       datus_agent_ref:
         description: "Optional Datus-agent branch, tag, or SHA to test. Defaults to the workflow branch."
         required: false
@@ -67,7 +74,7 @@ concurrency:
 
 jobs:
   run-nightly:
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux, X64]
     env:
       DATUS_AGENT_REF: ${{ inputs.datus_agent_ref || github.ref_name }}
       NIGHTLY_GROUP_FILTER: ${{ inputs.nightly_group_filter || '' }}
@@ -247,6 +254,7 @@ jobs:
             --reinstall-package datus-oracle \
             --reinstall-package datus-gaussdb \
             --reinstall-package datus-dws \
+            --reinstall-package datus-hana \
             --reinstall-package datus-storage-base \
             --reinstall-package datus-storage-postgresql \
             pytest-playwright \
@@ -271,6 +279,7 @@ jobs:
             ./external/datus-db-adapters/datus-spark \
             ./external/datus-db-adapters/datus-gaussdb \
             ./external/datus-db-adapters/datus-dws \
+            ./external/datus-db-adapters/datus-hana \
             ./external/datus-bi-adapters/datus-bi-core \
             ./external/datus-bi-adapters/datus-bi-superset \
             ./external/datus-bi-adapters/datus-bi-grafana \
@@ -614,12 +623,14 @@ jobs:
         env:
           EXTERNAL_REPOS_ROOT: ${{ github.workspace }}/external
           NIGHTLY_PYTEST_BASETEMP: ${{ runner.temp }}/datus-agent-nightly-pytest-${{ github.run_id }}-${{ github.run_attempt }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LANGFUSE_TRACING_ENABLED: "true"
           NIGHTLY_REQUIRE_LANGFUSE_TRACING: "1"
         run: |
           ci/run-nightly-tests.sh
 
       - name: Stop nightly services
+        id: nightly_cleanup
         if: always()
         env:
           EXTERNAL_REPOS_ROOT: ${{ github.workspace }}/external
@@ -635,6 +646,8 @@ jobs:
           path: |
             test_output_nightly_*.log
             nightly-manifest.json
+            nightly-manifest.json.execution/
+            nightly-cleanup-status.json
             ${{ env.DATUS_SQL_POLICY_RECEIPT }}
             ci/product-test-plan.json
             ci/product-execution.*/
@@ -642,10 +655,13 @@ jobs:
             nightly-failure-classification.json
             provider-coverage-manifest.json
             nightly-bi-evidence/*.json
+            nightly-vision-evidence/**/evidence.json
+            nightly-vision-evidence/**/server.log
             nightly-trace-references.jsonl
             nightly-trace-summary.jsonl
             nightly-process-diagnostics.json
             test-results/mcp/
+            test-results/hana/
             test-results/web-e2e/
           retention-days: 7
 
@@ -693,10 +709,16 @@ jobs:
             const { buildNightlyFeishuMessage, nightlyStatus } = require('./ci/format-nightly-feishu-report');
 
             const policyResult = '${{ steps.policy_release.outcome }}';
-            const testStatus = nightlyStatus(
-              '${{ steps.nightly_tests.outputs.test_exit_code }}',
-              policyResult,
-            );
+            const testExitCode = '${{ steps.nightly_tests.outputs.test_exit_code }}';
+            const testOutcome = '${{ steps.nightly_tests.outcome }}';
+            const cleanupOutcome = '${{ steps.nightly_cleanup.outcome }}';
+            const requiredStepsSucceeded = policyResult === 'success'
+              && testOutcome === 'success'
+              && cleanupOutcome === 'success'
+              && testExitCode === '0';
+            const testStatus = requiredStepsSucceeded
+              ? nightlyStatus(testExitCode, policyResult)
+              : 'FAILED';
             const today = new Date().toISOString().split('T')[0];
             const messageBody = buildNightlyFeishuMessage({
               status: testStatus,

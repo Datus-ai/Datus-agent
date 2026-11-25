@@ -56,16 +56,28 @@ def test_targeted_service_selection_keeps_dashboard_product_cases(node, expected
     assert result.stdout == expected
 
 
-def test_targeted_group_records_executed_pytest_results(tmp_path):
+@pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.parametrize("targeted", [True, False])
+@pytest.mark.parametrize("skip", [False, True, "setup"])
+def test_targeted_group_records_executed_pytest_results(tmp_path, targeted, skip, wrapped):
     source = tmp_path / "test_product.py"
-    source.write_text("def test_product(): assert 2 + 2 == 4\n")
+    source.write_text(
+        "import pytest\n@pytest.fixture\ndef ready(): pytest.skip('unavailable')\ndef test_product(ready): pass\n"
+        if skip == "setup"
+        else "import pytest\ndef test_product(): " + ('pytest.skip("unavailable")\n' if skip else "assert 2 + 2 == 4\n")
+    )
     (tmp_path / "pytest.ini").write_text("[pytest]\n")
     reports = tmp_path / "reports"
     reports.mkdir()
     env = {
         **os.environ,
         "REPO_ROOT": str(REPO_ROOT),
-        "PRODUCT_EXECUTION_DIR": str(reports),
+        "PRODUCT_EXECUTION_DIR": str(reports) if targeted else "",
+        "NIGHTLY_MANIFEST_FILE": str(tmp_path / "manifest.json"),
+        "NIGHTLY_HOME": str(tmp_path / "home"),
+        "NIGHTLY_PROJECT_ROOT": str(tmp_path / "workspace"),
+        "GAUSSDB_COMPOSE": "gaussdb-compose.yml",
+        "RUNNER_TEMP": str(tmp_path),
         "NIGHTLY_PYTEST_BASETEMP": str(tmp_path / "collection"),
         "LOG_FILE": str(tmp_path / "nightly.log"),
         "NIGHTLY_TRACE_REFERENCES_FILE": str(tmp_path / "traces.jsonl"),
@@ -81,10 +93,18 @@ def test_targeted_group_records_executed_pytest_results(tmp_path):
             "nightly_trace_expected_for_group() { return 1; }",
             "manifest_record_collection() { :; }",
             "manifest_record_suite() { :; }",
+            "manifest_update() { :; }",
+            "compose_project_name() { echo nightly-gaussdb; }",
+            'compose_cmd() { printf "test CA" > "$5"; }',
+            'cleanup_gaussdb_tls_host_artifacts() { if [ -n "${GAUSSDB_TLS_HOST_DIR:-}" ]; then rm -rf "$GAUSSDB_TLS_HOST_DIR"; fi; }',
+            'run_with_agent_home() { shift 2; "$@"; }',
+            _bash_function_source("run_gaussdb_adapter_tests"),
             _bash_function_source("command_contains_pytest"),
             _bash_function_source("collect_pytest_suite"),
             _bash_function_source("run_logged_unfiltered"),
-            'run_logged_unfiltered "Semantic Modeling Product Tests" "$1" -m pytest "$2" -q',
+            'run_logged_unfiltered "Semantic Modeling Product Tests" '
+            + ("run_gaussdb_adapter_tests " if wrapped else "")
+            + '"$1" -m pytest "$2" -q',
             'exit "$test_exit_code"',
         ]
     )
@@ -96,10 +116,13 @@ def test_targeted_group_records_executed_pytest_results(tmp_path):
         text=True,
         timeout=30,
     )
-    assert result.returncode == 0, result.stdout + result.stderr
-    report = json.loads((reports / "Semantic_Modeling_Product_Tests.json").read_text())
+    assert result.returncode == (1 if skip else 0), result.stdout + result.stderr
+    execution_dir = reports if targeted else tmp_path / "manifest.json.execution"
+    report = json.loads((execution_dir / "Semantic_Modeling_Product_Tests.json").read_text())
     assert report["collected"] == ["test_product.py::test_product"]
-    assert report["outcomes"] == {"test_product.py::test_product": "passed"}
+    assert report["executed"] == ([] if skip == "setup" else ["test_product.py::test_product"])
+    assert report["exit_code"] == (1 if skip else 0)
+    assert report["outcomes"] == {"test_product.py::test_product": "skipped" if skip else "passed"}
 
 
 def test_nightly_preserves_checkout_packages_after_locked_sync():
@@ -322,7 +345,15 @@ def test_nightly_runs_the_checkout_and_preserves_status_and_diagnostics(tmp_path
 def test_nightly_installs_new_database_adapters_from_latest_checkout():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
-    for package_name in ("datus-doris", "datus-hologres", "datus-oracle", "datus-gaussdb", "datus-tidb", "datus-dws"):
+    for package_name in (
+        "datus-doris",
+        "datus-hologres",
+        "datus-oracle",
+        "datus-gaussdb",
+        "datus-tidb",
+        "datus-dws",
+        "datus-hana",
+    ):
         assert f"--reinstall-package {package_name}" in workflow
         assert f"./external/datus-db-adapters/{package_name}" in workflow
 
