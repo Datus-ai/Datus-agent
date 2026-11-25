@@ -530,6 +530,7 @@ class DosiRuntime:
         *,
         params: Optional[Dict[str, Any]] = None,
         context_filter: Optional[str] = None,
+        time_ranges: Optional[List[Dict[str, str]]] = None,
     ) -> QueryResult:
         policy_kwargs = await asyncio.to_thread(self._policy_kwargs)
         binding = await asyncio.to_thread(load_binding)
@@ -558,6 +559,7 @@ class DosiRuntime:
             order_by=order_by,
             params=params,
             context_filter=context_filter,
+            time_ranges=time_ranges,
         )
         time_fields = self._query_time_dimensions(dimension_rows, dimensions)
         # Reuse the engine's field roles and the exact grains sent in this query.
@@ -1640,8 +1642,11 @@ class DosiRuntime:
         order_by: Optional[List[str]],
         params: Optional[Dict[str, Any]] = None,
         context_filter: Optional[str] = None,
+        time_ranges: Optional[List[Dict[str, str]]] = None,
     ) -> Dict[str, Any]:
         """Assemble the engine's MetricQuery dict. Pure: no engine I/O."""
+        if time_ranges is not None and (not time_ranges or time_start is not None or time_end is not None):
+            raise ValueError("time_ranges must be nonempty and cannot be combined with time_start or time_end")
         del metric_rows  # Kept for backward-compatible direct-call tests/callers.
         time_dimensions = self._query_time_dimensions(dimension_rows, dimensions)
 
@@ -1697,6 +1702,11 @@ class DosiRuntime:
                 # raw dataset membership.
                 time_range["dimension"] = "metric_time"
             query["time_range"] = time_range
+        if time_ranges is not None:
+            # Copy the inputs; all windows need the same time-axis fallback.
+            query["time_ranges"] = [
+                (dict(window) if time_dimensions else {"dimension": "metric_time", **window}) for window in time_ranges
+            ]
         if order_by:
             query["order_by"] = [
                 {"key": key[1:], "desc": True} if key.startswith("-") else {"key": key, "desc": False}

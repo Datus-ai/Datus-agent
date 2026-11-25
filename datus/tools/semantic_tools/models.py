@@ -8,6 +8,16 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
+class MetricTimeWindow(BaseModel):
+    """One labeled window in a side-by-side metric query."""
+
+    model_config = {"extra": "forbid"}
+
+    tag: str = Field(description="Unique lowercase tag (letters, digits or underscores)")
+    start: str = Field(description="Inclusive start (YYYY-MM-DD)")
+    end: str = Field(description="Exclusive end (YYYY-MM-DD)")
+
+
 class DimensionInfo(BaseModel):
     """Information about a dimension."""
 

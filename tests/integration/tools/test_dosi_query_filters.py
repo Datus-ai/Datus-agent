@@ -611,3 +611,23 @@ async def test_dashboard_preview_uses_project_model_and_published_query_uses_fro
     assert {row["product"]: row["score_total"] for row in result.data.rows} == expected
     assert model.read_text() == updated
     assert query.model_snapshot == content
+
+
+def test_tagged_metric_windows_match_individual_queries(query_tool):
+    windows = [
+        {"tag": "early", "start": "2025-06-01", "end": "2025-06-03"},
+        {"tag": "late", "start": "2025-06-03", "end": "2025-06-06"},
+    ]
+    arguments = {"metrics": ["score_total"], "dimensions": ["scores.product"]}
+    combined = _rows(query_tool, query_tool.query_metrics(**arguments, time_ranges=windows))
+    actual = {row["product"]: row for row in combined}
+    assert set(actual) == {"p1", "p2"}
+    for window in windows:
+        separate = _rows(
+            query_tool,
+            query_tool.query_metrics(**arguments, time_start=window["start"], time_end=window["end"]),
+        )
+        column = f"score_total__{window['tag']}"
+        assert {product: float(row[column]) for product, row in actual.items()} == {
+            row["product"]: float(row["score_total"]) for row in separate
+        }

@@ -3384,3 +3384,50 @@ class TestNativeQueryPagination:
         assert result.success == 1, result.error
         assert _text(result).row_count == 0
         assert '"returned": 0' in result.result and '"has_more": false' in result.result
+
+
+@pytest.mark.parametrize("parameter", ["time_start", "time_end"])
+def test_tagged_windows_reject_single_window_arguments(semantic_tools, mock_runtime, parameter):
+    windows = [{"tag": "one", "start": "2025-06-01", "end": "2025-06-03"}]
+    result = semantic_tools.query_metrics(metrics=["revenue"], time_ranges=windows, **{parameter: "2025-06-01"})
+    assert result.success == 0
+    assert "cannot be combined" in result.error
+    mock_runtime.query_metrics.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("windows", "expected_error"),
+    [([], "nonempty"), ([{"start": "2025-06-01", "end": "2025-06-03"}], "tag")],
+)
+def test_tagged_windows_reject_empty_and_untagged_input(semantic_tools, mock_runtime, windows, expected_error):
+    result = semantic_tools.query_metrics(metrics=["revenue"], time_ranges=windows)
+    assert result.success == 0
+    assert expected_error in result.error
+    mock_runtime.query_metrics.assert_not_called()
+
+
+def test_tagged_windows_cannot_change_a_cached_query(semantic_tools, mock_runtime):
+    windows = [{"tag": "one", "start": "2025-06-01", "end": "2025-06-03"}]
+    result = semantic_tools.query_metrics(result_id="existing", time_ranges=windows)
+    assert result.success == 0
+    assert "only result_id" in result.error
+    mock_runtime.query_metrics.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_accepts_typed_tagged_windows(semantic_tools, mock_runtime):
+    windows = [
+        {"tag": "early", "start": "2025-06-01", "end": "2025-06-03"},
+        {"tag": "late", "start": "2025-06-03", "end": "2025-06-06"},
+    ]
+    tool = trans_to_function_tool(semantic_tools.query_metrics)
+    mock_runtime.query_metrics = AsyncMock(
+        return_value=QueryResult(
+            columns=["revenue__early", "revenue__late"],
+            data=[{"revenue__early": 1, "revenue__late": 2}],
+        )
+    )
+    result = await tool.on_invoke_tool(None, json.dumps({"metrics": ["revenue"], "time_ranges": windows}))
+    assert result["success"] == 1, result
+    assert mock_runtime.query_metrics.call_args.kwargs["time_ranges"] == windows
+    assert parse_query_result_text(result["result"]).columns == ["revenue__early", "revenue__late"]
