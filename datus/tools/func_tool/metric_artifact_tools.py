@@ -379,7 +379,7 @@ class MetricArtifactToolsMixin:
 
     @tool_contract(access="restricted", direct_call=False)
     def save_metric_query(
-        self, name: str, query: dict[str, Any], goal: str, hypothesis: str, caveats: str = ""
+        self, name: str, query: dict[str, Any], goal: str, hypothesis: str, caveats: str = "", report_slug: str = ""
     ) -> FuncToolResult:
         """Save a report using ONE existing metric, never authored SQL.
 
@@ -388,7 +388,7 @@ class MetricArtifactToolsMixin:
         metric_params. Use get_metric to inspect capabilities first.
         Returns complete-result data_ref, columns and a small row preview.
         """
-        return self._save_metric_artifact(name, query, goal, hypothesis, caveats, None, None)
+        return self._save_metric_artifact(name, query, goal, hypothesis, caveats, None, None, report_slug)
 
     @tool_contract(access="restricted", direct_call=False)
     def save_metric_query_template(
@@ -400,6 +400,7 @@ class MetricArtifactToolsMixin:
         params: list[dict[str, Any]],
         sample_params: dict[str, Any],
         caveats: str = "",
+        dashboard_slug: str = "",
     ) -> FuncToolResult:
         """Save a live dashboard query using ONE metric.
 
@@ -407,20 +408,21 @@ class MetricArtifactToolsMixin:
         {"param": "start_date"}; params declares name/type/required; sample_params
         supplies typed trial values. Metric names and dimensions cannot be bound.
         """
-        return self._save_metric_artifact(name, query, goal, hypothesis, caveats, params, sample_params)
+        return self._save_metric_artifact(name, query, goal, hypothesis, caveats, params, sample_params, dashboard_slug)
 
     @connection_scope(owner_attr="_db_func_tool")
-    def _save_metric_artifact(self, name, query, goal, hypothesis, caveats, params, sample_params) -> FuncToolResult:
+    def _save_metric_artifact(
+        self, name, query, goal, hypothesis, caveats, params, sample_params, slug
+    ) -> FuncToolResult:
         """Persist a metric recipe and query result, then refresh the manifest timestamp."""
         from datus.api.services.dashboard_service import _validate_params
-        from datus.tools.func_tool._visual_artifact_helpers import touch_manifest_after_save
+        from datus.tools.func_tool._visual_artifact_helpers import staged_query_files, touch_manifest_after_save
         from datus.tools.func_tool.report_artifact_tools import _MAX_QUERY_BYTES, _atomic_write_text
 
         kind = "dashboard" if params is not None else "report"
-        tool_name = "save_metric_query_template" if params is not None else "save_metric_query"
-        unbound = self._require_active(tool_name)
-        if unbound is not None:
-            return unbound
+        error = self.target.select(slug)
+        if error is not None:
+            return error
         if self._semantic_tools is None:
             return FuncToolResult(
                 success=0, error="semantic tools unavailable; inspect metric configuration before saving"
@@ -493,25 +495,26 @@ class MetricArtifactToolsMixin:
                 _atomic_write_text(model_file, model_content, overwrite=False)
             except FileExistsError:
                 resolve_metric_query_snapshot(saved, artifact_dir=artifact_dir)
-            for filename, content in files.items():
-                _atomic_write_text(self.queries_dir / filename, content + "\n")
-            for suffix in (".sql", ".sql.j2"):
-                (self.queries_dir / f"{name}{suffix}").unlink(missing_ok=True)
+            with staged_query_files(self.queries_dir, name, remove_suffixes=(".sql", ".sql.j2")) as staging:
+                for filename, content in files.items():
+                    _atomic_write_text(staging / filename, content + "\n")
             artifact_dir = self.dashboard_dir if kind == "dashboard" else self.report_dir
             warning = touch_manifest_after_save(artifact_dir / "manifest.json", timestamp=payload.executed_at)
-            return FuncToolResult(
-                result={
-                    "name": name,
-                    "source_kind": "metric",
-                    "metric_path": (self.queries_dir / f"{name}.metric.json")
-                    .relative_to(self._project_root)
-                    .as_posix(),
-                    "data_ref": f"queries/{name}",
-                    "columns": [column.model_dump() for column in payload.columns],
-                    "row_count": payload.row_count,
-                    "preview_rows": payload.rows[:3],
-                    "manifest_warning": warning,
-                }
+            return self.target.record_mutation(
+                FuncToolResult(
+                    result={
+                        "name": name,
+                        "source_kind": "metric",
+                        "metric_path": (self.queries_dir / f"{name}.metric.json")
+                        .relative_to(self._project_root)
+                        .as_posix(),
+                        "data_ref": f"queries/{name}",
+                        "columns": [column.model_dump() for column in payload.columns],
+                        "row_count": payload.row_count,
+                        "preview_rows": payload.rows[:3],
+                        "manifest_warning": warning,
+                    }
+                )
             )
         except Exception as exc:
             return FuncToolResult(success=0, error=f"Metric query was not saved: {exc}")

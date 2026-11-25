@@ -372,6 +372,7 @@ def create_node_input(
     prompt_language: str = "en",
     plan_mode: bool = False,
     source_session_id: Optional[str] = None,
+    artifact_slug: Optional[str] = None,
 ):
     """Create node input for *node*, then attach resolved @-context uniformly.
 
@@ -407,6 +408,7 @@ def create_node_input(
         prompt_language=prompt_language,
         plan_mode=plan_mode,
         source_session_id=source_session_id,
+        artifact_slug=artifact_slug,
     )
     return apply_at_context(
         node_input,
@@ -428,6 +430,7 @@ def _build_typed_node_input(
     prompt_language: str = "en",
     plan_mode: bool = False,
     source_session_id: Optional[str] = None,
+    artifact_slug: Optional[str] = None,
 ):
     """Construct the node-type-specific input object (no @-context wiring)."""
     from datus.agent.node.configurable_agentic_node import ConfigurableAgenticNode
@@ -506,6 +509,7 @@ def _build_typed_node_input(
         from datus.schemas.gen_visual_report_models import GenVisualReportNodeInput
 
         return GenVisualReportNodeInput(
+            report_slug=artifact_slug,
             user_message=user_message,
             catalog=catalog,
             database=database,
@@ -516,6 +520,7 @@ def _build_typed_node_input(
         from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeInput
 
         return GenVisualDashboardNodeInput(
+            dashboard_slug=artifact_slug,
             user_message=user_message,
             catalog=catalog,
             database=database,
@@ -575,6 +580,7 @@ def _build_typed_node_input(
         from datus.schemas.chat_agentic_node_models import ChatNodeInput
 
         return ChatNodeInput(
+            artifact_slug=artifact_slug,
             user_message=user_message,
             catalog=catalog,
             database=database,

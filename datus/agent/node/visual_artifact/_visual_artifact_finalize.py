@@ -57,7 +57,7 @@ from datus.schemas.analysis_artifacts import (
     SubjectRefs,
 )
 from datus.schemas.artifact_manifest import ArtifactManifest
-from datus.tools.func_tool._visual_artifact_helpers import _atomic_write_text
+from datus.tools.func_tool._visual_artifact_helpers import _atomic_write_text, artifact_write_lock
 from datus.utils.artifact_files import iter_artifact_files
 from datus.utils.artifact_metadata import collect_query_datasources
 from datus.utils.loggings import get_logger
@@ -453,7 +453,7 @@ def load_existing_finalize_output(
     return _load("insights.json"), _load("suggested_questions.json")
 
 
-def narrative_outputs_present(analysis_dir: Path, *, artifact_kind: str) -> bool:
+def narrative_outputs_present(analysis_dir: Path, *, artifact_kind: str, since: Optional[float] = None) -> bool:
     """True when a prior finalize's LLM-authored files are on disk.
 
     ``skip_narrative`` means "reuse what's already there". With nothing to
@@ -463,10 +463,14 @@ def narrative_outputs_present(analysis_dir: Path, *, artifact_kind: str) -> bool
     skip would strand the artifact without chips permanently, so callers
     upgrade to a full finalize instead.
     """
-    if not (analysis_dir / "suggested_questions.json").is_file():
-        return False
-    # Dashboards never write insights.json — insights are report-only.
-    return artifact_kind != "report" or (analysis_dir / "insights.json").is_file()
+    names = ["suggested_questions.json"]
+    if artifact_kind == "report":
+        names.append("insights.json")
+    for name in names:
+        path = analysis_dir / name
+        if not path.is_file() or (since is not None and path.stat().st_mtime < since):
+            return False
+    return True
 
 
 def parse_finalize_output(raw: Any, *, artifact_kind: str) -> FinalizeAnalysisOutput:
@@ -1185,7 +1189,10 @@ def run_intent_curation(model: Any, intent_md_path: Path) -> Optional[str]:
         return None
 
     try:
-        _atomic_write_text(intent_md_path, new_body)
+        with artifact_write_lock(intent_md_path):
+            if intent_md_path.read_text(encoding="utf-8") != original:
+                return "intent curation: history changed during curation; kept the newer history"
+            _atomic_write_text(intent_md_path, new_body)
     except OSError as exc:
         return f"intent curation: failed to rewrite intent.md ({exc})"
     return None

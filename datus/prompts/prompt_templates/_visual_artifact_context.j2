@@ -20,6 +20,9 @@
 {% endif %}
 
 ## Context
+{% if report_slug or dashboard_slug %}
+- Selected edit target: `{{ report_slug or dashboard_slug }}`. Use its directory for file edits.
+{% endif %}
 {% if datasource -%}
 {% if current_datasource_dialect -%}
 - Current datasource: {{ datasource }} ({{ current_datasource_dialect }})

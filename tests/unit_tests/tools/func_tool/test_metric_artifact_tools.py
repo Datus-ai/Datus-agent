@@ -1364,3 +1364,32 @@ metrics:
             assert response.data.rows == [{"revenue": 25.0}]
         else:
             assert json.loads((tools.queries_dir / "sales.json").read_text())["rows"] == [{"revenue": 25.0}]
+
+
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+def test_first_query_save_on_existing_artifact_records_one_intent(environment, kind):
+    env = environment
+    kwargs = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
+    original, saved = _save(env, kind, **kwargs)
+    assert saved.success == 1, saved.error
+    (original.render_dir / "app.jsx").write_text("export default function App() { return null; }")
+    tools = type(original)(
+        agent_config=env.config, db_func_tool=env.db, semantic_tools=env.semantic, user_message="Compare net revenue."
+    )
+    target = {f"{kind}_slug": "demo"}
+    if kind == "report":
+        raw, metric = tools.save_query, tools.save_metric_query
+        source = {"sql": "SELECT 1 AS amount"}
+    else:
+        raw, metric = tools.save_query_template, tools.save_metric_query_template
+        source = {"sql_template": "-- @datus-params\nSELECT 1 AS amount", "sample_params": {}}
+    brief = {"name": "total", "goal": "Revenue", "hypothesis": "Measure net revenue"}
+    assert not raw(**target, **brief, **source).success
+    notes = original.analysis_dir / "intent.md"
+    assert not notes.exists()
+    result = raw(**target, **brief, **source, fallback_reason="A fixed baseline for the comparison")
+    assert result.success == 1, result.error
+    assert notes.read_text().count("Compare net revenue.") == 1
+    result = metric(**target, **brief, **kwargs, query={"metric": REF})
+    assert result.success == 1, result.error
+    assert notes.read_text().count("Compare net revenue.") == 1

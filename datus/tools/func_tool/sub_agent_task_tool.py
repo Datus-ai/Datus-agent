@@ -157,7 +157,7 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "For external dashboard conversion, accept only the bounded visualization phase "
         "after the main agent has followed the conversion workflow. "
         "The subagent picks a fresh slug "
-        "via start_new_dashboard (or reuses one via bind_existing_dashboard), "
+        "via start_new_dashboard (or edits an existing slug directly), "
         "persists each query via save_query_template, write_file's the render/*.jsx "
         "components, then finalizes with validate_render. "
         "Prompt: provide the dashboard question/topic plus the filter dimensions "
@@ -239,6 +239,8 @@ class SubAgentTaskTool:
         self.agent_config = agent_config
         self._allowed_subagents = allowed_subagents
         self._parent_node_name = parent_node_name
+        self._visual_parent_input = None
+        self._visual_intent_timestamp = ""
         self._action_bus: Optional["ActionBus"] = None
         self._interaction_broker: Optional["InteractionBroker"] = None
         self._parent_node: Optional["AgenticNode"] = None
@@ -1152,6 +1154,29 @@ class SubAgentTaskTool:
         sees the same @Table/@Metric/@Sql references the parent turn carried.
         """
         node_input = self._build_typed_subagent_input(node, prompt, db_ctx=db_ctx)
+        from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeInput
+        from datus.schemas.gen_visual_report_models import GenVisualReportNodeInput
+        from datus.tools.func_tool._visual_artifact_target import selected_visual_slug
+
+        if isinstance(node_input, (GenVisualReportNodeInput, GenVisualDashboardNodeInput)):
+            parent_input = getattr(self._parent_node, "input", None)
+            original = self._string_attr(parent_input, "user_message")
+            if original:
+                # A parent can rephrase the task, drop the Studio attachment or retry
+                # the child entirely. Preserve the originating turn for edit history.
+                if self._visual_parent_input is not parent_input:
+                    self._visual_parent_input = parent_input
+                    self._visual_intent_timestamp = node_input.intent_timestamp
+                node_input.intent_timestamp = self._visual_intent_timestamp
+                node_input.intent_message = original
+            kind = "report" if isinstance(node_input, GenVisualReportNodeInput) else "dashboard"
+            target = selected_visual_slug(parent_input, kind)
+            fallback = self._string_attr(parent_input, "artifact_slug")
+            if not target and fallback:
+                other = "dashboard" if kind == "report" else "report"
+                if not selected_visual_slug(parent_input, other):
+                    target = fallback
+            setattr(node_input, f"{kind}_slug", target)
         at_ctx = self._parent_at_context()
         node_input = apply_at_context(
             node_input,

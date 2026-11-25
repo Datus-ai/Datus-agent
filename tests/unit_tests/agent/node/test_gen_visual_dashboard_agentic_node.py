@@ -18,11 +18,14 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeInput
@@ -179,7 +182,6 @@ class TestPrepareDashboardArtifacts:
 
         tool_names = {t.name for t in node.tools}
         assert "start_new_dashboard" in tool_names
-        assert "bind_existing_dashboard" in tool_names
         assert "save_query_template" in tool_names
         assert "validate_render" in tool_names
 
@@ -211,7 +213,7 @@ class TestPrepareDashboardArtifacts:
         assert len(names) == len(set(names))
 
         # All four artifact-tool names are still present after the swap.
-        artifact_names = {"start_new_dashboard", "bind_existing_dashboard", "save_query_template", "validate_render"}
+        artifact_names = {"start_new_dashboard", "save_query_template", "validate_render"}
         assert artifact_names.issubset(set(names))
 
 
@@ -285,11 +287,7 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
         responses=[
             build_tool_then_response(
                 tool_calls=[
-                    MockToolCall(
-                        name="bind_existing_dashboard",
-                        arguments=json.dumps({"dashboard_slug": existing_slug}),
-                    ),
-                    MockToolCall(name="validate_render", arguments="{}"),
+                    MockToolCall(name="validate_render", arguments=json.dumps({"dashboard_slug": existing_slug})),
                 ],
                 content="Dashboard validated.",
             ),
@@ -372,7 +370,7 @@ async def test_execute_stream_fails_when_no_binding_and_no_answer(real_agent_con
     result = final.output
     assert isinstance(result, dict)
     assert result["success"] is False
-    assert "start_new_dashboard" in (result.get("error") or "")
+    assert "dashboard_slug" in (result.get("error") or "")
 
 
 @pytest.mark.asyncio
@@ -732,13 +730,7 @@ async def test_execute_stream_fails_when_validate_render_not_called(real_agent_c
 
 @pytest.mark.asyncio
 async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_config, mock_llm_create):
-    """Binding + reading + a prose answer is a valid turn, not an incomplete artifact.
-
-    Hard rule 1 of the system prompt makes the model bind before answering
-    anything — meta-discussion included — so "is this chart worth keeping?"
-    binds, reads the render tree, and replies with options. Nothing was
-    written, so there is no render to validate and no error to surface.
-    """
+    """A read-only consultation on a selected artifact preserves its intent history."""
     project_root = Path(real_agent_config.project_root)
     existing_slug = "consult_demo"
     dash_dir = project_root / "dashboards" / existing_slug
@@ -753,15 +745,16 @@ async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_c
         encoding="utf-8",
     )
 
+    intent = project_root / "dashboards" / existing_slug / "analysis/intent.md"
+    intent.parent.mkdir(exist_ok=True)
+    prior_intent = b"Original creation request.\n"
+    intent.write_bytes(prior_intent)
+
     answer = "That chart tracks a step nobody owns. Three options: drop it, demote it to text, or refocus it."
     mock_llm_create.reset(
         responses=[
             build_tool_then_response(
                 tool_calls=[
-                    MockToolCall(
-                        name="bind_existing_dashboard",
-                        arguments=json.dumps({"dashboard_slug": existing_slug}),
-                    ),
                     MockToolCall(
                         name="read_file",
                         arguments=json.dumps({"path": f"dashboards/{existing_slug}/render/app.jsx"}),
@@ -774,6 +767,7 @@ async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_c
 
     node = _make_node(real_agent_config)
     node.input = GenVisualDashboardNodeInput(
+        dashboard_slug=existing_slug,
         user_message="this chart doesn't look useful — is it worth keeping?",
         database="california_schools",
     )
@@ -788,6 +782,7 @@ async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_c
     assert not result.get("error")
     assert result["app_jsx_path"] is None
     assert result["response"] == answer
+    assert intent.read_bytes() == prior_intent
 
 
 @pytest.mark.asyncio
@@ -819,10 +814,6 @@ async def test_reused_action_manager_does_not_leak_a_prior_runs_write(real_agent
             ),
             build_tool_then_response(
                 tool_calls=[
-                    MockToolCall(
-                        name="bind_existing_dashboard",
-                        arguments=json.dumps({"dashboard_slug": slug}),
-                    ),
                     MockToolCall(
                         name="read_file",
                         arguments=json.dumps({"path": f"dashboards/{slug}/render/app.jsx"}),
@@ -947,3 +938,195 @@ class TestFinalizeLanguageDirective:
         assert "Chinese (zh-CN)" in prompt
         analysis_dir = dashboard_dir / "analysis"
         assert (analysis_dir / "suggested_questions.json").is_file()
+
+
+def test_preparation_failure_clears_previous_artifact(real_agent_config, mock_llm_create):
+    node = _make_node(real_agent_config)
+    node._prepare_artifacts(GenVisualDashboardNodeInput(user_message="Edit", dashboard_slug="previous"))
+    with pytest.raises(ValueError, match="Choose one"):
+        node._prepare_artifacts(
+            GenVisualDashboardNodeInput(user_message="dashboard slug: first\ndashboard slug: second")
+        )
+    error = node._finalize_artifact_error(ValueError("ambiguous target"))
+    assert error.dashboard_slug is None
+    assert node.artifact_tools is None
+    assert node.filesystem_func_tool.artifact_target is None
+
+
+@pytest.mark.parametrize(
+    "save_type,field", [("save_query_template", "sql_path"), ("save_metric_query_template", "metric_path")]
+)
+def test_narrative_refresh_after_earlier_save(real_agent_config, mock_llm_create, save_type, field):
+    node = _make_node(real_agent_config)
+    user_input = GenVisualDashboardNodeInput(user_message="Update render", dashboard_slug="demo")
+    node._prepare_artifacts(user_input)
+    manager = ActionHistoryManager()
+    earlier = ActionHistory(
+        action_id="save",
+        role=ActionRole.TOOL,
+        action_type=save_type,
+        status=ActionStatus.SUCCESS,
+        output={"result": {field: "dashboards/demo/queries/sales"}},
+        end_time=datetime.fromtimestamp(2000),
+    )
+    manager.add_action(earlier)
+    ctx = StreamRunContext(user_input=user_input, action_history_manager=manager, action_start=manager.checkpoint())
+    manager.add_action(
+        ActionHistory(
+            action_id="validate",
+            role=ActionRole.TOOL,
+            action_type="validate_render",
+            status=ActionStatus.SUCCESS,
+            output={"result": {"app_jsx_path": "dashboards/demo/render/app.jsx", "artifact_slug": "demo"}},
+        )
+    )
+    _seed_dashboard_on_disk(Path(real_agent_config.project_root), "demo")
+    questions = node._artifact_dir("demo") / "analysis/suggested_questions.json"
+    questions.parent.mkdir(parents=True)
+    questions.write_text("[]")
+    for modified, changed in [(1000, True), (3000, False)]:
+        os.utime(questions, (modified, modified))
+        result = node._build_success_result(ctx)
+        assert ctx.extras["artifact_data_changed"] is changed
+        assert result.template_count == 0
+    os.utime(questions, (1000, 1000))
+    earlier.output = {"result": {field: "dashboards/other/queries/sales"}}
+    node._build_success_result(ctx)
+    assert ctx.extras["artifact_data_changed"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delegated", [False, True])
+@pytest.mark.parametrize(
+    "followup,expected_writes,expected_status",
+    [
+        ("Change the title again.", [1, 0], "completed"),
+        ('Change <artifact-chart-card dashboard-slug="selected" />', [1, 0], "completed"),
+        ('Change <artifact-chart-card dashboard-slug="neighbor" />', [1], "error"),
+    ],
+)
+async def test_card_target_survives_run_boundary_insert(
+    real_agent_config, mock_llm_create, delegated, followup, expected_writes, expected_status
+):
+    from datus.api.models.cli_models import StreamChatInput
+    from datus.api.services.chat_task_manager import ChatTask, ChatTaskManager
+    from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
+
+    root = Path(real_agent_config.project_root)
+    for slug in ("selected", "neighbor"):
+        _seed_dashboard_on_disk(root, slug)
+    neighbor = root / "dashboards/neighbor/render/app.jsx"
+    before = neighbor.read_bytes()
+    visual = _make_node(real_agent_config)
+    manager = ChatTaskManager()
+    node = manager._create_node(real_agent_config, None, "chat", session_id="s-cont-card") if delegated else visual
+    manager._create_node = lambda *args, **kwargs: node
+    task_tool = SubAgentTaskTool(agent_config=real_agent_config)
+    task_tool.set_parent_node(node)
+    writes = []
+
+    async def run_pass(action_history_manager):
+        user_input = task_tool._build_node_input(visual, "Update the title", db_ctx={}) if delegated else node.input
+        visual._prepare_artifacts(user_input)
+        if len(writes) == 0:
+            node.pending_input_queue.push(followup)
+            target = "selected"
+        else:
+            target = "neighbor"
+        write = visual.filesystem_func_tool.write_file(
+            f"dashboards/{target}/render/app.jsx", "export default function App(){return 'Edited';}"
+        )
+        writes.append(write)
+        yield ActionHistory(
+            action_id=f"pass-{len(writes)}",
+            role=ActionRole.ASSISTANT,
+            action_type="chat_response",
+            messages="done",
+            output={"response": "done"},
+            status=ActionStatus.SUCCESS,
+        )
+
+    node.execute_stream_with_interactions = run_pass
+    task = ChatTask(session_id="s-cont-card", asyncio_task=MagicMock())
+    await manager._run_loop(
+        task,
+        real_agent_config,
+        StreamChatInput(
+            message='Update <artifact-chart-card dashboard-slug="selected" chart-id="title" />',
+            session_id="s-cont-card",
+        ),
+    )
+    assert [write.success for write in writes] == expected_writes
+    assert task.status == expected_status, task.error
+    assert (task.error or "") == {
+        "completed": "",
+        "error": "Choose one dashboard to edit per turn. Please confirm the target: neighbor, selected.",
+    }[expected_status]
+    assert neighbor.read_bytes() == before
+
+
+def test_selected_target_changes_cached_prompt(real_agent_config, mock_llm_create, monkeypatch):
+    node = _make_node(real_agent_config)
+    node.session_id = "test-dashboard-target-cache"
+    renders = []
+
+    def render(**kwargs):
+        renders.append(node._active_artifact_slug)
+        return str(node._active_artifact_slug)
+
+    monkeypatch.setattr(node, "_get_system_prompt", render)
+    for slug in ("a", "a", "b", "a", None, None):
+        node.input = GenVisualDashboardNodeInput(user_message="Show the chart", dashboard_slug=slug)
+        node._prepare_artifacts(node.input)
+        assert node._get_session_system_prompt() == str(slug)
+    assert renders == ["a", "b", "a", None]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recovers", [False, True])
+async def test_turn_requires_pending_intent_before_completion(
+    real_agent_config, mock_llm_create, monkeypatch, recovers
+):
+    from datus.tools.func_tool import _visual_artifact_target as targets
+
+    slug = "existing"
+    _seed_dashboard_on_disk(Path(real_agent_config.project_root), slug)
+    node = _make_node(real_agent_config)
+    message = "Add a net revenue summary."
+    node.input = GenVisualDashboardNodeInput(user_message=message, dashboard_slug=slug)
+    append = targets.append_intent_section
+    attempts = []
+
+    def fail_then_retry(*args, **kwargs):
+        attempts.append(kwargs["timestamp"])
+        if len(attempts) == 1 or not recovers:
+            return "intent log is unavailable"
+        return append(*args, **kwargs)
+
+    monkeypatch.setattr(targets, "append_intent_section", fail_then_retry)
+    mock_llm_create.reset(
+        responses=[
+            build_tool_then_response(
+                tool_calls=[
+                    MockToolCall(
+                        "write_file",
+                        {
+                            "path": f"dashboards/{slug}/render/app.jsx",
+                            "content": "export default function App(){return null;}",
+                        },
+                    ),
+                    MockToolCall("validate_render", {}),
+                ],
+                content="Updated.",
+            )
+        ]
+    )
+    actions = [a async for a in node.execute_stream(ActionHistoryManager())]
+    result = actions[-1].output
+    assert result["success"] is recovers
+    assert len(attempts) == 2 and attempts[0] == attempts[1]
+    if recovers:
+        assert (node._artifact_dir(slug) / "analysis/intent.md").read_text().count(message) == 1
+    else:
+        assert "intent log is unavailable" in result["error"]
+        assert not result.get("app_jsx_path")

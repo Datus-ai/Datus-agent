@@ -37,6 +37,7 @@ from datus.tools.func_tool import (
     ReportArtifactTools,
     ReportFilesystemFuncTool,
 )
+from datus.tools.func_tool._visual_artifact_target import selected_visual_slug
 from datus.utils.artifact_output import artifact_output_root
 from datus.utils.loggings import get_logger
 
@@ -91,11 +92,14 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
     # ────────── Hooks the base class calls ──────────
 
     def _make_artifact_tools(self, user_input: GenVisualReportNodeInput) -> ReportArtifactTools:
+        message = getattr(user_input, "user_message", "") or ""
         return ReportArtifactTools(
             agent_config=self.agent_config,
             db_func_tool=self.db_func_tool,
             semantic_tools=self.semantic_tools,
-            user_message=getattr(user_input, "user_message", "") or "",
+            user_message=getattr(user_input, "intent_message", None) or message,
+            intent_timestamp=getattr(user_input, "intent_timestamp", None),
+            requested_slug=selected_visual_slug(user_input, "report"),
         )
 
     def _read_artifact_slug_from_tools(self) -> Optional[str]:

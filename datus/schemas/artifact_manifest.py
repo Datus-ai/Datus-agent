@@ -57,7 +57,7 @@ class ArtifactManifest(BaseModel):
     * ``created_at`` is the UTC timestamp at which the manifest was
       first written.
     * ``updated_at`` is a persisted ISO-8601 UTC timestamp refreshed on
-      every ``save_query`` / ``save_query_template`` / ``bind_existing_*``
+      every successful query save
       call so list pages can order by recency. ``None`` until the first
       mutation after creation; older manifests written before this field
       was introduced deserialize cleanly with ``None``.
@@ -82,8 +82,7 @@ class ArtifactManifest(BaseModel):
     updated_at: Optional[str] = Field(
         default=None,
         description=(
-            "ISO-8601 UTC timestamp refreshed on every save_query / save_query_template / "
-            "bind_existing_* call so list pages can order by recency. ``None`` until the "
+            "ISO-8601 UTC timestamp refreshed on every successful query save so list pages can order by recency. ``None`` until the "
             "first mutation after creation. Older manifests written before this field was "
             "introduced deserialize cleanly with ``None``."
         ),

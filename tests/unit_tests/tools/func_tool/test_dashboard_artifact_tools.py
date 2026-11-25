@@ -7,12 +7,7 @@
 Covers:
 * Helpers: ``sql_quote_scalar``, ``resolve_bind_placeholders``,
   ``render_dashboard_template``.
-* ``DashboardArtifactTools.start_new_dashboard`` /
-  ``bind_existing_dashboard`` — LLM-driven intent declaration. The LLM
-  supplies the ``slug`` directly; the tool refuses to overwrite an
-  existing directory.
-* ``_require_active`` guard — save_query_template / validate_render fail
-  fast when no dashboard is bound.
+* Create and explicitly target existing dashboard artifacts.
 * ``save_query_template`` — header parsing, type coercion through the
   trial render, column inference, persistence on disk, error paths.
 * ``validate_render`` — entry point check, useQuerySql 2-arg requirement,
@@ -320,7 +315,7 @@ class TestExtractBindNames:
 
 
 # ----------------------------------------------------------------------------- #
-# start_new_dashboard / bind_existing_dashboard                                 #
+# start_new_dashboard / dashboard_slug                                 #
 # ----------------------------------------------------------------------------- #
 
 
@@ -398,34 +393,24 @@ class TestStartNewDashboard:
         assert "already exists" in (result.error or "").lower()
 
 
-class TestBindExistingDashboard:
-    def test_binds_when_directory_and_app_jsx_exist(self, unbound_tools: DashboardArtifactTools, project_root: Path):
-        existing = project_root / "dashboards" / "existing_demo"
-        (existing / "queries").mkdir(parents=True)
-        (existing / "render").mkdir()
-        (existing / "render" / "app.jsx").write_text("export default function D() { return null; }\n")
-
-        result = unbound_tools.bind_existing_dashboard("existing_demo")
-        assert result.success == 1, result.error
-        assert result.result["mode"] == "edit"
-        assert result.result["dashboard_slug"] == "existing_demo"
-        assert unbound_tools.dashboard_slug == "existing_demo"
-
+class TestExistingDashboardTarget:
     def test_rejects_missing_directory(self, unbound_tools: DashboardArtifactTools):
-        result = unbound_tools.bind_existing_dashboard("nope")
+        result = unbound_tools.validate_render("nope")
         assert result.success == 0
         assert "not found" in (result.error or "").lower()
 
-    def test_rejects_missing_app_jsx(self, unbound_tools: DashboardArtifactTools, project_root: Path):
+    def test_rejects_incomplete_directory_without_manifest(
+        self, unbound_tools: DashboardArtifactTools, project_root: Path
+    ):
         incomplete = project_root / "dashboards" / "partial"
         (incomplete / "queries").mkdir(parents=True)
         (incomplete / "render").mkdir()
-        result = unbound_tools.bind_existing_dashboard("partial")
+        result = unbound_tools.validate_render("partial")
         assert result.success == 0
-        assert "render/app.jsx" in (result.error or "")
+        assert "manifest" in (result.error or "")
 
     def test_rejects_invalid_slug_format(self, unbound_tools: DashboardArtifactTools):
-        result = unbound_tools.bind_existing_dashboard("Not-A-Valid-Slug!")
+        result = unbound_tools.validate_render("Not-A-Valid-Slug!")
         assert result.success == 0
         assert "match" in (result.error or "").lower()
 
@@ -444,14 +429,12 @@ class TestRequireActive:
         )
         assert result.success == 0
         error = (result.error or "").lower()
-        assert "no active dashboard" in error
-        assert "start_new_dashboard" in error
-        assert "bind_existing_dashboard" in error
+        assert "dashboard_slug" in error
 
     def test_validate_render_rejects_when_unbound(self, unbound_tools: DashboardArtifactTools):
         result = unbound_tools.validate_render()
         assert result.success == 0
-        assert "no active dashboard" in (result.error or "").lower()
+        assert "dashboard_slug" in (result.error or "").lower()
 
 
 # ----------------------------------------------------------------------------- #
@@ -470,6 +453,16 @@ _REVENUE_TEMPLATE = (
 
 
 class TestSaveQueryTemplate:
+    def test_invalid_brief_preserves_existing_query(self, dashboard_tools):
+        save = dashboard_tools.save_query_template
+        args = dict(name="sales", goal="Compare sales", hypothesis="Sales increased", sample_params={})
+        assert save(sql_template="-- @datus-params\nSELECT 1 AS total", **args).success == 1
+        queries = dashboard_tools.queries_dir
+        before = {p.name: p.read_bytes() for p in queries.iterdir()}
+        failed = save(sql_template="-- @datus-params\nSELECT 2 AS total", caveats="x" * 501, **args)
+        assert failed.success == 0 and "brief" in failed.error
+        assert {p.name: p.read_bytes() for p in queries.iterdir()} == before
+
     def test_preserves_mixed_sqlite_values(self, dashboard_tools: DashboardArtifactTools):
         result = dashboard_tools.save_query_template(
             name="mixed_values",

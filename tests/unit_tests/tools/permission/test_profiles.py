@@ -179,7 +179,7 @@ class TestNormalProfile:
         the user reviews the artifact as a whole via the rendered preview."""
         config = NORMAL
         assert _resolve(config, "artifact_tools", "start_new_report") == PermissionLevel.ALLOW
-        assert _resolve(config, "artifact_tools", "bind_existing_dashboard") == PermissionLevel.ALLOW
+        assert _resolve(config, "artifact_tools", "save_metric_query_template") == PermissionLevel.ALLOW
         assert _resolve(config, "artifact_tools", "save_query_template") == PermissionLevel.ALLOW
         assert _resolve(config, "artifact_tools", "validate_render") == PermissionLevel.ALLOW
 

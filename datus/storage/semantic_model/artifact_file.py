@@ -145,6 +145,25 @@ def semantic_artifact_lock(target_path: Path, *, load_before_lock: bool = True) 
 
 
 @contextmanager
+def windows_file_lock(lock_path: Path) -> Iterator[None]:
+    """Use a stable sidecar for interprocess exclusion when the target can be replaced."""
+    import msvcrt
+
+    with lock_path.open("a+b") as lock:
+        lock.seek(0)
+        if not lock.read(1):
+            lock.write(b"\0")
+            lock.flush()
+        lock.seek(0)
+        msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+        try:
+            yield
+        finally:
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+@contextmanager
 def _dosi_file_lock(lock_path: Path) -> Iterator[None]:
     """Hold the lock file Dosi shares with every writer of a model, then remove it.
 
@@ -155,20 +174,8 @@ def _dosi_file_lock(lock_path: Path) -> Iterator[None]:
     delete sharing.
     """
     if os.name != "posix":
-        import msvcrt
-
-        with lock_path.open("a+b") as lock:
-            lock.seek(0)
-            if not lock.read(1):
-                lock.write(b"\0")
-                lock.flush()
-            lock.seek(0)
-            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
-            try:
-                yield
-            finally:
-                lock.seek(0)
-                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+        with windows_file_lock(lock_path):
+            yield
         return
 
     import fcntl

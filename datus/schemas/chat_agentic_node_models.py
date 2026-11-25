@@ -13,6 +13,7 @@ from typing import Optional
 
 from pydantic import Field
 
+from datus.schemas.artifact_manifest import ARTIFACT_SLUG_PATTERN
 from datus.schemas.at_context import AtContextInput
 from datus.schemas.base import BaseResult
 
@@ -25,6 +26,9 @@ class ChatNodeInput(AtContextInput):
     ``external_knowledge``) are inherited from :class:`AtContextInput`.
     """
 
+    artifact_slug: Optional[str] = Field(
+        default=None, pattern=ARTIFACT_SLUG_PATTERN, description="Caller-selected target for visual delegation"
+    )
     user_message: str = Field(..., description="User's chat message input")
     catalog: Optional[str] = Field(default=None, description="Database catalog for context")
     database: Optional[str] = Field(default=None, description="Database name for context")

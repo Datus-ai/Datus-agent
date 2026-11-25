@@ -18,6 +18,7 @@ file enforces.
 """
 
 import re
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -131,6 +132,17 @@ class QueryTemplateMetaFile(ArtifactDatasource):
 class GenVisualDashboardNodeInput(AtContextInput):
     """Input model for GenVisualDashboardAgenticNode."""
 
+    dashboard_slug: Optional[str] = Field(
+        None, pattern=DASHBOARD_SLUG_RE.pattern, description="Caller-selected edit target"
+    )
+    intent_message: Optional[str] = Field(
+        None, description="Original user request when the generator is delegated a task"
+    )
+    intent_timestamp: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+        pattern=r"^[0-9T:.+Z-]{19,35}$",
+        description="Stable timestamp for this logical turn, preserved when retrying its input.",
+    )
     user_message: str = Field(..., description="User's dashboard question (required)")
     catalog: Optional[str] = Field(None, description="Database catalog")
     database: Optional[str] = Field(None, description="Database name")
@@ -165,7 +177,7 @@ class GenVisualDashboardNodeResult(BaseResult):
     )
     artifact_mode: Optional[Literal["new", "edit"]] = Field(
         default=None,
-        description="Whether the LLM chose start_new_dashboard (new) or bind_existing_dashboard (edit). None when the run failed before binding.",
+        description="Whether the turn created or edited the artifact.",
     )
     name: Optional[str] = Field(
         default=None,

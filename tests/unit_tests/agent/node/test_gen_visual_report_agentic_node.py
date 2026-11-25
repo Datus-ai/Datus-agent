@@ -11,7 +11,7 @@ Covers:
 * ``ReportFilesystemFuncTool`` replaces the default filesystem tool.
 * ``_prepare_artifacts`` registers the artifact tools but leaves the
   report slug unbound — the LLM owns the new/edit decision at runtime.
-* End-to-end streaming run: LLM calls bind_existing_report (against a
+* End-to-end streaming run: LLM calls validate_render (against a
   pre-seeded dir) and validate_render.
 * CLI mode compiles ``index.html`` after a successful validate_render.
 * Binding-required failure when the LLM never calls start/bind_report.
@@ -207,7 +207,6 @@ class TestPrepareReportArtifacts:
 
         tool_names = {t.name for t in node.tools}
         assert "start_new_report" in tool_names
-        assert "bind_existing_report" in tool_names
         assert "save_query" in tool_names
         assert "validate_render" in tool_names
 
@@ -229,7 +228,7 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
     without needing the mock LLM to author a fresh render tree end-to-end
     (that path is exercised in the artifact-tools tests). Pre-seeding
     ``render/`` + ``queries/`` + ``manifest.json`` and using
-    ``bind_existing_report`` keeps the test purely additive over the unit
+    ``validate_render`` keeps the test purely additive over the unit
     coverage.
     """
     project_root = Path(real_agent_config.project_root)
@@ -240,11 +239,7 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
         responses=[
             build_tool_then_response(
                 tool_calls=[
-                    MockToolCall(
-                        name="bind_existing_report",
-                        arguments=json.dumps({"report_slug": existing_slug}),
-                    ),
-                    MockToolCall(name="validate_render", arguments="{}"),
+                    MockToolCall(name="validate_render", arguments=json.dumps({"report_slug": existing_slug})),
                 ],
                 content="Report validated.",
             ),
@@ -293,7 +288,7 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
     # Artifact card fields surface through the result so the SSE artifact
     # event can be built without touching disk a second time.
     assert result["artifact_kind"] == "report"
-    assert result["artifact_mode"] == "edit"  # bind_existing_report path
+    assert result["artifact_mode"] == "edit"
     assert result["name"] == "seeded report"
     assert result["description"] == "Unit-test seeded report."
     assert result["created_at"] == "2026-05-13T00:00:00Z"
@@ -606,8 +601,7 @@ async def test_execute_stream_without_binding_and_no_answer_marks_failure(real_a
     assert result["report_slug"] is None
     assert result["query_count"] == 0
     error = result.get("error") or ""
-    assert "start_new_report" in error
-    assert "bind_existing_report" in error
+    assert "report_slug" in error
     # When no binding ever happened, the artifact-card fields stay None —
     # the SSE dispatcher then skips the artifact event and falls through
     # to the regular error path.
@@ -707,26 +701,21 @@ async def test_execute_stream_bound_but_no_validate_marks_failure(real_agent_con
 
 @pytest.mark.asyncio
 async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_config, mock_llm_create):
-    """Binding + reading + a prose answer is a valid turn, not an incomplete artifact.
-
-    Hard rule 1 of the system prompt makes the model bind before answering
-    anything — meta-discussion included — so a "should I keep this section?"
-    question binds, reads the render tree, and replies with options. Nothing
-    was written, so there is no render to validate and no error to surface.
-    """
+    """A read-only consultation on a selected artifact preserves its intent history."""
     project_root = Path(real_agent_config.project_root)
     existing_slug = "consult_demo"
     _seed_render_on_disk(project_root, existing_slug)
+
+    intent = project_root / "reports" / existing_slug / "analysis/intent.md"
+    intent.parent.mkdir(exist_ok=True)
+    prior_intent = b"Original creation request.\n"
+    intent.write_bytes(prior_intent)
 
     answer = "That section restates the KPI strip. Three options: drop it, merge it, or make it a callout."
     mock_llm_create.reset(
         responses=[
             build_tool_then_response(
                 tool_calls=[
-                    MockToolCall(
-                        name="bind_existing_report",
-                        arguments=json.dumps({"report_slug": existing_slug}),
-                    ),
                     MockToolCall(
                         name="read_file",
                         arguments=json.dumps({"path": f"reports/{existing_slug}/render/app.jsx"}),
@@ -738,7 +727,7 @@ async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_c
     )
 
     node = _make_node(real_agent_config)
-    node.input = GenVisualReportNodeInput(user_message="is this section worth keeping?")
+    node.input = GenVisualReportNodeInput(report_slug=existing_slug, user_message="is this section worth keeping?")
 
     actions = []
     async for action in node.execute_stream(ActionHistoryManager()):
@@ -752,6 +741,7 @@ async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_c
     assert not result.get("error")
     assert result["app_jsx_path"] is None
     assert result["response"] == answer
+    assert intent.read_bytes() == prior_intent
 
 
 class TestReportDistFromAgentConfig:
@@ -795,3 +785,75 @@ class TestReportDistFromAgentConfig:
         node._maybe_compile_html(report_slug)
 
         assert recorded["report_dist"] == Path(dist)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("revalidate", [False, True])
+async def test_mutation_invalidates_previous_render(real_agent_config, mock_llm_create, monkeypatch, revalidate):
+    slug = "editable"
+    _seed_render_on_disk(Path(real_agent_config.project_root), slug)
+    entry = f"reports/{slug}/render/app.jsx"
+    calls = [
+        MockToolCall("validate_render", {}),
+        MockToolCall("write_file", {"path": entry, "content": "export const title = 'Missing default';"}),
+    ]
+    if revalidate:
+        calls.append(MockToolCall("validate_render", {}))
+    mock_llm_create.reset(responses=[build_tool_then_response(tool_calls=calls, content="Finished editing.")])
+    node = _make_node(real_agent_config)
+    node.input = GenVisualReportNodeInput(user_message="Edit the report", report_slug=slug)
+    finalized = []
+    monkeypatch.setattr(node, "_run_finalize", lambda *args: finalized.append(args) or {})
+    actions = [a async for a in node.execute_stream(ActionHistoryManager())]
+    assert (Path(real_agent_config.project_root) / entry).read_text() == "export const title = 'Missing default';"
+    result = actions[-1].output
+    assert result["success"] is False
+    assert result["app_jsx_path"] is None
+    assert "validate_render" in result["error"]
+    assert finalized == []
+
+
+@pytest.mark.asyncio
+async def test_final_result_validates_disk_after_parallel_write_and_validation(real_agent_config, mock_llm_create):
+    import asyncio
+
+    from datus.agent.node.stream_run_context import StreamRunContext
+
+    slug = "editable"
+    root = Path(real_agent_config.project_root)
+    _seed_render_on_disk(root, slug)
+    node = _make_node(real_agent_config)
+    node.input = GenVisualReportNodeInput(user_message="Edit this report", report_slug=slug)
+    node._prepare_artifacts(node.input)
+    entry = f"reports/{slug}/render/app.jsx"
+    validated = asyncio.Event()
+
+    async def write():
+        await validated.wait()
+        return await asyncio.to_thread(node.filesystem_func_tool.write_file, entry, "export const title = 'Draft';")
+
+    async def validate():
+        result = await asyncio.to_thread(node.artifact_tools.validate_render, slug)
+        validated.set()
+        return result
+
+    # gather returns results in call order, even though validation saw the old entry.
+    results = await asyncio.gather(write(), validate())
+    assert [r.success for r in results] == [1, 1]
+    manager = ActionHistoryManager()
+    for name, result in zip(("write_file", "validate_render"), results):
+        manager.add_action(
+            ActionHistory(
+                action_id=name,
+                role=ActionRole.TOOL,
+                action_type=name,
+                status=ActionStatus.SUCCESS,
+                output=result.model_dump(),
+            )
+        )
+    ctx = StreamRunContext(user_input=node.input, action_history_manager=manager)
+    final = node._build_success_result(ctx)
+    assert final.success is False
+    assert "export default" in final.error
+    assert final.app_jsx_path is None
+    assert ctx.extras["artifact_app_jsx_rel_path"] is None

@@ -171,7 +171,7 @@ _NORMAL_RULES = [
     # these into ``semantic_tools`` (ALLOW) while chat left them in the
     # catch-all (ASK); the dedicated category unifies on ALLOW.
     _rule("reference_template_tools", "*", PermissionLevel.ALLOW),
-    # artifact authoring helpers (``start_new_*`` / ``bind_existing_*`` /
+    # artifact authoring helpers (``start_new_*`` /
     # ``save_query*`` / ``validate_render``) are subagent-internal state
     # mutations confined to the artifact tree; users review the artifact as
     # a whole via the rendered preview, not per-call prompts. Mirrors the

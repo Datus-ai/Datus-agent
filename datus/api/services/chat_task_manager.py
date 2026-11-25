@@ -48,6 +48,7 @@ from datus.cli.autocomplete import AtReferenceCompleter
 from datus.cli.execution_state import PendingInputQueue
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.at_context import AtContextInput
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.proxy.proxy_tool import apply_proxy_tools
 from datus.utils.artifact_output import session_user_scope
@@ -1087,6 +1088,7 @@ class ChatTaskManager:
                 db_schema=request.db_schema,
                 plan_mode=request.plan_mode or False,
                 source_session_id=request.source_session_id,
+                artifact_slug=request.artifact_slug,
             )
             node.input = node_input
 
@@ -1355,6 +1357,7 @@ class ChatTaskManager:
                         else:
                             parts.append({"type": "markdown", "payload": {"content": text}})
                     task.register_message_contents(combined, parts)
+                previous_input = node.input
                 node.input = self._create_node_input(
                     user_message=combined,
                     current_node=node,
@@ -1367,7 +1370,17 @@ class ChatTaskManager:
                     db_schema=request.db_schema,
                     plan_mode=request.plan_mode or False,
                     source_session_id=None,
+                    artifact_slug=request.artifact_slug,
                 )
+                if isinstance(previous_input, AtContextInput) and isinstance(node.input, AtContextInput):
+                    from datus.tools.func_tool._visual_artifact_target import selected_visual_slug
+
+                    for kind in ("report", "dashboard"):
+                        previous_slug = selected_visual_slug(previous_input, kind)
+                        if previous_slug:
+                            node.input.studio_edit_targets[kind] = [previous_slug]
+                            # Reject conflicting cards before even a chat parent can issue a write.
+                            selected_visual_slug(node.input, kind)
 
             # 6.5 Persist this turn's @-context (table/metric/sql/knowledge refs)
             # so the history API can re-render them. Best-effort and off the
@@ -1899,6 +1912,7 @@ class ChatTaskManager:
         db_schema: Optional[str] = None,
         plan_mode: bool = False,
         source_session_id: Optional[str] = None,
+        artifact_slug: Optional[str] = None,
     ):
         """Create node input based on node type.
 
@@ -1930,6 +1944,7 @@ class ChatTaskManager:
             prompt_language="en",
             plan_mode=plan_mode,
             source_session_id=source_session_id,
+            artifact_slug=artifact_slug,
         )
 
     # ------------------------------------------------------------------

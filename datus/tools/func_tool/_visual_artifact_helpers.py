@@ -28,7 +28,9 @@ import datetime as _dt
 import json
 import os
 import re
+import shutil
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, List, Optional
 
@@ -37,6 +39,7 @@ from agents import FunctionTool
 from datus.schemas.action_history import ActionHistory
 from datus.schemas.analysis_artifacts import QueryBrief, SubjectRefs
 from datus.schemas.artifact_manifest import ArtifactManifest
+from datus.storage.semantic_model.artifact_file import path_mutation_lock, windows_file_lock
 from datus.tools.func_tool.base import trans_to_function_tool
 from datus.utils.loggings import get_logger
 
@@ -152,12 +155,8 @@ def extract_artifact_result_field(action: ActionHistory, field: str) -> Optional
 #     query write; finalize owns the derived query-index fields.
 #   * ``write_query_brief`` — write ``queries/<name>.brief.json``.
 #
-# Each helper is best-effort: failures are logged and surfaced as a string
-# error message but never raise, so the caller can decide whether to bubble
-# the issue up as a hard FuncToolResult error (e.g. for save_query, where
-# missing brief metadata makes the artifact incomplete) or treat it as
-# a soft warning (e.g. for intent.md, where the SQL is the load-bearing
-# artifact and the prompt log is bonus).
+# The helpers report validation and I/O errors to their callers. A visual turn
+# retries a pending intent append before it can report success.
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
@@ -178,17 +177,94 @@ def _atomic_write_text(path: Path, content: str) -> None:
         raise
 
 
+def is_intent_file(path: Path) -> bool:
+    return path.name.casefold() == "intent.md" and path.parent.name.casefold() == "analysis"
+
+
+@contextmanager
+def artifact_write_lock(path: Path):
+    """Serialize writes to an artifact file or query bundle across workers."""
+    if os.name != "posix":
+        with path_mutation_lock(path):
+            if os.name == "nt" and is_intent_file(path):
+                with windows_file_lock(path.with_name(".intent.md.lock")):
+                    yield
+            else:
+                yield
+        return
+    import fcntl
+
+    # Lock the directory because published files are replaced by atomic writes.
+    descriptor = os.open(path.parent, os.O_RDONLY)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
+@contextmanager
+def staged_query_files(queries_dir: Path, name: str, *, remove_suffixes: tuple[str, ...]):
+    """Publish a validated query bundle, restoring the previous files if a replacement fails."""
+    queries_dir.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(dir=queries_dir))
+    keep_backups = False
+    try:
+        yield staging
+        staged = list(staging.iterdir())
+        obsolete = [queries_dir / f"{name}{suffix}" for suffix in remove_suffixes]
+        backup = staging / "backup"
+        backup.mkdir()
+        with artifact_write_lock(queries_dir / name):
+            changed = []
+            try:
+                for src in staged:
+                    dst = queries_dir / src.name
+                    saved = backup / dst.name if dst.exists() else None
+                    if saved is not None:
+                        os.link(dst, saved)
+                    os.replace(src, dst)
+                    changed.append((dst, saved))
+                for dst in obsolete:
+                    if dst.exists():
+                        saved = backup / dst.name
+                        dst.rename(saved)
+                        changed.append((dst, saved))
+            except OSError as publish_error:
+                keep_backups = True
+                restore_errors = []
+                for dst, saved in reversed(changed):
+                    try:
+                        if saved is not None:
+                            os.replace(saved, dst)
+                        else:
+                            dst.unlink(missing_ok=True)
+                    except OSError as exc:
+                        restore_errors.append(f"{dst.name}: {exc}")
+                if restore_errors:
+                    raise OSError(
+                        f"Query publication failed ({publish_error}); rollback incomplete "
+                        f"({', '.join(restore_errors)}). Recovery files retained at {staging}"
+                    ) from publish_error
+                keep_backups = False
+                raise
+    finally:
+        if not keep_backups:
+            shutil.rmtree(staging)
+
+
 def append_intent_section(
     analysis_dir: Path,
     *,
     user_message: str,
     mode: str,
     timestamp: str,
+    deduplicate: bool = False,
 ) -> Optional[str]:
     """Append a timestamped fenced-code-block section to ``analysis/intent.md``.
 
     The file is the raw record of every user prompt that drove a
-    start_new / bind_existing call against this artifact — see
+    creation or successful edit of this artifact — see
     ``docs/analysis_artifacts.md`` §3.3. Always append; never rewrite.
 
     Each section is rendered as a fenced code block (not a blockquote)
@@ -226,12 +302,20 @@ def append_intent_section(
         path = analysis_dir / "intent.md"
         # One blank line as a separator between sections — keeps the file
         # readable in any markdown renderer and easy to diff in git.
+        # Match the universal newline decoding used to read existing sections.
+        user_message = user_message.replace("\r\n", "\n").replace("\r", "\n")
         section = _format_intent_section(user_message=user_message, mode=mode, timestamp=timestamp)
-        existing = path.read_text(encoding="utf-8") if path.is_file() else ""
-        if existing and not existing.endswith("\n"):
-            existing += "\n"
-        new_text = existing + ("\n" if existing else "") + section
-        _atomic_write_text(path, new_text)
+        with artifact_write_lock(path):
+            existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+            if deduplicate and any(
+                match["timestamp"] == timestamp and match["message"] == user_message.strip()
+                for match in _INTENT_SECTION.finditer(existing)
+            ):
+                return None
+            if existing and not existing.endswith("\n"):
+                existing += "\n"
+            new_text = existing + ("\n" if existing else "") + section
+            _atomic_write_text(path, new_text)
         return None
     except Exception as exc:
         # Honour the "best-effort: never raise" contract documented above.
@@ -259,6 +343,13 @@ def _pick_code_fence(text: str) -> str:
         else:
             current = 0
     return "`" * max(3, longest + 1)
+
+
+# Match complete sections so a quoted heading inside a multi-line prompt is not a turn.
+_INTENT_SECTION = re.compile(
+    r"^### \[(?P<timestamp>[^\]\n]+)\] mode: [^\n]+\n(?P<fence>`{3,})\n(?P<message>.*?)\n(?P=fence)$",
+    re.MULTILINE | re.DOTALL,
+)
 
 
 def _format_intent_section(*, user_message: str, mode: str, timestamp: str) -> str:
