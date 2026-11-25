@@ -98,6 +98,15 @@ class VisualArtifactTarget:
                 )
             )
 
+    def _slug_guidance(self) -> str:
+        if self.requested_slug:
+            return f"Ask the user to confirm the selected {self.kind} in Studio."
+        return (
+            f"Use glob('{self.kind}s/*/manifest.json') and read the manifests to match the requested name. "
+            f"If exactly one matches, retry with its slug as {self.kind}_slug. "
+            "If the target is unclear, ask the user to identify it."
+        )
+
     def configure_tools(self, tools: list[FunctionTool]) -> list[FunctionTool]:
         """A known edit target is supplied by the caller; otherwise ask for it explicitly."""
         field = f"{self.kind}_slug"
@@ -112,6 +121,10 @@ class VisualArtifactTarget:
                     required.remove(field)
             else:
                 schema["properties"][field].pop("default", None)
+                schema["properties"][field]["description"] = (
+                    f"The target {self.kind} slug. For creation, use the slug returned by start_new_{self.kind}. "
+                    f"To identify an existing {self.kind}: {self._slug_guidance()}"
+                )
                 if field not in required:
                     required.append(field)
         return [tool for tool in tools if not (self.requested_slug and tool.name.startswith("start_new_"))]
@@ -121,14 +134,20 @@ class VisualArtifactTarget:
             # Programmatic creators may reuse the slug returned by start_new. A free-form
             # edit must identify its target on each call, even after another save succeeded.
             slug = slug or self.requested_slug or (self.slug if self.mode == "new" else None)
-            if not slug or not ARTIFACT_SLUG_RE.fullmatch(slug):
-                return FuncToolResult(success=0, error=f"{self.kind}_slug must match {ARTIFACT_SLUG_RE.pattern}")
+            if not slug:
+                return FuncToolResult(success=0, error=f"{self.kind}_slug is required. {self._slug_guidance()}")
+            if not ARTIFACT_SLUG_RE.fullmatch(slug):
+                return FuncToolResult(
+                    success=0, error=f"{self.kind}_slug must match {ARTIFACT_SLUG_RE.pattern}. {self._slug_guidance()}"
+                )
             for selected in (self.requested_slug, self.slug):
                 if selected and selected != slug:
                     return FuncToolResult(success=0, error=f"This turn targets {self.kind} {selected}, not {slug}")
             directory = self.root / f"{self.kind}s" / slug
             if not directory.is_dir():
-                return FuncToolResult(success=0, error=f"{self.kind} directory not found: {slug}")
+                return FuncToolResult(
+                    success=0, error=f"{self.kind} directory not found: {slug}. {self._slug_guidance()}"
+                )
             if self.slug is None and not (directory / "render/app.jsx").is_file():
                 return FuncToolResult(success=0, error=f"{directory.name}/render/app.jsx is missing")
             self.slug = slug

@@ -53,6 +53,35 @@ async def test_sdk_can_validate_an_existing_slug_before_any_write(existing):
         assert notes.read_bytes() == before
 
 
+@pytest.mark.asyncio
+async def test_freeform_tools_explain_how_to_recover_the_slug(existing):
+    kind, directory, make_tools, _ = existing
+    field = f"{kind}_slug"
+    tools = make_tools()
+    args = {"name": "sales", "goal": "Count sales", "hypothesis": "Sales exist"}
+    is_dashboard = kind == "dashboard"
+    sql_args = {"sql_template": "SELECT 1", "sample_params": {}} if is_dashboard else {"sql": "SELECT 1"}
+    metric_args = {"params": [], "sample_params": {}} if is_dashboard else {}
+    inputs = {
+        "validate_render": {},
+        "save_query_template" if is_dashboard else "save_query": {**args, **sql_args},
+        "save_metric_query_template" if is_dashboard else "save_metric_query": {**args, "query": {}, **metric_args},
+    }
+    history = (directory / "analysis/intent.md").read_bytes()
+    for tool in tools.available_tools():
+        if tool.name not in inputs:
+            continue
+        assert field in tool.params_json_schema["required"]
+        for target_args in ({}, {field: "Sales summary"}, {field: "unknown"}):
+            result = await tool.on_invoke_tool(None, json.dumps({**inputs[tool.name], **target_args}))
+            assert result["success"] == 0
+            assert f"{kind}s/*/manifest.json" in result["error"]
+            assert field in result["error"]
+            assert "name" in result["error"] and "retry" in result["error"]
+    assert tools.target.slug is None
+    assert (directory / "analysis/intent.md").read_bytes() == history
+
+
 def test_successful_file_edits_record_one_intent_even_when_retried(existing):
     kind, directory, make_tools, fs = existing
     notes = directory / "analysis/intent.md"
