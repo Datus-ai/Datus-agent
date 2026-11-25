@@ -785,3 +785,29 @@ class TestReportDistFromAgentConfig:
         node._maybe_compile_html(report_slug)
 
         assert recorded["report_dist"] == Path(dist)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("revalidate", [False, True])
+async def test_mutation_invalidates_previous_render(real_agent_config, mock_llm_create, monkeypatch, revalidate):
+    slug = "editable"
+    _seed_render_on_disk(Path(real_agent_config.project_root), slug)
+    entry = f"reports/{slug}/render/app.jsx"
+    calls = [
+        MockToolCall("validate_render", {}),
+        MockToolCall("write_file", {"path": entry, "content": "export const title = 'Missing default';"}),
+    ]
+    if revalidate:
+        calls.append(MockToolCall("validate_render", {}))
+    mock_llm_create.reset(responses=[build_tool_then_response(tool_calls=calls, content="Finished editing.")])
+    node = _make_node(real_agent_config)
+    node.input = GenVisualReportNodeInput(user_message="Edit the report", report_slug=slug)
+    finalized = []
+    monkeypatch.setattr(node, "_run_finalize", lambda *args: finalized.append(args) or {})
+    actions = [a async for a in node.execute_stream(ActionHistoryManager())]
+    assert (Path(real_agent_config.project_root) / entry).read_text() == "export const title = 'Missing default';"
+    result = actions[-1].output
+    assert result["success"] is False
+    assert result["app_jsx_path"] is None
+    assert "validate_render" in result["error"]
+    assert finalized == []

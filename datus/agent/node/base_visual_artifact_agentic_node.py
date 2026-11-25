@@ -672,7 +672,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
 
     def _incomplete_render_error(self) -> str:
         return (
-            "validate_render never returned success — the "
+            "validate_render never returned success for the final revision — the "
             f"{self.ARTIFACT_KIND} artifact is incomplete. "
             "The LLM must write_file the render/*.jsx components and then "
             "call validate_render() to finalize."
@@ -727,9 +727,22 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         ]
         app_jsx_rel_path: Optional[str] = None
         render_file_count = 0
-        for tc in reversed(tool_calls):
-            if tc.action_type != "validate_render":
+        validation_error = None
+        build_actions = self._build_attempt_action_types()
+        for tc in reversed(all_actions[run_start:]):
+            if (
+                tc.role != ActionRole.TOOL
+                or tc.status == ActionStatus.PROCESSING
+                or tc.action_type not in build_actions
+            ):
                 continue
+            if tc.action_type != "validate_render":
+                if tc.status == ActionStatus.FAILED:
+                    continue
+                break
+            validation_error = extract_artifact_result_field(tc, "error")
+            if tc.status != ActionStatus.SUCCESS or validation_error:
+                break
             candidate = extract_artifact_result_field(tc, "app_jsx_path")
             validated_slug = extract_artifact_result_field(tc, "artifact_slug")
             if candidate and validated_slug:
@@ -737,7 +750,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 app_jsx_rel_path = candidate
                 render_files = extract_artifact_result_list(tc, "render_files")
                 render_file_count = len(render_files) if render_files else 0
-                break
+            break
 
         if app_jsx_rel_path is None:
             self._active_artifact_slug = self._read_artifact_slug_from_tools()
@@ -762,7 +775,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             # No render produced. Separate a genuine "forgot to render" failure
             # from a legitimate informational turn: a run that never wrote into
             # the artifact tree and answered in prose can end normally.
-            build_attempted = any(a.action_type in self._build_attempt_action_types() for a in all_actions[run_start:])
+            build_attempted = any(a.action_type in build_actions for a in all_actions[run_start:])
             informational_answer = not build_attempted and bool(response_content.strip())
             if informational_answer:
                 if hasattr(result, "success"):
@@ -773,6 +786,8 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                     if self._active_artifact_slug is None
                     else self._incomplete_render_error()
                 )
+                if validation_error:
+                    error_msg = f"validate_render failed: {validation_error}"
                 if hasattr(result, "error"):
                     result.error = error_msg  # type: ignore[attr-defined]
                 # When the render is incomplete, success must reflect that so the

@@ -1156,7 +1156,7 @@ class SubAgentTaskTool:
         node_input = self._build_typed_subagent_input(node, prompt, db_ctx=db_ctx)
         from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeInput
         from datus.schemas.gen_visual_report_models import GenVisualReportNodeInput
-        from datus.tools.func_tool._visual_artifact_target import studio_edit_slug
+        from datus.tools.func_tool._visual_artifact_target import selected_visual_slug
 
         if isinstance(node_input, (GenVisualReportNodeInput, GenVisualDashboardNodeInput)):
             parent_input = getattr(self._parent_node, "input", None)
@@ -1170,9 +1170,9 @@ class SubAgentTaskTool:
                 node_input.intent_timestamp = self._visual_intent_timestamp
                 node_input.intent_message = original
                 if isinstance(node_input, GenVisualReportNodeInput):
-                    node_input.report_slug = studio_edit_slug(original, "report")
+                    node_input.report_slug = selected_visual_slug(parent_input, "report")
                 else:
-                    node_input.dashboard_slug = studio_edit_slug(original, "dashboard")
+                    node_input.dashboard_slug = selected_visual_slug(parent_input, "dashboard")
         at_ctx = self._parent_at_context()
         node_input = apply_at_context(
             node_input,

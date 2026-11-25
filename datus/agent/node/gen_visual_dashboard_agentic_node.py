@@ -38,7 +38,7 @@ from datus.schemas.gen_visual_dashboard_models import (
     GenVisualDashboardNodeInput,
     GenVisualDashboardNodeResult,
 )
-from datus.tools.func_tool._visual_artifact_target import studio_edit_slug
+from datus.tools.func_tool._visual_artifact_target import selected_visual_slug
 from datus.tools.func_tool.dashboard_artifact_tools import (
     DashboardArtifactTools,
     DashboardFilesystemFuncTool,
@@ -105,7 +105,7 @@ class GenVisualDashboardAgenticNode(
             semantic_tools=self.semantic_tools,
             user_message=getattr(user_input, "intent_message", None) or message,
             intent_timestamp=getattr(user_input, "intent_timestamp", None),
-            requested_slug=getattr(user_input, "dashboard_slug", None) or studio_edit_slug(message, "dashboard"),
+            requested_slug=selected_visual_slug(user_input, "dashboard"),
         )
 
     def _read_artifact_slug_from_tools(self) -> Optional[str]:

@@ -9,6 +9,7 @@ import pytest
 from datus.tools.func_tool import (
     DashboardArtifactTools,
     DashboardFilesystemFuncTool,
+    DBFuncTool,
     ReportArtifactTools,
     ReportFilesystemFuncTool,
 )
@@ -24,8 +25,8 @@ def existing(request, tmp_path):
     )
     config = SimpleNamespace(project_root=str(tmp_path))
 
-    def tools(**kwargs):
-        return tools_cls(agent_config=config, db_func_tool=None, user_message="Show net revenue.", **kwargs)
+    def tools(db_func_tool=None, **kwargs):
+        return tools_cls(agent_config=config, db_func_tool=db_func_tool, user_message="Show net revenue.", **kwargs)
 
     for slug in ("current", "other"):
         creator = tools_cls(agent_config=config, db_func_tool=None, user_message="Create revenue analysis.")
@@ -154,3 +155,48 @@ def test_create_can_retry_after_manifest_write_failure(existing, monkeypatch):
         assert not create("retry", "Retry", "New target").success
     assert (directory / "manifest.json").read_bytes() == original
     assert create("retry", "Retry", "New target").success == 1
+
+
+def test_resume_existing_manifest_before_first_render(existing):
+    kind, directory, make_tools, fs = existing
+    from datus.tools.db_tools.config import SQLiteConfig
+    from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+
+    db = directory.parent.parent / "sales.sqlite"
+    db.touch()
+    first = make_tools(db_func_tool=DBFuncTool(connector_or_manager=SQLiteConnector(SQLiteConfig(db_path=str(db)))))
+    assert getattr(first, f"start_new_{kind}")("resume", "Resume me", "Interrupted creation").success == 1
+    args = dict(name="total", goal="Show the baseline", hypothesis="The baseline is one")
+    if kind == "report":
+        saved = first.save_query(sql="SELECT 1 AS total", **args)
+    else:
+        saved = first.save_query_template(sql_template="-- @datus-params\nSELECT 1 AS total", sample_params={}, **args)
+    assert saved.success == 1, saved.error
+    queries = first.queries_dir
+    before = {p.name: p.read_bytes() for p in queries.iterdir()}
+    resumed = make_tools()
+    fs.artifact_target = resumed.target
+    incomplete = resumed.validate_render("resume")
+    assert incomplete.success == 0 and "app.jsx" in incomplete.error
+    path = f"{kind}s/resume/render/app.jsx"
+    write = fs.write_file(path, "export default function App() { return null; }")
+    assert write.success == 1, write.error
+    assert resumed.validate_render("resume").result["app_jsx_path"] == path
+    assert {p.name: p.read_bytes() for p in queries.iterdir()} == before
+
+
+@pytest.mark.parametrize("invalid", ["missing", "malformed", "wrong_slug", "wrong_kind"])
+def test_incomplete_artifact_requires_matching_manifest(existing, invalid):
+    kind, directory, make_tools, fs = existing
+    target = directory.parent / "incomplete"
+    target.mkdir()
+    manifest = json.loads((directory / "manifest.json").read_text())
+    manifest["slug"] = "other" if invalid == "wrong_slug" else "incomplete"
+    if invalid == "wrong_kind":
+        manifest["kind"] = "dashboard" if kind == "report" else "report"
+    if invalid != "missing":
+        (target / "manifest.json").write_text("{" if invalid == "malformed" else json.dumps(manifest))
+    fs.artifact_target = make_tools().target
+    write = fs.write_file(f"{kind}s/incomplete/render/app.jsx", "export default 1")
+    assert write.success == 0
+    assert not (target / "render/app.jsx").exists()

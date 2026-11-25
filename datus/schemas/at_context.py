@@ -32,6 +32,9 @@ class AtContextInput(BaseInput):
     renders the referenced context without node-specific wiring.
     """
 
+    studio_edit_targets: Dict[str, List[str]] = Field(
+        default_factory=dict, description="Studio artifact selections inherited across passes of this request"
+    )
     schemas: Optional[List[TableSchema]] = Field(default=None, description="@Table referenced table schemas")
     metrics: Optional[List[Metric]] = Field(default=None, description="@Metric referenced metrics")
     reference_sql: Optional[List[ReferenceSql]] = Field(

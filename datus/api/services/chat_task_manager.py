@@ -48,6 +48,7 @@ from datus.cli.autocomplete import AtReferenceCompleter
 from datus.cli.execution_state import PendingInputQueue
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.at_context import AtContextInput
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.proxy.proxy_tool import apply_proxy_tools
 from datus.utils.artifact_output import session_user_scope
@@ -1356,6 +1357,7 @@ class ChatTaskManager:
                         else:
                             parts.append({"type": "markdown", "payload": {"content": text}})
                     task.register_message_contents(combined, parts)
+                previous_input = node.input
                 node.input = self._create_node_input(
                     user_message=combined,
                     current_node=node,
@@ -1370,6 +1372,17 @@ class ChatTaskManager:
                     source_session_id=None,
                     artifact_slug=request.artifact_slug,
                 )
+                if isinstance(previous_input, AtContextInput) and isinstance(node.input, AtContextInput):
+                    from datus.tools.func_tool._visual_artifact_target import studio_edit_targets
+
+                    # Only the queued text becomes the next user message. Keep the
+                    # original Studio selections available to direct and delegated edits.
+                    for kind in ("report", "dashboard"):
+                        targets = previous_input.studio_edit_targets.get(kind) or studio_edit_targets(
+                            previous_input.user_message, kind
+                        )
+                        if targets:
+                            node.input.studio_edit_targets[kind] = targets
 
             # 6.5 Persist this turn's @-context (table/metric/sql/knowledge refs)
             # so the history API can re-render them. Best-effort and off the

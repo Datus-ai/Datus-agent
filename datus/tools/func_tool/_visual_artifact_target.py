@@ -21,7 +21,7 @@ from datus.tools.func_tool._visual_artifact_helpers import (
 from datus.tools.func_tool.base import FuncToolResult
 
 
-def studio_edit_slug(message: str, kind: str) -> str | None:
+def studio_edit_targets(message: str, kind: str) -> list[str]:
     """Recover the target carried by Studio's chart-card attachments or renderer repair messages."""
     # The renderer includes this standalone line before a stack trace in its repair request.
     targets = set(re.findall(rf"^{kind} slug: ([a-z0-9_]{{1,80}})$", message, re.MULTILINE))
@@ -34,6 +34,17 @@ def studio_edit_slug(message: str, kind: str) -> str | None:
         slug = attrs.get(f"{kind}-slug")
         if slug and f"{other_kind}-slug" not in attrs and ARTIFACT_SLUG_RE.fullmatch(slug):
             targets.add(slug)
+    return sorted(targets)
+
+
+def selected_visual_slug(user_input, kind: str) -> str | None:
+    explicit = getattr(user_input, f"{kind}_slug", None)
+    if isinstance(explicit, str) and explicit:
+        return explicit
+    inherited = getattr(user_input, "studio_edit_targets", None)
+    targets = inherited.get(kind) if isinstance(inherited, dict) else None
+    if not targets:
+        targets = studio_edit_targets(getattr(user_input, "user_message", "") or "", kind)
     if len(targets) > 1:
         raise ValueError(f"Choose one {kind} to edit per turn")
     return next(iter(targets), None)
@@ -161,7 +172,13 @@ class VisualArtifactTarget:
                     success=0, error=f"{self.kind} directory not found: {slug}. {self._slug_guidance()}"
                 )
             if self.slug is None and not (directory / "render/app.jsx").is_file():
-                return FuncToolResult(success=0, error=f"{directory.name}/render/app.jsx is missing")
+                # A prior creation may have stopped after saving queries but before writing app.jsx.
+                try:
+                    manifest = ArtifactManifest.model_validate_json((directory / "manifest.json").read_bytes())
+                except (OSError, ValueError) as exc:
+                    return FuncToolResult(success=0, error=f"Cannot resume {slug} without a valid manifest: {exc}")
+                if manifest.slug != slug or manifest.kind != self.kind:
+                    return FuncToolResult(success=0, error=f"Manifest does not identify {self.kind} {slug}")
             self.slug = slug
             self.mode = self.mode or "edit"
         return None

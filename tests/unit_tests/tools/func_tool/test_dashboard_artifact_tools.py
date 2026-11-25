@@ -399,13 +399,15 @@ class TestExistingDashboardTarget:
         assert result.success == 0
         assert "not found" in (result.error or "").lower()
 
-    def test_rejects_missing_app_jsx(self, unbound_tools: DashboardArtifactTools, project_root: Path):
+    def test_rejects_incomplete_directory_without_manifest(
+        self, unbound_tools: DashboardArtifactTools, project_root: Path
+    ):
         incomplete = project_root / "dashboards" / "partial"
         (incomplete / "queries").mkdir(parents=True)
         (incomplete / "render").mkdir()
         result = unbound_tools.validate_render("partial")
         assert result.success == 0
-        assert "render/app.jsx" in (result.error or "")
+        assert "manifest" in (result.error or "")
 
     def test_rejects_invalid_slug_format(self, unbound_tools: DashboardArtifactTools):
         result = unbound_tools.validate_render("Not-A-Valid-Slug!")

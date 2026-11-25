@@ -992,3 +992,60 @@ def test_narrative_refresh_after_earlier_save(real_agent_config, mock_llm_create
     earlier.output = {"result": {field: "dashboards/other/queries/sales"}}
     node._build_success_result(ctx)
     assert ctx.extras["artifact_data_changed"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delegated", [False, True])
+async def test_card_target_survives_run_boundary_insert(real_agent_config, mock_llm_create, delegated):
+    from datus.api.models.cli_models import StreamChatInput
+    from datus.api.services.chat_task_manager import ChatTask, ChatTaskManager
+    from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
+
+    root = Path(real_agent_config.project_root)
+    for slug in ("selected", "neighbor"):
+        _seed_dashboard_on_disk(root, slug)
+    neighbor = root / "dashboards/neighbor/render/app.jsx"
+    before = neighbor.read_bytes()
+    visual = _make_node(real_agent_config)
+    manager = ChatTaskManager()
+    node = manager._create_node(real_agent_config, None, "chat", session_id="s-cont-card") if delegated else visual
+    manager._create_node = lambda *args, **kwargs: node
+    task_tool = SubAgentTaskTool(agent_config=real_agent_config)
+    task_tool.set_parent_node(node)
+    writes = []
+
+    async def run_pass(action_history_manager):
+        user_input = task_tool._build_node_input(visual, "Update the title", db_ctx={}) if delegated else node.input
+        visual._prepare_artifacts(user_input)
+        if len(writes) == 0:
+            node.pending_input_queue.push("Change the title again.")
+            target = "selected"
+        else:
+            target = "neighbor"
+        write = visual.filesystem_func_tool.write_file(
+            f"dashboards/{target}/render/app.jsx", "export default function App(){return 'Edited';}"
+        )
+        writes.append(write)
+        yield ActionHistory(
+            action_id=f"pass-{len(writes)}",
+            role=ActionRole.ASSISTANT,
+            action_type="chat_response",
+            messages="done",
+            output={"response": "done"},
+            status=ActionStatus.SUCCESS,
+        )
+
+    node.execute_stream_with_interactions = run_pass
+    task = ChatTask(session_id="s-cont-card", asyncio_task=MagicMock())
+    await manager._run_loop(
+        task,
+        real_agent_config,
+        StreamChatInput(
+            message='Update <artifact-chart-card dashboard-slug="selected" chart-id="title" />',
+            session_id="s-cont-card",
+        ),
+    )
+    assert len(writes) == 2
+    assert writes[0].success == 1, writes[0].error
+    assert writes[1].success == 0
+    assert neighbor.read_bytes() == before

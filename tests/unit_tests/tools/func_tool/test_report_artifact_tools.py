@@ -253,13 +253,15 @@ class TestExistingReportTarget:
         assert "not found" in (result.error or "").lower()
         assert unbound_tools.report_slug is None
 
-    def test_rejects_missing_app_jsx(self, unbound_tools: ReportArtifactTools, project_root: Path):
+    def test_rejects_incomplete_directory_without_manifest(
+        self, unbound_tools: ReportArtifactTools, project_root: Path
+    ):
         incomplete = project_root / "reports" / "partial"
         (incomplete / "queries").mkdir(parents=True)
         (incomplete / "render").mkdir()
         result = unbound_tools.validate_render("partial")
         assert result.success == 0
-        assert "render/app.jsx" in (result.error or "")
+        assert "manifest" in (result.error or "")
         assert unbound_tools.report_slug is None
 
     def test_rejects_invalid_slug_format(self, unbound_tools: ReportArtifactTools):
