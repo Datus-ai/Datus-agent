@@ -1574,6 +1574,7 @@ execution:
       paths:
         - datus/api/models/
       targets:
+        - tests/unit_tests/agent/node/test_gen_visual_dashboard_agentic_node.py
         - tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py
         - tests/unit_tests/api/
         - tests/unit_tests/gateway/
@@ -2114,6 +2115,7 @@ execution:
         - datus/api/routes/chat_routes.py
         - datus/cli/chat_commands.py
       targets:
+        - tests/unit_tests/agent/node/test_gen_visual_dashboard_agentic_node.py
         - tests/unit_tests/api/
         - tests/unit_tests/cli/
         - tests/unit_tests/gateway/adapters/test_wecom.py
