@@ -105,6 +105,7 @@ class TableSchema(BaseTableSchema):
     """
 
     definition: str = Field(..., description="DDL schema text of the table")
+    reference_path: str = Field("", description="Full path selected by the user", exclude=True)
     table_type: str = Field("table", description="Type of the schema")
 
     def to_prompt(self, dialect: str = "snowflake") -> str:
@@ -128,7 +129,7 @@ class TableSchema(BaseTableSchema):
     def table_names_to_prompt(cls, schemas: List[TableSchema]) -> str:
         if not schemas:
             return ""
-        return "\n".join([schema.table_name for schema in schemas])
+        return "\n".join(schema.reference_path or schema.table_name for schema in schemas)
 
     @classmethod
     def list_to_prompt(cls, schemas: List[TableSchema], dialect: str = "snowflake") -> str:
@@ -147,6 +148,7 @@ class TableSchema(BaseTableSchema):
             schema_name=data.get("schema_name", ""),
             definition=data["definition"],
             table_type=data.get("table_type", "table"),
+            reference_path=data.get("reference_path", ""),
         )
 
     @classmethod

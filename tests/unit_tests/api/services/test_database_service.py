@@ -670,9 +670,9 @@ class TestListDatabases:
         svc = DatasourceService(agent_config=real_agent_config)
         request = ListDatabasesInput()
         result = svc.list_databases(request)
-        databases_with_tables = [db for db in result.data.databases if db.tables is not None]
+        databases_with_tables = [db for db in result.data.databases if db.objects]
         assert databases_with_tables
-        assert all(isinstance(db.tables, list) for db in databases_with_tables)
+        assert all(all(obj.kind == "table" for obj in db.objects) for db in databases_with_tables)
 
     def test_list_databases_has_type_field(self, real_agent_config):
         """list_databases includes database type."""
@@ -834,7 +834,7 @@ class TestPerDatasourceResolution:
 
         current = real_agent_config.current_datasource
         keys = list(svc._columns_cache)
-        assert keys and all(k.startswith(f"{current}\t") for k in keys)
+        assert keys and all(key[0] == current for key in keys)
 
         # A second datasource asking for the same table name must miss.
         # `datasource_configs` is a property that copies, so the registration has
@@ -885,6 +885,106 @@ def _no_schema_dialect(monkeypatch):
     monkeypatch.setattr(connector_registry, "support_schema", lambda dialect: False)
 
 
+def test_catalog_lists_and_describes_a_live_sqlite_view(real_agent_config):
+    from datus.tools.db_tools.config import SQLiteConfig
+    from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+
+    svc = DatasourceService(agent_config=real_agent_config)
+    connector = SQLiteConnector(SQLiteConfig(db_path=":memory:"))
+    try:
+        connector.execute_queries(
+            ["CREATE TABLE orders (id INTEGER)", "CREATE VIEW order_ids AS SELECT id FROM orders"]
+        )
+        with patch.object(svc.db_manager, "get_connections", return_value=connector):
+            catalog = svc.list_databases(ListDatabasesInput())
+        assert catalog.success
+        assert {obj.name: obj.kind for row in catalog.data.databases for obj in row.objects} == {
+            "orders": "table",
+            "order_ids": "view",
+        }
+
+        with patch.object(svc, "_connector_for", return_value=(connector, connector.database_name)):
+            detail = svc.get_table_schema("order_ids")
+        assert detail.success
+        assert [col.name for col in detail.data.table.columns] == ["id"]
+    finally:
+        connector.close()
+        svc.close()
+
+
+def test_column_cache_keeps_dotted_schema_and_view_names_distinct(real_agent_config):
+    from datus.tools.db_tools.config import DuckDBConfig
+    from datus.tools.db_tools.duckdb_connector import DuckdbConnector
+
+    svc = DatasourceService(agent_config=real_agent_config)
+    connector = DuckdbConnector(DuckDBConfig(db_path=":memory:", enable_external_access=False))
+    try:
+        connector.connect()
+        connector.connection.execute('CREATE SCHEMA "public"; CREATE SCHEMA "public.sales"')
+        connector.connection.execute('CREATE VIEW public."sales.daily" AS SELECT 1 AS total')
+        connector.connection.execute('CREATE VIEW "public.sales".daily AS SELECT 2 AS count')
+        with patch.object(svc, "_connector_for", return_value=(connector, "memory")):
+            first = svc.get_table_schema('memory.public."sales.daily"')
+            second = svc.get_table_schema('memory."public.sales".daily')
+            assert first.success and second.success
+            assert [column.name for column in first.data.table.columns] == ["total"]
+            assert [column.name for column in second.data.table.columns] == ["count"]
+    finally:
+        connector.close()
+        svc.close()
+
+
+def test_catalog_keeps_the_most_specific_kind_per_name():
+    connector = SimpleNamespace(
+        get_tables=MagicMock(return_value=["orders", "orders_view", "orders_mv"]),
+        get_views=MagicMock(return_value=["orders_view", "orders_mv"]),
+        get_materialized_views=MagicMock(return_value=["orders_mv"]),
+    )
+    objects, error = DatasourceService._list_catalog_objects(connector, catalog="lake", database="shop", schema="sales")
+
+    assert [(obj.name, obj.kind) for obj in objects] == [
+        ("orders", "table"),
+        ("orders_mv", "materialized_view"),
+        ("orders_view", "view"),
+    ]
+    assert error is None
+    connector.get_views.assert_called_once_with(catalog_name="lake", database_name="shop", schema_name="sales")
+
+
+def test_catalog_returns_tables_when_views_fail_to_list():
+    connector = SimpleNamespace(
+        get_tables=MagicMock(return_value=["orders"]),
+        get_views=MagicMock(side_effect=RuntimeError("view listing timed out")),
+    )
+    objects, error = DatasourceService._list_catalog_objects(connector, catalog="", database="main")
+    assert [(obj.name, obj.kind) for obj in objects] == [("orders", "table")]
+    assert "view listing timed out" in error
+
+
+@pytest.mark.parametrize(
+    ("failing_method", "kind"),
+    [("get_views", "view"), ("get_materialized_views", "materialized_view")],
+)
+def test_catalog_requests_strict_view_listing_when_supported(failing_method, kind):
+    def list_views(*, strict=False, **kwargs):
+        if strict:
+            raise RuntimeError("view metadata unavailable")
+        return []
+
+    connector = SimpleNamespace(
+        supports_strict_view_listing=True,
+        get_tables=lambda **kwargs: ["orders"],
+        get_views=lambda **kwargs: [],
+        get_materialized_views=lambda **kwargs: [],
+    )
+    setattr(connector, failing_method, list_views)
+
+    objects, error = DatasourceService._list_catalog_objects(connector, catalog="lake", database="shop")
+
+    assert [(obj.name, obj.kind) for obj in objects] == [("orders", "table")]
+    assert error == f"{kind} catalog could not be read: view metadata unavailable"
+
+
 class TestGetConnectionInfoScoping:
     """A datasource is a connection profile scoped to its configured database;
     listing must not leak every database on the server."""
@@ -901,7 +1001,7 @@ class TestGetConnectionInfoScoping:
         assert connector.get_databases_calls == 0
         assert infos[0].current is True
         # tables are surfaced (and sorted) for the scoped database
-        assert infos[0].tables == ["t1", "t2"]
+        assert [obj.name for obj in infos[0].objects] == ["t1", "t2"]
 
     def test_falls_back_to_server_enumeration_when_unconfigured(self, real_agent_config, _no_schema_dialect):
         """Only when no database is configured do we enumerate the server so the
@@ -978,7 +1078,7 @@ class TestGetConnectionInfoListingFailure:
         assert [i.name for i in infos] == ["benchmark"]
         assert infos[0].connection_status == "connected"
         assert infos[0].schema_name is None
-        assert infos[0].tables is None
+        assert infos[0].objects == []
         assert infos[0].tables_count is None
         assert "THRIFT_EAGAIN" in infos[0].error
 
@@ -998,7 +1098,7 @@ class TestGetConnectionInfoListingFailure:
         assert len(infos) == 1
         assert infos[0].connection_status == "connected"
         assert infos[0].schema_name is None
-        assert infos[0].tables is None
+        assert infos[0].objects == []
         assert infos[0].tables_count is None
         assert "SHOW DATABASES timed out" in infos[0].error
 
@@ -1014,14 +1114,14 @@ class TestGetConnectionInfoListingFailure:
         assert len(failed) == 1
         assert failed[0].connection_status == "connected"
         assert failed[0].schema_name is None
-        assert failed[0].tables is None
+        assert failed[0].objects == []
         assert failed[0].tables_count is None
         assert "schema enumeration timed out" in failed[0].error
 
         healthy = [i for i in infos if i.name == "warehouse"]
         assert [i.schema_name for i in healthy] == ["public", "reporting"]
         assert all(i.connection_status == "connected" and i.error is None for i in healthy)
-        assert all(i.tables == ["t1", "t2"] and i.tables_count == 2 for i in healthy)
+        assert all([obj.name for obj in i.objects] == ["t1", "t2"] and i.tables_count == 2 for i in healthy)
 
     def test_table_fetch_failure_is_scoped_to_its_schema(self, real_agent_config):
         """A failing schema is reported with its own name; sibling schemas still list."""
@@ -1034,11 +1134,11 @@ class TestGetConnectionInfoListingFailure:
         assert [i.schema_name for i in infos] == ["public", "reporting"]
 
         assert infos[0].error is None
-        assert infos[0].tables == ["t1", "t2"]
+        assert [obj.name for obj in infos[0].objects] == ["t1", "t2"]
         assert infos[0].tables_count == 2
 
         assert infos[1].connection_status == "connected"
-        assert infos[1].tables is None
+        assert infos[1].objects == []
         assert infos[1].tables_count is None
         assert "table enumeration timed out" in infos[1].error
 
@@ -1053,7 +1153,7 @@ class TestGetConnectionInfoListingFailure:
         assert infos[0].name == "warehouse"
         assert infos[0].schema_name == "reporting"
         assert infos[0].connection_status == "connected"
-        assert infos[0].tables is None
+        assert infos[0].objects == []
         assert "table enumeration timed out" in infos[0].error
 
     def test_failed_connection_test_is_still_disconnected(self, real_agent_config, _no_schema_dialect):
@@ -1430,7 +1530,7 @@ class TestSchemaOnlyDialectCatalog:
         assert [i.name for i in infos] == ["APP", "REPORTING"]
         # Already the root — nesting it under itself would print the name twice.
         assert all(i.schema_name is None for i in infos)
-        assert infos[0].tables == ["CUSTOMERS", "ORDERS"]
+        assert [obj.name for obj in infos[0].objects] == ["CUSTOMERS", "ORDERS"]
         assert infos[0].tables_count == 2
         assert [i.current for i in infos] == [True, False]
         assert all(i.connection_status == "connected" for i in infos)
@@ -1443,7 +1543,7 @@ class TestSchemaOnlyDialectCatalog:
             infos = svc._get_connection_info(connector, "oracle_ds", ListDatabasesInput())
 
         assert [i.name for i in infos] == ["APP", "LOCKED"]
-        assert infos[0].tables == ["ORDERS"]
+        assert [obj.name for obj in infos[0].objects] == ["ORDERS"]
         # Reachable but unlistable: reported with its reason, not as disconnected.
         assert infos[1].connection_status == "connected"
         assert "ORA-00942" in infos[1].error

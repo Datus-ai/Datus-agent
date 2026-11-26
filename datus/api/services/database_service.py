@@ -15,6 +15,8 @@ from datus_db_core import BaseSqlConnector
 from datus.api.models.base_models import Result
 from datus.api.models.config_models import ErrorCode
 from datus.api.models.database_models import (
+    CatalogObject,
+    CatalogObjectKind,
     DatabaseInfo,
     ListDatabasesData,
     ListDatabasesInput,
@@ -106,7 +108,7 @@ class DatasourceService:
         # one would serve the first one's columns.
         # The lock serializes the not-thread-safe connector across concurrent
         # asyncio.to_thread detail/batch requests.
-        self._columns_cache: dict[str, list[ColumnInfo]] = {}
+        self._columns_cache: dict[tuple[str, str, str, str, str], list[ColumnInfo]] = {}
         # One lock and one prefetch gate per datasource, not one of each overall.
         # Each datasource has its own connector, and the column cache is keyed by
         # datasource — so a global lock would serialize metadata reads between
@@ -253,6 +255,32 @@ class DatasourceService:
         self._datasource_connectors[key] = entry
         return entry
 
+    @staticmethod
+    def _list_catalog_objects(
+        connector: BaseSqlConnector, *, catalog: str, database: str = "", schema: str = ""
+    ) -> tuple[list[CatalogObject], str | None]:
+        """List relations in one namespace, preferring the most specific kind."""
+        params = {"catalog_name": catalog, "database_name": database, "schema_name": schema}
+        kinds: dict[str, CatalogObjectKind] = dict.fromkeys(connector.get_tables(**params), "table")
+        view_params = (
+            {**params, "strict": True} if getattr(connector, "supports_strict_view_listing", False) is True else params
+        )
+        errors = []
+        for kind, method in (("view", "get_views"), ("materialized_view", "get_materialized_views")):
+            list_names = getattr(connector, method, None)
+            if list_names is None:
+                continue
+            try:
+                for name in list_names(**view_params):
+                    kinds[name] = kind
+            except NotImplementedError:
+                continue
+            except Exception as exc:
+                logger.warning("Failed to list %ss in %s.%s.%s: %s", kind, catalog, database, schema, exc)
+                errors.append(f"{kind} catalog could not be read: {exc}")
+        objects = [CatalogObject(name=name, kind=kinds[name]) for name in sorted(kinds)]
+        return objects, "; ".join(errors) or None
+
     def _get_connection_info(
         self,
         connector,
@@ -369,8 +397,9 @@ class DatasourceService:
 
             for schema in schemas:
                 try:
-                    tables = connector.get_tables(catalog_name=catalog_name, schema_name=schema)
-                    tables.sort()
+                    objects, objects_error = self._list_catalog_objects(
+                        connector, catalog=catalog_name or "", schema=schema
+                    )
                 except Exception as e:
                     logger.warning("Failed to get tables for schema=%s dialect=%s: %s", schema, dialect, e)
                     db_infos.append(_listing_failed(schema, str(e), current=(schema == connector.schema_name)))
@@ -387,9 +416,10 @@ class DatasourceService:
                         # same name twice in a catalog tree.
                         schema_name=None,
                         connection_status="connected",
-                        tables_count=len(tables),
+                        tables_count=sum(obj.kind == "table" for obj in objects),
                         last_accessed=now,
-                        tables=tables,
+                        objects=objects,
+                        objects_error=objects_error,
                     )
                 )
             return db_infos
@@ -424,10 +454,9 @@ class DatasourceService:
                     # 3) Fetch tables for this (db, schema). A failure here only
                     # invalidates this entry, not sibling schemas.
                     try:
-                        tables = connector.get_tables(
-                            catalog_name=catalog_name, database_name=db_name, schema_name=schema
+                        objects, objects_error = self._list_catalog_objects(
+                            connector, catalog=catalog_name or "", database=db_name, schema=schema
                         )
-                        tables.sort()
                     except Exception as e:
                         logger.warning(
                             "Failed to get tables for db=%s schema=%s: %s",
@@ -447,18 +476,18 @@ class DatasourceService:
                             catalog_name=catalog_name,
                             schema_name=schema,
                             connection_status="connected",
-                            tables_count=len(tables),
+                            tables_count=sum(obj.kind == "table" for obj in objects),
                             last_accessed=now,
-                            tables=tables,
+                            objects=objects,
+                            objects_error=objects_error,
                         )
                     )
             else:
                 # No schema support — get tables directly. Isolate per-db failures.
                 try:
-                    tables = connector.get_tables(
-                        catalog_name=catalog_name, database_name=db_name, schema_name=request.schema_name
+                    objects, objects_error = self._list_catalog_objects(
+                        connector, catalog=catalog_name or "", database=db_name, schema=request.schema_name
                     )
-                    tables.sort()
                 except Exception as e:
                     logger.warning("Failed to get tables for db=%s: %s", db_name, e)
                     db_infos.append(_listing_failed(db_name, str(e)))
@@ -473,9 +502,10 @@ class DatasourceService:
                         catalog_name=catalog_name,
                         schema_name=None,
                         connection_status="connected",
-                        tables_count=len(tables),
+                        tables_count=sum(obj.kind == "table" for obj in objects),
                         last_accessed=now,
-                        tables=tables,
+                        objects=objects,
+                        objects_error=objects_error,
                     )
                 )
         return db_infos
@@ -568,12 +598,11 @@ class DatasourceService:
         schema_name = name_parts["schema_name"] or getattr(connector, "schema_name", "")
         return catalog_name, database_name, schema_name, name_parts["table_name"]
 
-    def _cache_key(self, datasource: str, identity: tuple[str, str, str, str]) -> str:
+    def _cache_key(self, datasource: str, identity: tuple[str, str, str, str]) -> tuple[str, str, str, str, str]:
         """Column-cache key. The datasource leads: two bound warehouses commonly
         hold a same-named table, and a shared key would serve one's columns for
         the other."""
-        catalog_name, database_name, schema_name, table_name = identity
-        return f"{datasource}\t{catalog_name}.{database_name}.{schema_name}.{table_name}"
+        return (datasource, *identity)
 
     def _cached_columns(self, full_path: str, datasource: Optional[str] = None) -> Optional[list[ColumnInfo]]:
         """Columns already in the cache for this reference, without touching the source."""
