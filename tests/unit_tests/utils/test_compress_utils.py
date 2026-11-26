@@ -247,6 +247,20 @@ class TestCompressPyarrowTable:
         assert head_idx == list(range(10))
         assert tail_idx == list(range(40, 50))
 
+    @pytest.mark.parametrize("row_count", [21, 50, 51])
+    def test_custom_row_threshold(self, row_count):
+        values = [str(i) for i in range(row_count)]
+        compressed, head_idx, tail_idx = _compress_pyarrow_table(pa.table({"v": values}), row_threshold=50)
+
+        if row_count <= 50:
+            assert compressed["v"].to_pylist() == values
+            assert head_idx == list(range(row_count))
+            assert tail_idx == []
+        else:
+            assert compressed["v"].to_pylist() == values[:10] + ["..."] + values[-10:]
+            assert head_idx == list(range(10))
+            assert tail_idx == list(range(41, 51))
+
     def test_ellipsis_row_contains_dots(self):
         # Use string column so ellipsis row ("...") has same dtype
         table = pa.table({"col": [str(i) for i in range(30)]})
@@ -494,6 +508,25 @@ class TestDataCompressorCompress:
         assert result["compression_type"] == "none"
         assert result["original_rows"] == 5
 
+    @pytest.mark.parametrize("output_format", ["csv", "table"])
+    @patch("datus.utils.compress_utils.litellm.token_counter", side_effect=_mock_token_counter)
+    def test_small_arrow_output_preserves_nullable_int64_precision(self, _mock, output_format):
+        large_id = (1 << 53) + 123
+        ids = [large_id, None, *range(33)]
+        table = pa.table({"id": pa.array(ids, type=pa.int64())})
+        compressor = DataCompressor(output_format=output_format, token_threshold=10_000)
+
+        result = compressor.compress(table, row_threshold=50)
+
+        assert result["original_rows"] == 35
+        assert result["compression_type"] == "none"
+        if output_format == "csv":
+            rows = list(csv.DictReader(StringIO(result["compressed_data"])))
+            assert [row["id"] for row in rows] == ["" if value is None else str(value) for value in ids]
+        else:
+            rows = result["compressed_data"].splitlines()[1:]
+            assert [row.split()[1] for row in rows] == ["NaN" if value is None else str(value) for value in ids]
+
     @patch("datus.utils.compress_utils.litellm.token_counter", side_effect=_mock_token_counter)
     def test_large_list_row_compression(self, _mock):
         dc = DataCompressor(token_threshold=100000)
@@ -535,6 +568,21 @@ class TestDataCompressorCompress:
         # is_compressed should be True because column compression was triggered
         assert result["is_compressed"] is True
         assert result["compression_type"] == "columns"
+
+    @pytest.mark.parametrize(
+        "row_count, default_type, override_type", [(3, "none", "columns"), (51, "rows", "rows_and_columns")]
+    )
+    @patch("datus.utils.compress_utils.litellm.token_counter", side_effect=_mock_token_counter)
+    def test_token_threshold_override_is_local(self, _mock, row_count, default_type, override_type):
+        compressor = DataCompressor(token_threshold=10_000, tolerance_ratio=0)
+        data = [{"id": i, "label": "ok", "detail": "x" * 320} for i in range(row_count)]
+
+        baseline = compressor.compress(data, row_threshold=50)
+        overridden = compressor.compress(data, row_threshold=50, token_threshold=200)
+        assert baseline["compression_type"] == default_type
+        assert overridden["compression_type"] == override_type
+        assert overridden["removed_columns"] == ["detail"]
+        assert compressor.compress(data, row_threshold=50) == baseline
 
     @patch("datus.utils.compress_utils.litellm.token_counter")
     def test_rows_and_columns_compression(self, mock_tc):

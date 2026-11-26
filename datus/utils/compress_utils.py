@@ -10,6 +10,8 @@ import litellm
 import pandas as pd
 import pyarrow as pa
 
+DEFAULT_ROW_COMPRESSION_THRESHOLD = 20
+
 
 # Static utility functions outside of class
 def _identify_id_time_columns(columns: List[str]) -> Tuple[List[str], List[str]]:
@@ -38,7 +40,9 @@ def _identify_id_time_columns(columns: List[str]) -> Tuple[List[str], List[str]]
     return id_columns, time_columns
 
 
-def _compress_pyarrow_table(table: pa.Table) -> Tuple[pa.Table, List[int], List[int]]:
+def _compress_pyarrow_table(
+    table: pa.Table, *, row_threshold: int = DEFAULT_ROW_COMPRESSION_THRESHOLD
+) -> Tuple[pa.Table, List[int], List[int]]:
     """
     Compress PyArrow Table by rows (take first 10 and last 10 rows)
 
@@ -46,12 +50,12 @@ def _compress_pyarrow_table(table: pa.Table) -> Tuple[pa.Table, List[int], List[
         Tuple[pa.Table, List[int], List[int]]: (compressed_table, head_indices, tail_indices)
     """
     total_rows = len(table)
-    if total_rows <= 20:
+    if total_rows <= row_threshold:
         return table, list(range(total_rows)), []
 
-    # Take first 10 rows and last 10 rows
-    head_table = table.slice(0, 10)
-    tail_table = table.slice(total_rows - 10, 10)
+    sample_size = min(10, (total_rows - 1) // 2)
+    head_table = table.slice(0, sample_size)
+    tail_table = table.slice(total_rows - sample_size, sample_size)
 
     # The ellipsis row is display-only, so normalize compressed Arrow chunks to
     # nullable strings before concatenating. This avoids schema mismatches for
@@ -75,8 +79,8 @@ def _compress_pyarrow_table(table: pa.Table) -> Tuple[pa.Table, List[int], List[
     compressed_table = pa.concat_tables([head_table, ellipsis_table, tail_table])
 
     # Return indices for proper row numbering
-    head_indices = list(range(10))
-    tail_indices = list(range(total_rows - 10, total_rows))
+    head_indices = list(range(sample_size))
+    tail_indices = list(range(total_rows - sample_size, total_rows))
 
     return compressed_table, head_indices, tail_indices
 
@@ -178,7 +182,9 @@ def _to_dataframe_efficient(data: Union[List[Dict], pd.DataFrame, pa.Table]) -> 
     if isinstance(data, pd.DataFrame):
         return data
     elif isinstance(data, pa.Table):
-        return data.to_pandas()
+        return data.to_pandas(
+            types_mapper=lambda arrow_type: pd.ArrowDtype(arrow_type) if pa.types.is_integer(arrow_type) else None
+        )
     elif isinstance(data, list):
         return pd.DataFrame(data)
     else:
@@ -299,6 +305,8 @@ class DataCompressor:
         df: pd.DataFrame,
         compressed_indices: Optional[Tuple[List[int], List[int]]] = None,
         column_priority: Optional[List[str]] = None,
+        *,
+        max_tolerable_tokens: Optional[int] = None,
     ) -> Tuple[pd.DataFrame, List[str]]:
         """
         Compress columns, keep ID and time columns, drop the rest in _drop_order
@@ -306,6 +314,8 @@ class DataCompressor:
         Returns:
             Tuple[pd.DataFrame, List[str]]: (compressed_df, removed_columns)
         """
+        if max_tolerable_tokens is None:
+            max_tolerable_tokens = self.max_tolerable_tokens
         columns = df.columns.tolist()
         id_columns, time_columns = _identify_id_time_columns(columns)
 
@@ -331,7 +341,7 @@ class DataCompressor:
             else:
                 current_text = _format_as_table(compressed_df, compressed_indices)
 
-            if self.count_tokens(current_text) <= self.max_tolerable_tokens:
+            if self.count_tokens(current_text) <= max_tolerable_tokens:
                 break
 
             if col_to_remove in compressed_df.columns:
@@ -344,6 +354,9 @@ class DataCompressor:
         self,
         data: Union[List[Dict], pd.DataFrame, pa.Table],
         column_priority: Optional[List[str]] = None,
+        *,
+        row_threshold: Optional[int] = None,
+        token_threshold: Optional[int] = None,
     ) -> Dict:
         """
         Compress data and return result with metadata
@@ -353,6 +366,8 @@ class DataCompressor:
             column_priority: Optional column names most-important-first. When the
                 caller knows what the columns mean, columns are given up from the
                 least important end instead of outward from the middle.
+            row_threshold: Optional row count above which to sample the head and tail.
+            token_threshold: Optional token threshold for this call, before tolerance.
 
         Returns:
             Dict: Contains original_rows, original_columns (list of column names), is_compressed,
@@ -368,6 +383,11 @@ class DataCompressor:
                 "compression_type": "none",
             }
 
+        effective_row_threshold = DEFAULT_ROW_COMPRESSION_THRESHOLD if row_threshold is None else row_threshold
+        max_tolerable_tokens = (
+            self.max_tolerable_tokens if token_threshold is None else int(token_threshold * (1 + self.tolerance_ratio))
+        )
+
         # Get row count and column names
         original_rows, original_columns = _get_data_dimensions(data)
 
@@ -378,21 +398,31 @@ class DataCompressor:
         df = None  # Will be created only when needed
 
         # If data is small, convert directly and check tokens
-        if original_rows <= 20:
+        if original_rows <= effective_row_threshold:
             df = _to_dataframe_efficient(data)
 
             if self.output_format == "csv":
                 text = _format_as_csv(df)
             else:
+                if isinstance(data, pa.Table):
+                    # Keep the text table's NaN marker without casting the integers to floats.
+                    for index, (_, column) in enumerate(df.items()):
+                        dtype = column.dtype
+                        if isinstance(dtype, pd.ArrowDtype) and pa.types.is_integer(dtype.pyarrow_dtype):
+                            present = column.notna()
+                            if not present.all():
+                                df.isetitem(index, column.astype(object).where(present, float("nan")))
                 text = _format_as_table(df)
 
             tokens = self.count_tokens(text)
 
-            if tokens <= self.max_tolerable_tokens:
+            if tokens <= max_tolerable_tokens:
                 compressed_data = text
             else:
                 # Small data but many tokens, compress columns only
-                compressed_df, removed_columns = self._compress_columns(df, column_priority=column_priority)
+                compressed_df, removed_columns = self._compress_columns(
+                    df, column_priority=column_priority, max_tolerable_tokens=max_tolerable_tokens
+                )
 
                 if self.output_format == "csv":
                     compressed_data = _format_as_csv(compressed_df)
@@ -405,21 +435,24 @@ class DataCompressor:
             # Large data, needs row compression
             is_compressed = True
             compression_type = "rows"
+            sample_size = min(10, (original_rows - 1) // 2)
 
             # Handle different data types efficiently without unnecessary conversion
             if isinstance(data, pa.Table):
                 # PyArrow: use native slicing
-                compressed_table, head_indices, tail_indices = _compress_pyarrow_table(data)
+                compressed_table, head_indices, tail_indices = _compress_pyarrow_table(
+                    data, row_threshold=effective_row_threshold
+                )
                 df = compressed_table.to_pandas()
                 compressed_indices = (head_indices, tail_indices)
             elif isinstance(data, pd.DataFrame):
                 # Pandas DataFrame: use native head/tail methods
-                head_df = data.head(10)
-                tail_df = data.tail(10)
+                head_df = data.head(sample_size)
+                tail_df = data.tail(sample_size)
 
                 # Store original indices
-                head_indices = list(data.index[:10])
-                tail_indices = list(data.index[-10:])
+                head_indices = list(data.index[:sample_size])
+                tail_indices = list(data.index[original_rows - sample_size :])
                 compressed_indices = (head_indices, tail_indices)
 
                 # Create ellipsis row
@@ -429,12 +462,12 @@ class DataCompressor:
                 df = pd.concat([head_df, ellipsis_row, tail_df], ignore_index=True)
             elif isinstance(data, list):
                 # List[Dict]: compress directly without converting entire list to DataFrame
-                head_data = data[:10]
-                tail_data = data[-10:] if len(data) > 10 else []
+                head_data = data[:sample_size]
+                tail_data = data[original_rows - sample_size :]
 
                 # Store indices
-                head_indices = list(range(10))
-                tail_indices = list(range(len(data) - 10, len(data)))
+                head_indices = list(range(sample_size))
+                tail_indices = list(range(original_rows - sample_size, original_rows))
                 compressed_indices = (head_indices, tail_indices)
 
                 # Create compressed list with ellipsis
@@ -448,8 +481,8 @@ class DataCompressor:
                 else:
                     # Fallback for non-dict lists
                     df = _to_dataframe_efficient(data)
-                    head_df = df.head(10)
-                    tail_df = df.tail(10)
+                    head_df = df.head(sample_size)
+                    tail_df = df.tail(sample_size)
                     ellipsis_row = pd.DataFrame([["..."] * len(df.columns)], columns=df.columns)
                     df = pd.concat([head_df, ellipsis_row, tail_df], ignore_index=True)
 
@@ -462,8 +495,10 @@ class DataCompressor:
             tokens = self.count_tokens(text)
 
             # If still exceeding threshold too much, compress columns
-            if tokens > self.max_tolerable_tokens:
-                df, removed_columns = self._compress_columns(df, compressed_indices, column_priority)
+            if tokens > max_tolerable_tokens:
+                df, removed_columns = self._compress_columns(
+                    df, compressed_indices, column_priority, max_tolerable_tokens=max_tolerable_tokens
+                )
 
                 if self.output_format == "csv":
                     text = _format_as_csv(df, compressed_indices)

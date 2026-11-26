@@ -71,6 +71,8 @@ logger = get_logger(__name__)
 
 # Default Agent wait after approval, independently of driver/server deadlines.
 SQL_TOOL_TIMEOUT_SECONDS = 300.0
+SQL_PREVIEW_ROW_THRESHOLD = 50
+SQL_PREVIEW_TOKEN_THRESHOLD = 2048
 _SQL_TOOL_MAX_TIMEOUT_ENV = "DATUS_SQL_TOOL_MAX_TIMEOUT_SECONDS"
 _sql_query_timeout: ContextVar[int | None] = ContextVar("sql_query_timeout", default=None)
 
@@ -3219,10 +3221,21 @@ class DBFuncTool(BulkQueryTools):
                         "SQL was not executed.",
                     )
                 return self.read_query(
-                    sql, datasource=datasource, database=database, query_timeout_seconds=query_timeout_seconds
+                    sql,
+                    datasource=datasource,
+                    database=database,
+                    query_timeout_seconds=query_timeout_seconds,
+                    preview_row_threshold=SQL_PREVIEW_ROW_THRESHOLD,
+                    preview_token_threshold=SQL_PREVIEW_TOKEN_THRESHOLD,
                 )
             if sql_type in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
-                return self.read_query(sql, datasource=datasource, database=database)
+                return self.read_query(
+                    sql,
+                    datasource=datasource,
+                    database=database,
+                    preview_row_threshold=SQL_PREVIEW_ROW_THRESHOLD,
+                    preview_token_threshold=SQL_PREVIEW_TOKEN_THRESHOLD,
+                )
             refusal = self._refuse_write_if_read_only(
                 "execute_sql",
                 datasource=datasource,
@@ -3294,6 +3307,8 @@ class DBFuncTool(BulkQueryTools):
         *,
         compress: bool = True,
         query_timeout_seconds: int | None = None,
+        preview_row_threshold: Optional[int] = None,
+        preview_token_threshold: Optional[int] = None,
     ) -> FuncToolResult:
         """
         Execute a read-only SQL query and return the result rows (optionally compressed).
@@ -3313,6 +3328,8 @@ class DBFuncTool(BulkQueryTools):
             compress: Compress rows for presentation. Internal result comparisons use False;
                 read policies still apply, but transformed results cannot serve as a
                 complete calculation reference and are refused.
+            preview_row_threshold: Optional row threshold for this compressed preview.
+            preview_token_threshold: Optional token threshold for this compressed preview.
 
         Returns:
             FuncToolResult with result=self.compressor.compress(rows) when successful. On failure success=0 with the
@@ -3350,8 +3367,16 @@ class DBFuncTool(BulkQueryTools):
                 query_timeout_seconds=query_timeout_seconds,
             )
             if result.success:
+                rows = result.sql_return
+                if compress:
+                    preview_options = {}
+                    if preview_row_threshold is not None:
+                        preview_options["row_threshold"] = preview_row_threshold
+                    if preview_token_threshold is not None:
+                        preview_options["token_threshold"] = preview_token_threshold
+                    rows = self.compressor.compress(rows, **preview_options)
                 return FuncToolResult(
-                    result=self.compressor.compress(result.sql_return) if compress else result.sql_return,
+                    result=rows,
                     execution_context=self.execution_context(connector, datasource),
                 )
             if getattr(result, "error_code", None) == ErrorCode.DB_EXECUTION_TIMEOUT.code:
