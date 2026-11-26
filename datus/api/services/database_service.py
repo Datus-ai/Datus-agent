@@ -108,7 +108,7 @@ class DatasourceService:
         # one would serve the first one's columns.
         # The lock serializes the not-thread-safe connector across concurrent
         # asyncio.to_thread detail/batch requests.
-        self._columns_cache: dict[str, list[ColumnInfo]] = {}
+        self._columns_cache: dict[tuple[str, str, str, str, str], list[ColumnInfo]] = {}
         # One lock and one prefetch gate per datasource, not one of each overall.
         # Each datasource has its own connector, and the column cache is keyed by
         # datasource — so a global lock would serialize metadata reads between
@@ -595,12 +595,11 @@ class DatasourceService:
         schema_name = name_parts["schema_name"] or getattr(connector, "schema_name", "")
         return catalog_name, database_name, schema_name, name_parts["table_name"]
 
-    def _cache_key(self, datasource: str, identity: tuple[str, str, str, str]) -> str:
+    def _cache_key(self, datasource: str, identity: tuple[str, str, str, str]) -> tuple[str, str, str, str, str]:
         """Column-cache key. The datasource leads: two bound warehouses commonly
         hold a same-named table, and a shared key would serve one's columns for
         the other."""
-        catalog_name, database_name, schema_name, table_name = identity
-        return f"{datasource}\t{catalog_name}.{database_name}.{schema_name}.{table_name}"
+        return (datasource, *identity)
 
     def _cached_columns(self, full_path: str, datasource: Optional[str] = None) -> Optional[list[ColumnInfo]]:
         """Columns already in the cache for this reference, without touching the source."""

@@ -834,7 +834,7 @@ class TestPerDatasourceResolution:
 
         current = real_agent_config.current_datasource
         keys = list(svc._columns_cache)
-        assert keys and all(k.startswith(f"{current}\t") for k in keys)
+        assert keys and all(key[0] == current for key in keys)
 
         # A second datasource asking for the same table name must miss.
         # `datasource_configs` is a property that copies, so the registration has
@@ -907,6 +907,28 @@ def test_catalog_lists_and_describes_a_live_sqlite_view(real_agent_config):
             detail = svc.get_table_schema("order_ids")
         assert detail.success
         assert [col.name for col in detail.data.table.columns] == ["id"]
+    finally:
+        connector.close()
+        svc.close()
+
+
+def test_column_cache_keeps_dotted_schema_and_view_names_distinct(real_agent_config):
+    from datus.tools.db_tools.config import DuckDBConfig
+    from datus.tools.db_tools.duckdb_connector import DuckdbConnector
+
+    svc = DatasourceService(agent_config=real_agent_config)
+    connector = DuckdbConnector(DuckDBConfig(db_path=":memory:", enable_external_access=False))
+    try:
+        connector.connect()
+        connector.connection.execute('CREATE SCHEMA "public"; CREATE SCHEMA "public.sales"')
+        connector.connection.execute('CREATE VIEW public."sales.daily" AS SELECT 1 AS total')
+        connector.connection.execute('CREATE VIEW "public.sales".daily AS SELECT 2 AS count')
+        with patch.object(svc, "_connector_for", return_value=(connector, "memory")):
+            first = svc.get_table_schema('memory.public."sales.daily"')
+            second = svc.get_table_schema('memory."public.sales".daily')
+            assert first.success and second.success
+            assert [column.name for column in first.data.table.columns] == ["total"]
+            assert [column.name for column in second.data.table.columns] == ["count"]
     finally:
         connector.close()
         svc.close()
