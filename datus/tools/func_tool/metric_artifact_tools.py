@@ -231,14 +231,11 @@ def execute_metric_artifact_query(
     rows = [{key: _normalize_value(value) for key, value in row.items()} for row in raw_rows]
     if not names:
         raise ValueError("metric engine returned no output columns")
+    sample = rows[:200]
     columns = [
         QueryColumnMeta(
             name=name,
-            type=(
-                _infer_column_type([row.get(name) for row in rows[:200]])
-                if rows
-                else _arrow_column_type(table.schema.field(index).type)
-            ),
+            type=_infer_column_type([row.get(name) for row in sample], arrow_type=table.schema.field(index).type),
         )
         for index, name in enumerate(names)
     ]

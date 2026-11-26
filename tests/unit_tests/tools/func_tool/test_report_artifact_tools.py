@@ -26,12 +26,14 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
+import pyarrow as pa
 import pytest
 
 from datus.tools.func_tool import DBFuncTool, ReportArtifactTools, ReportFilesystemFuncTool
 from datus.tools.func_tool.report_artifact_tools import (
     _atomic_write_text,
     _infer_column_type,
+    _query_rows_and_columns,
     _resolve_relative_import,
 )
 
@@ -1153,3 +1155,26 @@ def test_single_connector_save_resolves_configured_identity(report_tools, select
     assert payload["datasource_id"] == expected
     assert payload["execution_context"]["datasource_id"] == expected
     assert "datasource" not in payload
+
+
+def test_arrow_query_projection_preserves_types_for_null_samples():
+    table = pa.table(
+        {
+            "total": pa.array([None], type=pa.float64()),
+            "active": pa.array([None], type=pa.bool_()),
+            "day": pa.array(["2026-11-26"], type=pa.string()),
+        }
+    )
+    rows, columns = _query_rows_and_columns(SimpleNamespace(sql_return=table))
+    assert rows == [{"total": None, "active": None, "day": "2026-11-26"}]
+    assert columns == [
+        {"name": "total", "type": "number"},
+        {"name": "active", "type": "boolean"},
+        {"name": "day", "type": "date"},
+    ]
+
+
+def test_list_query_without_column_types_keeps_inference():
+    rows, columns = _query_rows_and_columns(SimpleNamespace(sql_return=[{"total": None, "count": 2}]))
+    assert rows == [{"total": None, "count": 2}]
+    assert columns == [{"name": "total", "type": "string"}, {"name": "count", "type": "integer"}]

@@ -110,6 +110,7 @@ def _save(env, kind="report", query=None, **kwargs):
 
 
 @pytest.mark.parametrize("kind", ["report", "dashboard"])
+@pytest.mark.parametrize("regions", [[], ["north"]], ids=["empty", "null-value"])
 @pytest.mark.parametrize(
     "arrow_type, expected",
     [
@@ -122,8 +123,10 @@ def _save(env, kind="report", query=None, **kwargs):
         (pa.string(), "string"),
     ],
 )
-def test_empty_metric_result_preserves_arrow_column_types(environment, kind, arrow_type, expected):
-    table = pa.Table.from_batches([], schema=pa.schema([("region", pa.string()), ("revenue", arrow_type)]))
+def test_metric_result_preserves_arrow_types_without_values(environment, kind, arrow_type, expected, regions):
+    table = pa.table(
+        {"region": pa.array(regions, type=pa.string()), "revenue": pa.nulls(len(regions), type=arrow_type)}
+    )
     environment.db.execute_read_enforced.return_value = SimpleNamespace(success=True, sql_return=table)
     options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
     tools, saved = _save(environment, kind, query={"metric": REF, "dimensions": ["orders.region"]}, **options)
@@ -131,7 +134,7 @@ def test_empty_metric_result_preserves_arrow_column_types(environment, kind, arr
     suffix = ".params.json" if kind == "dashboard" else ".json"
     actual = json.loads((tools.queries_dir / f"sales{suffix}").read_text(encoding="utf-8"))
     assert actual["columns"] == [{"name": "region", "type": "string"}, {"name": "revenue", "type": expected}]
-    assert actual.get("sample_row_count", actual.get("row_count")) == 0
+    assert actual.get("sample_row_count", actual.get("row_count")) == len(regions)
 
 
 def test_report_metric_result_limit_counts_utf8_bytes_and_preserves_saved_files(environment, monkeypatch):
