@@ -2163,6 +2163,8 @@ class TestDBFuncToolExecuteSql:
         connector.execute_query.return_value = ExecuteSQLResult(success=True, sql_return=[{"n": 1}])
         db = self._make_tool(connector)
         tool = db.to_function_tool(db.execute_sql)
+        compress = Mock(wraps=db.compressor.compress)
+        monkeypatch.setattr(db.compressor, "compress", compress)
         context = SimpleNamespace()
         assert "1 to 900" in tool.params_json_schema["properties"]["timeout"]["description"]
 
@@ -2171,6 +2173,7 @@ class TestDBFuncToolExecuteSql:
         assert result["success"] == 1, result
         assert json.loads(context.tool_arguments)["timeout"] == 600
         connector.execute_query.assert_called_once_with(sql, result_format="list", query_timeout_seconds=600)
+        compress.assert_called_once_with([{"n": 1}], row_threshold=50, token_threshold=2048)
 
         connector.execute_query.reset_mock()
         results = await asyncio.gather(
@@ -2316,8 +2319,44 @@ class TestDBFuncToolExecuteSql:
 
         assert result.success == 1
         mock_connector.execute_query.assert_called_once()
+        tool.compressor.compress.assert_called_once_with([{"a": 1}], row_threshold=50, token_threshold=2048)
         # Read results are the compressor payload (carries compressed_data).
         assert result.result == {"original_rows": 1, "compressed_data": "a\n1"}
+
+    @pytest.mark.parametrize("row_count", [35, 55])
+    def test_execute_sql_previews_real_sqlite_rows(self, row_count):
+        import csv
+        from io import StringIO
+
+        from datus.tools.db_tools.config import SQLiteConfig
+        from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+
+        connector = SQLiteConnector(SQLiteConfig(db_path=":memory:"))
+        sql = (
+            "WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL "
+            f"SELECT n + 1 FROM seq WHERE n < {row_count}) SELECT n FROM seq ORDER BY n"
+        )
+        all_values = list(range(1, row_count + 1))
+        try:
+            tool = self._make_tool(connector)
+            result = tool.execute_sql(sql)
+            assert result.success == 1, result.error
+            assert result.result["original_rows"] == row_count
+            rows = list(csv.DictReader(StringIO(result.result["compressed_data"])))
+            if row_count == 35:
+                assert result.result["compression_type"] == "none"
+                assert [int(row["n"]) for row in rows] == all_values
+            else:
+                assert result.result["compression_type"] == "rows"
+                assert [row["n"] for row in rows] == (
+                    [str(n) for n in all_values[:10]] + ["..."] + [str(n) for n in all_values[-10:]]
+                )
+
+            raw = tool.read_query(sql, compress=False, preview_row_threshold=50, preview_token_threshold=2048)
+            assert raw.success == 1, raw.error
+            assert raw.result == [{"n": n} for n in all_values]
+        finally:
+            connector.close()
 
     def test_insert_routes_to_execute_write(self):
         mock_connector = Mock()
