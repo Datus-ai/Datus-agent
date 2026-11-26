@@ -222,6 +222,38 @@ class TestOnEnd:
         assert any(c.name == "transfer_row_count_parity" and not c.passed for c in hook.final_report.checks)
 
     @pytest.mark.asyncio
+    async def test_successful_transfer_validates_prepared_destination_once(self):
+        hook = _make_hook(FakeDBFuncTool())
+        destination = TableTarget(datasource="warehouse", database="analytics", schema="public", table="orders")
+        transfer = TransferTarget(
+            source=DBRef(name="source"), target=destination, source_row_count=5, transferred_row_count=5
+        )
+
+        for target in (destination, transfer):
+            payload = {"deliverable_target": target.model_dump(by_alias=True, exclude_none=True)}
+            await hook.on_tool_end(None, None, None, FuncToolResult(result=payload))
+        await hook.on_end(None, None, None)
+
+        assert hook.session_targets == [transfer]
+        assert [check.name for check in hook.final_report.checks] == ["table_exists", "transfer_row_count_parity"]
+        assert not hook.final_report.has_blocking_failure()
+
+    @pytest.mark.asyncio
+    async def test_transfer_preserves_other_tables_and_later_writes(self):
+        hook = _make_hook(FakeDBFuncTool())
+        destination = TableTarget(datasource="warehouse", database="analytics", schema="public", table="orders")
+        other_database = destination.model_copy(update={"database": "archive"})
+        other_datasource = destination.model_copy(update={"datasource": "warehouse_replica"})
+        earlier_write = destination.model_copy(update={"rows_affected": 2})
+        transfer = TransferTarget(source=DBRef(name="source"), target=destination)
+
+        for target in (other_database, other_datasource, earlier_write, transfer, destination):
+            payload = {"deliverable_target": target.model_dump(by_alias=True, exclude_none=True)}
+            await hook.on_tool_end(None, None, None, FuncToolResult(result=payload))
+
+        assert hook.session_targets == [other_database, other_datasource, earlier_write, transfer, destination]
+
+    @pytest.mark.asyncio
     async def test_on_end_routes_describe_via_datasource(self):
         """Cross-datasource writes must validate against the same connector
         the tool wrote through. Layer A forwards ``target.datasource`` as the

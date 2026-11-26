@@ -155,7 +155,7 @@ class ValidationHook(AgentHooks):
         self._merge_session_target(target)
 
     def _merge_session_target(self, target: DeliverableTarget) -> None:
-        """Add a target, replacing weaker BI chart context when available.
+        """Add a target, replacing earlier targets that add no validation context.
 
         A chart can be created before it is attached to a dashboard. In that
         case the first ``ChartTarget`` has no ``dashboard_id``; the later
@@ -189,6 +189,10 @@ class ValidationHook(AgentHooks):
                 merged.append(target)
             self._session_targets = merged
             return
+        if isinstance(target, TransferTarget) and target.target.rows_affected is None:
+            # The transfer checks existence at the same destination and adds a
+            # row-count check. Keep other namespaces and standalone write counts.
+            self._session_targets = [existing for existing in self._session_targets if existing != target.target]
         self._session_targets.append(target)
 
     async def on_end(self, context, agent, output) -> None:
