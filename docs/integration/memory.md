@@ -4,13 +4,13 @@ Auto Memory is a persistent memory system for Datus-agent that enables agents to
 
 ## Overview
 
-When users interact with the agent, the agent can recognize valuable information and persist it to a single Markdown file stored under the workspace. On subsequent conversations, this memory is automatically loaded in full, allowing the agent to recall prior context.
+When users interact with the agent, the agent can recognize valuable information and persist it to a single Markdown file stored under the workspace. On subsequent conversations, this memory is loaded automatically so the agent can recall prior context.
 
 **Key characteristics:**
 
 - **File-based**: Memory is stored as a single plain Markdown file (`MEMORY.md`)
 - **Dedicated tools**: Memory is written exclusively through `add_memory` / `edit_memory` -- generic filesystem tools cannot touch the memory subtree
-- **Soft limit**: A warning appears when the file exceeds **20 KB (20,000 UTF-8 bytes)**. The agent saves and loads the entire file.
+- **20 KB warning and 25 KB prompt limit**. The full file is saved. The system prompt includes up to 25,000 UTF-8 bytes and identifies any omitted content.
 - **Per-subagent isolation**: Each subagent has its own memory directory
 - **Zero configuration**: No setup needed -- eligible agents are automatically enabled
 
@@ -45,8 +45,8 @@ Only interactive, user-facing agents have memory. Built-in system subagents that
 
 Memory is one flat `MEMORY.md` file per agent:
 
-- **Automatically loaded** into agent context, in full, at the start of every conversation
-- A size warning appears during loading if the file exceeds **20 KB**, including after a manual edit
+- **Automatically loaded** when the system prompt is built. Files at or below **25 KB** (25,000 UTF-8 bytes) are included in full. Larger files are clipped at a valid UTF-8 character boundary and the prompt marks the excerpt as partial.
+- Files over **20 KB** (20,000 UTF-8 bytes) generate a size warning, including after a manual edit. Between 20 and 25 KB, the agent can consolidate entries with the full memory in view.
 - Best for concise, durable facts: user preferences, key project decisions, references to external systems
 
 Keep entries short to reduce the amount of memory injected into every conversation.

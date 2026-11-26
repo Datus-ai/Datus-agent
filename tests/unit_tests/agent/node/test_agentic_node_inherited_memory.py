@@ -117,9 +117,12 @@ class TestInheritedMemoryInjection:
         assert prompt == "BASE PROMPT"
         assert "read-only inheritance" not in prompt
 
-    def test_oversize_memory_is_inlined_with_warning_outside_the_body(self, real_agent_config, mock_llm_create):
+    @pytest.mark.parametrize("file_bytes", [MEMORY_BYTE_LIMIT + 1, 25_000])
+    def test_memory_at_or_below_prompt_cap_is_inlined_with_warning(
+        self, real_agent_config, mock_llm_create, file_bytes
+    ):
         tail = "- Last fact."
-        head = "x" * (MEMORY_BYTE_LIMIT - len(tail) - 1)
+        head = "x" * (file_bytes - len(tail) - 2)
         content = head + "\r\n" + tail
         _write_chat_memory(real_agent_config, content)
         node = _new_gen_sql_node(real_agent_config)
@@ -128,11 +131,30 @@ class TestInheritedMemoryInjection:
             prompt = node._inject_memory_context("BASE PROMPT")
 
         assert f"<memory>\n{head}\n{tail}\n</memory>" in prompt
-        assert (
-            f"**Memory size warning:** MEMORY.md is {MEMORY_BYTE_LIMIT + 1} UTF-8 bytes"
-            in prompt.split("</memory>", 1)[1]
-        )
+        notice = prompt.split("</memory>", 1)[1]
+        assert f"**Memory size warning:** MEMORY.md is {file_bytes} UTF-8 bytes" in notice
+        assert "Treat the excerpt as partial" not in notice
         assert "**Save**" not in prompt
+
+    @pytest.mark.parametrize("override_owner", [None, "chat"], ids=["inherited", "writable"])
+    def test_memory_exceeding_prompt_cap_is_clipped_without_changing_the_file(
+        self, real_agent_config, mock_llm_create, override_owner
+    ):
+        head = "x" * 24_999
+        file_bytes = (head + "记忆\n- Hidden fact.").encode("utf-8")
+        path = _write_chat_memory(real_agent_config, file_bytes.decode("utf-8"))
+        node = _new_gen_sql_node(real_agent_config)
+
+        with inherited_memory("gen_sql", "chat"):
+            prompt = node._inject_memory_context("BASE PROMPT", override_node_name=override_owner)
+
+        excerpt = prompt.split("<memory>\n", 1)[1].split("\n</memory>", 1)[0]
+        assert excerpt == head
+        notice = prompt.split("</memory>", 1)[1]
+        assert f"the first 24999 of {len(file_bytes)} file bytes" in notice
+        assert "Treat the excerpt as partial" in notice
+        assert "Hidden fact." not in prompt
+        assert path.read_bytes() == file_bytes
 
     def test_explicit_override_node_name_takes_precedence(self, real_agent_config, mock_llm_create):
         """``override_node_name`` (feedback path) wins over inherited contextvar.

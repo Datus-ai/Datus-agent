@@ -1294,7 +1294,8 @@ class AgenticNode(Node):
         even for two sources with the same dialect and database skill. ``language`` DOES
         appear: it is a per-request field on the Chat API, so a user switching
         the UI language mid-session must not keep replaying a snapshot that
-        pins the old one. Date and memory stay frozen until the snapshot is rebuilt. Injected
+        pins the old one. Date and memory stay frozen until the snapshot is rebuilt.
+        The memory excerpt limit invalidates snapshots built with an older policy. Injected
         skill contents are fingerprinted so same-named updates rebuild it.
         The advertised datasource catalog also changes when a project binds,
         unbinds or renames a source, even if the current target stays the same.
@@ -1319,6 +1320,7 @@ class AgenticNode(Node):
         language = getattr(agent_config, "language", None) if agent_config is not None else None
         from datus.prompts.collaboration_contract import COLLABORATION_CONTRACT
         from datus.schemas.database_context import execution_context_for_node
+        from datus.utils.memory_loader import MEMORY_CONTEXT_BYTE_LIMIT
         from datus.utils.node_utils import build_datasource_prompt_context
 
         datasource_catalog = build_datasource_prompt_context(agent_config).get("available_datasources", {})
@@ -1339,6 +1341,7 @@ class AgenticNode(Node):
                 json.dumps(datasource_catalog, sort_keys=True, default=str).encode()
             ).hexdigest(),
             "prompt_template_sha256": template_digest,
+            "memory_context_byte_limit": str(MEMORY_CONTEXT_BYTE_LIMIT),
             "execution_context": execution_context_for_node(agent_config, getattr(self, "input", None)).identity,
             "node_name": self.get_node_name(),
             # NOT implied by ``node_name``. The node name used to decide the
@@ -1736,9 +1739,9 @@ class AgenticNode(Node):
         """
         from datus.configuration.inherited_memory_overrides import get_inherited_memory
         from datus.utils.memory_loader import (
+            format_memory_context,
             get_memory_dir,
             load_memory_context,
-            memory_size_warning,
             resolve_memory_node,
         )
 
@@ -1767,15 +1770,15 @@ class AgenticNode(Node):
                 # Parent has no memory worth inheriting; skip the read-only block
                 # entirely so we do not waste prompt budget on an empty notice.
                 return base_prompt
+            memory_content, memory_warning = format_memory_context(memory_content)
             memory_dir = get_memory_dir(workspace_root, node_name)
 
             memory_section = get_prompt_manager(agent_config=self.agent_config).render_template(
                 template_name="memory_context",
                 version=None,
                 has_memory=True,
-                # Match the universal newlines that the memory edit tool reads.
-                memory_content=memory_content.replace("\r\n", "\n").replace("\r", "\n"),
-                memory_warning=memory_size_warning(len(memory_content.encode("utf-8"))),
+                memory_content=memory_content,
+                memory_warning=memory_warning,
                 memory_dir=memory_dir,
                 read_only=read_only,
                 originating_agent=node_name,

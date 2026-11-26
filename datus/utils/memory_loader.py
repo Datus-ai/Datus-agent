@@ -9,7 +9,7 @@ Provides functions to determine memory eligibility and to read/write memory
 content for agentic nodes. Memory is a single file stored at
 ``{workspace_root}/.datus/memory/{subagent}/MEMORY.md``.
 
-The whole file is loaded into the system prompt. The size limit is advisory.
+The file is stored in full. The system prompt shows a bounded UTF-8 excerpt.
 Agent writes use a per-file lock and atomic replacement.
 """
 
@@ -25,6 +25,7 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 MEMORY_BYTE_LIMIT = 20_000
+MEMORY_CONTEXT_BYTE_LIMIT = 25_000
 MEMORY_FILENAME = "MEMORY.md"
 MEMORY_BASE_DIR = ".datus/memory"
 
@@ -64,7 +65,27 @@ def memory_size_warning(used_bytes: int) -> str:
     """Return an advisory message for a file above the soft limit."""
     if used_bytes <= MEMORY_BYTE_LIMIT:
         return ""
-    return f"{MEMORY_FILENAME} is {used_bytes} UTF-8 bytes and exceeds the {MEMORY_BYTE_LIMIT}-byte soft limit."
+    return (
+        f"{MEMORY_FILENAME} is {used_bytes} UTF-8 bytes and exceeds the {MEMORY_BYTE_LIMIT}-byte soft limit. "
+        f"The system prompt can show up to {MEMORY_CONTEXT_BYTE_LIMIT} UTF-8 bytes."
+    )
+
+
+def format_memory_context(content: str) -> tuple[str, str]:
+    """Return the prompt excerpt and a warning based on the original byte size."""
+    data = content.encode("utf-8")
+    used_bytes = len(data)
+    warning = memory_size_warning(used_bytes)
+    if used_bytes > MEMORY_CONTEXT_BYTE_LIMIT:
+        # The original string is valid UTF-8. A byte slice can split its last character.
+        content = data[:MEMORY_CONTEXT_BYTE_LIMIT].decode("utf-8", errors="ignore")
+        visible_bytes = len(content.encode("utf-8"))
+        warning += (
+            f" This excerpt covers the first {visible_bytes} of {used_bytes} file bytes. "
+            "The remaining content is still on disk. Treat the excerpt as partial."
+        )
+    # Match the universal newlines that the memory edit tool reads.
+    return content.replace("\r\n", "\n").replace("\r", "\n"), warning
 
 
 def get_memory_file_path(workspace_root: str, memory_node: str) -> Path:

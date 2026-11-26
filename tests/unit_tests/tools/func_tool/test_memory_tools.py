@@ -78,6 +78,19 @@ class TestAddMemory:
         assert str(MEMORY_BYTE_LIMIT) in r.result["warning"]
         assert r.result["memory"] == read_memory_raw(str(tmp_path), "chat") == original + "\n忆"
 
+    def test_write_beyond_prompt_limit_preserves_the_tail(self, tool, tmp_path):
+        initial = "x" * 25_000
+        assert tool.add_memory(initial).success == 1
+
+        result = tool.add_memory("Tail entry")
+        expected = initial + "\nTail entry"
+
+        assert result.success == 1
+        assert result.result["used_bytes"] == len(expected)
+        assert "25000" in result.result["warning"]
+        assert result.result["memory"] == expected
+        assert get_memory_file_path(str(tmp_path), "chat").read_bytes() == expected.encode("utf-8")
+
 
 class TestEditMemory:
     def test_unique_replacement(self, tool, tmp_path):

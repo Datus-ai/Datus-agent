@@ -148,6 +148,16 @@ class TestGetSessionSystemPrompt:
         # The expensive builder ran exactly once across both turns.
         assert node.build_count == 1
 
+    def test_snapshot_without_memory_limit_rebuilds_once(self, session_manager):
+        node = _SnapshotNode(session_manager, _agent_config())
+        legacy_meta = node._system_prompt_snapshot_meta("1.2")
+        legacy_meta.pop("memory_context_byte_limit", None)
+        session_manager.save_system_prompt_snapshot(node.session_id, "Legacy prompt", legacy_meta)
+
+        assert node._get_session_system_prompt("1.2") == "SYS#1"
+        assert node._get_session_system_prompt("1.2") == "SYS#1"
+        assert node.build_count == 1
+
     def test_collaboration_guidance_change_refreshes_resumed_session(self, session_manager, monkeypatch):
         from datus.prompts import collaboration_contract
 

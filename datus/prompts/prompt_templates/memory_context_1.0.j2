@@ -3,7 +3,7 @@
 {% if read_only %}
 ## Memory (read-only inheritance from {{ originating_agent }})
 
-{{ originating_agent }}'s persistent memory is inlined below in full as read-only background about the user's preferences, project decisions, and external references gathered by the parent agent.
+{{ originating_agent }}'s persistent memory is shown below as read-only background about the user's preferences, project decisions, and external references gathered by the parent agent.
 
 **Read-only**: you have no memory write tools. Do NOT attempt to modify any path under `.datus/memory/` — that subtree is hidden from filesystem tools. If you discover something the user would want remembered, mention it in your response so the parent agent can persist it.
 
@@ -16,7 +16,7 @@ Persistent memory is a single file shown below. Build it over time so future ses
 
 **Don't save**: code patterns, file paths, git history, debugging fixes, anything in CLAUDE.md or `data_context/`, ephemeral task state. If asked to save a PR list, ask what was *surprising* instead.
 
-**How**: Use `add_memory(content)` to append one concise fact and `edit_memory(old_string, new_string)` to update a unique match or delete it with an empty `new_string`. Check the current memory before writing to avoid duplicates. Memory has a **20 KB soft limit**. Writes still succeed above it and return a warning. Consolidate stale or duplicate entries when appropriate. Use the memory tools for all edits to `.datus/memory/`.
+**How**: Use `add_memory(content)` to append one concise fact and `edit_memory(old_string, new_string)` to update a unique match or delete it with an empty `new_string`. Check the current memory before writing to avoid duplicates. Writes above **20 KB** still succeed and return a warning. Consolidate stale or duplicate entries while the whole file is visible. The system prompt shows up to **25 KB** of memory. Use the memory tools for all edits to `.datus/memory/`.
 {% endif %}
 
 ### Current memory
