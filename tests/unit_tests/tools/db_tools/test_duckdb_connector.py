@@ -621,6 +621,7 @@ def test_iceberg_rejects_invalid_catalog_alias(monkeypatch):
         ("EXPLAIN SELECT 1", 1, "SELECT"),
         ("CREATE TABLE should_not_exist (id INT)", 1, "SELECT"),
         ("SELECT 1; CREATE TABLE should_not_exist (id INT); SELECT 42", 1, "single SELECT"),
+        (r"SELECT '\'; CREATE TABLE should_not_exist (id INT); SELECT '\'", 1, "single SELECT"),
         ("SELECT 1", 0, "positive integer"),
         ("SELECT 1", -1, "positive integer"),
         ("SELECT 1", True, "positive integer"),
@@ -671,5 +672,16 @@ def test_execute_query_timeout_propagates_timeout_error_and_recovers(monkeypatch
         recovered = connector.execute_query("SELECT 42 AS answer", result_format="list")
         assert recovered.success is True
         assert recovered.sql_return == [{"answer": 42}]
+
+        @contextmanager
+        def allow_duckdb_query_timeout(cursor, seconds, interrupt_error):
+            yield
+
+        module.duckdb_query_timeout = allow_duckdb_query_timeout
+        slash_query = connector.execute_query(
+            r"SELECT '\' AS slash, ';' AS semi; -- trailing comment", result_format="list", query_timeout_seconds=2
+        )
+        assert slash_query.success is True
+        assert slash_query.sql_return == [{"slash": "\\", "semi": ";"}]
     finally:
         connector.close()

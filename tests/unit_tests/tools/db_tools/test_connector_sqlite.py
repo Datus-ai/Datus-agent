@@ -350,6 +350,7 @@ def test_get_schema(sqlite_connector):
         ("EXPLAIN SELECT 1", 1, "SELECT"),
         ("CREATE TABLE should_not_exist (id INT)", 1, "SELECT"),
         ("SELECT 1; CREATE TABLE should_not_exist (id INT); SELECT 42", 1, "single SELECT"),
+        (r"SELECT '\'; CREATE TABLE should_not_exist (id INT); SELECT '\'", 1, "single SELECT"),
         ("SELECT 1", 0, "positive integer"),
         ("SELECT 1", -1, "positive integer"),
         ("SELECT 1", True, "positive integer"),
@@ -396,3 +397,14 @@ def test_execute_query_timeout_propagates_timeout_error_and_recovers(sqlite_conn
     recovered = sqlite_connector.execute_query("SELECT 42 AS answer", result_format="list")
     assert recovered.success is True
     assert recovered.sql_return == [{"answer": 42}]
+
+    @contextmanager
+    def allow_sqlite_query_timeout(connection, seconds):
+        yield
+
+    module.sqlite_query_timeout = allow_sqlite_query_timeout
+    slash_query = sqlite_connector.execute_query(
+        r"SELECT '\' AS slash, ';' AS semi; -- trailing comment", result_format="list", query_timeout_seconds=2
+    )
+    assert slash_query.success is True
+    assert slash_query.sql_return == [{"slash": "\\", "semi": ";"}]
