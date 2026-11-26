@@ -961,6 +961,30 @@ def test_catalog_returns_tables_when_views_fail_to_list():
     assert "view listing timed out" in error
 
 
+@pytest.mark.parametrize(
+    ("failing_method", "kind"),
+    [("get_views", "view"), ("get_materialized_views", "materialized_view")],
+)
+def test_catalog_requests_strict_view_listing_when_supported(failing_method, kind):
+    def list_views(*, strict=False, **kwargs):
+        if strict:
+            raise RuntimeError("view metadata unavailable")
+        return []
+
+    connector = SimpleNamespace(
+        supports_strict_view_listing=True,
+        get_tables=lambda **kwargs: ["orders"],
+        get_views=lambda **kwargs: [],
+        get_materialized_views=lambda **kwargs: [],
+    )
+    setattr(connector, failing_method, list_views)
+
+    objects, error = DatasourceService._list_catalog_objects(connector, catalog="lake", database="shop")
+
+    assert [(obj.name, obj.kind) for obj in objects] == [("orders", "table")]
+    assert error == f"{kind} catalog could not be read: view metadata unavailable"
+
+
 class TestGetConnectionInfoScoping:
     """A datasource is a connection profile scoped to its configured database;
     listing must not leak every database on the server."""

@@ -262,13 +262,16 @@ class DatasourceService:
         """List relations in one namespace, preferring the most specific kind."""
         params = {"catalog_name": catalog, "database_name": database, "schema_name": schema}
         kinds: dict[str, CatalogObjectKind] = dict.fromkeys(connector.get_tables(**params), "table")
+        view_params = (
+            {**params, "strict": True} if getattr(connector, "supports_strict_view_listing", False) is True else params
+        )
         errors = []
         for kind, method in (("view", "get_views"), ("materialized_view", "get_materialized_views")):
             list_names = getattr(connector, method, None)
             if list_names is None:
                 continue
             try:
-                for name in list_names(**params):
+                for name in list_names(**view_params):
                     kinds[name] = kind
             except NotImplementedError:
                 continue
