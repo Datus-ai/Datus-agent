@@ -3050,6 +3050,55 @@ def test_catalog_reference_paths_are_restricted_to_the_subagent_scope():
     assert _scoped_table_paths(config, "agent_id", paths) == []
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("dispatched_id", "requested_id", "expected"),
+    [
+        ("sales-id", None, ["sales_view"]),
+        ("sales-id", "finance-id", ["sales_view"]),
+        (None, "sales-id", ["sales_view", "finance_view"]),
+    ],
+)
+async def test_chat_table_references_follow_the_dispatched_node(
+    real_agent_config, dispatched_id, requested_id, expected
+):
+    from datus.api.models.cli_models import StreamChatInput
+    from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+    real_agent_config.agentic_nodes.update(
+        {
+            "sales": {"id": "sales-id", "scoped_context": {"tables": "sales_view"}},
+            "finance": {"id": "finance-id", "scoped_context": {"tables": "finance_view"}},
+        }
+    )
+
+    class FakeNode:
+        session_id = "s-dispatched-table-scope"
+
+        async def execute_stream_with_interactions(self, action_history_manager):
+            yield ActionHistory(
+                action_id="final",
+                role=ActionRole.ASSISTANT,
+                action_type="chat_response",
+                output={"response": "done"},
+                status=ActionStatus.SUCCESS,
+            )
+
+        async def get_last_turn_usage(self):
+            return None
+
+    node = FakeNode()
+    manager = ChatTaskManager(node_factory=lambda **kwargs: node)
+    request = StreamChatInput(
+        message="Query views", subagent_id=requested_id, table_paths=["sales_view", "finance_view"]
+    )
+    task = await manager.start_chat(real_agent_config, request, sub_agent_id=dispatched_id)
+    await task.asyncio_task
+
+    assert task.status == "completed", task.error
+    assert [table.reference_path for table in node.input.schemas] == expected
+
+
 @pytest.mark.parametrize("entry", [{"id": "agent_id"}, {"id": "agent_id", "scoped_context": {}}])
 def test_named_subagent_cannot_reference_tables_without_a_scope(entry):
     from types import SimpleNamespace

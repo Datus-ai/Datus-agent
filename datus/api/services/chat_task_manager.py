@@ -1105,7 +1105,7 @@ class ChatTaskManager:
             at_tables, at_metrics, at_sqls, at_hints = await asyncio.to_thread(
                 self._resolve_at_context,
                 agent_config,
-                _scoped_table_paths(agent_config, request.subagent_id, request.table_paths),
+                _scoped_table_paths(agent_config, sub_agent_id, request.table_paths),
                 request.metric_paths,
                 request.sql_paths,
                 request.knowledge_paths,
