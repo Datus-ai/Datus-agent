@@ -2,6 +2,8 @@
 alignment that lets datus and SQLAlchemy+duckdb_engine clients coexist."""
 
 import sys
+import threading
+import time
 import types
 
 import duckdb
@@ -640,48 +642,103 @@ def test_execute_query_timeout_rejects_non_select_and_invalid_values(sql, timeou
         connector.close()
 
 
-def test_execute_query_timeout_propagates_timeout_error_and_recovers(monkeypatch):
-    from contextlib import contextmanager
-
-    from datus_db_core import DatusDbException, ErrorCode
-
-    entered = []
-
-    @contextmanager
-    def fake_duckdb_query_timeout(cursor, seconds, interrupt_error):
-        entered.append((cursor, seconds, interrupt_error))
-        raise DatusDbException(
-            ErrorCode.DB_EXECUTION_TIMEOUT,
-            message_args={"error_message": f"Query timed out after {seconds} seconds"},
-        )
-        yield
-
-    module = types.ModuleType("datus_db_core.query_timeout")
-    module.duckdb_query_timeout = fake_duckdb_query_timeout
-    monkeypatch.setitem(sys.modules, "datus_db_core.query_timeout", module)
-
+@pytest.mark.timeout(8)
+def test_execute_query_timeout_propagates_timeout_error_and_recovers():
     connector = DuckdbConnector(DuckDBConfig(db_path=":memory:"))
+    sql = "SELECT SUM(sin(i)) FROM range(1000000000) AS t(i)"
     try:
-        timed_out = connector.execute_query("SELECT 1 AS answer", result_format="list", query_timeout_seconds=2)
+        connector.connect()
+        connection = connector.connection
+        timed_out = connector.execute_query(sql, result_format="list", query_timeout_seconds=1)
         assert timed_out.success is False
-        assert "Query timed out after 2 seconds" in timed_out.error
-        assert len(entered) == 1
-        assert entered[0][1] == 2
-        assert entered[0][2] is duckdb.InterruptException
+        assert "Interrupted" in timed_out.error
+        assert timed_out.error_code == "500007"
+        assert timed_out.sql_query == sql
 
-        recovered = connector.execute_query("SELECT 42 AS answer", result_format="list")
-        assert recovered.success is True
-        assert recovered.sql_return == [{"answer": 42}]
-
-        @contextmanager
-        def allow_duckdb_query_timeout(cursor, seconds, interrupt_error):
-            yield
-
-        module.duckdb_query_timeout = allow_duckdb_query_timeout
-        slash_query = connector.execute_query(
+        recovered = connector.execute_query(
             r"SELECT '\' AS slash, ';' AS semi; -- trailing comment", result_format="list", query_timeout_seconds=2
         )
-        assert slash_query.success is True
-        assert slash_query.sql_return == [{"slash": "\\", "semi": ";"}]
+        assert recovered.success is True
+        assert recovered.sql_return == [{"slash": "\\", "semi": ";"}]
+        assert connector.connection is connection
+    finally:
+        connector.close()
+
+
+@pytest.mark.timeout(8)
+@pytest.mark.parametrize(
+    "sql, expected_rows",
+    [("SELECT SUM(sin(i)) FROM range(100000000) AS t(i)", None), ("SELECT 1", [(1,)])],
+    ids=["retry-interrupts-slow-query", "discard-late-rows"],
+)
+def test_duckdb_handles_an_interrupt_issued_before_native_execution(sql, expected_rows):
+    connector = DuckdbConnector(DuckDBConfig(db_path=":memory:"))
+    first_interrupt = threading.Event()
+    fetch_finished = threading.Event()
+    interrupt_calls = []
+    fetched_rows = []
+
+    class DelayedCursor:
+        def __init__(self, cursor):
+            self.native = cursor
+
+        def execute(self, statement):
+            if statement == sql and not first_interrupt.wait(timeout=2):
+                raise AssertionError("The first interrupt did not arrive before execution")
+            result = self.native.execute(statement)
+            return self if statement == sql and expected_rows is not None else result
+
+        def fetchall(self):
+            rows = self.native.fetchall()
+            fetched_rows.extend(rows)
+            fetch_finished.set()
+            return rows
+
+        @property
+        def description(self):
+            return self.native.description
+
+        def interrupt(self):
+            interrupt_calls.append(True)
+            if expected_rows is not None and first_interrupt.is_set():
+                # Keep retries from racing the quick query under a slow scheduler.
+                fetch_finished.wait(timeout=2)
+            self.native.interrupt()
+            first_interrupt.set()
+
+        def close(self):
+            self.native.close()
+
+    class DelayedConnection:
+        def __init__(self, connection):
+            self.native = connection
+
+        def execute(self, statement):
+            return self.native.execute(statement)
+
+        def cursor(self):
+            return DelayedCursor(self.native.cursor())
+
+        def close(self):
+            self.native.close()
+
+    try:
+        connector.connect()
+        connector.connection = DelayedConnection(connector.connection)
+        timed_out = connector.execute_query(
+            sql,
+            result_format="arrow" if expected_rows is None else "list",
+            query_deadline_monotonic=time.monotonic() + 0.25,
+        )
+        assert timed_out.success is False
+        assert timed_out.error_code == "500007"
+        if expected_rows is None:
+            assert "Interrupted" in timed_out.error
+            assert len(interrupt_calls) >= 2
+        else:
+            assert fetched_rows == expected_rows
+        recovered = connector.execute_query("SELECT 42 AS answer", result_format="arrow")
+        assert recovered.success is True
+        assert recovered.sql_return.to_pylist() == [{"answer": 42}]
     finally:
         connector.close()

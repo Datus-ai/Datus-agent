@@ -2183,6 +2183,49 @@ class TestDBFuncToolExecuteSql:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
+        "override, seconds, guidance",
+        [
+            (None, 2, "Do not retry write statements without checking their outcome."),
+            (1, 1, "Check its outcome before retrying the query."),
+        ],
+    )
+    async def test_registered_sql_normalizes_a_connector_timeout_before_the_outer_timer(
+        self, monkeypatch, override, seconds, guidance
+    ):
+        import time
+
+        from datus.schemas.node_models import ExecuteSQLResult
+
+        monkeypatch.setattr("datus.tools.func_tool.database.SQL_TOOL_TIMEOUT_SECONDS", 2)
+        monkeypatch.setenv("DATUS_SQL_TOOL_MAX_TIMEOUT_SECONDS", "300")
+        connector = Mock(dialect="sqlite", supports_query_timeout_override=True, supports_read_query_timeout=True)
+        connector.get_databases.return_value = []
+        connector.execute_query.return_value = ExecuteSQLResult(success=False, error="interrupted", error_code="500007")
+        db = self._make_tool(connector)
+        tool = db.to_function_tool(db.execute_sql)
+        context = SimpleNamespace()
+        sql = "SELECT 1"
+        before = time.monotonic()
+        result = await tool.on_invoke_tool(context, json.dumps({"sql": sql, "timeout": override}))
+        after = time.monotonic()
+
+        assert result["success"] == 0
+        assert result["result"] is None
+        assert result["error"] == (
+            f"SQL tool timed out after {seconds:g} seconds. Database execution may still be running. {guidance}"
+        )
+        assert context._datus_tool_status == "timeout"
+        options = connector.execute_query.call_args.kwargs.copy()
+        assert before + seconds <= options.pop("query_deadline_monotonic") <= after + seconds
+        assert options == (
+            {"result_format": "list"}
+            if override is None
+            else {"result_format": "list", "query_timeout_seconds": override}
+        )
+        assert connector.execute_query.call_args.args == (sql,)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
         "sql, timeout, supported, reason",
         [
             ("SELECT 1", 301, True, "1 to 300"),

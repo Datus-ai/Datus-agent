@@ -4,13 +4,18 @@ import ast
 import asyncio
 import json
 import sqlite3
+import threading
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.schemas.action_history import ActionHistoryManager, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput
+from datus.tools.db_tools.db_manager import DBManager
+from datus.tools.func_tool.database import DBFuncTool
 from datus.utils.path_manager import reset_path_manager
 from tests.helpers.product_acceptance import ModelServer, answer, isolated_connectors, product_config, tool_call
 
@@ -75,11 +80,97 @@ async def test_sql_tool_timeout_returns_to_model_in_the_same_turn(product, monke
     slow_sql = (
         "WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n < 10000000) SELECT SUM(n) FROM seq"
     )
-    server.enqueue(tool_call("execute_sql", {"sql": slow_sql}), answer("The query timed out."))
+    server.enqueue(
+        tool_call("execute_sql", {"sql": slow_sql}),
+        tool_call("get_datasource_identity", {}, "call_identity"),
+        answer("The query timed out."),
+    )
     node, _ = await run_chat(config, "Run the query and report the outcome.")
     results = [message for message in server.requests[-1]["messages"] if message.get("role") == "tool"]
     assert "SQL tool timed out after 0.25 seconds" in json.dumps(results)
+    identity = next(message for message in results if message.get("tool_call_id") == "call_identity")
+    payload = ast.literal_eval(identity["content"])["result"]
+    assert payload["identity_status"] == "resolved"
+    assert payload["identity"]["path"] == str((Path(config.project_root).parent / "sales.sqlite").resolve())
     assert "timed out" in node.result.response
+
+
+@pytest.mark.asyncio
+async def test_parallel_sql_tool_query_that_expires_waiting_never_reaches_sqlite(product, monkeypatch):
+    config, _ = product
+    started = threading.Event()
+    release = threading.Event()
+    second_started = threading.Event()
+    second_finished = threading.Event()
+    first_finished = threading.Event()
+    submitted = []
+    first_sql = (
+        "WITH RECURSIVE seq(n) AS (SELECT hold_first_query() UNION ALL "
+        "SELECT n + 1 FROM seq WHERE n < 50000000) SELECT SUM(n) FROM seq"
+    )
+    second_sql = first_sql.replace("hold_first_query()", "2")
+
+    def hold_first_query():
+        started.set()
+        if not release.wait(timeout=5):
+            raise TimeoutError("Test did not release the first SQLite query")
+        return 1
+
+    manager = DBManager(config.current_db_configs())
+    db = DBFuncTool(manager, agent_config=config)
+    connector = db.connector
+    connector.connect()
+    connector.connection.create_function("hold_first_query", 0, hold_first_query)
+    connector.connection.set_trace_callback(submitted.append)
+    execute_query = connector.execute_query
+    outcomes = {}
+
+    def track_query(sql, **options):
+        if sql == second_sql:
+            second_started.set()
+            # Start the short lock-wait budget once the worker reaches the connector.
+            options["query_deadline_monotonic"] = min(options["query_deadline_monotonic"], time.monotonic() + 0.1)
+        try:
+            result = execute_query(sql, **options)
+            outcomes[sql] = result
+            return result
+        finally:
+            (first_finished if sql == first_sql else second_finished).set()
+
+    monkeypatch.setattr(connector, "execute_query", track_query)
+    monkeypatch.setattr("datus.tools.func_tool.database.SQL_TOOL_TIMEOUT_SECONDS", 0.75)
+    tool = db.to_function_tool(db.execute_sql)
+    first_context, second_context = SimpleNamespace(), SimpleNamespace()
+    first = asyncio.create_task(tool.on_invoke_tool(first_context, json.dumps({"sql": first_sql})))
+    second = None
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        monkeypatch.setattr("datus.tools.func_tool.database.SQL_TOOL_TIMEOUT_SECONDS", 3)
+        second = asyncio.create_task(tool.on_invoke_tool(second_context, json.dumps({"sql": second_sql})))
+        assert await asyncio.to_thread(second_started.wait, 2)
+        second_result = await second
+        assert second_result["success"] == 0
+        assert second_context._datus_tool_status == "timeout"
+        # The worker must finish while the first query still owns the lock.
+        assert await asyncio.to_thread(second_finished.wait, 0.5)
+        assert outcomes[second_sql].error_code == "500007"
+        assert second_sql not in submitted
+
+        release.set()
+        first_result = await first
+        assert first_result["success"] == 0
+        assert first_context._datus_tool_status == "timeout"
+        assert await asyncio.to_thread(first_finished.wait, 1)
+        assert outcomes[first_sql].error_code == "500007"
+        assert submitted.count(first_sql) == 1
+        assert second_sql not in submitted
+    finally:
+        release.set()
+        await first
+        if second is not None:
+            await second
+        db.close()
+        manager.close()
 
 
 @pytest.mark.asyncio

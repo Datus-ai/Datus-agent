@@ -1,7 +1,9 @@
 import os
 import sqlite3
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import pytest
 import structlog
@@ -365,46 +367,91 @@ def test_execute_query_timeout_rejects_non_select_and_invalid_values(sqlite_conn
     assert tables.sql_return == []
 
 
-def test_execute_query_timeout_propagates_timeout_error_and_recovers(sqlite_connector, monkeypatch):
-    import sys
-    import types
-    from contextlib import contextmanager
+@pytest.mark.timeout(8)
+def test_execute_query_timeout_propagates_timeout_error_and_recovers(sqlite_connector):
+    sqlite_connector.connect()
+    connection = sqlite_connector.connection
+    connection.execute("PRAGMA busy_timeout = 2000")
+    sql = (
+        "WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 50000000) SELECT SUM(n) FROM seq"
+    )
 
-    from datus_db_core import DatusDbException, ErrorCode
-
-    entered = []
-
-    @contextmanager
-    def fake_sqlite_query_timeout(connection, seconds):
-        entered.append((connection, seconds))
-        raise DatusDbException(
-            ErrorCode.DB_EXECUTION_TIMEOUT,
-            message_args={"error_message": f"Query timed out after {seconds} seconds"},
-        )
-        yield
-
-    module = types.ModuleType("datus_db_core.query_timeout")
-    module.sqlite_query_timeout = fake_sqlite_query_timeout
-    monkeypatch.setitem(sys.modules, "datus_db_core.query_timeout", module)
-
-    timed_out = sqlite_connector.execute_query("SELECT 1 AS answer", result_format="list", query_timeout_seconds=2)
+    timed_out = sqlite_connector.execute_query(sql, result_format="list", query_timeout_seconds=1)
     assert timed_out.success is False
-    assert "Query timed out after 2 seconds" in timed_out.error
-    assert len(entered) == 1
-    assert entered[0][0] is sqlite_connector.connection
-    assert entered[0][1] == 2
+    assert timed_out.error == "interrupted"
+    assert timed_out.error_code == "500007"
+    assert timed_out.sql_query == sql
+    assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 2000
 
-    recovered = sqlite_connector.execute_query("SELECT 42 AS answer", result_format="list")
+    # Execute enough opcodes to detect a leaked progress handler.
+    recovered = sqlite_connector.execute_query(sql.replace("50000000", "5000"), result_format="list")
     assert recovered.success is True
-    assert recovered.sql_return == [{"answer": 42}]
+    assert recovered.sql_return == [{"SUM(n)": 12502500}]
+    assert sqlite_connector.connection is connection
 
-    @contextmanager
-    def allow_sqlite_query_timeout(connection, seconds):
-        yield
-
-    module.sqlite_query_timeout = allow_sqlite_query_timeout
     slash_query = sqlite_connector.execute_query(
         r"SELECT '\' AS slash, ';' AS semi; -- trailing comment", result_format="list", query_timeout_seconds=2
     )
     assert slash_query.success is True
     assert slash_query.sql_return == [{"slash": "\\", "semi": ";"}]
+
+
+@pytest.mark.timeout(8)
+def test_execute_query_rejects_rows_returned_after_deadline(sqlite_connector, monkeypatch):
+    sqlite_connector.connect()
+    connection = sqlite_connector.connection
+    now = time.monotonic()
+    monkeypatch.setattr("datus.tools.db_tools.sqlite_connector.time", SimpleNamespace(monotonic=lambda: now))
+    returned = []
+
+    def slow_value():
+        nonlocal now
+        # Model a slow UDF without depending on the scheduler or waiting a real second.
+        now += 2
+        returned.append(42)
+        return 42
+
+    connection.create_function("slow_value", 0, slow_value)
+    sql = "SELECT slow_value() AS value"
+    timed_out = sqlite_connector.execute_query(sql, result_format="list", query_timeout_seconds=1)
+
+    assert returned == [42]
+    assert timed_out.success is False
+    assert timed_out.error_code == "500007"
+    assert timed_out.sql_query == sql
+
+    recovered = sqlite_connector.execute_query("SELECT 42 AS value", result_format="list")
+    assert recovered.success is True
+    assert recovered.sql_return == [{"value": 42}]
+    assert sqlite_connector.connection is connection
+
+
+@pytest.mark.parametrize("busy_timeout_ms, deadline_seconds, expected_code", [(10, 1, None), (1500, 0.1, "500007")])
+def test_execute_query_classifies_sqlite_busy_by_deadline(
+    sqlite_connector, db_path, busy_timeout_ms, deadline_seconds, expected_code
+):
+    sqlite_connector.connect()
+    connection = sqlite_connector.connection
+    connection.execute("CREATE TABLE items (value INTEGER)")
+    connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
+
+    with sqlite3.connect(db_path) as writer:
+        writer.execute("BEGIN EXCLUSIVE")
+        writer.execute("INSERT INTO items VALUES (42)")
+        result = sqlite_connector.execute_query(
+            "SELECT value FROM items",
+            result_format="list",
+            query_deadline_monotonic=time.monotonic() + deadline_seconds,
+        )
+
+    assert result.success is False
+    assert result.error_code == expected_code
+    if expected_code is None:
+        assert "Connection to database timed out." in result.error
+        assert "database is locked" in result.error
+    else:
+        assert result.error == "database is locked"
+    assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == busy_timeout_ms
+    recovered = sqlite_connector.execute_query("SELECT value FROM items", result_format="list")
+    assert recovered.success is True
+    assert recovered.sql_return == [{"value": 42}]
