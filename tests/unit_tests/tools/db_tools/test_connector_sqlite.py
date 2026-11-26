@@ -341,3 +341,70 @@ def test_get_schema(sqlite_connector):
     assert table2["table_name"] == "test_table2"
     assert "id INTEGER PRIMARY KEY" in table2["definition"]
     assert "description TEXT" in table2["definition"]
+
+
+@pytest.mark.parametrize(
+    "sql, timeout, expected_error",
+    [
+        ("PRAGMA table_list", 1, "SELECT"),
+        ("EXPLAIN SELECT 1", 1, "SELECT"),
+        ("CREATE TABLE should_not_exist (id INT)", 1, "SELECT"),
+        ("SELECT 1; CREATE TABLE should_not_exist (id INT); SELECT 42", 1, "single SELECT"),
+        (r"SELECT '\'; CREATE TABLE should_not_exist (id INT); SELECT '\'", 1, "single SELECT"),
+        ("SELECT 1", 0, "positive integer"),
+        ("SELECT 1", -1, "positive integer"),
+        ("SELECT 1", True, "positive integer"),
+    ],
+)
+def test_execute_query_timeout_rejects_non_select_and_invalid_values(sqlite_connector, sql, timeout, expected_error):
+    result = sqlite_connector.execute_query(sql, result_format="list", query_timeout_seconds=timeout)
+    assert result.success is False
+    assert expected_error in result.error
+    tables = sqlite_connector.execute_query("SELECT name FROM sqlite_master WHERE type='table'", result_format="list")
+    assert tables.success is True
+    assert tables.sql_return == []
+
+
+def test_execute_query_timeout_propagates_timeout_error_and_recovers(sqlite_connector, monkeypatch):
+    import sys
+    import types
+    from contextlib import contextmanager
+
+    from datus_db_core import DatusDbException, ErrorCode
+
+    entered = []
+
+    @contextmanager
+    def fake_sqlite_query_timeout(connection, seconds):
+        entered.append((connection, seconds))
+        raise DatusDbException(
+            ErrorCode.DB_EXECUTION_TIMEOUT,
+            message_args={"error_message": f"Query timed out after {seconds} seconds"},
+        )
+        yield
+
+    module = types.ModuleType("datus_db_core.query_timeout")
+    module.sqlite_query_timeout = fake_sqlite_query_timeout
+    monkeypatch.setitem(sys.modules, "datus_db_core.query_timeout", module)
+
+    timed_out = sqlite_connector.execute_query("SELECT 1 AS answer", result_format="list", query_timeout_seconds=2)
+    assert timed_out.success is False
+    assert "Query timed out after 2 seconds" in timed_out.error
+    assert len(entered) == 1
+    assert entered[0][0] is sqlite_connector.connection
+    assert entered[0][1] == 2
+
+    recovered = sqlite_connector.execute_query("SELECT 42 AS answer", result_format="list")
+    assert recovered.success is True
+    assert recovered.sql_return == [{"answer": 42}]
+
+    @contextmanager
+    def allow_sqlite_query_timeout(connection, seconds):
+        yield
+
+    module.sqlite_query_timeout = allow_sqlite_query_timeout
+    slash_query = sqlite_connector.execute_query(
+        r"SELECT '\' AS slash, ';' AS semi; -- trailing comment", result_format="list", query_timeout_seconds=2
+    )
+    assert slash_query.success is True
+    assert slash_query.sql_return == [{"slash": "\\", "semi": ";"}]

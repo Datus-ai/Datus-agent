@@ -976,6 +976,47 @@ def is_single_statement(sql: str) -> bool:
     return _first_statement(normalized) == normalized
 
 
+def _sqlglot_dialect(dialect: str) -> sqlglot.Dialect:
+    candidates = []
+    if dialect:
+        for candidate in (parse_dialect(dialect), parse_read_dialect(dialect)):
+            normalized = "mysql" if candidate == "tidb" else candidate
+            if normalized and normalized not in candidates:
+                candidates.append(normalized)
+    for candidate in candidates:
+        try:
+            return sqlglot.Dialect.get_or_raise(candidate)
+        except ValueError:
+            continue
+    return sqlglot.Dialect.get_or_raise("")
+
+
+def is_single_select_statement(sql: str, dialect: str) -> bool:
+    """Whether ``sql`` is exactly one SELECT statement under ``dialect`` lexical rules."""
+    if not sql or not isinstance(sql, str):
+        return False
+    sqlglot_dialect = _sqlglot_dialect(dialect)
+    try:
+        tokens = sqlglot_dialect.tokenize(sql)
+    except sqlglot.errors.TokenError:
+        return False
+    if not tokens:
+        return False
+    if tokens[-1].token_type == sqlglot.tokens.TokenType.SEMICOLON:
+        tokens = tokens[:-1]
+    if not tokens or any(token.token_type == sqlglot.tokens.TokenType.SEMICOLON for token in tokens):
+        return False
+    try:
+        parsed = [
+            expr
+            for expr in sqlglot.parse(sql, dialect=sqlglot_dialect, error_level=sqlglot.ErrorLevel.IGNORE)
+            if expr is not None and not isinstance(expr, expressions.Semicolon)
+        ]
+    except Exception:
+        return False
+    return len(parsed) == 1 and isinstance(_normalize_expression(parsed[0]), (expressions.Query, expressions.Values))
+
+
 #: Leading ``EXPLAIN`` and the option forms the dialects spell it with, so the
 #: statement being explained can be classified on its own.
 #:

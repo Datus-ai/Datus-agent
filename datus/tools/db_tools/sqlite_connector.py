@@ -5,12 +5,14 @@
 import sqlite3
 import threading
 from collections.abc import Callable
+from contextlib import nullcontext
 from functools import wraps
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, override
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from datus_db_core import BaseSqlConnector
+from datus_db_core import BaseSqlConnector, DatusDbException
 from pandas import DataFrame
 from pyarrow import Table
 
@@ -59,6 +61,8 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
     """
     Connector for SQLite databases using native sqlite3 SDK.
     """
+
+    supports_query_timeout_override = find_spec("datus_db_core.query_timeout") is not None
 
     def __init__(self, config: SQLiteConfig):
         super().__init__(config, dialect=DBType.SQLITE)
@@ -283,14 +287,30 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
     @override
     @_serialized_connection
     def execute_query(
-        self, sql: str, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"
+        self,
+        sql: str,
+        result_format: Literal["csv", "arrow", "pandas", "list"] = "csv",
+        *,
+        query_timeout_seconds: int | None = None,
     ) -> ExecuteSQLResult:
         """Execute a SELECT query."""
         try:
             self.connect()
             cursor = self.connection.cursor()
-            cursor.execute(sql)
-            rows = cursor.fetchall()
+            scope = nullcontext()
+            if query_timeout_seconds is not None:
+                from datus.utils.sql_utils import is_single_select_statement
+
+                if type(query_timeout_seconds) is not int or query_timeout_seconds <= 0:
+                    raise ValueError("query_timeout_seconds must be a positive integer")
+                if not is_single_select_statement(sql, self.dialect):
+                    raise ValueError("A per-query timeout can only be set on a single SELECT query")
+                from datus_db_core.query_timeout import sqlite_query_timeout
+
+                scope = sqlite_query_timeout(self.connection, query_timeout_seconds)
+            with scope:
+                cursor.execute(sql)
+                rows = cursor.fetchall()
             columns = [desc[0] for desc in cursor.description] if cursor.description else []
 
             # Convert to list of dicts
@@ -317,6 +337,8 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
                 result_format=result_format,
                 column_names=columns if not rows else None,
             )
+        except DatusDbException as exc:
+            return ExecuteSQLResult(success=False, error=str(exc), sql_query=sql)
         except Exception as e:
             ex = self._handle_exception(e, sql)
             return ExecuteSQLResult(

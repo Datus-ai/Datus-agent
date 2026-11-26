@@ -358,7 +358,11 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             if hasattr(tool_instance, method_name):
                 from datus.tools.func_tool import trans_to_function_tool
 
-                self.tools.append(trans_to_function_tool(getattr(tool_instance, method_name)))
+                method = getattr(tool_instance, method_name)
+                if tool_type == "db_tools" and method_name == "execute_sql":
+                    self.tools.append(tool_instance.to_function_tool(method))
+                else:
+                    self.tools.append(trans_to_function_tool(method))
             else:
                 logger.warning("Method %r not found in %s", method_name, tool_type)
         except Exception as exc:

@@ -12,13 +12,14 @@ import os
 import re
 import threading
 from collections import OrderedDict
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Union
 
-from agents import Tool
+from agents import FunctionTool, Tool
 from datus_db_core import BaseSqlConnector, connector_registry
 
 from datus.configuration.agent_config import AgentConfig
@@ -53,7 +54,7 @@ from datus.tools.db_tools.database_import import (
 from datus.tools.db_tools.datasource_plan import DatasourcePlanError, plan_from_ddl
 from datus.tools.db_tools.datasource_quality import QualityChecker, summarize
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
-from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.base import FuncToolResult, parse_tool_args, trans_to_function_tool, write_back_tool_args
 from datus.tools.func_tool.bulk_query_tools import BulkQueryTools
 from datus.tools.registry.contracts import tool_contract
 from datus.utils.compress_utils import DataCompressor
@@ -67,8 +68,19 @@ from datus.utils.sql_utils import parse_dialect, parse_table_name_parts
 
 logger = get_logger(__name__)
 
-# Bounds SQL tool waits after approval, independently of driver/server deadlines.
+# Default Agent wait after approval, independently of driver/server deadlines.
 SQL_TOOL_TIMEOUT_SECONDS = 300.0
+_SQL_TOOL_MAX_TIMEOUT_ENV = "DATUS_SQL_TOOL_MAX_TIMEOUT_SECONDS"
+_sql_query_timeout: ContextVar[int | None] = ContextVar("sql_query_timeout", default=None)
+
+
+def _sql_tool_max_timeout() -> int:
+    value = os.getenv(_SQL_TOOL_MAX_TIMEOUT_ENV, "").strip()
+    if not value:
+        return int(SQL_TOOL_TIMEOUT_SECONDS)
+    if not (value.isascii() and value.isdecimal()) or int(value) < SQL_TOOL_TIMEOUT_SECONDS:
+        raise ValueError(f"{_SQL_TOOL_MAX_TIMEOUT_ENV} must be an integer >= {SQL_TOOL_TIMEOUT_SECONDS:g}")
+    return int(value)
 
 
 def _parse_profile_text(text: str):
@@ -1450,6 +1462,47 @@ class DBFuncTool(BulkQueryTools):
             excluded.add("catalog")
         return excluded
 
+    def _supports_sql_tool_timeout(self) -> bool:
+        if getattr(self.connector, "supports_query_timeout_override", False) is True:
+            return True
+        if not self._is_multi_connector or not self.agent_config:
+            return False
+
+        try:
+            configs = self.agent_config.current_db_configs()
+        except Exception:
+            return False
+        if not isinstance(configs, dict):
+            return False
+
+        for datasource in self._datasources:
+            if datasource == self._default_datasource:
+                continue
+            config = configs.get(datasource)
+            if config is None:
+                continue
+            raw_type = config.get("type", "") if isinstance(config, dict) else getattr(config, "type", "")
+            metadata = connector_registry.get_metadata(self._dialect_name(raw_type))
+            if metadata is None:
+                continue
+            capability = getattr(metadata.connector_class, "supports_query_timeout_override", False)
+            if capability is True:
+                return True
+            if not isinstance(capability, property):
+                continue
+            # A subclass can inherit the property while using a different
+            # dialect. Check the registered dialect before applying its options.
+            dialect = metadata.db_type
+            raw_extra = config.get("extra") if isinstance(config, dict) else getattr(config, "extra", None)
+            options = raw_extra if isinstance(raw_extra, dict) else {}
+            if dialect == "hive" and (options.get("server_type") or "hive") == "hive":
+                return True
+            if dialect in {"doris", "greenplum", "mysql", "postgresql", "starrocks", "tidb"} and not coerce_bool(
+                options.get("aurora"), False
+            ):
+                return True
+        return False
+
     def to_function_tool(self, bound_method: Callable) -> Tool:
         excluded = self._excluded_tool_params()
         read_query = bound_method.__name__ == "execute_sql" and self.read_only
@@ -1457,32 +1510,7 @@ class DBFuncTool(BulkQueryTools):
             excluded.update({"min_rows", "max_rows"})
         tool = trans_to_function_tool(bound_method, excluded_params=excluded)
         if bound_method.__name__ == "execute_sql":
-            timeout = SQL_TOOL_TIMEOUT_SECONDS
-            invoke = tool.on_invoke_tool
-
-            async def invoke_sql(context, arguments):
-                deadline = asyncio.timeout(timeout)
-                try:
-                    async with deadline:
-                        return await invoke(context, arguments)
-                except TimeoutError:
-                    if not deadline.expired():
-                        raise
-                    # Cancelling to_thread stops waiting, not the database
-                    # driver. A mutation may still finish; never imply it is
-                    # safe to repeat, or claim that the server killed it.
-                    if context is not None:
-                        context._datus_tool_status = "timeout"
-                    return FuncToolResult(
-                        success=0,
-                        error=(
-                            f"SQL tool timed out after {timeout:g} seconds. "
-                            "Database execution may still be running. "
-                            "Do not retry write statements without checking their outcome."
-                        ),
-                    ).model_dump(mode="json")
-
-            tool.on_invoke_tool = invoke_sql
+            self._configure_sql_tool_timeout(tool, supports_override=self._supports_sql_tool_timeout())
         if read_query:
             tool.description = (
                 "Execute one read-only SQL statement (SELECT, SHOW, DESCRIBE or EXPLAIN). "
@@ -1491,6 +1519,84 @@ class DBFuncTool(BulkQueryTools):
                 "Use datasource and database only to select the connection."
             )
         return tool
+
+    @staticmethod
+    def _configure_sql_tool_timeout(tool: FunctionTool, *, supports_override: bool) -> None:
+        maximum = _sql_tool_max_timeout() if supports_override else None
+        schema = tool.params_json_schema
+        if supports_override:
+            schema["properties"]["timeout"] = {
+                "anyOf": [{"type": "integer"}, {"type": "null"}],
+                "description": (
+                    f"Optional timeout in seconds (1 to {maximum}) for a SELECT on a supported database. "
+                    "Bounds this tool's wait and overrides the datasource's default query timeout for this SELECT. "
+                    "Leave timeout hints or settings out of the SQL when relying on this argument. "
+                    "Omit or use null for the defaults. Driver/network timeouts apply independently. "
+                    "A tool timeout can leave the query running."
+                ),
+            }
+            if tool.strict_json_schema:
+                schema.setdefault("required", []).append("timeout")
+        invoke = tool.on_invoke_tool
+
+        async def invoke_sql(context, arguments):
+            args, canonical, error = parse_tool_args(arguments, tool_name=tool.name, params_schema=schema)
+            if error:
+                write_back_tool_args(context, canonical)
+                return FuncToolResult(success=0, error=error).model_dump(mode="json")
+            has_timeout = "timeout" in args
+            if not supports_override:
+                override = None
+                if has_timeout and args["timeout"] is not None:
+                    write_back_tool_args(context, canonical)
+                    return FuncToolResult(
+                        success=0,
+                        error="This datasource does not support a per-query timeout. Omit timeout to use its defaults. "
+                        "SQL was not executed.",
+                    ).model_dump(mode="json")
+            else:
+                override = args.pop("timeout", None)
+                if override is not None and (type(override) is not int or not 1 <= override <= maximum):
+                    write_back_tool_args(context, canonical)
+                    return FuncToolResult(
+                        success=0,
+                        error=f"timeout must be an integer from 1 to {maximum} seconds. SQL was not executed.",
+                    ).model_dump(mode="json")
+
+            seconds = SQL_TOOL_TIMEOUT_SECONDS if override is None else override
+            deadline = asyncio.timeout(seconds)
+            token = _sql_query_timeout.set(override)
+            strip_timeout = supports_override and has_timeout
+            try:
+                async with deadline:
+                    return await invoke(context, json.dumps(args, ensure_ascii=False) if strip_timeout else canonical)
+            except TimeoutError:
+                if not deadline.expired():
+                    raise
+                # Cancelling to_thread stops waiting, not the database
+                # driver. A mutation may still finish; never imply it is
+                # safe to repeat, or claim that the server killed it.
+                if context is not None:
+                    context._datus_tool_status = "timeout"
+                guidance = (
+                    "Do not retry write statements without checking their outcome."
+                    if override is None
+                    else "Check its outcome before retrying the query."
+                )
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        f"SQL tool timed out after {seconds:g} seconds. "
+                        "Database execution may still be running. "
+                        f"{guidance}"
+                    ),
+                ).model_dump(mode="json")
+            finally:
+                _sql_query_timeout.reset(token)
+                if strip_timeout:
+                    write_back_tool_args(context, canonical)
+
+        tool.on_invoke_tool = invoke_sql
 
     def available_tools(self) -> List[Tool]:
         bound_tools = []
@@ -3078,6 +3184,21 @@ class DBFuncTool(BulkQueryTools):
                 return analysis_error
             sql_type = parse_sql_type(sql, connector.dialect)
 
+            query_timeout_seconds = _sql_query_timeout.get()
+            if query_timeout_seconds is not None:
+                if sql_type != SQLType.SELECT:
+                    return FuncToolResult(
+                        success=0, error="timeout is only available for SELECT. SQL was not executed."
+                    )
+                if getattr(connector, "supports_query_timeout_override", False) is not True:
+                    return FuncToolResult(
+                        success=0,
+                        error="This datasource does not support a per-query timeout. Omit timeout to use its defaults. "
+                        "SQL was not executed.",
+                    )
+                return self.read_query(
+                    sql, datasource=datasource, database=database, query_timeout_seconds=query_timeout_seconds
+                )
             if sql_type in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
                 return self.read_query(sql, datasource=datasource, database=database)
             refusal = self._refuse_write_if_read_only(
@@ -3144,7 +3265,13 @@ class DBFuncTool(BulkQueryTools):
 
     @connection_scope
     def read_query(
-        self, sql: str, datasource: Optional[str] = "", database: Optional[str] = "", *, compress: bool = True
+        self,
+        sql: str,
+        datasource: Optional[str] = "",
+        database: Optional[str] = "",
+        *,
+        compress: bool = True,
+        query_timeout_seconds: int | None = None,
     ) -> FuncToolResult:
         """
         Execute a read-only SQL query and return the result rows (optionally compressed).
@@ -3198,6 +3325,7 @@ class DBFuncTool(BulkQueryTools):
                 datasource=datasource,
                 result_format=result_format,
                 require_unmodified=not compress,
+                query_timeout_seconds=query_timeout_seconds,
             )
             if result.success:
                 return FuncToolResult(
@@ -3217,6 +3345,7 @@ class DBFuncTool(BulkQueryTools):
         result_format: str = "list",
         policy_context: Optional[Dict[str, Any]] = None,
         require_unmodified: bool = False,
+        query_timeout_seconds: int | None = None,
     ) -> ExecuteSQLResult:
         """Run a read-only query through the shared read guardrails.
 
@@ -3309,7 +3438,10 @@ class DBFuncTool(BulkQueryTools):
             result_format in {"csv", "pandas", "list"}
             and getattr(runtime, "has_batch_only_result_hooks", False) is True
         )
-        result = connector.execute_query(enforced_sql, result_format="arrow" if typed_policy_result else result_format)
+        query_options = {} if query_timeout_seconds is None else {"query_timeout_seconds": query_timeout_seconds}
+        result = connector.execute_query(
+            enforced_sql, result_format="arrow" if typed_policy_result else result_format, **query_options
+        )
         if not result.success:
             return result
         try:
