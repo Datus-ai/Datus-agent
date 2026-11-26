@@ -135,8 +135,8 @@ def _atomic_write_text(path: Path, content: str, *, overwrite: bool = True) -> N
         raise
 
 
-def _infer_column_type(values: List[Any]) -> ColumnSemanticType:
-    """Infer a semantic column type from a sample of values."""
+def _infer_column_type(values: List[Any], *, arrow_type: pa.DataType | None = None) -> ColumnSemanticType:
+    """Infer from observed values, using the projection type for an all-null sample."""
     saw_bool = False
     saw_int = False
     saw_float = False
@@ -165,6 +165,8 @@ def _infer_column_type(values: List[Any]) -> ColumnSemanticType:
             else:
                 saw_other = True
 
+    if arrow_type is not None and not (saw_bool or saw_int or saw_float or saw_other or saw_str_total):
+        return _arrow_column_type(arrow_type)
     if saw_bool and not (saw_int or saw_float or saw_other or saw_str_total):
         return "boolean"
     if saw_int and not (saw_bool or saw_float or saw_other or saw_str_total):
@@ -207,6 +209,7 @@ def _query_result_format(connector: BaseSqlConnector) -> Literal["list", "arrow"
 def _query_rows_and_columns(execute_result: ExecuteSQLResult) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """Preserve projected columns from a zero-row query or trial."""
     result = execute_result.sql_return
+    arrow_types: dict[str, pa.DataType] = {}
     if isinstance(result, pa.Table):
         # Match the row-list result's last-value behavior for repeated labels.
         names = result.column_names
@@ -215,6 +218,7 @@ def _query_rows_and_columns(execute_result: ExecuteSQLResult) -> tuple[list[dict
             result = result.select(list(indices.values()))
         if result.num_rows == 0:
             return [], [{"name": field.name, "type": _arrow_column_type(field.type)} for field in result.schema]
+        arrow_types = {field.name: field.type for field in result.schema}
         result = result.to_pylist()
     if not isinstance(result, list):
         raise ValueError("Unexpected query result format; expected an Arrow table or a list of dictionaries")
@@ -228,7 +232,11 @@ def _query_rows_and_columns(execute_result: ExecuteSQLResult) -> tuple[list[dict
 
     rows = [{key: _normalize_value(value) for key, value in row.items()} for row in result]
     names = dict.fromkeys(key for row in rows for key in row)
-    columns = [{"name": name, "type": _infer_column_type([row.get(name) for row in rows[:200]])} for name in names]
+    sample = rows[:200]
+    columns = [
+        {"name": name, "type": _infer_column_type([row.get(name) for row in sample], arrow_type=arrow_types.get(name))}
+        for name in names
+    ]
     return rows, columns
 
 
