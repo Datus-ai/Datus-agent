@@ -1856,6 +1856,7 @@ class TestResolveAtContext:
             tables = manager._resolve_table_paths(real_agent_config, ["db.schema.table"])
 
         assert [t.table_name for t in tables] == ["table"]
+        assert tables[0].reference_path == "db.schema.table"
 
     def test_metric_store_failure_degrades_to_hint(self, real_agent_config):
         """A store failure yields no typed metric but a look-up hint (not a silent drop)."""
@@ -3013,80 +3014,40 @@ class TestStartChatDatasourceOverride:
         assert captured["db_schema"] == "picked_schema"
 
 
-class TestMatchTableEntry:
-    """_match_table_entry — resilient @Table resolution when the picker's
-    fullName (live introspection) diverges from the metadata-store key."""
-
-    FLAT = {
-        "sample_shop.main.raw_stores": {
-            "table_name": "raw_stores",
-            "database_name": "sample_shop",
-            "schema_name": "main",
-            "definition": "x",
-            "identifier": "i",
-        },
-        "sample_shop.main.raw_orders": {
-            "table_name": "raw_orders",
-            "database_name": "sample_shop",
-            "schema_name": "main",
-            "definition": "x",
-            "identifier": "i",
-        },
+def test_catalog_reference_resolves_to_its_selected_namespace():
+    coordinates = {
+        "catalog_name": "default_catalog",
+        "database_name": "shop",
+        "schema_name": "",
+        "table_name": "revenue",
     }
-
-    def test_catalog_prefix_mismatch_resolves(self):
-        entry = ChatTaskManager._match_table_entry(self.FLAT, "default_catalog.sample_shop.raw_stores")
-        assert entry and entry["table_name"] == "raw_stores"
-
-    def test_bare_db_table_resolves(self):
-        entry = ChatTaskManager._match_table_entry(self.FLAT, "sample_shop.raw_stores")
-        assert entry and entry["table_name"] == "raw_stores"
-
-    def test_unknown_table_returns_none(self):
-        assert ChatTaskManager._match_table_entry(self.FLAT, "default_catalog.sample_shop.nope") is None
-
-    def test_ambiguous_without_db_returns_none(self):
-        amb = {
-            "db1.t": {"table_name": "t", "database_name": "db1"},
-            "db2.t": {"table_name": "t", "database_name": "db2"},
-        }
-        assert ChatTaskManager._match_table_entry(amb, "t") is None
-
-    def test_ambiguous_disambiguated_by_db(self):
-        amb = {
-            "db1.t": {"table_name": "t", "database_name": "db1"},
-            "db2.t": {"table_name": "t", "database_name": "db2"},
-        }
-        entry = ChatTaskManager._match_table_entry(amb, "db2.t")
-        assert entry and entry["database_name"] == "db2"
-
-    def test_sqlite_single_level_resolves(self):
-        flat = {"raw_stores": {"table_name": "raw_stores", "definition": "x"}}
-        entry = ChatTaskManager._match_table_entry(flat, "raw_stores")
-        assert entry and entry["table_name"] == "raw_stores"
+    other = {**coordinates, "catalog_name": "other_catalog"}
+    omitted = {**coordinates, "catalog_name": ""}
+    match = ChatTaskManager._match_table_entry({"other": other, "legacy": omitted}, coordinates)
+    assert match == omitted
+    assert ChatTaskManager._match_table_entry({"other": other}, coordinates) is None
 
 
-class TestSynthesizeTableEntry:
-    """_synthesize_table_entry — name-only fallback when the metadata store
-    can't resolve a picked @Table (KB not indexed for the datasource)."""
+def test_catalog_reference_paths_are_restricted_to_the_subagent_scope():
+    from types import SimpleNamespace
 
-    def test_three_part_path(self):
-        from datus.schemas.node_models import TableSchema
+    from datus.api.services.chat_task_manager import _scoped_table_paths
 
-        entry = ChatTaskManager._synthesize_table_entry("default_catalog.sample_shop.raw_orders")
-        assert entry["table_name"] == "raw_orders"
-        assert entry["database_name"] == "sample_shop"
-        # Must build a valid TableSchema and render to its own name in the prompt.
-        ts = TableSchema.from_dict(entry)
-        assert TableSchema.table_names_to_prompt([ts]) == "raw_orders"
+    scope = {"datasource": "warehouse", "tables": "default_catalog.shop.revenue"}
+    config = SimpleNamespace(
+        agentic_nodes={"sql": {"id": "agent_id"}},
+        sub_agent_config=lambda name: {"scoped_context": scope},
+        current_datasource="warehouse",
+        db_type="starrocks",
+    )
+    paths = ["default_catalog.shop.revenue", "default_catalog.shop.orders", "other_catalog.shop.revenue"]
+    assert _scoped_table_paths(config, "agent_id", paths) == ["default_catalog.shop.revenue"]
+    assert _scoped_table_paths(config, None, paths) == paths
 
-    def test_single_segment(self):
-        entry = ChatTaskManager._synthesize_table_entry("raw_orders")
-        assert entry["table_name"] == "raw_orders"
-        assert entry["database_name"] == ""
-
-    def test_empty_path(self):
-        assert ChatTaskManager._synthesize_table_entry("") is None
+    scope["tables"] = "default_catalog.shop.*"
+    assert _scoped_table_paths(config, "agent_id", paths) == paths[:2]
+    config.current_datasource = "other"
+    assert _scoped_table_paths(config, "agent_id", paths) == []
 
 
 class TestSplitSubjectPath:

@@ -52,8 +52,10 @@ from datus.schemas.at_context import AtContextInput
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.proxy.proxy_tool import apply_proxy_tools
 from datus.utils.artifact_output import session_user_scope
+from datus.utils.catalog_scope import catalog_scope_matches
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import set_current_path_manager
+from datus.utils.sql_utils import parse_table_name_parts
 from datus.utils.time_utils import now_utc_iso
 from datus.utils.trace_context import (
     build_chat_trace_context,
@@ -83,19 +85,59 @@ def _release_stamp() -> Optional[str]:
 logger = get_logger(__name__)
 
 
-def _subagent_datasource(agent_config: AgentConfig, name_or_id: Optional[str]) -> Optional[str]:
-    """Resolve a direct subagent's saved datasource by configuration name or API id."""
+def _subagent_scope(agent_config: AgentConfig, name_or_id: Optional[str]) -> dict | None:
     if not name_or_id:
         return None
     for name, entry in (agent_config.agentic_nodes or {}).items():
         entry_id = entry.get("id") if isinstance(entry, dict) else getattr(entry, "id", None)
-        if name != name_or_id and entry_id != name_or_id:
-            continue
-        config = agent_config.sub_agent_config(name)
-        scope = config.get("scoped_context") if isinstance(config, dict) else getattr(config, "scoped_context", None)
-        datasource = scope.get("datasource") if isinstance(scope, dict) else getattr(scope, "datasource", None)
-        return datasource if isinstance(datasource, str) and datasource else None
+        if name == name_or_id or entry_id == name_or_id:
+            config = agent_config.sub_agent_config(name)
+            scope = (
+                config.get("scoped_context") if isinstance(config, dict) else getattr(config, "scoped_context", None)
+            )
+            if isinstance(scope, dict):
+                return scope
+            return scope.model_dump() if hasattr(scope, "model_dump") else None
     return None
+
+
+def _subagent_datasource(agent_config: AgentConfig, name_or_id: Optional[str]) -> Optional[str]:
+    scope = _subagent_scope(agent_config, name_or_id) or {}
+    datasource = scope.get("datasource")
+    return datasource if isinstance(datasource, str) and datasource else None
+
+
+def _scoped_table_paths(
+    agent_config: AgentConfig, name_or_id: Optional[str], paths: list[str] | None
+) -> list[str] | None:
+    if not paths:
+        return paths
+    scope = _subagent_scope(agent_config, name_or_id)
+    if scope is None:
+        return paths
+
+    datasource = agent_config.current_datasource
+    bound = scope.get("datasource") or datasource
+    tokens = (scope.get("tables_by_datasource") or {}).get(datasource)
+    if tokens is None and datasource == bound:
+        tokens = scope.get("tables")
+    if isinstance(tokens, str):
+        tokens = tokens.replace("\n", ",").split(",")
+    dialect = str(agent_config.db_type or "")
+    patterns = [
+        parse_table_name_parts(token.strip().lstrip("/"), dialect)
+        for token in (tokens or [])
+        if isinstance(token, str) and token.strip()
+    ]
+    visible = []
+    for path in paths:
+        try:
+            coordinates = parse_table_name_parts(path, dialect)
+        except ValueError:
+            continue
+        if any(catalog_scope_matches(coordinates, pattern) for pattern in patterns):
+            visible.append(path)
+    return visible
 
 
 HEARTBEAT_INTERVAL = 10  # seconds
@@ -1069,7 +1111,7 @@ class ChatTaskManager:
             at_tables, at_metrics, at_sqls, at_hints = await asyncio.to_thread(
                 self._resolve_at_context,
                 agent_config,
-                request.table_paths,
+                _scoped_table_paths(agent_config, request.subagent_id, request.table_paths),
                 request.metric_paths,
                 request.sql_paths,
                 request.knowledge_paths,
@@ -1981,32 +2023,17 @@ class ChatTaskManager:
         return event_id + 1
 
     @staticmethod
-    def _match_table_entry(flatten: Dict[str, Any], path: str) -> Optional[Dict[str, Any]]:
-        """Best-effort match when the picker's fullName != the metadata-store key.
-
-        The @-picker builds table paths from live introspection (the catalog
-        tree), while the completer indexes the schema-metadata store; the two can
-        differ in catalog presence or schema level (e.g. picker sends
-        ``default_catalog.db.table`` but the store key is ``db.schema.table``).
-        Fall back to matching the trailing components — table name, plus the
-        database when the path carries one. Returns a hit only when exactly one
-        candidate matches, so a genuinely ambiguous name never resolves to the
-        wrong table.
-        """
-        segs = [s.strip().strip('"').lower() for s in path.split(".") if s.strip()]
-        if not segs:
-            return None
-        want_table = segs[-1]
-        want_db = segs[-2] if len(segs) >= 2 else None
-        candidates: List[Dict[str, Any]] = []
-        for entry in flatten.values():
-            if str(entry.get("table_name", "")).lower() != want_table:
-                continue
-            if want_db is not None:
-                entry_db = str(entry.get("database_name", "")).lower()
-                if entry_db and entry_db != want_db:
-                    continue
-            candidates.append(entry)
+    def _match_table_entry(flatten: Dict[str, Any], coordinates: Dict[str, str]) -> Optional[Dict[str, Any]]:
+        """Allow an omitted metadata namespace only when the remaining match is unique."""
+        candidates = [
+            entry
+            for entry in flatten.values()
+            if entry.get("table_name") == coordinates["table_name"]
+            and all(
+                not provided or not entry.get(field) or entry[field] == provided
+                for field, provided in coordinates.items()
+            )
+        ]
         return candidates[0] if len(candidates) == 1 else None
 
     @staticmethod
@@ -2034,28 +2061,6 @@ class ChatTaskManager:
         if not segs:
             return [], ""
         return segs[:-1], segs[-1]
-
-    @staticmethod
-    def _synthesize_table_entry(path: str) -> Optional[Dict[str, Any]]:
-        """Build a name-only table entry from a picked path when the store can't resolve it.
-
-        Only ``table_name`` is surfaced to the prompt ("Available tables"), so an
-        empty ``definition`` is fine — the node inspects the real DDL via its own
-        ``describe_table``. ``database_name`` is a best-effort guess from the
-        leading segment for display/scoping; it isn't required for resolution.
-        """
-        segs = [s.strip().strip('"') for s in path.split(".") if s.strip()]
-        if not segs:
-            return None
-        return {
-            "identifier": path,
-            "catalog_name": "",
-            "database_name": segs[-2] if len(segs) >= 2 else "",
-            "schema_name": "",
-            "table_name": segs[-1],
-            "table_type": "table",
-            "definition": "",
-        }
 
     def _resolve_at_context(
         self,
@@ -2123,23 +2128,24 @@ class ChatTaskManager:
             table_flatten = {}
         for path in table_paths:
             try:
-                entry = table_flatten.get(path) or self._match_table_entry(table_flatten, path)
+                coordinates = parse_table_name_parts(path, str(agent_config.db_type or ""))
+                if not coordinates["table_name"]:
+                    continue
+                entry = table_flatten.get(path) or self._match_table_entry(table_flatten, coordinates)
                 if not entry:
                     # The @-picker builds table paths from live introspection, so a
                     # picked table always exists even when the schema-metadata store
                     # is empty/stale (KB not indexed for this datasource). The prompt
-                    # injection only needs the table NAME (the node's own describe_table
-                    # fetches the DDL), so synthesise a name-only entry rather than
-                    # silently dropping the reference and re-asking the user.
+                    # injection can use the selected path while describe_table
+                    # reads the live columns.
                     logger.warning(
                         "Unresolved @Table path '%s' (%d indexed tables); using name-only reference. Sample keys: %s",
                         path,
                         len(table_flatten),
                         list(table_flatten.keys())[:5],
                     )
-                    entry = self._synthesize_table_entry(path)
-                if entry:
-                    tables.append(TableSchema.from_dict(entry))
+                    entry = {**coordinates, "identifier": path, "definition": ""}
+                tables.append(TableSchema.from_dict({**entry, "reference_path": path}))
             except Exception as e:
                 logger.warning(f"Failed to resolve table path '{path}': {e}")
         return tables

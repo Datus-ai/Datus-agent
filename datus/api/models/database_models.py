@@ -1,8 +1,15 @@
 """Pydantic models for Database Management API endpoints."""
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
+
+CatalogObjectKind = Literal["table", "view", "materialized_view"]
+
+
+class CatalogObject(BaseModel):
+    name: str
+    kind: CatalogObjectKind
 
 
 # Database listing models
@@ -22,7 +29,8 @@ class DatabaseInfo(BaseModel):
     connection_status: str = Field(..., description="Connection status (connected, disconnected)")
     tables_count: Optional[int] = Field(None, description="Number of tables in the database")
     last_accessed: Optional[str] = Field(None, description="Last access timestamp")
-    tables: Optional[List[str]] = Field(None, description="List of table names")
+    objects: list[CatalogObject] = Field(default_factory=list, description="Queryable objects in the namespace")
+    objects_error: Optional[str] = Field(None, description="Why some object categories could not be listed")
     error: Optional[str] = Field(
         None, description="Why the object listing is unavailable, when the connection itself is usable"
     )
