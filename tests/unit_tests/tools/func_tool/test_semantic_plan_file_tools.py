@@ -297,14 +297,12 @@ def test_direct_cli_write_and_later_instance_share_plan_identity(tmp_path):
     assert revised.result["review_status"] == "applied"
 
 
-def _commit_plan_in_worker(root, prepared, started, results):
-    started.set()
-    result = SemanticPlanFileTools(root).commit(prepared)
-    results.put((result.success, result.error))
-
-
-def test_commit_waits_for_another_process_and_rechecks_baseline(tmp_path):
-    import multiprocessing
+def test_commit_waits_for_another_process_and_rechecks_baseline(tmp_path, monkeypatch):
+    import os
+    import select
+    import subprocess
+    import sys
+    from threading import Event
 
     from datus.tools.func_tool.semantic_plan_file_tools import fcntl
 
@@ -315,34 +313,60 @@ def test_commit_waits_for_another_process_and_rechecks_baseline(tmp_path):
     saved = writer.write_semantic_model_plan_file("sales", {"summary": "accepted"})
     prepared = writer.prepare("sales", {"summary": "proposal"})
     target = tmp_path / saved.result["path"]
-    context = multiprocessing.get_context("spawn")
-    started = context.Event()
-    results = context.Queue()
-    worker = context.Process(target=_commit_plan_in_worker, args=(tmp_path, prepared, started, results))
-    with target.with_name(f".{target.name}.lock").open("a+") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        worker.start()
-        try:
-            assert started.wait(10)
-            worker.join(0.2)
-            assert worker.is_alive()
-            assert target.read_text() == prepared.old_text
-            target.write_text("concurrent worker content")
-        finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    # Only the lock holder needs another process. Spawning this entire test
+    # module imports the application before its readiness signal and can time
+    # out under CI memory pressure, before testing lock contention at all.
+    worker = subprocess.Popen(
+        [
+            sys.executable,
+            "-I",
+            "-u",
+            "-c",
+            "import fcntl, pathlib, sys\n"
+            "target = pathlib.Path(sys.argv[1])\n"
+            "with target.with_name('.' + target.name + '.lock').open('a+') as lock:\n"
+            "    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)\n"
+            "    print('locked', flush=True)\n"
+            "    if sys.stdin.readline() == 'replace\\n':\n"
+            "        target.write_text('concurrent worker content')\n",
+            str(target),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    attempted = Event()
+    original_flock = fcntl.flock
+    lock_path = target.with_name(f".{target.name}.lock")
 
+    def observe_flock(fd, operation):
+        if operation == fcntl.LOCK_EX and os.fstat(fd).st_ino == lock_path.stat().st_ino:
+            attempted.set()
+        return original_flock(fd, operation)
+
+    monkeypatch.setattr(fcntl, "flock", observe_flock)
+    executor = ThreadPoolExecutor(max_workers=1)
     try:
-        success, error = results.get(timeout=10)
-        worker.join(10)
-        assert worker.exitcode == 0
-        assert success == 0
-        assert "changed during review" in error
+        assert select.select([worker.stdout], [], [], 10)[0], "Lock holder did not start"
+        assert worker.stdout.readline().strip() == "locked"
+        pending = executor.submit(writer.commit, prepared)
+        assert attempted.wait(10), "Commit did not attempt the cross-process lock"
+        assert not pending.done()
+        assert target.read_text() == prepared.old_text
+        worker.stdin.write("replace\n")
+        worker.stdin.flush()
+        result = pending.result(timeout=10)
+        _, stderr = worker.communicate(timeout=10)
+        assert worker.returncode == 0, stderr
+        assert result.success == 0
+        assert "changed during review" in result.error
         assert target.read_text() == "concurrent worker content"
     finally:
-        if worker.is_alive():
+        if worker.poll() is None:
             worker.terminate()
-            worker.join(10)
-        results.close()
+        worker.communicate(timeout=10)
+        executor.shutdown(wait=True)
 
 
 def test_concurrent_proposals_in_the_same_chat_reject_an_outdated_plan(tmp_path):

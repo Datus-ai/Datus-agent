@@ -17,6 +17,7 @@ import inspect
 import json
 import os
 import uuid
+from contextlib import aclosing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Set, Tuple
@@ -4246,13 +4247,12 @@ class AgenticNode(Node):
 
         action_stream = self.execute_stream(action_history_manager)
         try:
-            async for action in self.action_bus.merge(
-                action_stream,
-                broker.fetch(),
-                on_primary_done=broker.close,
-            ):
-                self.interrupt_controller.check()
-                yield action
+            async with aclosing(
+                self.action_bus.merge(action_stream, broker.fetch(), on_primary_done=broker.close)
+            ) as merged:
+                async for action in merged:
+                    self.interrupt_controller.check()
+                    yield action
         except ExecutionInterrupted:
             logger.info("Execution interrupted by user")
             yield ActionHistory.create_action(

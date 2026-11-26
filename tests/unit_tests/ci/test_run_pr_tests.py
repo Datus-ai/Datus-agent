@@ -314,6 +314,16 @@ def test_parallel_suite_writes_failure_report_when_a_worker_crashes(tmp_path, mo
     # The synthetic nested pytest owns its temp directory and plugins. Nightly's
     # outer --basetemp can be a parent of tmp_path and is invalid in this cwd.
     monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+    # A host-installed plugin must never affect this synthetic pytest project.
+    distribution = tmp_path / "unrelated_plugin-1.0.dist-info"
+    distribution.mkdir()
+    (distribution / "METADATA").write_text("Metadata-Version: 2.1\nName: unrelated-plugin\nVersion: 1.0\n")
+    (distribution / "entry_points.txt").write_text("[pytest11]\nunrelated_plugin = unrelated_plugin\n")
+    (tmp_path / "unrelated_plugin.py").write_text("raise RuntimeError('Unrelated plugin was auto-loaded')\n")
+    # Exercise xdist's crash reporting, without importing every installed
+    # provider/tracing/browser plugin in each synthetic worker under coverage.
+    monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+    monkeypatch.setenv("PYTEST_PLUGINS", "xdist.plugin")
     monkeypatch.setattr(run_pr_tests, "PARALLEL_WORKERS", "2")
     monkeypatch.setattr(run_pr_tests, "TEST_CMD_TIMEOUT", 15)
     monkeypatch.setattr(run_pr_tests, "DEFAULT_PYTEST_BASETEMP", str(tmp_path / "pytest-temp"))
@@ -323,7 +333,13 @@ def test_parallel_suite_writes_failure_report_when_a_worker_crashes(tmp_path, mo
     log = io.StringIO()
 
     exit_code = run_pr_tests._run_pytest_suite(
-        [str(tmp_path)], str(junit), log, suite_name="worker crash regression", parallel=True, dist="loadfile"
+        [str(tmp_path)],
+        str(junit),
+        log,
+        suite_name="worker crash regression",
+        parallel=True,
+        dist="loadfile",
+        coverage=False,
     )
 
     assert exit_code == 1, log.getvalue()

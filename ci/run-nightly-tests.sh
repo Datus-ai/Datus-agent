@@ -2153,7 +2153,9 @@ run_logged_unfiltered "Flaky Registry Check" uv run python ci/check_flaky_regist
 
 validate_unit_test_home "$UNIT_TEST_HOME" || exit 1
 rm -rf "$UNIT_TEST_HOME"
-run_logged "Full Unit Tests" run_with_agent_home "$UNIT_TEST_HOME" "$UNIT_TEST_PROJECT_ROOT" env DATUS_TEST_LAYER=unit uv run pytest tests/unit_tests/ -m "not nightly and not quarantine" --tb=short --verbose --timeout=300 --dist=loadscope -n auto
+# This host also runs other repositories and database containers. CPU-based
+# auto workers exhausted RAM; keep the limit with the suite on every runner.
+run_logged "Full Unit Tests" run_with_agent_home "$UNIT_TEST_HOME" "$UNIT_TEST_PROJECT_ROOT" env DATUS_TEST_LAYER=unit uv run pytest tests/unit_tests/ -m "not nightly and not quarantine" --tb=short --verbose --timeout=300 --dist=loadscope -n "${NIGHTLY_UNIT_WORKERS:-2}"
 
 ensure_nightly_kb_data
 

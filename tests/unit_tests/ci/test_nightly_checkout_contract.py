@@ -406,6 +406,26 @@ def test_nightly_product_suites_keep_required_cases_without_reruns_or_skips():
     assert "p0_plan" not in script
 
 
+@pytest.mark.parametrize("workers, expected", [(None, "2"), ("3", "3")])
+def test_nightly_unit_workers_are_bounded_on_every_runner(workers, expected):
+    command = next(
+        line for line in NIGHTLY_SCRIPT.read_text().splitlines() if line.startswith('run_logged "Full Unit Tests"')
+    )
+    env = {**os.environ, "UNIT_TEST_HOME": "/tmp/unit-home", "UNIT_TEST_PROJECT_ROOT": "/tmp/unit-workspace"}
+    env.pop("NIGHTLY_UNIT_WORKERS", None)
+    if workers is not None:
+        env["NIGHTLY_UNIT_WORKERS"] = workers
+    result = subprocess.run(
+        ["bash", "-c", 'run_logged() { printf "%s\\n" "$@"; }; ' + command],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    args = result.stdout.splitlines()
+    assert args[args.index("-n") + 1] == expected
+
+
 def test_nightly_filter_requires_a_matching_group():
     harness = "\n".join(
         [
