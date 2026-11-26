@@ -37,6 +37,9 @@ def _write_report(config, *, completed=False, exit_code=pytest.ExitCode.INTERRUP
         **identity,
     }
     path = Path(target)
+    # Tests can remove their workspace while running. Recreate the original
+    # report directory, never a directory relative to the test's current cwd.
+    path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     temporary.write_text(json.dumps(report, indent=2) + "\n")
     os.replace(temporary, path)
@@ -53,6 +56,11 @@ def pytest_addoption(parser):
 def pytest_sessionstart(session):
     global _config, _last_checkpoint
     _config = session.config
+    target = _config.getoption("--gate-report")
+    if target:
+        # Resolve once, before fixtures or application tools change cwd. Both
+        # incremental checkpoints and the final report must use this identity.
+        _config.option.gate_report = str(Path(target).resolve())
     _collected.clear()
     _executed.clear()
     _outcomes.clear()

@@ -15,6 +15,56 @@ from _pytest.reports import TestReport
 from ci import pytest_gate_plugin as gate
 
 
+@pytest.mark.parametrize("absolute", [False, True])
+@pytest.mark.parametrize("remove_report_directory", [False, True])
+@pytest.mark.parametrize("fails", [False, True])
+def test_evidence_path_survives_test_cwd_and_directory_changes(tmp_path, absolute, remove_report_directory, fails):
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / "other").mkdir()
+    source = tmp_path / "test_chdir.py"
+    source.write_text(
+        "import os, shutil\nfrom pathlib import Path\n"
+        "def test_changes_directory():\n"
+        "    root = Path(__file__).parent\n"
+        f"    if {remove_report_directory!r}: shutil.rmtree(root / 'reports')\n"
+        "    os.chdir(root / 'other')\n"
+        f"    assert not {fails!r}, 'EXPECTED_TEST_FAILURE'\n"
+    )
+    evidence_path = tmp_path / "reports" / "execution.json"
+    evidence_path.parent.mkdir()
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--noconftest",
+            "-p",
+            "ci.pytest_gate_plugin",
+            "--gate-report",
+            str(evidence_path if absolute else evidence_path.relative_to(tmp_path)),
+            "-q",
+            str(source),
+        ],
+        cwd=tmp_path,
+        env={
+            **{key: value for key, value in os.environ.items() if key not in {"PYTEST_ADDOPTS", "PYTEST_PLUGINS"}},
+            "PYTHONPATH": str(Path(__file__).resolve().parents[3]),
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        },
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == int(fails), result.stdout + result.stderr
+    assert "INTERNALERROR" not in result.stdout
+    evidence = json.loads(evidence_path.read_text())
+    assert evidence["completed"] is True
+    assert evidence["exit_code"] == int(fails)
+    assert evidence["executed"] == ["test_chdir.py::test_changes_directory"]
+    assert evidence["outcomes"] == {"test_chdir.py::test_changes_directory": "failed" if fails else "passed"}
+    assert not (tmp_path / "other" / "reports").exists()
+
+
 def test_execution_evidence_survives_a_hard_timeout(tmp_path):
     """pytest-timeout's thread watchdog bypasses every session-finish hook."""
     (tmp_path / "pytest.ini").write_text("[pytest]\n")

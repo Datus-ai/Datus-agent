@@ -109,6 +109,36 @@ async def test_pure_config_runs_without_implicit_tools_or_business_resources(rea
 
 
 @pytest.mark.asyncio
+async def test_nightly_proposal_delegate_advertises_its_actual_no_write_capabilities(
+    real_agent_config, mock_llm_create
+):
+    from datus.tools.func_tool.sub_agent_task_tool import BUILTIN_SUBAGENT_DESCRIPTIONS
+    from tests.integration.agent.test_configurable_subagent import SEMANTIC_PROPOSAL_CAPABILITIES, _routing_chat
+
+    parent = _routing_chat(real_agent_config)
+    child = parent.sub_agent_task_tool._create_node("semantic_modeling")
+    try:
+        description = next(tool.description for tool in parent.tools if tool.name == "task")
+        assert f"- semantic_modeling: {SEMANTIC_PROPOSAL_CAPABILITIES}" in description
+        assert BUILTIN_SUBAGENT_DESCRIPTIONS["semantic_modeling"] not in description
+        assert child.get_node_class_name() == "configurable"
+        assert child.spec.description == SEMANTIC_PROPOSAL_CAPABILITIES
+        assert child.spec.tools == []
+        assert "no file or data writes" in child.spec.instructions
+        proposal = {"status": "proposed", "proposal_id": "modeling-proposal", "summary": "school_count = COUNT(*)"}
+        mock_llm_create.reset(responses=[MockLLMResponse(content=json.dumps(proposal))])
+        actions = await _run(
+            child, "Supplied schema: schools(CDSCode TEXT PRIMARY KEY). Propose school_count = COUNT(*)."
+        )
+        assert child.result.success is True, child.result.error
+        assert child.result.data == proposal
+        assert not any(action.role == "tool" for action in actions)
+    finally:
+        await child.aclose()
+        await parent.aclose()
+
+
+@pytest.mark.asyncio
 async def test_selected_sql_tool_runs_against_real_scoped_sqlite(real_agent_config, mock_llm_create):
     config = _configure(
         real_agent_config, tools=["db_tools.execute_sql"], scoped_context={"datasource": "california_schools"}
