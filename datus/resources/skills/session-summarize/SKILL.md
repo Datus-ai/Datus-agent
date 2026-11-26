@@ -29,7 +29,7 @@ Review the **current session's conversation** (the transcript already in your co
 - **Business facts / rules** surfaced during the session — field encodings / enums / status codes, mandatory constant filters, join traps (must go through a mapping table), boundary traps (strict vs non-strict inequality), business-term-to-field mappings, same-name-field divergence.
 - **Validated SQL** — a complete query the user ran and accepted (plus the business question it answered), worth indexing for future few-shot reuse.
 - **Metric / model definitions** produced or refined this session — a named metric and its measure, or a table's identifiers / measures / dimensions.
-- **Durable preferences or working context** the agent should remember next session (≤ 2000 bytes, bound to one agent).
+- **Durable preferences or working context** the agent should remember next session (bound to one agent).
 - **Project conventions / overview** facts that belong in `AGENTS.md`.
 - **Reusable, multi-step workflows** the session repeated and that will recur.
 
@@ -64,7 +64,7 @@ Aggregate every verdict, **dedupe** refs that appear more than once, and build a
 | order status encoding | knowledge | `orders.status` enum | `extract-knowledge` (lite) | atomic field-encoding fact |
 | top-SKU ranking query | reference_sql | the validated SQL | `task(gen_sql_summary)` | reusable ranking example |
 | GMV metric | metrics | GMV on `orders` | `task(semantic_modeling)` | built on orders measures |
-| prefers DuckDB dialect | memory | — | `add_memory` | session preference (≤ 2000 B) |
+| prefers DuckDB dialect | memory | — | `add_memory` | session preference |
 
 **STOP here.** After printing the manifest, **end your turn**. Do **NOT** call any generation `task`, `extract-knowledge`, `gen_skill`, `add_memory`, or write any store yet. Do **NOT** call `ask_user`. State plainly: *"Reply to confirm, or correct / drop any row, and I'll persist the rest."* Wait for the user's next message.
 
@@ -78,7 +78,7 @@ Once the user confirms or corrects the manifest:
 
 1. Treat `storage-classify`'s **Decision Tree** + **Per-Store Reference** + **Context Handoff to Subagents** as the routing authority for every item.
 2. **Make every delegated prompt self-contained (see storage-classify's *Context Handoff*).** Each generator runs in a fresh context and sees none of this session — so inline the **datasource (+ dialect)**, the **business intent / question** the session established, and the **rules/encodings surfaced this session** that the artifact must honor. Use the `prompt-seed` you recorded in Step 2 as the carrier, not a bare ref. Route each item with the prescribed mechanism:
-   - **Light items** → write directly: `memory` via `add_memory` / `edit_memory` (≤ 2000 bytes); small `AGENTS.md` notes via `edit_file` (never overwrite `## Knowledge` entries you did not write; the section is maintained by `/init` and `extract-knowledge`).
+   - **Light items** → write directly: `memory` via `add_memory` / `edit_memory`; small `AGENTS.md` notes via `edit_file` (never overwrite `## Knowledge` entries you did not write; the section is maintained by `/init` and `extract-knowledge`).
    - **Heavy items** → delegate (placeholders are the *minimum* each prompt must carry):
      - semantic_models / metrics → `task(type="semantic_modeling", prompt="<datasource> · table(s) · metric definitions if any · intent · known column encodings, join-key traps, and mandatory filters>")`
      - reference_sql → `task(type="gen_sql_summary", prompt="<datasource/dialect> · the complete SQL · the business question it answered · why it is written this way>")` — one call per SQL (instruct the generator: when the original question is known, use it verbatim as `search_text`)
@@ -95,7 +95,7 @@ End with a short human-readable summary: how many items were persisted, where ea
 
 - Do not hand-write `semantic_models` / `metrics` / `reference_sql` YAML or vector-store rows — always delegate to the matching `task` subagent.
 - Do not run `extract-knowledge` in deep mode — use lite.
-- Do not exceed the 2000-byte `memory` cap, and do not write `memory` with any tool other than `add_memory` / `edit_memory`.
+- Use `add_memory` / `edit_memory` for memory. If a write warns that the file is over 20 KB, consolidate stale or duplicate entries when appropriate.
 - Do not overwrite `## Knowledge` entries in `AGENTS.md` — the section is maintained by `/init` and `extract-knowledge`.
 - Do not persist one-shot content, generic SQL knowledge, presentation/answer conventions, or anything inferable from `INFORMATION_SCHEMA` / table comments / column names.
 - Do not generate the artifact's content yourself — your job is to harvest, classify, and route, not to author.

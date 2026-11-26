@@ -10,7 +10,7 @@ When users interact with the agent, the agent can recognize valuable information
 
 - **File-based**: Memory is stored as a single plain Markdown file (`MEMORY.md`)
 - **Dedicated tools**: Memory is written exclusively through `add_memory` / `edit_memory` -- generic filesystem tools cannot touch the memory subtree
-- **Hard byte cap**: A single flat file capped at **2000 bytes** -- no topic files, no index, so the whole file always fits in the system prompt
+- **Soft limit**: A warning appears when the file exceeds **20 KB (20,000 UTF-8 bytes)**. The agent saves and loads the entire file.
 - **Per-subagent isolation**: Each subagent has its own memory directory
 - **Zero configuration**: No setup needed -- eligible agents are automatically enabled
 
@@ -23,7 +23,7 @@ Memory is stored under `.datus/memory/` in the workspace, with each agent having
 └── .datus/
     └── memory/
         ├── chat/                       # Built-in chat agent
-        │   └── MEMORY.md              # Single file, auto-loaded (≤2000 bytes)
+        │   └── MEMORY.md              # Single file, automatically loaded
         └── my_custom_agent/           # Custom subagent
             └── MEMORY.md
 ```
@@ -46,10 +46,10 @@ Only interactive, user-facing agents have memory. Built-in system subagents that
 Memory is one flat `MEMORY.md` file per agent:
 
 - **Automatically loaded** into agent context, in full, at the start of every conversation
-- Capped at **2000 bytes** -- the dedicated tools reject writes that would exceed the cap, and an externally-edited file that exceeds it is truncated at load time
+- A size warning appears during loading if the file exceeds **20 KB**, including after a manual edit
 - Best for concise, durable facts: user preferences, key project decisions, references to external systems
 
-There are no topic sub-files and no index -- keep entries short so the whole file stays under the cap.
+Keep entries short to reduce the amount of memory injected into every conversation.
 
 ## Memory Tools
 
@@ -60,7 +60,7 @@ The agent maintains memory through two dedicated tools:
 | `add_memory(content)` | Append one concise fact to memory |
 | `edit_memory(old_string, new_string)` | Update an entry, or delete it by passing an empty `new_string` |
 
-When `add_memory` would push the file past 2000 bytes, the write is rejected with guidance to free space first; the agent then `edit_memory`s away a stale entry and retries.
+Both tools serialize writes to the same file across sessions and processes. An edit whose target text has changed or become ambiguous returns an error and leaves the file intact. Writes past 20 KB succeed with a `warning` in the tool result. `remaining_budget` is zero at or above the threshold.
 
 ## Usage
 
@@ -146,7 +146,7 @@ For example, when `agent.project_root` is set to `~/my_project`, the chat agent'
 
 ## Best Practices
 
-1. **Keep entries concise**: The whole file is capped at 2000 bytes -- one short line per fact
+1. **Keep entries concise**. Aim for one short line per fact.
 2. **Prune regularly**: Ask the agent to delete or correct outdated or incorrect memories to free space
 3. **Use explicit requests**: For important information, explicitly say "remember this" to ensure persistence
-4. **Manual editing works too**: The memory file is plain Markdown -- feel free to view and edit it directly (stay under the 2000-byte cap)
+4. **Manual editing works too**. Edit the Markdown file between agent writes so an editor cannot overwrite a concurrent update.

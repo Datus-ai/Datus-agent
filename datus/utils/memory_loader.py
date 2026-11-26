@@ -9,26 +9,22 @@ Provides functions to determine memory eligibility and to read/write memory
 content for agentic nodes. Memory is a single file stored at
 ``{workspace_root}/.datus/memory/{subagent}/MEMORY.md``.
 
-There is no progressive disclosure: memory is one flat file bounded by a hard
-2000-byte cap, so the whole file always fits inside the system prompt. The
-dedicated ``add_memory`` / ``edit_memory`` tools (see
-``datus/tools/func_tool/memory_tools.py``) are the only writers and enforce the
-cap on write; the load-time truncation here is a defensive guard for files that
-were edited externally or predate the cap.
+The whole file is loaded into the system prompt. The size limit is advisory.
+Agent writes use a per-file lock and atomic replacement.
 """
 
+import os
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Iterator, Optional, Tuple
 
+from datus.storage.semantic_model.artifact_file import atomic_write_text
 from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
-# Single hard byte cap for the whole MEMORY.md file. The add_memory/edit_memory
-# tools reject writes that would exceed it; load_memory_context truncates as a
-# last-resort defense.
-MEMORY_BYTE_LIMIT = 2000
+MEMORY_BYTE_LIMIT = 20_000
 MEMORY_FILENAME = "MEMORY.md"
 MEMORY_BASE_DIR = ".datus/memory"
 
@@ -64,34 +60,11 @@ def resolve_memory_node(node_name: str) -> str:
     return node_name if node_name not in _ALL_BUILTIN_NODES else "chat"
 
 
-def _truncate_to_byte_limit(raw: str) -> str:
-    """Truncate ``raw`` to ``MEMORY_BYTE_LIMIT`` bytes, on a newline boundary.
-
-    Defensive load-time guard only — the write tools already enforce the cap.
-    Cuts at the last newline before the byte cap so an entry is not sliced
-    mid-line, falling back to a hard byte cut when there is no newline in range.
-    A short warning is appended so the model knows the file was clipped.
-    """
-    trimmed = raw.rstrip("\r\n")
-    if len(trimmed.encode("utf-8")) <= MEMORY_BYTE_LIMIT:
-        return trimmed
-
-    # Reserve room for the appended notice so the final string still fits the
-    # cap. If the warning itself somehow exceeds the budget, fall back to a bare
-    # byte cut with no notice rather than breach the limit.
-    warning = f"\n\n> WARNING: {MEMORY_FILENAME} exceeded {MEMORY_BYTE_LIMIT} bytes and was truncated at load time."
-    warning_bytes = len(warning.encode("utf-8"))
-    budget = MEMORY_BYTE_LIMIT - warning_bytes
-    if budget <= 0:
-        return trimmed.encode("utf-8")[:MEMORY_BYTE_LIMIT].decode("utf-8", errors="ignore")
-
-    encoded = trimmed.encode("utf-8")[:budget]
-    # Decode ignoring a possibly-split trailing multi-byte char.
-    safe = encoded.decode("utf-8", errors="ignore")
-    cut_at = safe.rfind("\n")
-    content = safe[:cut_at] if cut_at > 0 else safe
-
-    return content + warning
+def memory_size_warning(used_bytes: int) -> str:
+    """Return an advisory message for a file above the soft limit."""
+    if used_bytes <= MEMORY_BYTE_LIMIT:
+        return ""
+    return f"{MEMORY_FILENAME} is {used_bytes} UTF-8 bytes and exceeds the {MEMORY_BYTE_LIMIT}-byte soft limit."
 
 
 def get_memory_file_path(workspace_root: str, memory_node: str) -> Path:
@@ -99,23 +72,56 @@ def get_memory_file_path(workspace_root: str, memory_node: str) -> Path:
     return Path(workspace_root) / MEMORY_BASE_DIR / memory_node / MEMORY_FILENAME
 
 
-def read_memory_raw(workspace_root: str, memory_node: str) -> str:
-    """Read a node's raw MEMORY.md content. Returns '' when the file is absent."""
+@contextmanager
+def memory_mutation_lock(workspace_root: str, memory_node: str) -> Iterator[None]:
+    """Serialize the entire read-modify-write across threads and processes."""
+    memory_file = get_memory_file_path(workspace_root, memory_node).resolve()
+    memory_file.parent.mkdir(parents=True, exist_ok=True)
+    # Keep the lock inode stable across atomic replacement of MEMORY.md.
+    # Never unlink it on exit: another process may already be waiting on it.
+    lock_path = memory_file.with_name(f".{memory_file.name}.lock")
+    with lock_path.open("a+b") as lock_file:
+        if os.name == "posix":
+            import fcntl
+
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            yield
+        else:
+            import msvcrt
+
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+def read_memory_raw(
+    workspace_root: str, memory_node: str, *, strict: bool = False, preserve_newlines: bool = False
+) -> str:
+    """Read MEMORY.md, returning empty text when absent.
+
+    Mutations use strict reads to avoid replacing unreadable memory with an empty file.
+    """
     memory_file = get_memory_file_path(workspace_root, memory_node)
-    if not memory_file.exists():
-        return ""
     try:
-        return memory_file.read_text(encoding="utf-8")
+        with memory_file.open(encoding="utf-8", newline="" if preserve_newlines else None) as stream:
+            return stream.read()
+    except FileNotFoundError:
+        return ""
     except (OSError, UnicodeError) as exc:
+        if strict:
+            raise
         logger.warning(f"Failed to read memory file {memory_file}: {exc}")
         return ""
 
 
 def write_memory_raw(workspace_root: str, memory_node: str, content: str) -> None:
-    """Write a node's MEMORY.md content, creating parent directories as needed."""
-    memory_file = get_memory_file_path(workspace_root, memory_node)
-    memory_file.parent.mkdir(parents=True, exist_ok=True)
-    memory_file.write_text(content, encoding="utf-8")
+    """Replace MEMORY.md atomically. Hold the mutation lock for read-modify-write."""
+    memory_file = get_memory_file_path(workspace_root, memory_node).resolve()
+    atomic_write_text(memory_file, content, mode=None if memory_file.exists() else 0o600)
 
 
 def apply_single_replacement(content: str, old_string: str, new_string: str) -> Tuple[Optional[str], Optional[str]]:
@@ -144,15 +150,8 @@ def apply_single_replacement(content: str, old_string: str, new_string: str) -> 
 
 
 def load_memory_context(workspace_root: str, subagent_name: str) -> str:
-    """Load MEMORY.md for a subagent. Returns empty string if not found.
-
-    Applies the defensive 2000-byte cap; the write tools already enforce it on
-    write, so truncation only fires for externally-edited or legacy files.
-    """
-    raw = read_memory_raw(workspace_root, subagent_name)
-    if not raw.strip():
-        return ""
-    return _truncate_to_byte_limit(raw)
+    """Load the full MEMORY.md for a subagent, including any existing line endings."""
+    return read_memory_raw(workspace_root, subagent_name, preserve_newlines=True)
 
 
 def get_memory_dir(workspace_root: str, subagent_name: str) -> str:

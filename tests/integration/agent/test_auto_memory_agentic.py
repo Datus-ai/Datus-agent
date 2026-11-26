@@ -5,7 +5,7 @@
 """
 Nightly coverage for the extension flow ``extension.auto_memory``.
 
-Memory is a single 2000-byte-capped ``MEMORY.md`` per node, written exclusively
+Memory is a single ``MEMORY.md`` per node with a 20 KB soft limit, written exclusively
 through the dedicated ``add_memory`` / ``edit_memory`` tools (see
 ``datus/tools/func_tool/memory_tools.py``); generic filesystem tools cannot
 touch the ``.datus/memory/**`` subtree. This file covers:
@@ -23,8 +23,8 @@ touch the ``.datus/memory/**`` subtree. This file covers:
    distinctive instruction runs end-to-end and the loaded memory is present in
    the prompt it sends.
 
-The add_memory/edit_memory write lifecycle (including the 2000-byte full →
-prune → retry loop) is covered deterministically in
+The add_memory/edit_memory write lifecycle (including concurrent writes and size warnings)
+is covered deterministically in
 ``tests/unit_tests/tools/func_tool/test_memory_tools.py`` and at the node level
 in the chat / feedback acceptance tests.
 """

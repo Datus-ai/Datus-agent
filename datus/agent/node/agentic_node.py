@@ -1735,7 +1735,12 @@ class AgenticNode(Node):
                 feedback node injects its caller's memory).
         """
         from datus.configuration.inherited_memory_overrides import get_inherited_memory
-        from datus.utils.memory_loader import get_memory_dir, load_memory_context, resolve_memory_node
+        from datus.utils.memory_loader import (
+            get_memory_dir,
+            load_memory_context,
+            memory_size_warning,
+            resolve_memory_node,
+        )
 
         read_only = False
         if override_node_name:
@@ -1768,7 +1773,9 @@ class AgenticNode(Node):
                 template_name="memory_context",
                 version=None,
                 has_memory=True,
-                memory_content=memory_content,
+                # Match the universal newlines that the memory edit tool reads.
+                memory_content=memory_content.replace("\r\n", "\n").replace("\r", "\n"),
+                memory_warning=memory_size_warning(len(memory_content.encode("utf-8"))),
                 memory_dir=memory_dir,
                 read_only=read_only,
                 originating_agent=node_name,

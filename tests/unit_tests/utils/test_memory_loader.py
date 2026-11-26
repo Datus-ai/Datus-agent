@@ -51,10 +51,10 @@ class TestHasMemory:
 
 
 class TestByteLimit:
-    """The single hard cap is 2000 bytes."""
+    """The soft limit is expressed in UTF-8 bytes."""
 
     def test_limit_value(self):
-        assert MEMORY_BYTE_LIMIT == 2000
+        assert MEMORY_BYTE_LIMIT == 20_000
 
 
 class TestPathHelpers:
@@ -88,7 +88,7 @@ class TestPathHelpers:
         memory_file = get_memory_file_path(str(tmp_path), "chat")
         memory_file.parent.mkdir(parents=True)
         memory_file.write_text("content", encoding="utf-8")
-        with patch("pathlib.Path.read_text", side_effect=OSError("Permission denied")):
+        with patch("pathlib.Path.open", side_effect=OSError("Permission denied")):
             assert read_memory_raw(str(tmp_path), "chat") == ""
 
 
@@ -143,31 +143,14 @@ class TestLoadMemoryContext:
         write_memory_raw(str(tmp_path), "chat", "")
         assert load_memory_context(str(tmp_path), "chat") == ""
 
-    def test_under_limit_not_truncated(self, tmp_path):
-        write_memory_raw(str(tmp_path), "chat", "- one fact\n- another fact")
-        result = load_memory_context(str(tmp_path), "chat")
-        assert "truncated" not in result
-
-    def test_over_byte_limit_truncated_on_newline(self, tmp_path):
-        # 30 lines × ~100 bytes each ≈ 3 KB, over the 2000-byte cap.
-        lines = [f"- fact line number {i} " + ("x" * 80) for i in range(30)]
-        write_memory_raw(str(tmp_path), "chat", "\n".join(lines))
-
-        result = load_memory_context(str(tmp_path), "chat")
-        assert "truncated" in result
-        # The whole returned string — body + appended warning — stays within the
-        # hard cap; the warning bytes are reserved before the content is sliced.
-        assert len(result.encode("utf-8")) <= MEMORY_BYTE_LIMIT
-        body = result.split("> WARNING", 1)[0]
-        assert len(body.encode("utf-8")) <= MEMORY_BYTE_LIMIT
-
-    def test_exact_limit_not_truncated(self, tmp_path):
-        # Build content that is exactly MEMORY_BYTE_LIMIT bytes.
-        content = "a" * MEMORY_BYTE_LIMIT
+    @pytest.mark.parametrize(
+        "content",
+        ["- one fact\n- another fact", "a" * MEMORY_BYTE_LIMIT, "a" * MEMORY_BYTE_LIMIT + "\r\n- last fact\r\n"],
+        ids=["under_limit", "at_limit", "over_limit"],
+    )
+    def test_load_preserves_full_content(self, tmp_path, content):
         write_memory_raw(str(tmp_path), "chat", content)
-        result = load_memory_context(str(tmp_path), "chat")
-        assert "truncated" not in result
-        assert result == content
+        assert load_memory_context(str(tmp_path), "chat") == content
 
     def test_custom_agent_memory(self, tmp_path):
         write_memory_raw(str(tmp_path), "my_agent", "# Custom Agent Memory\n")

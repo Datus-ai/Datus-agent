@@ -4,6 +4,11 @@
 
 """Unit tests for datus/tools/func_tool/memory_tools.py (MemoryFuncTool)."""
 
+import multiprocessing
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, BrokenBarrierError
+from unittest.mock import patch
+
 import pytest
 
 from datus.tools.func_tool.memory_tools import MemoryFuncTool
@@ -54,27 +59,24 @@ class TestAddMemory:
         assert "must not be empty" in r.error
         assert not get_memory_file_path(str(tmp_path), "chat").exists()
 
-    def test_over_limit_rejected_and_not_written(self, tool, tmp_path):
-        tool.add_memory("a" * 1900)
-        before = read_memory_raw(str(tmp_path), "chat")
-        r = tool.add_memory("b" * 200)
-        assert r.success == 0
-        # The guidance names the byte limit and how much to free.
-        assert str(MEMORY_BYTE_LIMIT) in r.error
-        assert "edit_memory" in r.error
-        # Nothing was written: file content unchanged.
-        assert read_memory_raw(str(tmp_path), "chat") == before
-
     def test_add_exactly_at_limit_succeeds(self, tool, tmp_path):
-        r = tool.add_memory("a" * MEMORY_BYTE_LIMIT)
+        content = "记" * (MEMORY_BYTE_LIMIT // 3) + "x" * (MEMORY_BYTE_LIMIT % 3)
+        r = tool.add_memory(content)
         assert r.success == 1
         assert r.result["used_bytes"] == MEMORY_BYTE_LIMIT
         assert r.result["remaining_budget"] == 0
+        assert "warning" not in r.result
+        assert get_memory_file_path(str(tmp_path), "chat").read_bytes() == content.encode("utf-8")
 
-    def test_add_one_over_limit_rejected(self, tool, tmp_path):
-        r = tool.add_memory("a" * (MEMORY_BYTE_LIMIT + 1))
-        assert r.success == 0
-        assert read_memory_raw(str(tmp_path), "chat") == ""
+    def test_append_one_byte_over_limit_warns_and_saves(self, tool, tmp_path):
+        original = "a" * (MEMORY_BYTE_LIMIT - 3)
+        assert tool.add_memory(original).success == 1
+        r = tool.add_memory("忆")
+        assert r.success == 1
+        assert r.result["used_bytes"] == MEMORY_BYTE_LIMIT + 1
+        assert r.result["remaining_budget"] == 0
+        assert str(MEMORY_BYTE_LIMIT) in r.result["warning"]
+        assert r.result["memory"] == read_memory_raw(str(tmp_path), "chat") == original + "\n忆"
 
 
 class TestEditMemory:
@@ -115,13 +117,13 @@ class TestEditMemory:
         assert r.success == 0
         assert "exactly once" in r.error
 
-    def test_edit_exceeding_limit_rejected(self, tool, tmp_path):
-        tool.add_memory("a" * 1990 + "MARK")
-        before = read_memory_raw(str(tmp_path), "chat")
+    def test_edit_exceeding_limit_warns_and_saves(self, tool, tmp_path):
+        prefix = "a" * (MEMORY_BYTE_LIMIT - 4)
+        assert tool.add_memory(prefix + "MARK").success == 1
         r = tool.edit_memory("MARK", "b" * 50)
-        assert r.success == 0
-        assert str(MEMORY_BYTE_LIMIT) in r.error
-        assert read_memory_raw(str(tmp_path), "chat") == before
+        assert r.success == 1
+        assert str(MEMORY_BYTE_LIMIT) in r.result["warning"]
+        assert read_memory_raw(str(tmp_path), "chat") == prefix + "b" * 50
 
     def test_edit_result_payload(self, tool):
         tool.add_memory("alpha")
@@ -130,19 +132,120 @@ class TestEditMemory:
         assert r.result["used_bytes"] == len("beta")
         assert r.result["remaining_budget"] == MEMORY_BYTE_LIMIT - len("beta")
 
+    def test_pruning_clears_warning_and_preserves_new_entry(self, tool, tmp_path):
+        stale = "STALE " + "x" * (MEMORY_BYTE_LIMIT - 6)
+        assert tool.add_memory(stale).success == 1
+        appended = tool.add_memory("new important fact")
+        assert appended.success == 1
+        assert "warning" in appended.result
 
-class TestFullToPrunedToRetry:
-    """The end-to-end loop the over-limit guidance describes."""
-
-    def test_full_then_prune_then_add(self, tool, tmp_path):
-        stale = "STALE " + "x" * 1980
-        tool.add_memory(stale)
-        rejected = tool.add_memory("new important fact")
-        assert rejected.success == 0
-
-        # Free space by deleting the stale entry, then retry.
-        pruned = tool.edit_memory(stale, "")
+        pruned = tool.edit_memory(stale + "\n", "")
         assert pruned.success == 1
-        retry = tool.add_memory("new important fact")
-        assert retry.success == 1
-        assert "new important fact" in read_memory_raw(str(tmp_path), "chat")
+        assert "warning" not in pruned.result
+        assert read_memory_raw(str(tmp_path), "chat") == "new important fact"
+
+
+def _pause_parallel_reads(writers):
+    snapshots = Barrier(writers)
+
+    def read(*args, **kwargs):
+        content = read_memory_raw(*args, **kwargs)
+        try:
+            snapshots.wait(timeout=1)
+        except BrokenBarrierError:
+            # With the mutation lock, only the first writer can reach this barrier.
+            pass
+        return content
+
+    return patch("datus.tools.func_tool.memory_tools.read_memory_raw", side_effect=read)
+
+
+def _append_from_process(root, connection):
+    from datus.tools.func_tool.memory_tools import write_memory_raw
+
+    def pause_after_read(*args, **kwargs):
+        connection.send("ready to write")
+        # An unlocked parent finishes its own write before this snapshot commits.
+        connection.poll(1)
+        write_memory_raw(*args, **kwargs)
+
+    with connection, patch("datus.tools.func_tool.memory_tools.write_memory_raw", side_effect=pause_after_read):
+        tool = MemoryFuncTool(root_path=root, memory_node="chat")
+        connection.send(tool.add_memory("child").success)
+        connection.poll(5)
+
+
+class TestConcurrentMemory:
+    def test_parallel_appends_preserve_every_successful_entry(self, tmp_path):
+        entries = [f"entry {index}" for index in range(8)]
+
+        def append(entry):
+            writer = MemoryFuncTool(root_path=str(tmp_path), memory_node="chat")
+            return writer.add_memory(entry).success
+
+        with _pause_parallel_reads(len(entries)):
+            with ThreadPoolExecutor(max_workers=len(entries)) as executor:
+                assert list(executor.map(append, entries)) == [1] * len(entries)
+
+        assert sorted(read_memory_raw(str(tmp_path), "chat").splitlines()) == sorted(entries)
+
+    def test_competing_edits_reject_the_stale_replacement(self, tool, tmp_path):
+        assert tool.add_memory("original").success == 1
+
+        def edit(replacement):
+            return tool.edit_memory("original", replacement)
+
+        replacements = ["first choice", "second choice"]
+        with _pause_parallel_reads(len(replacements)):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                outcomes = list(executor.map(edit, replacements))
+
+        saved = [replacement for replacement, outcome in zip(replacements, outcomes, strict=True) if outcome.success]
+        rejected = [outcome for outcome in outcomes if not outcome.success]
+        assert len(saved) == len(rejected) == 1
+        assert "not found" in rejected[0].error
+        assert read_memory_raw(str(tmp_path), "chat") == saved[0]
+
+    def test_parallel_process_appends_preserve_both_entries(self, tool, tmp_path):
+        context = multiprocessing.get_context("spawn")
+        parent, child = context.Pipe()
+        process = context.Process(target=_append_from_process, args=(str(tmp_path), child))
+        process.start()
+        child.close()
+        try:
+            with parent:
+                assert parent.poll(15)
+                assert parent.recv() == "ready to write"
+                assert tool.add_memory("parent").success == 1
+                parent.send("finished")
+                assert parent.poll(5)
+                assert parent.recv() == 1
+            process.join(5)
+            assert process.exitcode == 0
+        finally:
+            if process.is_alive():
+                process.terminate()
+                process.join(5)
+        assert sorted(read_memory_raw(str(tmp_path), "chat").splitlines()) == ["child", "parent"]
+
+
+class TestMemoryWriteFailures:
+    def test_invalid_utf8_is_not_overwritten(self, tool, tmp_path):
+        memory_file = get_memory_file_path(str(tmp_path), "chat")
+        memory_file.parent.mkdir(parents=True)
+        original = b"\xffinvalid UTF-8"
+        memory_file.write_bytes(original)
+
+        assert tool.add_memory("new entry").success == 0
+        assert memory_file.read_bytes() == original
+
+    def test_failed_replace_preserves_original_and_allows_retry(self, tool, tmp_path):
+        assert tool.add_memory("original").success == 1
+        with patch("datus.storage.semantic_model.artifact_file.os.replace", side_effect=OSError("replace failed")):
+            failed = tool.add_memory("new entry")
+        assert failed.success == 0
+        assert "replace failed" in failed.error
+        assert read_memory_raw(str(tmp_path), "chat") == "original"
+
+        assert tool.add_memory("new entry").success == 1
+        assert read_memory_raw(str(tmp_path), "chat") == "original\nnew entry"

@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from datus.configuration.inherited_memory_overrides import inherited_memory
-from datus.utils.memory_loader import has_memory
+from datus.utils.memory_loader import MEMORY_BYTE_LIMIT, has_memory
 
 
 def _write_chat_memory(real_agent_config, content: str) -> Path:
@@ -27,7 +27,7 @@ def _write_chat_memory(real_agent_config, content: str) -> Path:
     chat_dir = workspace_root / ".datus" / "memory" / "chat"
     chat_dir.mkdir(parents=True, exist_ok=True)
     memory_file = chat_dir / "MEMORY.md"
-    memory_file.write_text(content, encoding="utf-8")
+    memory_file.write_bytes(content.encode("utf-8"))
     return memory_file
 
 
@@ -116,6 +116,23 @@ class TestInheritedMemoryInjection:
 
         assert prompt == "BASE PROMPT"
         assert "read-only inheritance" not in prompt
+
+    def test_oversize_memory_is_inlined_with_warning_outside_the_body(self, real_agent_config, mock_llm_create):
+        tail = "- Last fact."
+        head = "x" * (MEMORY_BYTE_LIMIT - len(tail) - 1)
+        content = head + "\r\n" + tail
+        _write_chat_memory(real_agent_config, content)
+        node = _new_gen_sql_node(real_agent_config)
+
+        with inherited_memory("gen_sql", "chat"):
+            prompt = node._inject_memory_context("BASE PROMPT")
+
+        assert f"<memory>\n{head}\n{tail}\n</memory>" in prompt
+        assert (
+            f"**Memory size warning:** MEMORY.md is {MEMORY_BYTE_LIMIT + 1} UTF-8 bytes"
+            in prompt.split("</memory>", 1)[1]
+        )
+        assert "**Save**" not in prompt
 
     def test_explicit_override_node_name_takes_precedence(self, real_agent_config, mock_llm_create):
         """``override_node_name`` (feedback path) wins over inherited contextvar.
