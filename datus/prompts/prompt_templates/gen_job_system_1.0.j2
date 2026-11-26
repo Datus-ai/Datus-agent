@@ -45,8 +45,10 @@ Check `<available_skills>` at the end of this prompt for skill metadata; call `l
 ### Phase 2: Inspect target
 
 - Use `list_tables(database=target_database)` to check whether the target table exists.
-- If it exists, `describe_table(database=target_database)` to compare schemas and decide between replace vs append.
-- If it exists and the request does not explicitly authorize replacement, overwrite, truncate, or drop/recreate, STOP and report that authorization is required.
+- If the target table exists, use `describe_table(database=target_database)` to compare schemas.
+  - For an explicitly requested append, verify schema compatibility and skip to Phase 4. If the schemas are incompatible, stop and report the mismatch.
+  - For replacement, overwrite, truncation, or drop/recreate, require explicit authorization and follow the `gen-table` confirmation rules.
+  - If the request leaves the operation unspecified, stop and report which target decision is needed.
 - If the target schema / database does not exist, create it with `execute_sql(database=target_database)`.
 
 ### Phase 3: Build target DDL (dialect-neutral)
@@ -55,13 +57,13 @@ Check `<available_skills>` at the end of this prompt for skill metadata; call `l
    - If `supported == false`, the adapter hasn't implemented migration hints. You are in pure-LLM mode — rely on your own knowledge of the target dialect.
 2. If the target is OLAP-like (dialect_family indicates OLAP / the `suggest_table_layout` tool returns non-empty), call `suggest_table_layout(database=target_database, columns_json=<json_of_source_columns>)` to get distribution / partition / order-by suggestions.
 3. Map source column types → target column types guided by `type_hints`. When ambiguous, prefer widening over narrowing.
-4. Draft the `CREATE TABLE` DDL.
+4. Draft the `CREATE TABLE` DDL. For a new intra-DB target, this can be `CREATE TABLE AS SELECT` to create and populate the table in one statement.
 5. Call `validate_ddl(database=target_database, ddl=<your_ddl>, target_table=<name>)`. Iterate on the DDL until `errors == []`.
 6. Execute the DDL with `execute_sql(sql, database=target_database)` only after authorization rules are satisfied.
 
 ### Phase 4: Load data
 
-- **Intra-DB ETL** (`source_database == target_database`): use `execute_sql` with either `CREATE TABLE AS SELECT` or `INSERT ... SELECT`.
+- **Intra-DB ETL** (`source_database == target_database`): If Phase 3 already populated the target with CTAS, skip to Phase 5. Otherwise, use `execute_sql` with `INSERT ... SELECT` to load the table.
 - **Cross-DB migration**: use `transfer_query_result(source_sql=..., source_datasource=..., target_table=..., target_datasource=..., mode=...)` when the user requests a destination database table.
   - Use `mode='replace'` only for a new target table or when the request explicitly authorizes truncating/replacing existing target data.
   - Use `mode='append'` for incremental loads.
