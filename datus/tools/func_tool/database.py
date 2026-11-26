@@ -11,6 +11,7 @@ import json
 import os
 import re
 import threading
+import time
 from collections import OrderedDict
 from contextvars import ContextVar
 from copy import deepcopy
@@ -72,6 +73,31 @@ logger = get_logger(__name__)
 SQL_TOOL_TIMEOUT_SECONDS = 300.0
 _SQL_TOOL_MAX_TIMEOUT_ENV = "DATUS_SQL_TOOL_MAX_TIMEOUT_SECONDS"
 _sql_query_timeout: ContextVar[int | None] = ContextVar("sql_query_timeout", default=None)
+
+
+@dataclass
+class _SqlToolExecutionState:
+    deadline_monotonic: float
+    timed_out: bool = False
+
+
+_sql_tool_state: ContextVar[Optional[_SqlToolExecutionState]] = ContextVar("sql_tool_state", default=None)
+
+
+def _timeout_result(context, seconds, override):
+    # Cancelling to_thread stops waiting, not the database driver. A mutation
+    # may still finish, so callers must check its outcome before retrying.
+    if context is not None:
+        context._datus_tool_status = "timeout"
+    guidance = (
+        "Do not retry write statements without checking their outcome."
+        if override is None
+        else "Check its outcome before retrying the query."
+    )
+    return FuncToolResult(
+        success=0,
+        error=(f"SQL tool timed out after {seconds:g} seconds. Database execution may still be running. {guidance}"),
+    ).model_dump(mode="json")
 
 
 def _sql_tool_max_timeout() -> int:
@@ -709,7 +735,9 @@ class DBFuncTool(BulkQueryTools):
             self._datasource_pattern_cache[key] = patterns
         return self._datasource_pattern_cache[key]
 
-    def _get_connector(self, datasource: Optional[str] = None, database: str = "") -> BaseSqlConnector:
+    def _get_connector(
+        self, datasource: Optional[str] = None, database: str = "", *, defer_query_connect: bool = False
+    ) -> BaseSqlConnector:
         """
         Get connector for the specified (datasource, database).
 
@@ -756,8 +784,13 @@ class DBFuncTool(BulkQueryTools):
                 message=f"Datasource '{ds}' is not configured. Available datasources: {', '.join(self._datasources)}.",
             ) from e
 
-        # Ensure connector is connected
-        if hasattr(connector, "connect"):
+        # Deadline-aware reads open the connection under their budgeted lock.
+        defer_connect = (
+            defer_query_connect
+            and _sql_tool_state.get() is not None
+            and getattr(connector, "supports_read_query_timeout", False) is True
+        )
+        if not defer_connect and hasattr(connector, "connect"):
             connector.connect()
 
         # Add to cache with LRU eviction
@@ -1565,33 +1598,22 @@ class DBFuncTool(BulkQueryTools):
 
             seconds = SQL_TOOL_TIMEOUT_SECONDS if override is None else override
             deadline = asyncio.timeout(seconds)
+            state = _SqlToolExecutionState(deadline_monotonic=time.monotonic() + seconds)
             token = _sql_query_timeout.set(override)
+            state_token = _sql_tool_state.set(state)
             strip_timeout = supports_override and has_timeout
             try:
                 async with deadline:
-                    return await invoke(context, json.dumps(args, ensure_ascii=False) if strip_timeout else canonical)
+                    result = await invoke(context, json.dumps(args, ensure_ascii=False) if strip_timeout else canonical)
+                if state.timed_out:
+                    return _timeout_result(context, seconds, override)
+                return result
             except TimeoutError:
                 if not deadline.expired():
                     raise
-                # Cancelling to_thread stops waiting, not the database
-                # driver. A mutation may still finish; never imply it is
-                # safe to repeat, or claim that the server killed it.
-                if context is not None:
-                    context._datus_tool_status = "timeout"
-                guidance = (
-                    "Do not retry write statements without checking their outcome."
-                    if override is None
-                    else "Check its outcome before retrying the query."
-                )
-                return FuncToolResult(
-                    success=0,
-                    error=(
-                        f"SQL tool timed out after {seconds:g} seconds. "
-                        "Database execution may still be running. "
-                        f"{guidance}"
-                    ),
-                ).model_dump(mode="json")
+                return _timeout_result(context, seconds, override)
             finally:
+                _sql_tool_state.reset(state_token)
                 _sql_query_timeout.reset(token)
                 if strip_timeout:
                     write_back_tool_args(context, canonical)
@@ -3178,7 +3200,7 @@ class DBFuncTool(BulkQueryTools):
             if guard_error is not None:
                 return guard_error
 
-            connector = self._get_connector(datasource, database)
+            connector = self._get_connector(datasource, database, defer_query_connect=True)
             analysis_error = self._validate_adapter_sql_analysis(sql, connector)
             if analysis_error is not None:
                 return analysis_error
@@ -3304,7 +3326,7 @@ class DBFuncTool(BulkQueryTools):
             if looks_like_sql_file_ref(sql_stripped):
                 sql = self._read_sql_from_file(sql_stripped)
 
-            connector = self._get_connector(datasource, database)
+            connector = self._get_connector(datasource, database, defer_query_connect=True)
             validation_error, sql_type = self._validate_read_sql(sql, connector)
             if validation_error:
                 return validation_error
@@ -3332,6 +3354,10 @@ class DBFuncTool(BulkQueryTools):
                     result=self.compressor.compress(result.sql_return) if compress else result.sql_return,
                     execution_context=self.execution_context(connector, datasource),
                 )
+            if getattr(result, "error_code", None) == ErrorCode.DB_EXECUTION_TIMEOUT.code:
+                state = _sql_tool_state.get()
+                if state is not None:
+                    state.timed_out = True
             return FuncToolResult(success=0, error=result.error)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
@@ -3439,6 +3465,17 @@ class DBFuncTool(BulkQueryTools):
             and getattr(runtime, "has_batch_only_result_hooks", False) is True
         )
         query_options = {} if query_timeout_seconds is None else {"query_timeout_seconds": query_timeout_seconds}
+        state = _sql_tool_state.get()
+        if state is not None:
+            if state.deadline_monotonic - time.monotonic() <= 0:
+                return ExecuteSQLResult(
+                    success=False,
+                    error="SQL tool deadline expired before query execution.",
+                    error_code=ErrorCode.DB_EXECUTION_TIMEOUT.code,
+                    sql_query=enforced_sql,
+                )
+            if getattr(connector, "supports_read_query_timeout", False) is True:
+                query_options["query_deadline_monotonic"] = state.deadline_monotonic
         result = connector.execute_query(
             enforced_sql, result_format="arrow" if typed_policy_result else result_format, **query_options
         )
