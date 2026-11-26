@@ -5,6 +5,7 @@ import asyncio
 import json
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -99,6 +100,7 @@ async def test_parallel_sql_tool_query_that_expires_waiting_never_reaches_sqlite
     config, _ = product
     started = threading.Event()
     release = threading.Event()
+    second_started = threading.Event()
     second_finished = threading.Event()
     first_finished = threading.Event()
     submitted = []
@@ -124,6 +126,10 @@ async def test_parallel_sql_tool_query_that_expires_waiting_never_reaches_sqlite
     outcomes = {}
 
     def track_query(sql, **options):
+        if sql == second_sql:
+            second_started.set()
+            # Start the short lock-wait budget once the worker reaches the connector.
+            options["query_deadline_monotonic"] = min(options["query_deadline_monotonic"], time.monotonic() + 0.1)
         try:
             result = execute_query(sql, **options)
             outcomes[sql] = result
@@ -136,11 +142,14 @@ async def test_parallel_sql_tool_query_that_expires_waiting_never_reaches_sqlite
     tool = db.to_function_tool(db.execute_sql)
     first_context, second_context = SimpleNamespace(), SimpleNamespace()
     first = asyncio.create_task(tool.on_invoke_tool(first_context, json.dumps({"sql": first_sql})))
+    second = None
     try:
         assert await asyncio.to_thread(started.wait, 2)
-        monkeypatch.setattr("datus.tools.func_tool.database.SQL_TOOL_TIMEOUT_SECONDS", 0.1)
-        second = await tool.on_invoke_tool(second_context, json.dumps({"sql": second_sql}))
-        assert second["success"] == 0
+        monkeypatch.setattr("datus.tools.func_tool.database.SQL_TOOL_TIMEOUT_SECONDS", 3)
+        second = asyncio.create_task(tool.on_invoke_tool(second_context, json.dumps({"sql": second_sql})))
+        assert await asyncio.to_thread(second_started.wait, 2)
+        second_result = await second
+        assert second_result["success"] == 0
         assert second_context._datus_tool_status == "timeout"
         # The worker must finish while the first query still owns the lock.
         assert await asyncio.to_thread(second_finished.wait, 0.5)
@@ -158,6 +167,8 @@ async def test_parallel_sql_tool_query_that_expires_waiting_never_reaches_sqlite
     finally:
         release.set()
         await first
+        if second is not None:
+            await second
         db.close()
         manager.close()
 

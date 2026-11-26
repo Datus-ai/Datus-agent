@@ -666,11 +666,17 @@ def test_execute_query_timeout_propagates_timeout_error_and_recovers():
 
 
 @pytest.mark.timeout(8)
-def test_duckdb_retries_an_interrupt_issued_before_native_execution():
+@pytest.mark.parametrize(
+    "sql, expected_rows",
+    [("SELECT SUM(sin(i)) FROM range(100000000) AS t(i)", None), ("SELECT 1", [(1,)])],
+    ids=["retry-interrupts-slow-query", "discard-late-rows"],
+)
+def test_duckdb_handles_an_interrupt_issued_before_native_execution(sql, expected_rows):
     connector = DuckdbConnector(DuckDBConfig(db_path=":memory:"))
-    sql = "SELECT SUM(sin(i)) FROM range(100000000) AS t(i)"
     first_interrupt = threading.Event()
+    fetch_finished = threading.Event()
     interrupt_calls = []
+    fetched_rows = []
 
     class DelayedCursor:
         def __init__(self, cursor):
@@ -679,10 +685,24 @@ def test_duckdb_retries_an_interrupt_issued_before_native_execution():
         def execute(self, statement):
             if statement == sql and not first_interrupt.wait(timeout=2):
                 raise AssertionError("The first interrupt did not arrive before execution")
-            return self.native.execute(statement)
+            result = self.native.execute(statement)
+            return self if statement == sql and expected_rows is not None else result
+
+        def fetchall(self):
+            rows = self.native.fetchall()
+            fetched_rows.extend(rows)
+            fetch_finished.set()
+            return rows
+
+        @property
+        def description(self):
+            return self.native.description
 
         def interrupt(self):
             interrupt_calls.append(True)
+            if expected_rows is not None and first_interrupt.is_set():
+                # Keep retries from racing the quick query under a slow scheduler.
+                fetch_finished.wait(timeout=2)
             self.native.interrupt()
             first_interrupt.set()
 
@@ -706,12 +726,17 @@ def test_duckdb_retries_an_interrupt_issued_before_native_execution():
         connector.connect()
         connector.connection = DelayedConnection(connector.connection)
         timed_out = connector.execute_query(
-            sql, result_format="arrow", query_deadline_monotonic=time.monotonic() + 0.25
+            sql,
+            result_format="arrow" if expected_rows is None else "list",
+            query_deadline_monotonic=time.monotonic() + 0.25,
         )
         assert timed_out.success is False
-        assert "Interrupted" in timed_out.error
         assert timed_out.error_code == "500007"
-        assert len(interrupt_calls) >= 2
+        if expected_rows is None:
+            assert "Interrupted" in timed_out.error
+            assert len(interrupt_calls) >= 2
+        else:
+            assert fetched_rows == expected_rows
         recovered = connector.execute_query("SELECT 42 AS answer", result_format="arrow")
         assert recovered.success is True
         assert recovered.sql_return.to_pylist() == [{"answer": 42}]

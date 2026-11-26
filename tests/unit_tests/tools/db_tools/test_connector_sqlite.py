@@ -3,6 +3,7 @@ import sqlite3
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import pytest
 import structlog
@@ -393,6 +394,36 @@ def test_execute_query_timeout_propagates_timeout_error_and_recovers(sqlite_conn
     )
     assert slash_query.success is True
     assert slash_query.sql_return == [{"slash": "\\", "semi": ";"}]
+
+
+@pytest.mark.timeout(8)
+def test_execute_query_rejects_rows_returned_after_deadline(sqlite_connector, monkeypatch):
+    sqlite_connector.connect()
+    connection = sqlite_connector.connection
+    now = time.monotonic()
+    monkeypatch.setattr("datus.tools.db_tools.sqlite_connector.time", SimpleNamespace(monotonic=lambda: now))
+    returned = []
+
+    def slow_value():
+        nonlocal now
+        # Model a slow UDF without depending on the scheduler or waiting a real second.
+        now += 2
+        returned.append(42)
+        return 42
+
+    connection.create_function("slow_value", 0, slow_value)
+    sql = "SELECT slow_value() AS value"
+    timed_out = sqlite_connector.execute_query(sql, result_format="list", query_timeout_seconds=1)
+
+    assert returned == [42]
+    assert timed_out.success is False
+    assert timed_out.error_code == "500007"
+    assert timed_out.sql_query == sql
+
+    recovered = sqlite_connector.execute_query("SELECT 42 AS value", result_format="list")
+    assert recovered.success is True
+    assert recovered.sql_return == [{"value": 42}]
+    assert sqlite_connector.connection is connection
 
 
 @pytest.mark.parametrize("busy_timeout_ms, deadline_seconds, expected_code", [(10, 1, None), (1500, 0.1, "500007")])

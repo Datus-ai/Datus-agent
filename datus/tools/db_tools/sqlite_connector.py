@@ -351,6 +351,8 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
 
             cursor.execute(sql)
             rows = cursor.fetchall()
+            if deadline is not None and time.monotonic() >= deadline:
+                return timeout_result("Query deadline expired after fetching rows.")
             columns = [desc[0] for desc in cursor.description] if cursor.description else []
 
             # Convert to list of dicts

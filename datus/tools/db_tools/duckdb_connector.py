@@ -713,44 +713,28 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
 
             result = cursor.execute(sql)
 
-            if result_format == "csv":
+            if result_format in {"csv", "pandas"}:
                 df = result.df()
-                return ExecuteSQLResult(
-                    success=True,
-                    sql_query=sql,
-                    sql_return=df.to_csv(index=False),
-                    row_count=len(df),
-                    result_format=result_format,
-                )
+                sql_return = df.to_csv(index=False) if result_format == "csv" else df
+                row_count = len(df)
             elif result_format == "arrow":
-                arrow_table = result.fetch_arrow_table()
-                return ExecuteSQLResult(
-                    success=True,
-                    sql_query=sql,
-                    sql_return=arrow_table,
-                    row_count=arrow_table.num_rows,
-                    result_format=result_format,
-                )
-            elif result_format == "pandas":
-                df = result.df()
-                return ExecuteSQLResult(
-                    success=True,
-                    sql_query=sql,
-                    sql_return=df,
-                    row_count=len(df),
-                    result_format=result_format,
-                )
+                sql_return = result.fetch_arrow_table()
+                row_count = sql_return.num_rows
             else:  # list
                 rows = result.fetchall()
                 columns = [desc[0] for desc in result.description]
-                result_list = [dict(zip(columns, row)) for row in rows]
-                return ExecuteSQLResult(
-                    success=True,
-                    sql_query=sql,
-                    sql_return=result_list,
-                    row_count=len(rows),
-                    result_format=result_format,
-                )
+                sql_return = [dict(zip(columns, row)) for row in rows]
+                row_count = len(rows)
+
+            if deadline is not None and time.monotonic() >= deadline:
+                return timeout_result("Query deadline expired after fetching rows.")
+            return ExecuteSQLResult(
+                success=True,
+                sql_query=sql,
+                sql_return=sql_return,
+                row_count=row_count,
+                result_format=result_format,
+            )
         except duckdb.InterruptException as exc:
             if expired is not None and expired.is_set():
                 return timeout_result(str(exc))
