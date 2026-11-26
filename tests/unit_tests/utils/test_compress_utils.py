@@ -508,6 +508,25 @@ class TestDataCompressorCompress:
         assert result["compression_type"] == "none"
         assert result["original_rows"] == 5
 
+    @pytest.mark.parametrize("output_format", ["csv", "table"])
+    @patch("datus.utils.compress_utils.litellm.token_counter", side_effect=_mock_token_counter)
+    def test_small_arrow_output_preserves_nullable_int64_precision(self, _mock, output_format):
+        large_id = (1 << 53) + 123
+        ids = [large_id, None, *range(33)]
+        table = pa.table({"id": pa.array(ids, type=pa.int64())})
+        compressor = DataCompressor(output_format=output_format, token_threshold=10_000)
+
+        result = compressor.compress(table, row_threshold=50)
+
+        assert result["original_rows"] == 35
+        assert result["compression_type"] == "none"
+        if output_format == "csv":
+            rows = list(csv.DictReader(StringIO(result["compressed_data"])))
+            assert [row["id"] for row in rows] == ["" if value is None else str(value) for value in ids]
+        else:
+            rows = result["compressed_data"].splitlines()[1:]
+            assert [row.split()[1] for row in rows] == ["NaN" if value is None else str(value) for value in ids]
+
     @patch("datus.utils.compress_utils.litellm.token_counter", side_effect=_mock_token_counter)
     def test_large_list_row_compression(self, _mock):
         dc = DataCompressor(token_threshold=100000)

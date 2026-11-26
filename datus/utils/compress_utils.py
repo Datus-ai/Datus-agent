@@ -182,7 +182,9 @@ def _to_dataframe_efficient(data: Union[List[Dict], pd.DataFrame, pa.Table]) -> 
     if isinstance(data, pd.DataFrame):
         return data
     elif isinstance(data, pa.Table):
-        return data.to_pandas()
+        return data.to_pandas(
+            types_mapper=lambda arrow_type: pd.ArrowDtype(arrow_type) if pa.types.is_integer(arrow_type) else None
+        )
     elif isinstance(data, list):
         return pd.DataFrame(data)
     else:
@@ -402,6 +404,14 @@ class DataCompressor:
             if self.output_format == "csv":
                 text = _format_as_csv(df)
             else:
+                if isinstance(data, pa.Table):
+                    # Keep the text table's NaN marker without casting the integers to floats.
+                    for index, (_, column) in enumerate(df.items()):
+                        dtype = column.dtype
+                        if isinstance(dtype, pd.ArrowDtype) and pa.types.is_integer(dtype.pyarrow_dtype):
+                            present = column.notna()
+                            if not present.all():
+                                df.isetitem(index, column.astype(object).where(present, float("nan")))
                 text = _format_as_table(df)
 
             tokens = self.count_tokens(text)
