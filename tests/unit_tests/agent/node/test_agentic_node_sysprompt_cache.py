@@ -148,15 +148,40 @@ class TestGetSessionSystemPrompt:
         # The expensive builder ran exactly once across both turns.
         assert node.build_count == 1
 
-    def test_snapshot_without_memory_limit_rebuilds_once(self, session_manager):
+    @pytest.mark.parametrize("missing_key", ["memory_byte_limits", "memory_template_sha256"])
+    def test_snapshot_without_memory_identity_rebuilds_once(self, session_manager, missing_key):
         node = _SnapshotNode(session_manager, _agent_config())
         legacy_meta = node._system_prompt_snapshot_meta("1.2")
-        legacy_meta.pop("memory_context_byte_limit", None)
+        legacy_meta.pop(missing_key, None)
         session_manager.save_system_prompt_snapshot(node.session_id, "Legacy prompt", legacy_meta)
 
         assert node._get_session_system_prompt("1.2") == "SYS#1"
         assert node._get_session_system_prompt("1.2") == "SYS#1"
         assert node.build_count == 1
+
+    def test_memory_template_change_refreshes_resumed_session(self, session_manager, monkeypatch, tmp_path):
+        """The memory section is rendered outside the system template's include graph."""
+        from datus.prompts import prompt_manager as prompt_manager_module
+
+        user_templates = tmp_path / "user_templates"
+        user_templates.mkdir()
+        monkeypatch.setattr(
+            prompt_manager_module.PromptManager, "user_templates_dir", property(lambda self: user_templates)
+        )
+        monkeypatch.setattr(
+            prompt_manager_module, "get_prompt_manager", lambda **_kwargs: prompt_manager_module.PromptManager()
+        )
+        node = _SnapshotNode(session_manager, _agent_config())
+        assert node._get_session_system_prompt("1.2") == "SYS#1"
+        assert node._get_session_system_prompt("1.2") == "SYS#1"
+
+        builtin = TEMPLATE_DIR / "memory_context_1.0.j2"
+        (user_templates / "memory_context_1.0.j2").write_text(
+            builtin.read_text(encoding="utf-8") + "\nUpdated memory guidance.\n", encoding="utf-8"
+        )
+
+        assert node._get_session_system_prompt("1.2") == "SYS#2"
+        assert node._get_session_system_prompt("1.2") == "SYS#2"
 
     def test_collaboration_guidance_change_refreshes_resumed_session(self, session_manager, monkeypatch):
         from datus.prompts import collaboration_contract
@@ -1083,7 +1108,7 @@ def test_digest_and_render_use_the_same_resolved_template_version(
     session_manager, monkeypatch, override, node_version, agent_version, selected
 ):
     """Fingerprint, snapshot metadata and rendering honor request > node > agent precedence."""
-    from unittest.mock import Mock
+    from unittest.mock import Mock, call
 
     from datus.prompts import prompt_manager
 
@@ -1098,7 +1123,11 @@ def test_digest_and_render_use_the_same_resolved_template_version(
     node._finalize_system_prompt = lambda prompt: prompt
     meta = node._system_prompt_snapshot_meta(override)
     assert AgenticNode._get_system_prompt(node, prompt_version=override) == "rendered prompt"
-    manager.template_fingerprint.assert_called_once_with(node._system_prompt_template_name(), version=selected)
+    # The memory section always renders its latest template, independent of the prompt version.
+    assert manager.template_fingerprint.call_args_list == [
+        call(node._system_prompt_template_name(), version=selected),
+        call("memory_context"),
+    ]
     assert manager.render_template.call_count == 1
     assert manager.render_template.call_args.kwargs["version"] == selected
     assert meta["prompt_version"] == (selected or "")

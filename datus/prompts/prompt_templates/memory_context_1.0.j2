@@ -16,7 +16,7 @@ Persistent memory is a single file shown below. Build it over time so future ses
 
 **Don't save**: code patterns, file paths, git history, debugging fixes, anything in CLAUDE.md or `data_context/`, ephemeral task state. If asked to save a PR list, ask what was *surprising* instead.
 
-**How**: Use `add_memory(content)` to append one concise fact and `edit_memory(old_string, new_string)` to update a unique match or delete it with an empty `new_string`. Check the current memory before writing to avoid duplicates. Writes above **20 KB** still succeed and return a warning. Consolidate stale or duplicate entries while the whole file is visible. The system prompt shows up to **25 KB** of memory. Use the memory tools for all edits to `.datus/memory/`.
+**How**: Use `add_memory(content)` to append one concise fact and `edit_memory(old_string, new_string)` to update a unique match or delete it with an empty `new_string`. Check the current memory before writing to avoid duplicates. Memory has a **20 KB** soft limit: writes above it still succeed but return a warning, and you should then consolidate stale or duplicate entries until the file is below 20 KB. Writes that would grow the file past **25 KB** are rejected. The tools report the file size, not its content. Use the memory tools for all edits to `.datus/memory/`.
 {% endif %}
 
 ### Current memory

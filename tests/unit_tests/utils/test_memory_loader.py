@@ -4,6 +4,8 @@
 
 """Unit tests for datus/utils/memory_loader.py"""
 
+import os
+import stat
 from unittest.mock import patch
 
 import pytest
@@ -11,8 +13,10 @@ import pytest
 from datus.utils.memory_loader import (
     MEMORY_BASE_DIR,
     MEMORY_BYTE_LIMIT,
+    MEMORY_CONTEXT_BYTE_LIMIT,
     MEMORY_FILENAME,
     apply_single_replacement,
+    format_memory_context,
     get_memory_dir,
     get_memory_file_path,
     has_memory,
@@ -71,6 +75,13 @@ class TestPathHelpers:
         write_memory_raw(str(tmp_path), "chat", "hello memory")
         assert get_memory_file_path(str(tmp_path), "chat").exists()
         assert read_memory_raw(str(tmp_path), "chat") == "hello memory"
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
+    def test_new_memory_file_is_not_private_to_the_owner(self, tmp_path):
+        """Other local readers (web UI, backups) keep the access a plain file write gave them."""
+        write_memory_raw(str(tmp_path), "chat", "hello memory")
+        mode = stat.S_IMODE(get_memory_file_path(str(tmp_path), "chat").stat().st_mode)
+        assert mode & 0o044 == 0o044
 
     def test_write_overwrites(self, tmp_path):
         write_memory_raw(str(tmp_path), "chat", "first")
@@ -145,8 +156,8 @@ class TestLoadMemoryContext:
 
     @pytest.mark.parametrize(
         "content",
-        ["- one fact\n- another fact", "a" * MEMORY_BYTE_LIMIT, "a" * MEMORY_BYTE_LIMIT + "\r\n- last fact\r\n"],
-        ids=["under_limit", "at_limit", "over_limit"],
+        ["- one fact\n- another fact", "a" * MEMORY_BYTE_LIMIT, "a" * MEMORY_CONTEXT_BYTE_LIMIT + "\n- last fact\n"],
+        ids=["under_limit", "at_limit", "over_prompt_limit"],
     )
     def test_load_preserves_full_content(self, tmp_path, content):
         write_memory_raw(str(tmp_path), "chat", content)
@@ -171,6 +182,61 @@ class TestLoadMemoryContext:
         updated = load_memory_context(str(tmp_path), "chat")
         assert "prefer CTEs" in updated
         assert "explicit joins" not in updated
+
+
+class TestFormatMemoryContext:
+    """The prompt excerpt and the notice that goes with it."""
+
+    @staticmethod
+    def _lines(count: int) -> list[str]:
+        return [f"- fact {index:04d}: " + "y" * 80 for index in range(count)]
+
+    def test_small_memory_is_unchanged_without_notice(self):
+        assert format_memory_context("- one\n- two") == ("- one\n- two", "")
+
+    def test_over_soft_limit_asks_to_consolidate_below_it(self):
+        content, notice = format_memory_context("x" * (MEMORY_BYTE_LIMIT + 1))
+        assert content == "x" * (MEMORY_BYTE_LIMIT + 1)
+        assert f"below {MEMORY_BYTE_LIMIT} bytes" in notice
+        assert "edit_memory" in notice
+        assert "partial" not in notice
+
+    def test_excerpt_never_slices_an_entry(self):
+        lines = self._lines(300)
+        content = "\n".join(lines)
+        excerpt, notice = format_memory_context(content)
+        visible = excerpt.split("\n")
+        assert visible == lines[: len(visible)]
+        assert len(excerpt.encode("utf-8")) <= MEMORY_CONTEXT_BYTE_LIMIT
+        assert f"first {len(excerpt.encode('utf-8'))} of {len(content.encode('utf-8'))} bytes" in notice
+        assert "partial" in notice
+
+    def test_line_ending_exactly_at_the_limit_is_kept(self):
+        first = "a" * (MEMORY_CONTEXT_BYTE_LIMIT - 1)
+        excerpt, _ = format_memory_context(first + "b\n- hidden")
+        assert excerpt == first + "b"
+
+    def test_single_oversized_line_falls_back_to_a_character_boundary(self):
+        excerpt, notice = format_memory_context("记" * MEMORY_CONTEXT_BYTE_LIMIT)
+        assert excerpt == "记" * (MEMORY_CONTEXT_BYTE_LIMIT // 3)
+        assert "partial" in notice
+
+    @pytest.mark.parametrize("lf_bytes", [MEMORY_BYTE_LIMIT - 50, MEMORY_CONTEXT_BYTE_LIMIT])
+    def test_crlf_is_sized_like_the_memory_tools_see_it(self, lf_bytes):
+        lines = [f"- {index:03d} " + "z" * 90 for index in range(lf_bytes // 97 + 1)]
+        lf = "\n".join(lines)[:lf_bytes]
+        crlf = lf.replace("\n", "\r\n")
+        assert len(crlf.encode("utf-8")) > len(lf.encode("utf-8"))
+        assert format_memory_context(crlf) == format_memory_context(lf)
+
+    def test_read_only_gets_only_the_partial_notice(self):
+        assert format_memory_context("x" * (MEMORY_BYTE_LIMIT + 1), read_only=True) == (
+            "x" * (MEMORY_BYTE_LIMIT + 1),
+            "",
+        )
+        _, notice = format_memory_context("\n".join(self._lines(300)), read_only=True)
+        assert "partial" in notice
+        assert "edit_memory" not in notice
 
 
 class TestGetMemoryDir:

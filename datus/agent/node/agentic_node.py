@@ -1295,7 +1295,8 @@ class AgenticNode(Node):
         appear: it is a per-request field on the Chat API, so a user switching
         the UI language mid-session must not keep replaying a snapshot that
         pins the old one. Date and memory stay frozen until the snapshot is rebuilt.
-        The memory excerpt limit invalidates snapshots built with an older policy. Injected
+        The memory limits and the separately rendered memory template are part of
+        the identity, so a memory policy change rebuilds it. Injected
         skill contents are fingerprinted so same-named updates rebuild it.
         The advertised datasource catalog also changes when a project binds,
         unbinds or renames a source, even if the current target stays the same.
@@ -1320,20 +1321,28 @@ class AgenticNode(Node):
         language = getattr(agent_config, "language", None) if agent_config is not None else None
         from datus.prompts.collaboration_contract import COLLABORATION_CONTRACT
         from datus.schemas.database_context import execution_context_for_node
-        from datus.utils.memory_loader import MEMORY_CONTEXT_BYTE_LIMIT
+        from datus.utils.memory_loader import MEMORY_BYTE_LIMIT, MEMORY_CONTEXT_BYTE_LIMIT
         from datus.utils.node_utils import build_datasource_prompt_context
 
         datasource_catalog = build_datasource_prompt_context(agent_config).get("available_datasources", {})
 
+        prompt_manager = None
         try:
             from datus.prompts.prompt_manager import get_prompt_manager
 
-            template_digest = get_prompt_manager(agent_config=agent_config).template_fingerprint(
+            prompt_manager = get_prompt_manager(agent_config=agent_config)
+            template_digest = prompt_manager.template_fingerprint(
                 self._system_prompt_template_name(),
                 version=version,
             )
         except (AttributeError, FileNotFoundError, ValueError, TypeError):
             template_digest = ""
+        # The memory section is rendered from its own template, outside the
+        # system template's include graph.
+        try:
+            memory_template_digest = prompt_manager.template_fingerprint("memory_context") if prompt_manager else ""
+        except (AttributeError, FileNotFoundError, ValueError, TypeError):
+            memory_template_digest = ""
 
         return {
             "collaboration_contract_sha256": hashlib.sha256(COLLABORATION_CONTRACT.encode()).hexdigest(),
@@ -1341,7 +1350,8 @@ class AgenticNode(Node):
                 json.dumps(datasource_catalog, sort_keys=True, default=str).encode()
             ).hexdigest(),
             "prompt_template_sha256": template_digest,
-            "memory_context_byte_limit": str(MEMORY_CONTEXT_BYTE_LIMIT),
+            "memory_template_sha256": memory_template_digest,
+            "memory_byte_limits": f"{MEMORY_BYTE_LIMIT}:{MEMORY_CONTEXT_BYTE_LIMIT}",
             "execution_context": execution_context_for_node(agent_config, getattr(self, "input", None)).identity,
             "node_name": self.get_node_name(),
             # NOT implied by ``node_name``. The node name used to decide the
@@ -1770,7 +1780,7 @@ class AgenticNode(Node):
                 # Parent has no memory worth inheriting; skip the read-only block
                 # entirely so we do not waste prompt budget on an empty notice.
                 return base_prompt
-            memory_content, memory_warning = format_memory_context(memory_content)
+            memory_content, memory_warning = format_memory_context(memory_content, read_only=read_only)
             memory_dir = get_memory_dir(workspace_root, node_name)
 
             memory_section = get_prompt_manager(agent_config=self.agent_config).render_template(

@@ -10,7 +10,7 @@ When users interact with the agent, the agent can recognize valuable information
 
 - **File-based**: Memory is stored as a single plain Markdown file (`MEMORY.md`)
 - **Dedicated tools**: Memory is written exclusively through `add_memory` / `edit_memory` -- generic filesystem tools cannot touch the memory subtree
-- **20 KB warning and 25 KB prompt limit**. The full file is saved. The system prompt includes up to 25,000 UTF-8 bytes and identifies any omitted content.
+- **20 KB soft limit, 25 KB hard limit**. Above 20 KB the agent is asked to consolidate. Agent writes that would grow the file past 25 KB are rejected, so everything the agent writes stays in the system prompt.
 - **Per-subagent isolation**: Each subagent has its own memory directory
 - **Zero configuration**: No setup needed -- eligible agents are automatically enabled
 
@@ -45,8 +45,9 @@ Only interactive, user-facing agents have memory. Built-in system subagents that
 
 Memory is one flat `MEMORY.md` file per agent:
 
-- **Automatically loaded** when the system prompt is built. Files at or below **25 KB** (25,000 UTF-8 bytes) are included in full. Larger files are clipped at a valid UTF-8 character boundary and the prompt marks the excerpt as partial.
-- Files over **20 KB** (20,000 UTF-8 bytes) generate a size warning, including after a manual edit. Between 20 and 25 KB, the agent can consolidate entries with the full memory in view.
+- **Automatically loaded** when the system prompt is built. Files at or below **25 KB** (25,000 UTF-8 bytes) are included in full.
+- Files over **20 KB** (20,000 UTF-8 bytes) carry a warning that asks the agent to consolidate stale or duplicate entries until the file is below 20 KB. This also applies after a manual edit.
+- Only a manual edit can make the file larger than 25 KB. The prompt then shows the leading complete lines that fit and marks the excerpt as partial.
 - Best for concise, durable facts: user preferences, key project decisions, references to external systems
 
 Keep entries short to reduce the amount of memory injected into every conversation.
@@ -60,7 +61,7 @@ The agent maintains memory through two dedicated tools:
 | `add_memory(content)` | Append one concise fact to memory |
 | `edit_memory(old_string, new_string)` | Update an entry, or delete it by passing an empty `new_string` |
 
-Both tools serialize writes to the same file across sessions and processes. An edit whose target text has changed or become ambiguous returns an error and leaves the file intact. Writes past 20 KB succeed with a `warning` in the tool result. `remaining_budget` is zero at or above the threshold.
+Both tools serialize writes to the same file across sessions and processes. An edit whose target text has changed or become ambiguous returns an error and leaves the file intact. Results report `used_bytes` and `remaining_budget`, not the file content. Writes past 20 KB succeed with a `warning` in the tool result, and `remaining_budget` is zero at or above that threshold. A write that would grow the file past 25 KB is rejected and nothing is written; edits that shrink the file are always allowed.
 
 ## Usage
 

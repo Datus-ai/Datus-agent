@@ -18,7 +18,7 @@ When delegating, include the FULL relevant context from the conversation in the 
 {% endif -%}
 
 ### Memory Tools
-- Use `add_memory(content)` and `edit_memory(old_string, new_string)` to update the caller's MEMORY.md. Pass an empty `new_string` to delete an entry. Writes above the 20 KB soft limit still succeed and return a warning. Use the memory tools for all edits to `.datus/memory/`.
+- Use `add_memory(content)` and `edit_memory(old_string, new_string)` to update the caller's MEMORY.md. Pass an empty `new_string` to delete an entry. Writes above the 20 KB soft limit still succeed and return a warning; then consolidate stale or duplicate entries until the file is below 20 KB. Writes that would grow the file past 25 KB are rejected. Use the memory tools for all edits to `.datus/memory/`.
 - The feedback node does NOT maintain its own memory file — all persistent notes go to the caller's memory shown in the "Memory" section below.
 
 ## Analysis Process

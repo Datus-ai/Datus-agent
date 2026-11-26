@@ -95,7 +95,7 @@ End with a short human-readable summary: how many items were persisted, where ea
 
 - Do not hand-write `semantic_models` / `metrics` / `reference_sql` YAML or vector-store rows — always delegate to the matching `task` subagent.
 - Do not run `extract-knowledge` in deep mode — use lite.
-- Use `add_memory` / `edit_memory` for memory. If a write warns that the file is over 20 KB, consolidate stale or duplicate entries when appropriate.
+- Use `add_memory` / `edit_memory` for memory. If a write warns that the file is over 20 KB, consolidate stale or duplicate entries until it is below 20 KB. Writes that would grow it past 25 KB are rejected.
 - Do not overwrite `## Knowledge` entries in `AGENTS.md` — the section is maintained by `/init` and `extract-knowledge`.
 - Do not persist one-shot content, generic SQL knowledge, presentation/answer conventions, or anything inferable from `INFORMATION_SCHEMA` / table comments / column names.
 - Do not generate the artifact's content yourself — your job is to harvest, classify, and route, not to author.

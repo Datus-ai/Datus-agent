@@ -24,7 +24,7 @@ You are a router and curator, not a generator. The goal is that every artifact l
 
 - **`semantic_models` / `metrics` MUST go through `task(type="semantic_modeling", ...)`; `reference_sql` MUST go through `task(type="gen_sql_summary", ...)`.** Never hand-write their YAML files or vector-store rows yourself — the subagents own schema, validation, and indexing.
 - **`knowledge` goes through `extract-knowledge` in lite mode** — summarize the atomic fact directly against the source; do NOT trigger the deep blind-SQL-iteration flow.
-- **`memory` goes through `add_memory` / `edit_memory`** — writes above the 20 KB soft limit succeed with a warning.
+- **`memory` goes through `add_memory` / `edit_memory`** — writes above the 20 KB soft limit succeed with a warning; writes that would grow the file past 25 KB are rejected.
 - **`skills` goes through `task(type="gen_skill", ...)`**, which provides the authoring and review workflow and can consult Datus format references when needed.
 - **`AGENTS.md` is the only file you edit yourself** (`write_file` / `edit_file`).
 - When content does not clearly belong to any store, or routing would overwrite something destructively, call `ask_user`. If `ask_user` is unavailable, report the gap and do **not** write by default.
@@ -70,7 +70,7 @@ Walk top to bottom; the first match wins. Each item routes to exactly one store.
 | metrics | Metrics embedded in Dosi YAML plus reconciled LanceDB `metrics` rows | Vector rows — `measure_expr`, `metric_type`, `base_measures`, dimensions | `task(type="semantic_modeling", …)` — author prerequisites and metrics together when needed |
 | reference_sql | `./subject/sql_summaries/{id}.yaml` + LanceDB `reference_sql` | YAML — `id` / `name` / `sql` / `summary` / `search_text` / `tags` | `task(type="gen_sql_summary", …)` — prompt MUST carry **one** complete SQL; **one call per query** (never batch multiple SQLs into a single entry) |
 | knowledge | `./knowledge/<domain-slug>.md`, indexed under `AGENTS.md ## Knowledge` | Markdown per domain: `## Tables` / `## Relationships` / `## Lineage` / `## Metric Definitions` (written by `/init`), business-rule topics (atomic facts), `## Known Issues` | `extract-knowledge` (**lite** mode); `/init` writes its sections directly |
-| memory | `{workspace_root}/.datus/memory/{node}/MEMORY.md` (only `chat` and custom subagents) | Markdown — **20 KB soft limit** | `add_memory` / `edit_memory` (the only writers) |
+| memory | `{workspace_root}/.datus/memory/{node}/MEMORY.md` (only `chat` and custom subagents) | Markdown — **20 KB soft limit, 25 KB hard limit** | `add_memory` / `edit_memory` (the only writers) |
 | AGENTS.md | `./AGENTS.md` (project root; first ~200 lines injected into `<project_context>`) | Markdown — Data Architecture / Directory Map / Core Tables / Global Rules / SQL Conventions / KB index / Knowledge (see *AGENTS.md Section Ownership*) | **edit directly** (`write_file` / `edit_file`) |
 | skills | `./.datus/skills/` (project) > `~/.datus/skills/` (user) > `datus/resources/skills/` (builtin); first-wins | `SKILL.md` + YAML frontmatter | `task(type="gen_skill", …)` |
 
@@ -137,7 +137,7 @@ End with a short human-readable summary: how many pieces were classified, where 
 - Do not hand-write `semantic_models` / `metrics` / `reference_sql` YAML or vector-store rows — use `semantic_modeling` for Dosi semantic assets and `gen_sql_summary` for reference SQL.
 - Do not bundle multiple SQLs into one `gen_sql_summary` call — one query per call, one entry per query.
 - Do not run `extract-knowledge` in deep mode — use lite.
-- Use `add_memory` / `edit_memory` for memory. If a write warns that the file is over 20 KB, consolidate stale or duplicate entries when appropriate.
+- Use `add_memory` / `edit_memory` for memory. If a write warns that the file is over 20 KB, consolidate stale or duplicate entries until it is below 20 KB. Writes that would grow it past 25 KB are rejected.
 - Do not overwrite `## Knowledge` entries in `AGENTS.md` that you did not write — the section is maintained by `/init` and `extract-knowledge`, append only.
 - Do not persist one-shot content, generic SQL knowledge, or anything inferable from `INFORMATION_SCHEMA` / table comments / column names.
 - Do not generate the artifact's content yourself (e.g. write the SQL, invent the metric) — your job is classification and routing, not authoring.

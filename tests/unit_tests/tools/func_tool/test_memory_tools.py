@@ -4,6 +4,7 @@
 
 """Unit tests for datus/tools/func_tool/memory_tools.py (MemoryFuncTool)."""
 
+import json
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, BrokenBarrierError
@@ -12,7 +13,18 @@ from unittest.mock import patch
 import pytest
 
 from datus.tools.func_tool.memory_tools import MemoryFuncTool
-from datus.utils.memory_loader import MEMORY_BYTE_LIMIT, get_memory_file_path, read_memory_raw
+from datus.utils.memory_loader import (
+    MEMORY_BYTE_LIMIT,
+    MEMORY_CONTEXT_BYTE_LIMIT,
+    get_memory_file_path,
+    read_memory_raw,
+    write_memory_raw,
+)
+
+
+def _utf8_text(size: int) -> str:
+    """Multi-byte text of exactly ``size`` UTF-8 bytes."""
+    return "记" * (size // 3) + "x" * (size % 3)
 
 
 @pytest.fixture
@@ -38,7 +50,6 @@ class TestAddMemory:
         assert r.success == 1
         assert get_memory_file_path(str(tmp_path), "chat").exists()
         assert read_memory_raw(str(tmp_path), "chat") == "User prefers DuckDB"
-        assert r.result["memory"] == "User prefers DuckDB"
         assert r.result["used_bytes"] == len("User prefers DuckDB")
         assert r.result["remaining_budget"] == MEMORY_BYTE_LIMIT - len("User prefers DuckDB")
 
@@ -60,7 +71,7 @@ class TestAddMemory:
         assert not get_memory_file_path(str(tmp_path), "chat").exists()
 
     def test_add_exactly_at_limit_succeeds(self, tool, tmp_path):
-        content = "记" * (MEMORY_BYTE_LIMIT // 3) + "x" * (MEMORY_BYTE_LIMIT % 3)
+        content = _utf8_text(MEMORY_BYTE_LIMIT)
         r = tool.add_memory(content)
         assert r.success == 1
         assert r.result["used_bytes"] == MEMORY_BYTE_LIMIT
@@ -75,21 +86,53 @@ class TestAddMemory:
         assert r.success == 1
         assert r.result["used_bytes"] == MEMORY_BYTE_LIMIT + 1
         assert r.result["remaining_budget"] == 0
-        assert str(MEMORY_BYTE_LIMIT) in r.result["warning"]
-        assert r.result["memory"] == read_memory_raw(str(tmp_path), "chat") == original + "\n忆"
+        # The warning tells the agent to consolidate back under the soft limit.
+        assert f"below {MEMORY_BYTE_LIMIT} bytes" in r.result["warning"]
+        assert "edit_memory" in r.result["warning"]
+        assert read_memory_raw(str(tmp_path), "chat") == original + "\n忆"
 
-    def test_write_beyond_prompt_limit_preserves_the_tail(self, tool, tmp_path):
-        initial = "x" * 25_000
-        assert tool.add_memory(initial).success == 1
+    def test_add_up_to_hard_limit_succeeds(self, tool, tmp_path):
+        content = _utf8_text(MEMORY_CONTEXT_BYTE_LIMIT)
+        r = tool.add_memory(content)
+        assert r.success == 1
+        assert r.result["used_bytes"] == MEMORY_CONTEXT_BYTE_LIMIT
+        assert get_memory_file_path(str(tmp_path), "chat").read_bytes() == content.encode("utf-8")
 
-        result = tool.add_memory("Tail entry")
-        expected = initial + "\nTail entry"
+    @pytest.mark.parametrize(
+        "existing_bytes, addition",
+        [
+            (0, _utf8_text(MEMORY_CONTEXT_BYTE_LIMIT + 1)),
+            (MEMORY_CONTEXT_BYTE_LIMIT - 3, "忆"),
+            (MEMORY_CONTEXT_BYTE_LIMIT, "- newest fact"),
+        ],
+        ids=["single_oversized_write", "one_byte_over", "already_full"],
+    )
+    def test_add_past_hard_limit_is_rejected_and_file_unchanged(self, tool, tmp_path, existing_bytes, addition):
+        if existing_bytes:
+            write_memory_raw(str(tmp_path), "chat", _utf8_text(existing_bytes))
+        memory_file = get_memory_file_path(str(tmp_path), "chat")
+        before = memory_file.read_bytes() if memory_file.exists() else None
 
-        assert result.success == 1
-        assert result.result["used_bytes"] == len(expected)
-        assert "25000" in result.result["warning"]
-        assert result.result["memory"] == expected
-        assert get_memory_file_path(str(tmp_path), "chat").read_bytes() == expected.encode("utf-8")
+        r = tool.add_memory(addition)
+
+        assert r.success == 0
+        assert str(MEMORY_CONTEXT_BYTE_LIMIT) in r.error
+        assert "edit_memory" in r.error
+        assert (memory_file.read_bytes() if memory_file.exists() else None) == before
+        # Whatever the agent manages to save stays within what the prompt can show.
+        assert len(read_memory_raw(str(tmp_path), "chat").encode("utf-8")) <= MEMORY_CONTEXT_BYTE_LIMIT
+
+    def test_result_size_does_not_grow_with_the_file(self, tool, tmp_path):
+        entries = [f"- fact {index:04d}: " + "y" * 80 for index in range(250)]
+        write_memory_raw(str(tmp_path), "chat", "\n".join(entries))
+
+        results = [tool.add_memory("- newest fact"), tool.edit_memory("- newest fact", "- edited fact")]
+
+        for result in results:
+            assert result.success == 1
+            payload = json.dumps(result.result, ensure_ascii=False)
+            assert len(payload) < 1_000
+            assert not any(entry in payload for entry in entries)
 
 
 class TestEditMemory:
@@ -141,9 +184,31 @@ class TestEditMemory:
     def test_edit_result_payload(self, tool):
         tool.add_memory("alpha")
         r = tool.edit_memory("alpha", "beta")
-        assert r.result["memory"] == "beta"
         assert r.result["used_bytes"] == len("beta")
         assert r.result["remaining_budget"] == MEMORY_BYTE_LIMIT - len("beta")
+
+    def test_edit_growing_past_hard_limit_is_rejected(self, tool, tmp_path):
+        original = "a" * (MEMORY_CONTEXT_BYTE_LIMIT - 4) + "MARK"
+        assert tool.add_memory(original).success == 1
+
+        r = tool.edit_memory("MARK", "MARK!")
+
+        assert r.success == 0
+        assert str(MEMORY_CONTEXT_BYTE_LIMIT) in r.error
+        assert read_memory_raw(str(tmp_path), "chat") == original
+
+    def test_oversized_hand_edited_file_can_still_be_shrunk(self, tool, tmp_path):
+        stale = "- STALE " + "x" * 2_000
+        oversized = "y" * MEMORY_CONTEXT_BYTE_LIMIT + "\n" + stale + "\n- keep"
+        write_memory_raw(str(tmp_path), "chat", oversized)
+
+        shrunk = tool.edit_memory(stale, "- short")
+        assert shrunk.success == 1
+        assert shrunk.result["used_bytes"] > MEMORY_CONTEXT_BYTE_LIMIT
+        # Growing it again stays rejected, and so does appending.
+        assert tool.edit_memory("- short", "- short" + "z" * 10).success == 0
+        assert tool.add_memory("- more").success == 0
+        assert read_memory_raw(str(tmp_path), "chat") == "y" * MEMORY_CONTEXT_BYTE_LIMIT + "\n- short\n- keep"
 
     def test_pruning_clears_warning_and_preserves_new_entry(self, tool, tmp_path):
         stale = "STALE " + "x" * (MEMORY_BYTE_LIMIT - 6)
