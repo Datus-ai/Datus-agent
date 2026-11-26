@@ -18,26 +18,49 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.semantic_agentic_node_models import SemanticModelingNodeResult, SemanticNodeInput
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.registry.contracts import tool_contract
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
 _SUPPORTED_SEMANTIC_MODELING_STATUSES: Final[frozenset[str]] = frozenset({"generated", "skipped", "blocked"})
-_SEMANTIC_MODELING_RESULT_RETRY_PROMPT: Final[str] = """Your semantic model changes have been preserved.
-Return only one JSON object with this shape:
-{
-  "status": "generated",
-  "blocker_code": null,
-  "skip_reason": null,
-  "output": "brief summary of reused and changed semantic objects"
-}
-Use status "blocked" or "skipped" only when appropriate under the original instructions.
-You may use the available tools first if more work or verification is needed.
-"""
+_SUPPORTED_SEMANTIC_MODELING_BLOCKERS: Final = (
+    "semantic_model_required",
+    "semantic_model_selection_required",
+    "semantic_model_target_invalid",
+    "semantic_model_inline_in_mapping",
+)
+_BLOCKER_DIAGNOSTIC_KEY: Final = "semantic_modeling_blocker_diagnostic"
+_SEMANTIC_MODELING_RESULT_RETRY_PROMPT: Final[str] = (
+    "Your semantic model changes have been preserved. Return one JSON object with status, blocker_code, "
+    "skip_reason, and output.\n"
+    "Use status generated only when the requested authoring work is complete and validated. "
+    "Use status skipped only with skip_reason no_semantic_change. Use status blocked only for unresolved "
+    f"model target issues. Allowed blocker codes: {', '.join(_SUPPORTED_SEMANTIC_MODELING_BLOCKERS)}. "
+    "Set unused blocker_code and skip_reason fields to null.\n"
+    "You may use the available tools first if more work or verification is needed. "
+    "For a compilation or tool validation error, use its diagnostic to repair and validate the affected objects. "
+    "If the issue remains, describe the affected objects and the validation error in output. "
+    "Do not invent a target blocker or claim the work succeeded."
+)
+
+
+def _outcome_validation_error(status: str | None, blocker_code: str | None, skip_reason: str | None) -> str | None:
+    if status not in _SUPPORTED_SEMANTIC_MODELING_STATUSES:
+        return "semantic_modeling must return a supported status."
+    if status == "blocked" and blocker_code not in _SUPPORTED_SEMANTIC_MODELING_BLOCKERS:
+        return "status='blocked' requires a supported semantic-model blocker_code."
+    if blocker_code is not None and status != "blocked":
+        return "blocker_code is only valid when status='blocked'."
+    if status == "skipped" and skip_reason != "no_semantic_change":
+        return "status='skipped' requires skip_reason='no_semantic_change'."
+    if skip_reason is not None and status != "skipped":
+        return "skip_reason is only valid when status='skipped'."
+    return None
 
 
 class SemanticModelingResultRetryPolicy:
-    """Retry once when semantic modeling returns an unsupported outcome status."""
+    """Retry once when the semantic-modeling outcome is invalid."""
 
     max_attempts: int = 2
 
@@ -49,10 +72,16 @@ class SemanticModelingResultRetryPolicy:
 
     def should_retry(self, ctx: StreamRunContext) -> bool:
         response_content = self.node._response_content(ctx)
-        status, _, _, _ = self.node._parse_semantic_modeling_response(response_content)
-        return status not in _SUPPORTED_SEMANTIC_MODELING_STATUSES
+        status, blocker_code, skip_reason, output = self.node._parse_semantic_modeling_response(response_content)
+        if status == "blocked" and blocker_code not in _SUPPORTED_SEMANTIC_MODELING_BLOCKERS:
+            diagnostic = ": ".join(part for part in (blocker_code, output.strip()) if part)
+            if diagnostic:
+                ctx.extras.setdefault(_BLOCKER_DIAGNOSTIC_KEY, diagnostic)
+        return _outcome_validation_error(status, blocker_code, skip_reason) is not None
 
     def next_prompt(self, ctx: StreamRunContext) -> str:
+        if diagnostic := ctx.extras.get(_BLOCKER_DIAGNOSTIC_KEY):
+            return f"{_SEMANTIC_MODELING_RESULT_RETRY_PROMPT}\n\nPrevious outcome diagnostic:\n{diagnostic}"
         return _SEMANTIC_MODELING_RESULT_RETRY_PROMPT
 
     def on_retry_actions(self, ctx: StreamRunContext) -> Iterable[ActionHistory]:
@@ -78,8 +107,6 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         is_subagent: bool = False,
         session_id: Optional[str] = None,
     ):
-        from datus.utils.exceptions import DatusException, ErrorCode
-
         if authoring_scope not in {"datasets", "full"}:
             raise DatusException(
                 ErrorCode.COMMON_UNSUPPORTED,
@@ -291,29 +318,18 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         if not isinstance(response_content, str):
             response_content = str(response_content) if response_content else ""
 
-        if status not in _SUPPORTED_SEMANTIC_MODELING_STATUSES:
-            raise RuntimeError("semantic_modeling must return a supported status.")
-        if blocker_code is not None and status != "blocked":
-            raise RuntimeError("blocker_code is only valid when status='blocked'.")
-        if skip_reason is not None and status != "skipped":
-            raise RuntimeError("skip_reason is only valid when status='skipped'.")
+        if validation_error := _outcome_validation_error(status, blocker_code, skip_reason):
+            if diagnostic := ctx.extras.get(_BLOCKER_DIAGNOSTIC_KEY):
+                raise DatusException(ErrorCode.COMMON_VALIDATION_FAILED, message=diagnostic)
+            raise RuntimeError(validation_error)
 
         self._enforce_authoring_scope()
 
         semantic_model_files: List[str] = []
         if status == "blocked":
-            if blocker_code not in {
-                "semantic_model_required",
-                "semantic_model_selection_required",
-                "semantic_model_target_invalid",
-                "semantic_model_inline_in_mapping",
-            }:
-                raise RuntimeError("status='blocked' requires a supported semantic-model blocker_code.")
             if self._target_was_mutated():
                 raise RuntimeError("semantic_modeling cannot return status='blocked' after changing the target.")
         elif status == "skipped":
-            if skip_reason != "no_semantic_change":
-                raise RuntimeError("status='skipped' requires skip_reason='no_semantic_change'.")
             if self._target_was_mutated():
                 raise RuntimeError("semantic_modeling cannot return status='skipped' after changing the target.")
         else:

@@ -610,6 +610,62 @@ async def test_retries_unsupported_outcome_once_before_finalizing(real_agent_con
     node._finalize_selected_osi_artifact.assert_called_once_with()
 
 
+@pytest.mark.asyncio
+async def test_retries_compile_diagnostic_reported_as_a_blocker(real_agent_config, mock_llm_create):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+    diagnostic = "The average_order_value expression does not match its derive formula."
+    mock_llm_create.reset(
+        responses=[
+            build_simple_response(
+                json.dumps({"status": "blocked", "blocker_code": "derive_expression_mismatch", "output": diagnostic})
+            ),
+            build_simple_response(json.dumps({"status": "generated", "output": "Repaired average_order_value"})),
+        ]
+    )
+    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+    node.input = SemanticNodeInput(user_message="Update the average order value metric")
+    node._finalize_selected_osi_artifact = MagicMock(return_value="subject/semantic_models/warehouse/orders.yml")
+
+    actions = [action async for action in node.execute_stream(ActionHistoryManager())]
+
+    assert _stream_call_count(mock_llm_create) == 2
+    assert diagnostic in mock_llm_create.call_history[-1]["prompt"]
+    assert "upsert_osi_metrics" in mock_llm_create.call_history[-1]["tools"]
+    assert actions[-1].output["success"] is True
+    assert actions[-1].output["status"] == "generated"
+    node._finalize_selected_osi_artifact.assert_called_once_with()
+
+
+@pytest.mark.parametrize("retry_content", ['{"status":"blocked","blocker_code":null}', "I could not finish."])
+@pytest.mark.asyncio
+async def test_exhausted_blocker_retry_preserves_authoring_diagnostic(
+    real_agent_config, mock_llm_create, retry_content
+):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+    diagnostic = "The average_order_value expression does not match its derive formula."
+    mock_llm_create.reset(
+        responses=[
+            build_simple_response(
+                json.dumps({"status": "blocked", "blocker_code": "derive_expression_mismatch", "output": diagnostic})
+            ),
+            build_simple_response(retry_content),
+        ]
+    )
+    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+    node.input = SemanticNodeInput(user_message="Update the average order value metric")
+    node._finalize_selected_osi_artifact = MagicMock()
+
+    actions = [action async for action in node.execute_stream(ActionHistoryManager())]
+
+    assert _stream_call_count(mock_llm_create) == 2
+    assert actions[-1].output["success"] is False
+    assert diagnostic in actions[-1].output["error"]
+    assert "derive_expression_mismatch" in actions[-1].output["error"]
+    node._finalize_selected_osi_artifact.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("payload", "expected_status", "expected_success"),
     [
