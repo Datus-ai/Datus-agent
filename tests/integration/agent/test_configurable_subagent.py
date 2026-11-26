@@ -11,7 +11,12 @@ import pytest
 
 from datus.agent.node.node_factory import create_interactive_node, create_node_input
 from datus.schemas.action_history import ActionRole, ActionStatus
-from datus.tools.func_tool.sub_agent_task_tool import BUILTIN_SUBAGENT_DESCRIPTIONS
+
+SEMANTIC_PROPOSAL_DESCRIPTION = (
+    "Draft proposals for semantic models and metrics using only the supplied schema and definitions. "
+    "Do not inspect existing models, write files or data, or publish assets. "
+    "Do not answer ordinary existing-data questions."
+)
 
 
 @pytest.mark.nightly
@@ -99,7 +104,7 @@ def _arguments(call):
 @pytest.mark.timeout(120)
 @pytest.mark.skipif(not os.getenv("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY is not configured")
 async def test_chat_answers_data_question_without_modeling_handoff(nightly_agent_config):
-    node = _routing_chat(nightly_agent_config, BUILTIN_SUBAGENT_DESCRIPTIONS["semantic_modeling"])
+    node = _routing_chat(nightly_agent_config, SEMANTIC_PROPOSAL_DESCRIPTION)
     try:
         actions = await _run_chat(
             node, "How many rows are in the schools table? Answer from the database without changing definitions."
@@ -118,7 +123,7 @@ async def test_chat_answers_data_question_without_modeling_handoff(nightly_agent
 @pytest.mark.skipif(not os.getenv("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY is not configured")
 async def test_chat_delegates_semantic_proposal_using_capabilities(nightly_agent_config):
     """Exercise real routing, with a definition proposal rather than asset publication."""
-    node = _routing_chat(nightly_agent_config, BUILTIN_SUBAGENT_DESCRIPTIONS["semantic_modeling"])
+    node = _routing_chat(nightly_agent_config, SEMANTIC_PROPOSAL_DESCRIPTION)
     try:
         actions = await _run_chat(
             node,
