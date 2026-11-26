@@ -3050,6 +3050,54 @@ def test_catalog_reference_paths_are_restricted_to_the_subagent_scope():
     assert _scoped_table_paths(config, "agent_id", paths) == []
 
 
+@pytest.mark.parametrize("entry", [{"id": "agent_id"}, {"id": "agent_id", "scoped_context": {}}])
+def test_named_subagent_cannot_reference_tables_without_a_scope(entry):
+    from types import SimpleNamespace
+
+    from datus.api.services.chat_task_manager import _scoped_table_paths
+
+    config = SimpleNamespace(
+        agentic_nodes={"sql": entry},
+        sub_agent_config=lambda name: entry,
+        current_datasource="warehouse",
+        db_type="starrocks",
+    )
+    paths = ["default_catalog.shop.revenue"]
+    assert _scoped_table_paths(config, "agent_id", paths) == []
+    assert _scoped_table_paths(config, None, paths) == paths
+
+
+@pytest.mark.parametrize(
+    ("grouped", "datasource", "expected"),
+    [
+        ({}, "warehouse", []),
+        ({"other": "*"}, "warehouse", []),
+        ({"warehouse": ""}, "warehouse", []),
+        ({"other": 'warehouse.public."sales.daily"'}, "other", ['warehouse.public."sales.daily"']),
+        (None, "warehouse", ['warehouse.public."sales.daily"', "warehouse.public.orders"]),
+    ],
+)
+def test_chat_references_respect_an_explicit_datasource_map(grouped, datasource, expected):
+    from types import SimpleNamespace
+
+    from datus.api.services.chat_task_manager import _scoped_table_paths
+
+    scope = {
+        "datasource": "warehouse",
+        "tables": "warehouse.public.*",
+        "tables_by_datasource": grouped,
+    }
+    entry = {"id": "agent_id", "scoped_context": scope}
+    config = SimpleNamespace(
+        agentic_nodes={"sql": entry},
+        sub_agent_config=lambda name: entry,
+        current_datasource=datasource,
+        db_type="duckdb",
+    )
+    paths = ['warehouse.public."sales.daily"', "warehouse.public.orders"]
+    assert _scoped_table_paths(config, "agent_id", paths) == expected
+
+
 class TestSplitSubjectPath:
     """_split_subject_path — (subject_path, name) from a picked ref path."""
 

@@ -52,7 +52,7 @@ from datus.schemas.at_context import AtContextInput
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.proxy.proxy_tool import apply_proxy_tools
 from datus.utils.artifact_output import session_user_scope
-from datus.utils.catalog_scope import catalog_scope_matches
+from datus.utils.catalog_scope import catalog_scope_matches, catalog_scope_tokens
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import set_current_path_manager
 from datus.utils.sql_utils import parse_table_name_parts
@@ -97,7 +97,7 @@ def _subagent_scope(agent_config: AgentConfig, name_or_id: Optional[str]) -> dic
             )
             if isinstance(scope, dict):
                 return scope
-            return scope.model_dump() if hasattr(scope, "model_dump") else None
+            return scope.model_dump() if hasattr(scope, "model_dump") else {}
     return None
 
 
@@ -118,17 +118,11 @@ def _scoped_table_paths(
 
     datasource = agent_config.current_datasource
     bound = scope.get("datasource") or datasource
-    tokens = (scope.get("tables_by_datasource") or {}).get(datasource)
-    if tokens is None and datasource == bound:
-        tokens = scope.get("tables")
-    if isinstance(tokens, str):
-        tokens = tokens.replace("\n", ",").split(",")
+    if scope.get("tables_by_datasource") is None and datasource != bound:
+        return []
+
     dialect = str(agent_config.db_type or "")
-    patterns = [
-        parse_table_name_parts(token.strip().lstrip("/"), dialect)
-        for token in (tokens or [])
-        if isinstance(token, str) and token.strip()
-    ]
+    patterns = [parse_table_name_parts(token, dialect) for token in catalog_scope_tokens(scope, datasource)]
     visible = []
     for path in paths:
         try:
