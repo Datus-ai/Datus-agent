@@ -2000,3 +2000,21 @@ async def test_execution_failure_preserves_cancellation_diagnostics(make_runtime
     with pytest.raises(SemanticCoreException) as caught:
         await make_runtime().query_metrics(metrics=["order_count"])
     assert caught.value.execution_info == info
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("dimensions", "axis"),
+    [([], {"dimension": "metric_time"}), (["metric_time"], {})],
+)
+async def test_tagged_windows_use_the_single_window_axis_rules(make_runtime, dimensions, axis):
+    windows = [
+        {"tag": "a", "start": "2025-01-01", "end": "2025-02-01"},
+        {"tag": "b", "start": "2025-02-01", "end": "2025-03-01"},
+    ]
+    original = [dict(window) for window in windows]
+    await make_runtime().query_metrics(metrics=["revenue"], dimensions=dimensions, time_ranges=windows)
+    query = FakeEngine.instances[-1].execute_calls[0]["query"]
+    assert query["time_ranges"] == [{**window, **axis} for window in original]
+    assert "time_range" not in query
+    assert windows == original

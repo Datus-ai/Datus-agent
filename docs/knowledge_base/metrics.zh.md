@@ -159,6 +159,14 @@ query_metrics(
 
 例如，要包含 2024 年 1 月的全部数据，应使用 `time_start="2024-01-01"` 和 `time_end="2024-02-01"`。
 
+使用 Dosi 并排比较多个周期时，可向 `query_metrics` 传入 `time_ranges`：
+
+```json
+{"metrics":["revenue"],"time_ranges":[{"tag":"jan","start":"2024-01-01","end":"2024-02-01"},{"tag":"feb","start":"2024-02-01","end":"2024-03-01"}]}
+```
+
+每个分组的同一行会返回 `revenue__jan` 和 `revenue__feb`。标签必须唯一，只能包含小写字母、数字或下划线。每个时间范围都是左闭右开区间，不能与 `time_start` 或 `time_end` 同时使用。
+
 实际执行的查询返回文本：先是 `result_id` 一行和写着行数的 `rows` 一行；有需要说明的事时每件一行，比如引擎的 `warning` 或 `info`、`IN (...)` 里没有匹配到任何行的值（`note`）、按参数绑定命名的列对应哪个指标（`column`）；然后空一行，接着是 CSV 格式的结果行。结果较长时只显示开头和结尾几行，中间用 `... N rows omitted` 一行代替；完整结果已经缓存，可以用 `get_query_metrics_result` 分页读取，最终答案用的也是它。文本里不带编译后的 SQL，需要 SQL 时用 `dry_run`。
 
 ### 条件放在哪里

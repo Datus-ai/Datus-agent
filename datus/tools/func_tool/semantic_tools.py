@@ -39,6 +39,7 @@ from datus.tools.registry.contracts import tool_contract
 from datus.tools.semantic_tools.dosi import DosiConfig, DosiRuntime
 from datus.tools.semantic_tools.dosi.attribution_text import render_attribution
 from datus.tools.semantic_tools.dosi.engine import has_model_files
+from datus.tools.semantic_tools.models import MetricTimeWindow
 from datus.tools.semantic_tools.paging import (
     METRIC_CATALOG_MAX_PAGES,
     METRIC_CATALOG_PAGE_SIZE,
@@ -2079,6 +2080,7 @@ class SemanticTools:
         page_size: Optional[int] = None,
         offset: int = 0,
         result_id: Optional[str] = None,
+        time_ranges: Optional[List[MetricTimeWindow]] = None,
     ) -> FuncToolResult:
         """
         Query metrics data (requires runtime).
@@ -2147,6 +2149,9 @@ class SemanticTools:
                         `metric_time`, with `time_granularity` for its grain.
             time_start: Optional inclusive start of a half-open time range (ISO date YYYY-MM-DD)
             time_end: Optional exclusive end of a half-open time range (ISO date YYYY-MM-DD)
+            time_ranges: Nonempty list of tagged half-open periods for side-by-side comparisons.
+                         Each metric produces a column per tag, such as revenue__jan.
+                         Do not combine with time_start or time_end.
             time_granularity: Optional time granularity for aggregation ('day', 'week', 'month', 'quarter', 'year')
             where: Optional SQL boolean expression (without the WHERE keyword). Each
                    top-level AND condition runs where its columns exist: a condition on a
@@ -2203,6 +2208,7 @@ class SemanticTools:
                         dimensions,
                         time_start,
                         time_end,
+                        time_ranges is not None,
                         time_granularity,
                         where,
                         limit is not None,
@@ -2244,6 +2250,7 @@ class SemanticTools:
             result_page_size=page_size,
             authorized_scope=authorized_scope,
             context_filter=context_filter,
+            time_ranges=time_ranges,
         )
 
     def compile_metric_for_sql_execution(self, **arguments: Any) -> FuncToolResult:
@@ -2266,6 +2273,7 @@ class SemanticTools:
         dry_run: bool = False,
         context_filter: Optional[str] = None,
         *,
+        time_ranges: Optional[List[MetricTimeWindow]] = None,
         external_sql_execution: bool = False,
         result_page_size: Optional[int] = None,
         authorized_scope: Optional[str] = None,
@@ -2308,6 +2316,14 @@ class SemanticTools:
         )
 
         try:
+            if time_ranges is not None:
+                if not isinstance(time_ranges, list) or not time_ranges:
+                    return FuncToolResult(success=0, error="query_metrics time_ranges must be a nonempty list")
+                if time_start is not None or time_end is not None:
+                    return FuncToolResult(
+                        success=0, error="query_metrics time_ranges cannot be combined with time_start or time_end"
+                    )
+                windows = [MetricTimeWindow.model_validate(window).model_dump() for window in time_ranges]
             # Execute query via runtime
             runtime_query_kwargs = {
                 "metrics": metrics,
@@ -2320,6 +2336,8 @@ class SemanticTools:
                 "order_by": order_by or None,
                 "dry_run": dry_run,
             }
+            if time_ranges is not None:
+                runtime_query_kwargs["time_ranges"] = windows
             if params:
                 runtime_query_kwargs["params"] = params
             if context_filter:

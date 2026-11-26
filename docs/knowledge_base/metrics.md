@@ -159,6 +159,16 @@ Each discovery tool answers with text, one fact per line, and leaves out what an
 
 For example, to include all of January 2024, use `time_start="2024-01-01"` and `time_end="2024-02-01"`.
 
+For side-by-side comparisons in Dosi, pass `time_ranges` to `query_metrics`:
+
+```json
+{"metrics":["revenue"],"time_ranges":[{"tag":"jan","start":"2024-01-01","end":"2024-02-01"},{"tag":"feb","start":"2024-02-01","end":"2024-03-01"}]}
+```
+
+This returns `revenue__jan` and `revenue__feb` in the same row for each group.
+Use unique lowercase tags made of letters, digits, or underscores. Dates are
+half-open. Omit `time_start` and `time_end` when passing `time_ranges`.
+
 An executed query returns text: a `result_id` line, a `rows` line with the row count, one line for each thing to report (a `warning` or `info` from the engine, a `note` on `IN (...)` values that matched no row, a `column` line mapping a column named after a parameter binding to its metric), then a blank line and the rows as CSV. A long result shows its first and last rows around a `... N rows omitted` line; the complete result is cached, `get_query_metrics_result` pages it, and it is what the final answer uses. The text leaves out the compiled SQL; a `dry_run` returns it.
 
 ### Where a condition goes
