@@ -2,6 +2,34 @@
 
 ## 0.4
 
+### 0.4.6
+
+**新功能**
+
+- **通过项目配置和插件定义子代理。** 可组合提示词、工具、Skill 和 MCP，并在 CLI 发现和调用。使用新的 `configurable` 类型时，需要显式授权业务数据和项目文件范围。([#1667](https://github.com/Datus-ai/Datus-agent/pull/1667)) 文档：[配置指南](https://docs.datus.ai/dev/subagent/configurable_subagent/)。
+- **按公式和维度解释指标变化。** `attribute_metrics` 拆解各公式输入的贡献，`attribute_dimensions` 按维度分组并支持多级下钻。Dosi 引擎升级到 0.2.2。([#1642](https://github.com/Datus-ai/Datus-agent/pull/1642)、[#1665](https://github.com/Datus-ai/Datus-agent/pull/1665)) 文档：[指标问答](https://docs.datus.ai/zh/dev/subagent/ask_metrics/)。
+- **数据源目录可发现视图。** 目录区分表、视图及连接器支持的物化视图，Chat 可保留所选对象的完整路径和子代理的访问范围。视图枚举失败时仍展示已有表，并标记目录结果不完整。StarRocks 0.1.14 支持区分枚举失败和确实没有视图。用户文档缺失。([Agent #1691](https://github.com/Datus-ai/Datus-agent/pull/1691)、[DB #201](https://github.com/Datus-ai/datus-db-adapters/pull/201))
+
+**增强**
+
+- **单条 `SELECT` 可指定超时。** 在支持的连接器上，`execute_sql` 的 `timeout` 参数按秒设置单条读取语句的时限。SQLite 和 DuckDB 的普通读取也能在默认工具时限到期时中断执行，等待连接锁超时则不会提交 SQL。适配器版本见升级说明。([Agent #1690](https://github.com/Datus-ai/Datus-agent/pull/1690)、[Agent #1694](https://github.com/Datus-ai/Datus-agent/pull/1694)、[DB #200](https://github.com/Datus-ai/datus-db-adapters/pull/200)) 文档：[超时说明](https://docs.datus.ai/dev/tools/query_exports/#wait-longer-for-a-select)。
+- **SQL 结果预览可展示更多行。** `execute_sql` 的行数截断门槛从 20 提到 50。结果超过 50 行时默认取首尾各 10 行，随后仍按每次调用约 2,048 token 的预算压缩。用户文档缺失。([#1693](https://github.com/Datus-ai/Datus-agent/pull/1693))
+- **单次查询导出上限为 10 万行、100 MB。** `export_query` 超过任一上限会终止整次导出，已有超限配置需要调低。([#1634](https://github.com/Datus-ai/Datus-agent/pull/1634)) 文档：[查询导出](https://docs.datus.ai/dev/tools/query_exports/)。
+- **持久记忆支持更大的文件和并发写入。** `MEMORY.md` 的写入按文件串行处理，避免并发更新互相覆盖。超过 20,000 字节会提示整理，Agent 拒绝把文件写大到 25,000 字节以上。手工编辑超限时，载入的记忆按完整行截断。([#1697](https://github.com/Datus-ai/Datus-agent/pull/1697)) 文档：[持久记忆](https://docs.datus.ai/zh/dev/integration/memory/)。
+- **工具被拒绝后，对话可以继续。** 被用户或策略拒绝的调用返回单次失败，同批获准调用及后续推理仍能继续。`datus --print` 增加无人值守模式的权限提示。([#1669](https://github.com/Datus-ai/Datus-agent/pull/1669)、[#1579](https://github.com/Datus-ai/Datus-agent/pull/1579)) 文档：[CLI 文档](https://docs.datus.ai/zh/dev/cli/introduction/)。
+- **支持自定义 OpenAI-compatible Embedding 服务。** 可以显式配置自定义模型的向量维度，并单独决定是否向接口发送 `dimensions` 参数。([#1633](https://github.com/Datus-ai/Datus-agent/pull/1633)) 文档：[存储配置](https://docs.datus.ai/zh/dev/configuration/storage/)。
+
+**Bug 修复**
+
+- **长对话压缩后仍能回看消息和子代理步骤。** 升级后新建的会话会归档被压缩的历史，历史接口可恢复归档中的子代理步骤。CLI 也修复了操作记录不断嵌套、拖慢每轮收尾的问题。([#1681](https://github.com/Datus-ai/Datus-agent/pull/1681)、[#1682](https://github.com/Datus-ai/Datus-agent/pull/1682)、[#1649](https://github.com/Datus-ai/Datus-agent/pull/1649))
+- **修复语义建模发布卡死、审阅误报和诊断丢失。** 并发发布避免锁死工作区，审阅新增指标时保留原有指标。模型把编译诊断误填为阻塞码时可尝试修复一次，失败仍会保留原始诊断。([#1672](https://github.com/Datus-ai/Datus-agent/pull/1672)、[#1668](https://github.com/Datus-ai/Datus-agent/pull/1668)、[#1692](https://github.com/Datus-ai/Datus-agent/pull/1692))
+
+**升级说明**
+
+- **检查自定义归因配置。** 将 `semantic_tools.attribution_analyze` 更新为 `semantic_tools.attribute_metrics` 和 `semantic_tools.attribute_dimensions`。旧工具名和权限规则有过渡映射。([#1642](https://github.com/Datus-ai/Datus-agent/pull/1642)) 文档：[指标问答](https://docs.datus.ai/zh/dev/subagent/ask_metrics/)。
+- **检查已有导出配置。** `bulk_query.max_rows` 最大为 100,000，`bulk_query.max_bytes` 最大为 100,000,000，超过上限的配置需要调低。([#1634](https://github.com/Datus-ai/Datus-agent/pull/1634)) 文档：[查询导出](https://docs.datus.ai/dev/tools/query_exports/)。
+- **单条 `SELECT` 超时需要相应的 Agent 和适配器版本。** PyPI 已有 `datus-db-core` 0.1.12、`datus-sqlalchemy` 0.1.14，以及 MySQL 0.1.12、StarRocks 0.1.14、Doris 0.1.5、PostgreSQL 0.1.13、ClickHouse／Hive／Spark 0.1.6。Agent 内置的 SQLite 和 DuckDB 使用 `datus-db-core` 0.1.12 或更高版本提供显式超时参数。([Agent #1690](https://github.com/Datus-ai/Datus-agent/pull/1690)、[DB #200](https://github.com/Datus-ai/datus-db-adapters/pull/200)) [PyPI · datus-db-core](https://pypi.org/project/datus-db-core/0.1.12/)。 文档：[超时说明](https://docs.datus.ai/dev/tools/query_exports/#wait-longer-for-a-select)。
+
 ### 0.4.5
 
 **新功能**
