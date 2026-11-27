@@ -143,7 +143,7 @@ _NORMAL_RULES = [
     _rule("semantic_tools", "delete_osi_metrics", PermissionLevel.ASK),
     _rule("semantic_tools", "delete_osi_datasets", PermissionLevel.ASK),
     # persistent memory: ALLOW. add_memory/edit_memory only touch a single
-    # hidden, 2000-byte-capped MEMORY.md with no external reach — gating
+    # hidden MEMORY.md with no external reach — gating
     # benign self-notes behind a prompt would fire on routine "remember this"
     # turns for zero safety benefit.
     _rule("memory_tools", "*", PermissionLevel.ALLOW),

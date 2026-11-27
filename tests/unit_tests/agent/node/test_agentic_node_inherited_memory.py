@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from datus.configuration.inherited_memory_overrides import inherited_memory
-from datus.utils.memory_loader import has_memory
+from datus.utils.memory_loader import MEMORY_BYTE_LIMIT, MEMORY_CONTEXT_BYTE_LIMIT, has_memory
 
 
 def _write_chat_memory(real_agent_config, content: str) -> Path:
@@ -27,7 +27,7 @@ def _write_chat_memory(real_agent_config, content: str) -> Path:
     chat_dir = workspace_root / ".datus" / "memory" / "chat"
     chat_dir.mkdir(parents=True, exist_ok=True)
     memory_file = chat_dir / "MEMORY.md"
-    memory_file.write_text(content, encoding="utf-8")
+    memory_file.write_bytes(content.encode("utf-8"))
     return memory_file
 
 
@@ -116,6 +116,62 @@ class TestInheritedMemoryInjection:
 
         assert prompt == "BASE PROMPT"
         assert "read-only inheritance" not in prompt
+
+    @pytest.mark.parametrize("lf_bytes", [MEMORY_BYTE_LIMIT + 1, MEMORY_CONTEXT_BYTE_LIMIT])
+    def test_writable_memory_up_to_prompt_cap_is_inlined_with_consolidation_warning(
+        self, real_agent_config, mock_llm_create, lf_bytes
+    ):
+        tail = "- Last fact."
+        head = "x" * (lf_bytes - len(tail) - 1)
+        # A hand-edited CRLF file is sized as the memory tools see it (LF), so
+        # the 25 KB boundary case is still inlined in full.
+        _write_chat_memory(real_agent_config, head + "\r\n" + tail)
+        node = _new_gen_sql_node(real_agent_config)
+
+        with inherited_memory("gen_sql", "chat"):
+            prompt = node._inject_memory_context("BASE PROMPT", override_node_name="chat")
+
+        assert f"<memory>\n{head}\n{tail}\n</memory>" in prompt
+        notice = prompt.split("</memory>", 1)[1]
+        assert f"**Memory size warning:** MEMORY.md is {lf_bytes} UTF-8 bytes" in notice
+        assert f"below {MEMORY_BYTE_LIMIT} bytes" in notice
+        assert "edit_memory" in notice
+        assert "Treat the excerpt as partial" not in notice
+
+    def test_read_only_memory_over_soft_limit_omits_consolidation_advice(self, real_agent_config, mock_llm_create):
+        _write_chat_memory(real_agent_config, "x" * MEMORY_BYTE_LIMIT + "\n- Last fact.")
+        node = _new_gen_sql_node(real_agent_config)
+
+        with inherited_memory("gen_sql", "chat"):
+            prompt = node._inject_memory_context("BASE PROMPT")
+
+        assert "- Last fact." in prompt
+        # The sub-agent has no memory tools, so it must not be told to consolidate.
+        assert "Memory size warning" not in prompt
+        assert "edit_memory" not in prompt.split("</memory>", 1)[1]
+
+    @pytest.mark.parametrize("override_owner", [None, "chat"], ids=["inherited", "writable"])
+    def test_memory_exceeding_prompt_cap_shows_complete_lines_without_changing_the_file(
+        self, real_agent_config, mock_llm_create, override_owner
+    ):
+        lines = [f"- fact {index:04d}: " + "y" * 80 for index in range(300)]
+        content = "\n".join(lines)
+        assert len(content.encode("utf-8")) > MEMORY_CONTEXT_BYTE_LIMIT
+        path = _write_chat_memory(real_agent_config, content)
+        node = _new_gen_sql_node(real_agent_config)
+
+        with inherited_memory("gen_sql", "chat"):
+            prompt = node._inject_memory_context("BASE PROMPT", override_node_name=override_owner)
+
+        excerpt = prompt.split("<memory>\n", 1)[1].split("\n</memory>", 1)[0]
+        visible = excerpt.split("\n")
+        # Every visible line is a whole original line, in order: no entry is sliced.
+        assert visible == lines[: len(visible)]
+        assert len(excerpt.encode("utf-8")) <= MEMORY_CONTEXT_BYTE_LIMIT
+        assert lines[len(visible)] not in prompt
+        notice = prompt.split("</memory>", 1)[1]
+        assert "Treat the excerpt as partial" in notice
+        assert path.read_bytes() == content.encode("utf-8")
 
     def test_explicit_override_node_name_takes_precedence(self, real_agent_config, mock_llm_create):
         """``override_node_name`` (feedback path) wins over inherited contextvar.

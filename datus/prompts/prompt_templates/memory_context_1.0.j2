@@ -3,21 +3,10 @@
 {% if read_only %}
 ## Memory (read-only inheritance from {{ originating_agent }})
 
-{{ originating_agent }}'s persistent memory is inlined below in full as read-only background about the user's preferences, project decisions, and external references gathered by the parent agent.
+{{ originating_agent }}'s persistent memory is shown below as read-only background about the user's preferences, project decisions, and external references gathered by the parent agent.
 
 **Read-only**: you have no memory write tools. Do NOT attempt to modify any path under `.datus/memory/` — that subtree is hidden from filesystem tools. If you discover something the user would want remembered, mention it in your response so the parent agent can persist it.
 
-### Current memory
-
-<memory>
-{% if memory_content %}
-{{ memory_content }}
-{% else %}
-(empty)
-{% endif %}
-</memory>
-
-**Access**: apply these facts when they are relevant to the current task. Verify file/function/flag claims against current code before acting — trust what you observe now. If the user asks to ignore memory, treat it as empty.
 {% else %}
 ## Memory
 
@@ -27,18 +16,26 @@ Persistent memory is a single file shown below. Build it over time so future ses
 
 **Don't save**: code patterns, file paths, git history, debugging fixes, anything in CLAUDE.md or `data_context/`, ephemeral task state. If asked to save a PR list, ask what was *surprising* instead.
 
-**How**: Memory is a single flat file with a hard **2000-byte** cap — no topic files, no index. Use only the dedicated tools: `add_memory(content)` to append one concise fact, `edit_memory(old_string, new_string)` to update or delete (pass an empty `new_string` to delete). Do NOT use `write_file`/`edit_file`/shell on `.datus/memory/` — that subtree is hidden from filesystem tools. Write concisely, one fact per call, and read the current memory below before writing — never duplicate. When `add_memory` reports the file is full, first `edit_memory` away a stale entry to free space, then retry.
+**How**: Use `add_memory(content)` to append one concise fact and `edit_memory(old_string, new_string)` to update a unique match or delete it with an empty `new_string`. Check the current memory before writing to avoid duplicates. Memory has a **20 KB** soft limit: writes above it still succeed but return a warning, and you should then consolidate stale or duplicate entries until the file is below 20 KB. Writes that would grow the file past **25 KB** are rejected. The tools report the file size, not its content. Use the memory tools for all edits to `.datus/memory/`.
+{% endif %}
 
 ### Current memory
 
 <memory>
-{% if memory_content %}
+{% if memory_content | trim %}
 {{ memory_content }}
 {% else %}
 (empty)
 {% endif %}
 </memory>
+{% if memory_warning %}
 
+**Memory size warning:** {{ memory_warning }}
+{% endif %}
+
+{% if read_only %}
+**Access**: apply these facts when they are relevant to the current task. Verify file/function/flag claims against current code before acting — trust what you observe now. If the user asks to ignore memory, treat it as empty.
+{% else %}
 **Access**: when memories seem relevant or user references past work; must access when user asks to recall. Verify file/function/flag claims against current code before acting — trust what you observe now and update stale entries with `edit_memory`. For current repo state, prefer `git log`/code. If user says ignore memory, treat it as empty.
 
 Use **plans** for implementation alignment, **tasks** for current work tracking — not memory.

@@ -4,13 +4,10 @@
 
 """Dedicated persistent-memory tool.
 
-Exposes ``add_memory`` / ``edit_memory`` as the *only* writers of a node's
-single ``MEMORY.md`` file (``{workspace_root}/.datus/memory/{node}/MEMORY.md``).
-The file is a flat, hard-capped (2000-byte) document — no progressive
-disclosure, no topic files — so its whole content is always inlined into the
-system prompt. Generic filesystem tools are blocked from the memory subtree
-(see ``fs_path_policy``), so this tool is the single entry point and the byte
-cap cannot be bypassed.
+Appends and edits a node's single ``MEMORY.md`` file
+(``{workspace_root}/.datus/memory/{node}/MEMORY.md``) through serialized mutations.
+Results report the file size, never its content, so a large memory file does not
+grow the conversation on every write.
 """
 
 from __future__ import annotations
@@ -25,7 +22,11 @@ from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 from datus.utils.memory_loader import (
     MEMORY_BYTE_LIMIT,
+    MEMORY_CONTEXT_BYTE_LIMIT,
     apply_single_replacement,
+    memory_limit_error,
+    memory_mutation_lock,
+    memory_size_warning,
     read_memory_raw,
     write_memory_raw,
 )
@@ -34,7 +35,7 @@ logger = get_logger(__name__)
 
 
 class MemoryFuncTool(BaseTool):
-    """Read/append/edit a single node's persistent ``MEMORY.md`` with a hard byte cap.
+    """Append to or edit a single node's persistent ``MEMORY.md``.
 
     The tool is bound to exactly one ``memory_node`` (the memory owner): ``chat``
     for the chat node, the subagent's own name for custom subagents, or the
@@ -46,7 +47,7 @@ class MemoryFuncTool(BaseTool):
     permission_category: str = "memory_tools"
 
     tool_name = "memory"
-    tool_description = "Append to or edit the agent's persistent memory (single MEMORY.md, hard byte cap)."
+    tool_description = "Append to or edit the agent's persistent MEMORY.md (20 KB soft limit, 25 KB hard limit)."
 
     def __init__(self, *, root_path: str, memory_node: str, **kwargs):
         """
@@ -81,14 +82,17 @@ class MemoryFuncTool(BaseTool):
 
     # ----------------------------------------------------------------- helpers
 
-    def _result_payload(self, content: str, message: str) -> dict:
-        used = len(content.encode("utf-8"))
-        return {
+    @staticmethod
+    def _result_payload(used: int, message: str) -> dict:
+        result = {
             "message": message,
-            "memory": content,
             "used_bytes": used,
-            "remaining_budget": MEMORY_BYTE_LIMIT - used,
+            "remaining_budget": max(0, MEMORY_BYTE_LIMIT - used),
         }
+        warning = memory_size_warning(used)
+        if warning:
+            result["warning"] = warning
+        return result
 
     # ------------------------------------------------------------------- tools
 
@@ -102,37 +106,26 @@ class MemoryFuncTool(BaseTool):
                 call; it is appended on its own line(s) after existing memory.
 
         Returns:
-            FuncToolResult. On success, ``result`` carries the updated memory,
-            ``used_bytes`` and ``remaining_budget``. When appending would exceed
-            the 2000-byte hard cap, nothing is written and ``success=0`` with
-            guidance to free space via ``edit_memory`` first.
+            FuncToolResult. On success, ``result`` carries ``used_bytes`` and
+            ``remaining_budget`` (bytes left under the 20 KB soft limit). Above
+            the soft limit the write succeeds with a ``warning`` asking you to
+            consolidate. A write that would make the file larger than 25 KB is
+            rejected and nothing is written.
         """
         try:
             if not content or not content.strip():
                 return FuncToolResult(success=0, error="content must not be empty")
 
-            existing = read_memory_raw(self._root_path, self._memory_node)
             addition = content.rstrip("\n")
-            new_raw = f"{existing}\n{addition}" if existing else addition
-
-            projected = len(new_raw.encode("utf-8"))
-            if projected > MEMORY_BYTE_LIMIT:
-                overflow = projected - MEMORY_BYTE_LIMIT
-                current = len(existing.encode("utf-8"))
-                return FuncToolResult(
-                    success=0,
-                    error=(
-                        f"Memory is full: adding this content would make MEMORY.md {projected} bytes, "
-                        f"exceeding the {MEMORY_BYTE_LIMIT}-byte hard limit by {overflow} bytes "
-                        f"(currently {current} bytes). The content was NOT saved. "
-                        f'First call edit_memory(old_string=<an existing stale entry>, new_string="") '
-                        f"to free at least {overflow} bytes, then retry add_memory. "
-                        f"The current memory is shown in your system prompt."
-                    ),
-                )
-
-            write_memory_raw(self._root_path, self._memory_node, new_raw)
-            return FuncToolResult(result=self._result_payload(new_raw, "Memory saved."))
+            with memory_mutation_lock(self._root_path, self._memory_node):
+                existing = read_memory_raw(self._root_path, self._memory_node, strict=True)
+                new_raw = f"{existing}\n{addition}" if existing else addition
+                projected = len(new_raw.encode("utf-8"))
+                if projected > MEMORY_CONTEXT_BYTE_LIMIT:
+                    current = len(existing.encode("utf-8"))
+                    return FuncToolResult(success=0, error=memory_limit_error(projected, current))
+                write_memory_raw(self._root_path, self._memory_node, new_raw)
+            return FuncToolResult(result=self._result_payload(projected, "Memory saved."))
         except Exception as exc:
             logger.error(f"MemoryFuncTool.add_memory failed for node '{self._memory_node}': {exc}")
             return FuncToolResult(success=0, error=str(exc))
@@ -143,45 +136,38 @@ class MemoryFuncTool(BaseTool):
         Replace a unique occurrence of ``old_string`` in memory with ``new_string``.
 
         Use this to update or prune existing memory. ``old_string`` must match
-        exactly once; pass an empty ``new_string`` to delete the matched text
-        (the primary way to free space when add_memory reports the file is full).
+        exactly once in the current file; pass an empty ``new_string`` to delete
+        the matched text.
 
         Args:
             old_string: Exact existing text to find. Must match exactly once.
             new_string: Replacement text. Empty string deletes the match.
 
         Returns:
-            FuncToolResult. On success, ``result`` carries the updated memory,
-            ``used_bytes`` and ``remaining_budget``. Rejected (nothing written)
-            when memory is empty, the match is not unique, or the edit would
-            push the file past the 2000-byte cap.
+            FuncToolResult. On success, ``result`` carries ``used_bytes`` and
+            ``remaining_budget`` (bytes left under the 20 KB soft limit). Above
+            the soft limit the edit succeeds with a ``warning``. An edit that
+            would grow the file past 25 KB is rejected; edits that shrink it are
+            always allowed. An absent or ambiguous match leaves the file unchanged.
         """
         try:
             if not old_string:
                 return FuncToolResult(success=0, error="old_string must not be empty")
 
-            existing = read_memory_raw(self._root_path, self._memory_node)
-            if not existing.strip():
-                return FuncToolResult(success=0, error="Memory is empty; nothing to edit.")
-
-            new_content, error = apply_single_replacement(existing, old_string, new_string)
-            if error is not None:
-                return FuncToolResult(success=0, error=error)
-
-            projected = len(new_content.encode("utf-8"))
-            if projected > MEMORY_BYTE_LIMIT:
-                overflow = projected - MEMORY_BYTE_LIMIT
-                return FuncToolResult(
-                    success=0,
-                    error=(
-                        f"Edit rejected: the result would be {projected} bytes, exceeding the "
-                        f"{MEMORY_BYTE_LIMIT}-byte hard limit by {overflow} bytes. Nothing was written. "
-                        f"Use a shorter new_string or delete other entries first."
-                    ),
-                )
-
-            write_memory_raw(self._root_path, self._memory_node, new_content)
-            return FuncToolResult(result=self._result_payload(new_content, "Memory updated."))
+            with memory_mutation_lock(self._root_path, self._memory_node):
+                existing = read_memory_raw(self._root_path, self._memory_node, strict=True)
+                if not existing.strip():
+                    return FuncToolResult(success=0, error="Memory is empty; nothing to edit.")
+                new_content, error = apply_single_replacement(existing, old_string, new_string)
+                if error is not None:
+                    return FuncToolResult(success=0, error=error)
+                current = len(existing.encode("utf-8"))
+                projected = len(new_content.encode("utf-8"))
+                # A hand-edited file may already be over the limit; let edits shrink it.
+                if projected > MEMORY_CONTEXT_BYTE_LIMIT and projected > current:
+                    return FuncToolResult(success=0, error=memory_limit_error(projected, current))
+                write_memory_raw(self._root_path, self._memory_node, new_content)
+            return FuncToolResult(result=self._result_payload(projected, "Memory updated."))
         except Exception as exc:
             logger.error(f"MemoryFuncTool.edit_memory failed for node '{self._memory_node}': {exc}")
             return FuncToolResult(success=0, error=str(exc))

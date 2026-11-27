@@ -4,6 +4,8 @@
 
 """Unit tests for datus/utils/memory_loader.py"""
 
+import os
+import stat
 from unittest.mock import patch
 
 import pytest
@@ -11,8 +13,10 @@ import pytest
 from datus.utils.memory_loader import (
     MEMORY_BASE_DIR,
     MEMORY_BYTE_LIMIT,
+    MEMORY_CONTEXT_BYTE_LIMIT,
     MEMORY_FILENAME,
     apply_single_replacement,
+    format_memory_context,
     get_memory_dir,
     get_memory_file_path,
     has_memory,
@@ -51,10 +55,10 @@ class TestHasMemory:
 
 
 class TestByteLimit:
-    """The single hard cap is 2000 bytes."""
+    """The soft limit is expressed in UTF-8 bytes."""
 
     def test_limit_value(self):
-        assert MEMORY_BYTE_LIMIT == 2000
+        assert MEMORY_BYTE_LIMIT == 20_000
 
 
 class TestPathHelpers:
@@ -72,6 +76,33 @@ class TestPathHelpers:
         assert get_memory_file_path(str(tmp_path), "chat").exists()
         assert read_memory_raw(str(tmp_path), "chat") == "hello memory"
 
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
+    @pytest.mark.parametrize("umask", [0o022, 0o077])
+    def test_new_memory_file_mode_follows_the_umask(self, tmp_path, umask):
+        """A new file gets the same mode a plain write gives it, so a private umask stays private."""
+        previous = os.umask(umask)
+        try:
+            write_memory_raw(str(tmp_path), "chat", "hello memory")
+            plain = tmp_path / "plain.txt"
+            plain.write_text("hello", encoding="utf-8")
+        finally:
+            os.umask(previous)
+
+        memory_mode = stat.S_IMODE(get_memory_file_path(str(tmp_path), "chat").stat().st_mode)
+        assert memory_mode == stat.S_IMODE(plain.stat().st_mode)
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
+    @pytest.mark.parametrize("mode", [0o600, 0o640])
+    def test_rewrite_keeps_the_existing_mode(self, tmp_path, mode):
+        write_memory_raw(str(tmp_path), "chat", "first")
+        memory_file = get_memory_file_path(str(tmp_path), "chat")
+        memory_file.chmod(mode)
+
+        write_memory_raw(str(tmp_path), "chat", "second")
+
+        assert stat.S_IMODE(memory_file.stat().st_mode) == mode
+        assert read_memory_raw(str(tmp_path), "chat") == "second"
+
     def test_write_overwrites(self, tmp_path):
         write_memory_raw(str(tmp_path), "chat", "first")
         write_memory_raw(str(tmp_path), "chat", "second")
@@ -88,7 +119,7 @@ class TestPathHelpers:
         memory_file = get_memory_file_path(str(tmp_path), "chat")
         memory_file.parent.mkdir(parents=True)
         memory_file.write_text("content", encoding="utf-8")
-        with patch("pathlib.Path.read_text", side_effect=OSError("Permission denied")):
+        with patch("pathlib.Path.open", side_effect=OSError("Permission denied")):
             assert read_memory_raw(str(tmp_path), "chat") == ""
 
 
@@ -143,31 +174,14 @@ class TestLoadMemoryContext:
         write_memory_raw(str(tmp_path), "chat", "")
         assert load_memory_context(str(tmp_path), "chat") == ""
 
-    def test_under_limit_not_truncated(self, tmp_path):
-        write_memory_raw(str(tmp_path), "chat", "- one fact\n- another fact")
-        result = load_memory_context(str(tmp_path), "chat")
-        assert "truncated" not in result
-
-    def test_over_byte_limit_truncated_on_newline(self, tmp_path):
-        # 30 lines × ~100 bytes each ≈ 3 KB, over the 2000-byte cap.
-        lines = [f"- fact line number {i} " + ("x" * 80) for i in range(30)]
-        write_memory_raw(str(tmp_path), "chat", "\n".join(lines))
-
-        result = load_memory_context(str(tmp_path), "chat")
-        assert "truncated" in result
-        # The whole returned string — body + appended warning — stays within the
-        # hard cap; the warning bytes are reserved before the content is sliced.
-        assert len(result.encode("utf-8")) <= MEMORY_BYTE_LIMIT
-        body = result.split("> WARNING", 1)[0]
-        assert len(body.encode("utf-8")) <= MEMORY_BYTE_LIMIT
-
-    def test_exact_limit_not_truncated(self, tmp_path):
-        # Build content that is exactly MEMORY_BYTE_LIMIT bytes.
-        content = "a" * MEMORY_BYTE_LIMIT
+    @pytest.mark.parametrize(
+        "content",
+        ["- one fact\n- another fact", "a" * MEMORY_BYTE_LIMIT, "a" * MEMORY_CONTEXT_BYTE_LIMIT + "\n- last fact\n"],
+        ids=["under_limit", "at_limit", "over_prompt_limit"],
+    )
+    def test_load_preserves_full_content(self, tmp_path, content):
         write_memory_raw(str(tmp_path), "chat", content)
-        result = load_memory_context(str(tmp_path), "chat")
-        assert "truncated" not in result
-        assert result == content
+        assert load_memory_context(str(tmp_path), "chat") == content
 
     def test_custom_agent_memory(self, tmp_path):
         write_memory_raw(str(tmp_path), "my_agent", "# Custom Agent Memory\n")
@@ -188,6 +202,61 @@ class TestLoadMemoryContext:
         updated = load_memory_context(str(tmp_path), "chat")
         assert "prefer CTEs" in updated
         assert "explicit joins" not in updated
+
+
+class TestFormatMemoryContext:
+    """The prompt excerpt and the notice that goes with it."""
+
+    @staticmethod
+    def _lines(count: int) -> list[str]:
+        return [f"- fact {index:04d}: " + "y" * 80 for index in range(count)]
+
+    def test_small_memory_is_unchanged_without_notice(self):
+        assert format_memory_context("- one\n- two") == ("- one\n- two", "")
+
+    def test_over_soft_limit_asks_to_consolidate_below_it(self):
+        content, notice = format_memory_context("x" * (MEMORY_BYTE_LIMIT + 1))
+        assert content == "x" * (MEMORY_BYTE_LIMIT + 1)
+        assert f"below {MEMORY_BYTE_LIMIT} bytes" in notice
+        assert "edit_memory" in notice
+        assert "partial" not in notice
+
+    def test_excerpt_never_slices_an_entry(self):
+        lines = self._lines(300)
+        content = "\n".join(lines)
+        excerpt, notice = format_memory_context(content)
+        visible = excerpt.split("\n")
+        assert visible == lines[: len(visible)]
+        assert len(excerpt.encode("utf-8")) <= MEMORY_CONTEXT_BYTE_LIMIT
+        assert f"first {len(excerpt.encode('utf-8'))} of {len(content.encode('utf-8'))} bytes" in notice
+        assert "partial" in notice
+
+    def test_line_ending_exactly_at_the_limit_is_kept(self):
+        first = "a" * (MEMORY_CONTEXT_BYTE_LIMIT - 1)
+        excerpt, _ = format_memory_context(first + "b\n- hidden")
+        assert excerpt == first + "b"
+
+    def test_single_oversized_line_falls_back_to_a_character_boundary(self):
+        excerpt, notice = format_memory_context("记" * MEMORY_CONTEXT_BYTE_LIMIT)
+        assert excerpt == "记" * (MEMORY_CONTEXT_BYTE_LIMIT // 3)
+        assert "partial" in notice
+
+    @pytest.mark.parametrize("lf_bytes", [MEMORY_BYTE_LIMIT - 50, MEMORY_CONTEXT_BYTE_LIMIT])
+    def test_crlf_is_sized_like_the_memory_tools_see_it(self, lf_bytes):
+        lines = [f"- {index:03d} " + "z" * 90 for index in range(lf_bytes // 97 + 1)]
+        lf = "\n".join(lines)[:lf_bytes]
+        crlf = lf.replace("\n", "\r\n")
+        assert len(crlf.encode("utf-8")) > len(lf.encode("utf-8"))
+        assert format_memory_context(crlf) == format_memory_context(lf)
+
+    def test_read_only_gets_only_the_partial_notice(self):
+        assert format_memory_context("x" * (MEMORY_BYTE_LIMIT + 1), read_only=True) == (
+            "x" * (MEMORY_BYTE_LIMIT + 1),
+            "",
+        )
+        _, notice = format_memory_context("\n".join(self._lines(300)), read_only=True)
+        assert "partial" in notice
+        assert "edit_memory" not in notice
 
 
 class TestGetMemoryDir:

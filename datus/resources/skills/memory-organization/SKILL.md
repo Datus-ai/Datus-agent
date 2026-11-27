@@ -43,10 +43,11 @@ Enumerate the current contents of each store. Do not modify anything in this ste
 
 `load_skill("storage-classify")` and treat its **Decision Tree** + **Per-Store Reference** + **Disambiguation** + **When NOT to pick a store** as the rule set. Scan within and across stores for:
 
-- **Misclassification** — an item in the wrong store per the decision tree. E.g. a single metric stored as a `semantic_model`; structural table/column definitions stored as `metrics`; a presentation/answer convention written as `knowledge`; a team-level long-lived business fact (or anything > 2000 bytes) parked in `memory`; a fine-grained atomic fact inlined into `AGENTS.md` instead of `knowledge`.
+- **Misclassification** — an item in the wrong store per the decision tree. E.g. a single metric stored as a `semantic_model`; structural table/column definitions stored as `metrics`; a presentation/answer convention written as `knowledge`; a team-level long-lived business fact parked in `memory`; a fine-grained atomic fact inlined into `AGENTS.md` instead of `knowledge`.
 - **Duplicates** — the same atomic fact appearing twice in `knowledge`; the same SQL indexed twice in `reference_sql`; the same fact living in both `memory` and `knowledge`.
 - **Conflicts** — two entries asserting contradictory facts (e.g. two `knowledge` atoms disagreeing on a status-code encoding).
-- **Errors / stale** — `knowledge` that contradicts the current schema; `## Knowledge` index links pointing to missing `./knowledge/*.md` files; `AGENTS.md` index counts that no longer match the stores; `memory` over the 2000-byte cap.
+- **Errors / stale** — `knowledge` that contradicts the current schema; `## Knowledge` index links pointing to missing `./knowledge/*.md` files; `AGENTS.md` index counts that no longer match the stores.
+- **Size** — `memory` over the 20 KB soft limit, even when every entry is still valid. Report the size and propose consolidating (merge duplicates, drop stale entries, tighten wording) until the file is below 20 KB.
 - **Structural issues** — `AGENTS.md` sections out of canonical order, or inlining store *contents* where it should only carry an index (count + retrieval tool, or file links for knowledge).
 
 Use `ask_user` **only** when the resolution genuinely needs a human judgement that the data cannot settle — e.g. which of two conflicting facts is correct, or whether to merge two near-duplicate entries or keep both. Do not use `ask_user` for the plan-confirmation gate (that is the turn boundary below).
@@ -92,7 +93,7 @@ End with a short human-readable summary: how many issues were remediated, what c
 
 - Do not hand-write `semantic_models` / `metrics` / `reference_sql` YAML or vector-store rows — always delegate to the matching `task` subagent.
 - Do not run `extract-knowledge` in deep mode — use lite.
-- Do not exceed the 2000-byte `memory` cap, and do not write `memory` with any tool other than `add_memory` / `edit_memory`.
+- Use `add_memory` / `edit_memory` for memory. If a write warns that the file is over 20 KB, consolidate stale or duplicate entries until it is below 20 KB. Writes that would grow it past 25 KB are rejected.
 - Do not overwrite `## Knowledge` entries in `AGENTS.md` beyond removing provably dead index links — the section is maintained by `/init` and `extract-knowledge`.
 - Do not execute any remediation before the user confirms the plan.
 - Do not delete or overwrite content destructively without an explicit plan row or an `ask_user` confirmation.
