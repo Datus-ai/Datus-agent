@@ -183,6 +183,27 @@ class TestGetSessionSystemPrompt:
         assert node._get_session_system_prompt("1.2") == "SYS#2"
         assert node._get_session_system_prompt("1.2") == "SYS#2"
 
+    def test_broken_memory_template_override_does_not_fail_the_turn(self, session_manager, monkeypatch, tmp_path):
+        from datus.prompts import prompt_manager as prompt_manager_module
+
+        user_templates = tmp_path / "user_templates"
+        user_templates.mkdir()
+        monkeypatch.setattr(
+            prompt_manager_module.PromptManager, "user_templates_dir", property(lambda self: user_templates)
+        )
+        monkeypatch.setattr(
+            prompt_manager_module, "get_prompt_manager", lambda **_kwargs: prompt_manager_module.PromptManager()
+        )
+        node = _SnapshotNode(session_manager, _agent_config())
+        healthy = node._system_prompt_snapshot_meta("1.2")
+        (user_templates / "memory_context_1.0.j2").write_text("{% if has_memory %}unclosed", encoding="utf-8")
+
+        meta = node._system_prompt_snapshot_meta("1.2")
+
+        assert meta["memory_template_sha256"] == ""
+        assert meta["prompt_template_sha256"] == healthy["prompt_template_sha256"] != ""
+        assert node._get_session_system_prompt("1.2") == "SYS#1"
+
     def test_collaboration_guidance_change_refreshes_resumed_session(self, session_manager, monkeypatch):
         from datus.prompts import collaboration_contract
 

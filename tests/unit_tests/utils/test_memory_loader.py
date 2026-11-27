@@ -77,11 +77,31 @@ class TestPathHelpers:
         assert read_memory_raw(str(tmp_path), "chat") == "hello memory"
 
     @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
-    def test_new_memory_file_is_not_private_to_the_owner(self, tmp_path):
-        """Other local readers (web UI, backups) keep the access a plain file write gave them."""
-        write_memory_raw(str(tmp_path), "chat", "hello memory")
-        mode = stat.S_IMODE(get_memory_file_path(str(tmp_path), "chat").stat().st_mode)
-        assert mode & 0o044 == 0o044
+    @pytest.mark.parametrize("umask", [0o022, 0o077])
+    def test_new_memory_file_mode_follows_the_umask(self, tmp_path, umask):
+        """A new file gets the same mode a plain write gives it, so a private umask stays private."""
+        previous = os.umask(umask)
+        try:
+            write_memory_raw(str(tmp_path), "chat", "hello memory")
+            plain = tmp_path / "plain.txt"
+            plain.write_text("hello", encoding="utf-8")
+        finally:
+            os.umask(previous)
+
+        memory_mode = stat.S_IMODE(get_memory_file_path(str(tmp_path), "chat").stat().st_mode)
+        assert memory_mode == stat.S_IMODE(plain.stat().st_mode)
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
+    @pytest.mark.parametrize("mode", [0o600, 0o640])
+    def test_rewrite_keeps_the_existing_mode(self, tmp_path, mode):
+        write_memory_raw(str(tmp_path), "chat", "first")
+        memory_file = get_memory_file_path(str(tmp_path), "chat")
+        memory_file.chmod(mode)
+
+        write_memory_raw(str(tmp_path), "chat", "second")
+
+        assert stat.S_IMODE(memory_file.stat().st_mode) == mode
+        assert read_memory_raw(str(tmp_path), "chat") == "second"
 
     def test_write_overwrites(self, tmp_path):
         write_memory_raw(str(tmp_path), "chat", "first")

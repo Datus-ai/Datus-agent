@@ -10,7 +10,7 @@ When users interact with the agent, the agent can recognize valuable information
 
 - **File-based**: Memory is stored as a single plain Markdown file (`MEMORY.md`)
 - **Dedicated tools**: Memory is written exclusively through `add_memory` / `edit_memory` -- generic filesystem tools cannot touch the memory subtree
-- **20 KB soft limit, 25 KB hard limit**. Above 20 KB the agent is asked to consolidate. Agent writes that would grow the file past 25 KB are rejected, so everything the agent writes stays in the system prompt.
+- **20 KB soft limit, 25 KB hard limit**. Above 20 KB the agent is asked to consolidate. Agent writes that would grow the file past 25 KB are rejected, so the file stays within what the system prompt shows. The exception is a file enlarged past 25 KB by hand: edits that shrink it are still allowed, but they may change content beyond the excerpt the prompt shows.
 - **Per-subagent isolation**: Each subagent has its own memory directory
 - **Zero configuration**: No setup needed -- eligible agents are automatically enabled
 

@@ -10,10 +10,11 @@ content for agentic nodes. Memory is a single file stored at
 ``{workspace_root}/.datus/memory/{subagent}/MEMORY.md``.
 
 Above the 20 KB soft limit the agent is asked to consolidate. Agent writes that
-would grow the file past the 25 KB prompt limit are rejected, so everything the
-agent writes stays visible. Files edited by hand can still exceed it; the prompt
-then shows the leading complete lines. Agent writes use a per-file lock and
-atomic replacement.
+would grow the file past the 25 KB prompt limit are rejected, so the file stays
+within what the prompt shows. Files edited by hand can still exceed it; the
+prompt then shows the leading complete lines, and edits that shrink such a file
+are allowed even though they may touch content beyond the excerpt. Agent writes
+use a per-file lock and atomic replacement.
 """
 
 import os
@@ -167,10 +168,21 @@ def read_memory_raw(workspace_root: str, memory_node: str, *, strict: bool = Fal
 
 
 def write_memory_raw(workspace_root: str, memory_node: str, content: str) -> None:
-    """Replace MEMORY.md atomically. Hold the mutation lock for read-modify-write."""
+    """Replace MEMORY.md atomically. Hold the mutation lock for read-modify-write.
+
+    A new file gets the mode a plain write would give it under the process umask;
+    an existing file keeps its mode.
+    """
     from datus.storage.semantic_model.artifact_file import atomic_write_text
 
-    atomic_write_text(get_memory_file_path(workspace_root, memory_node).resolve(), content)
+    memory_file = get_memory_file_path(workspace_root, memory_node).resolve()
+    memory_file.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        # The kernel applies the umask here; the atomic replacement then keeps this mode.
+        os.close(os.open(memory_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666))
+    except FileExistsError:
+        pass
+    atomic_write_text(memory_file, content)
 
 
 def apply_single_replacement(content: str, old_string: str, new_string: str) -> Tuple[Optional[str], Optional[str]]:

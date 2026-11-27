@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict
 from agents import Tool
 from agents.extensions.memory import AdvancedSQLiteSession
 from agents.mcp import MCPServerStdio
+from jinja2 import TemplateError
 
 from datus.agent.node.compact_archive import ToolArchive, archive_old_tool_outputs, maybe_truncate_item
 from datus.agent.node.compact_prompts import (
@@ -1339,9 +1340,12 @@ class AgenticNode(Node):
             template_digest = ""
         # The memory section is rendered from its own template, outside the
         # system template's include graph.
+        # A broken user override must not fail the turn: memory injection skips
+        # the section on the same error.
         try:
             memory_template_digest = prompt_manager.template_fingerprint("memory_context") if prompt_manager else ""
-        except (AttributeError, FileNotFoundError, ValueError, TypeError):
+        except (AttributeError, FileNotFoundError, ValueError, TypeError, TemplateError) as exc:
+            logger.warning(f"Failed to fingerprint the memory_context template: {exc}")
             memory_template_digest = ""
 
         return {
