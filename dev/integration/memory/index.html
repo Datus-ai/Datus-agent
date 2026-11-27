@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/integration/memory/">
       
       
         <link rel="prev" href="../validation/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/integration/memory/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/integration/memory/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/integration/memory/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/integration/memory/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -5236,12 +5230,12 @@
 <h1 id="auto-memory">Auto Memory<a class="headerlink" href="#auto-memory" title="Permanent link">&para;</a></h1>
 <p>Auto Memory is a persistent memory system for Datus-agent that enables agents to automatically retain valuable information across conversations. It is purely file-based and prompt-driven -- no vector database or embedding is required.</p>
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
-<p>When users interact with the agent, the agent can recognize valuable information and persist it to a single Markdown file stored under the workspace. On subsequent conversations, this memory is automatically loaded in full, allowing the agent to recall prior context.</p>
+<p>When users interact with the agent, the agent can recognize valuable information and persist it to a single Markdown file stored under the workspace. On subsequent conversations, this memory is loaded automatically so the agent can recall prior context.</p>
 <p><strong>Key characteristics:</strong></p>
 <ul>
 <li><strong>File-based</strong>: Memory is stored as a single plain Markdown file (<code>MEMORY.md</code>)</li>
 <li><strong>Dedicated tools</strong>: Memory is written exclusively through <code>add_memory</code> / <code>edit_memory</code> -- generic filesystem tools cannot touch the memory subtree</li>
-<li><strong>Hard byte cap</strong>: A single flat file capped at <strong>2000 bytes</strong> -- no topic files, no index, so the whole file always fits in the system prompt</li>
+<li><strong>20 KB soft limit, 25 KB hard limit</strong>. Above 20 KB the agent is asked to consolidate. Agent writes that would grow the file past 25 KB are rejected, so the file stays within what the system prompt shows. The exception is a file enlarged past 25 KB by hand: edits that shrink it are still allowed, but they may change content beyond the excerpt the prompt shows.</li>
 <li><strong>Per-subagent isolation</strong>: Each subagent has its own memory directory</li>
 <li><strong>Zero configuration</strong>: No setup needed -- eligible agents are automatically enabled</li>
 </ul>
@@ -5251,7 +5245,7 @@
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>└── .datus/
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    └── memory/
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>        ├── chat/                       # Built-in chat agent
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>        │   └── MEMORY.md              # Single file, auto-loaded (≤2000 bytes)
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>        │   └── MEMORY.md              # Single file, automatically loaded
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>        └── my_custom_agent/           # Custom subagent
 </span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>            └── MEMORY.md
 </span></code></pre></div>
@@ -5289,11 +5283,12 @@
 <h2 id="single-file-memory">Single-File Memory<a class="headerlink" href="#single-file-memory" title="Permanent link">&para;</a></h2>
 <p>Memory is one flat <code>MEMORY.md</code> file per agent:</p>
 <ul>
-<li><strong>Automatically loaded</strong> into agent context, in full, at the start of every conversation</li>
-<li>Capped at <strong>2000 bytes</strong> -- the dedicated tools reject writes that would exceed the cap, and an externally-edited file that exceeds it is truncated at load time</li>
+<li><strong>Automatically loaded</strong> when the system prompt is built. Files at or below <strong>25 KB</strong> (25,000 UTF-8 bytes) are included in full.</li>
+<li>Files over <strong>20 KB</strong> (20,000 UTF-8 bytes) carry a warning that asks the agent to consolidate stale or duplicate entries until the file is below 20 KB. This also applies after a manual edit.</li>
+<li>Only a manual edit can make the file larger than 25 KB. The prompt then shows the leading complete lines that fit and marks the excerpt as partial.</li>
 <li>Best for concise, durable facts: user preferences, key project decisions, references to external systems</li>
 </ul>
-<p>There are no topic sub-files and no index -- keep entries short so the whole file stays under the cap.</p>
+<p>Keep entries short to reduce the amount of memory injected into every conversation.</p>
 <h2 id="memory-tools">Memory Tools<a class="headerlink" href="#memory-tools" title="Permanent link">&para;</a></h2>
 <p>The agent maintains memory through two dedicated tools:</p>
 <table>
@@ -5314,7 +5309,7 @@
 </tr>
 </tbody>
 </table>
-<p>When <code>add_memory</code> would push the file past 2000 bytes, the write is rejected with guidance to free space first; the agent then <code>edit_memory</code>s away a stale entry and retries.</p>
+<p>Both tools serialize writes to the same file across sessions and processes. An edit whose target text has changed or become ambiguous returns an error and leaves the file intact. Results report <code>used_bytes</code> and <code>remaining_budget</code>, not the file content. Writes past 20 KB succeed with a <code>warning</code> in the tool result, and <code>remaining_budget</code> is zero at or above that threshold. A write that would grow the file past 25 KB is rejected and nothing is written; edits that shrink the file are always allowed.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <h3 id="ask-the-agent-to-remember">Ask the Agent to Remember<a class="headerlink" href="#ask-the-agent-to-remember" title="Permanent link">&para;</a></h3>
 <p>Use natural language:</p>
@@ -5401,10 +5396,10 @@
 </span></code></pre></div>
 <h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
 <ol>
-<li><strong>Keep entries concise</strong>: The whole file is capped at 2000 bytes -- one short line per fact</li>
+<li><strong>Keep entries concise</strong>. Aim for one short line per fact.</li>
 <li><strong>Prune regularly</strong>: Ask the agent to delete or correct outdated or incorrect memories to free space</li>
 <li><strong>Use explicit requests</strong>: For important information, explicitly say "remember this" to ensure persistence</li>
-<li><strong>Manual editing works too</strong>: The memory file is plain Markdown -- feel free to view and edit it directly (stay under the 2000-byte cap)</li>
+<li><strong>Manual editing works too</strong>. Edit the Markdown file between agent writes so an editor cannot overwrite a concurrent update.</li>
 </ol>
 
 
