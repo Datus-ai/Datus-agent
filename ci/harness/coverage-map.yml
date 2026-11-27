@@ -2102,6 +2102,7 @@ execution:
       targets:
         - tests/unit_tests/agent/
         - tests/unit_tests/api/
+        - tests/unit_tests/ci/test_skill_stream.py
         - tests/unit_tests/cli/
         - tests/unit_tests/configuration/
         - tests/unit_tests/models/
