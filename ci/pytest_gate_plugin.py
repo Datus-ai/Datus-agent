@@ -2,6 +2,7 @@
 
 import json
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,38 @@ _executed: set[str] = set()
 _outcomes: dict[str, str] = {}
 _excluded: dict[str, str] = {}
 _config = None
+_last_checkpoint = 0.0
+
+
+def _write_report(config, *, completed=False, exit_code=pytest.ExitCode.INTERRUPTED, force=False):
+    """Keep honest partial evidence even when a watchdog calls os._exit()."""
+    global _last_checkpoint
+    target = config.getoption("--gate-report")
+    if not target or hasattr(config, "workerinput"):
+        return
+    now = time.monotonic()
+    # Full unit suites collect tens of thousands of nodeids. Avoid rewriting
+    # that snapshot for every setup/call/teardown report.
+    if not force and now - _last_checkpoint < 1.0:
+        return
+    identity = {"source_id": os.environ["DATUS_GATE_SOURCE_ID"]} if os.environ.get("DATUS_GATE_SOURCE_ID") else {}
+    report = {
+        "collected": sorted(_collected),
+        "executed": sorted(_executed),
+        "outcomes": _outcomes,
+        "excluded": _excluded,
+        "exit_code": int(exit_code),
+        "completed": completed,
+        **identity,
+    }
+    path = Path(target)
+    # Tests can remove their workspace while running. Recreate the original
+    # report directory, never a directory relative to the test's current cwd.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(report, indent=2) + "\n")
+    os.replace(temporary, path)
+    _last_checkpoint = now
 
 
 def pytest_addoption(parser):
@@ -21,12 +54,18 @@ def pytest_addoption(parser):
 
 
 def pytest_sessionstart(session):
-    global _config
+    global _config, _last_checkpoint
     _config = session.config
+    target = _config.getoption("--gate-report")
+    if target:
+        # Resolve once, before fixtures or application tools change cwd. Both
+        # incremental checkpoints and the final report must use this identity.
+        _config.option.gate_report = str(Path(target).resolve())
     _collected.clear()
     _executed.clear()
     _outcomes.clear()
     _excluded.clear()
+    _last_checkpoint = 0.0
 
 
 @pytest.hookimpl(trylast=True)
@@ -63,11 +102,13 @@ def pytest_deselected(items):
 
 def pytest_collection_finish(session):
     _collected.update(item.nodeid for item in session.items)
+    _write_report(session.config, force=True)
 
 
 @pytest.hookimpl(optionalhook=True)
 def pytest_xdist_node_collection_finished(node, ids):
     _collected.update(ids)
+    _write_report(node.config, force=True)
 
 
 @pytest.hookimpl(optionalhook=True)
@@ -96,6 +137,8 @@ def pytest_runtest_logreport(report):
             # locals options, including reports transported back from xdist.
             report.toterminal(reporter._tw)
             reporter._tw.flush()
+    if _config is not None:
+        _write_report(_config, force=failed)
 
 
 @pytest.hookimpl(trylast=True)
@@ -106,18 +149,4 @@ def pytest_sessionfinish(session, exitstatus):
     if target and not hasattr(session.config, "workerinput"):
         if session.exitstatus == pytest.ExitCode.OK and "failed" in _outcomes.values():
             session.exitstatus = pytest.ExitCode.TESTS_FAILED
-        identity = {"source_id": os.environ["DATUS_GATE_SOURCE_ID"]} if os.environ.get("DATUS_GATE_SOURCE_ID") else {}
-        Path(target).write_text(
-            json.dumps(
-                {
-                    "collected": sorted(_collected),
-                    "executed": sorted(_executed),
-                    "outcomes": _outcomes,
-                    "excluded": _excluded,
-                    "exit_code": int(session.exitstatus),
-                    **identity,
-                },
-                indent=2,
-            )
-            + "\n"
-        )
+        _write_report(session.config, completed=True, exit_code=session.exitstatus, force=True)

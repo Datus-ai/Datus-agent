@@ -57,7 +57,12 @@ prepare_nightly_case_scope() {
   deselected_nodeids="$(uv run python ci/nightly_manifest.py case-scope --deselected-nodeids)" || return 1
   while IFS= read -r nodeid; do
     if [ -n "$nodeid" ]; then
-      NIGHTLY_FREQUENCY_DESELECTS+=(--deselect "$nodeid")
+      if [[ "$nodeid" == *::* ]]; then
+        NIGHTLY_FREQUENCY_DESELECTS+=(--deselect "$nodeid")
+      else
+        # Exclude provider modules before import as well as fixture setup.
+        NIGHTLY_FREQUENCY_DESELECTS+=(--ignore "$nodeid")
+      fi
     fi
   done <<< "$deselected_nodeids"
 }
@@ -1132,8 +1137,7 @@ trap handle_interrupt INT TERM
 rm -f "$AGENT_TEST_CONFIG_BACKUP"
 
 export DATUS_STRICT_NIGHTLY_REQUIREMENTS="${DATUS_STRICT_NIGHTLY_REQUIREMENTS:-1}"
-# The daily scoped-init product flow is required; scale/capacity remain weekly.
-export DATUS_RUN_LIVE_INIT="${DATUS_RUN_LIVE_INIT:-1}"
+# Qwen init/capacity cases are excluded by the DeepSeek-only case scope.
 export ADAPTERS_PG="${ADAPTERS_PG:-1}"
 export ADAPTERS_MYSQL="${ADAPTERS_MYSQL:-1}"
 export ADAPTERS_CH="${ADAPTERS_CH:-1}"
@@ -2085,9 +2089,6 @@ if [ -n "${PRODUCT_TEST_BASE_REF:-}" ]; then
   PRODUCT_EXECUTION_DIR=$(mktemp -d "${REPO_ROOT}/ci/product-execution.XXXXXX") || exit 1
   NIGHTLY_GROUP_FILTER=$(uv run python -c 'import json; from ci.harness.test_plan import product_group_filter; print(product_group_filter(json.load(open("ci/product-test-plan.json"))))') || exit 1
   PRODUCT_REQUIRED_ARGS=(-p ci.pytest_fail_on_skip_plugin --fail-on-skip)
-  if [[ " ${PRODUCT_E2E_ROOTS[*]} " == *"test_init_live.py::test_qwen_scoped_init_supplements_existing_documents"* ]]; then
-    export DATUS_RUN_LIVE_INIT=1
-  fi
   if [[ "Superset Product Tests" =~ $NIGHTLY_GROUP_FILTER ]]; then
     DASHBOARD_MARK_EXPR="nightly"
   fi
@@ -2153,7 +2154,9 @@ run_logged_unfiltered "Flaky Registry Check" uv run python ci/check_flaky_regist
 
 validate_unit_test_home "$UNIT_TEST_HOME" || exit 1
 rm -rf "$UNIT_TEST_HOME"
-run_logged "Full Unit Tests" run_with_agent_home "$UNIT_TEST_HOME" "$UNIT_TEST_PROJECT_ROOT" env DATUS_TEST_LAYER=unit uv run pytest tests/unit_tests/ -m "not nightly and not quarantine" --tb=short --verbose --timeout=300 --dist=loadscope -n auto
+# This host also runs other repositories and database containers. CPU-based
+# auto workers exhausted RAM; keep the limit with the suite on every runner.
+run_logged "Full Unit Tests" run_with_agent_home "$UNIT_TEST_HOME" "$UNIT_TEST_PROJECT_ROOT" env DATUS_TEST_LAYER=unit uv run pytest tests/unit_tests/ -m "not nightly and not quarantine" --tb=short --verbose --timeout=300 --dist=loadscope -n "${NIGHTLY_UNIT_WORKERS:-2}"
 
 ensure_nightly_kb_data
 
@@ -2250,9 +2253,12 @@ run_compose_suite "GaussDB Adapter Tests" "$GAUSSDB_COMPOSE" "gaussdb:600" -- ru
 # Express has a dedicated memory budget and starts after other heavy services stop.
 run_compose_suite "HANA Agent Tests" "$HANA_COMPOSE" "hana:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest tests/integration/tools/test_hana_semantic_verification.py tests/integration/agent/test_hana_chat_agentic.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread
 
-run_self_hosted_vision_suite
+# The provisioned vision model is not DeepSeek. Retain the manual lifecycle
+# helpers, but do not download or start it in the DeepSeek-only CI baseline.
+log "Skipping Self-hosted Vision Tests: CI real-provider tests are restricted to DeepSeek."
+manifest_record_suite "Self-hosted Vision Tests" blocking command skipped 0 "$(utc_now)" "$(utc_now)"
 
-run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
+run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_FREQUENCY_DESELECTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
 
 run_logged_unfiltered "Flaky Log Classification" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --log-file "$LOG_FILE" --warn-only
 

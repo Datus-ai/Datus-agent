@@ -18,6 +18,7 @@ from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools import SkillManager
 from datus.utils.loggings import get_logger
 from tests.helpers.skill_actions import successful_skill_loads
+from tests.helpers.skill_stream import run_skill_stream
 
 logger = get_logger(__name__)
 
@@ -265,8 +266,7 @@ class TestRealLLMSkillIntegration:
 
         ahm = ActionHistoryManager()
         start_time = time.time()
-        async for _ in node.execute_stream(ahm):
-            pass
+        await run_skill_stream(node, ahm)
         duration = time.time() - start_time
 
         all_actions = ahm.get_actions()

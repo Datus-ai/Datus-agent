@@ -1134,13 +1134,11 @@ flow_groups:
             status: not_applicable
           nightly:
             status: partial
-            nodeids:
-              - tests/integration/models/test_custom_model_preflight.py::test_self_hosted_model_reads_code_from_image
+            nodeids: []
             notes: >
-              The required Docker vision suite verifies real local-image interpretation
-              with a pinned self-hosted model. Resuming an image-bearing agent session
-              still has deterministic coverage only; provider-specific image support
-              remains dependent on external credentials and network access.
+              Real vision-model execution is excluded by the DeepSeek-only CI policy.
+              Local image processing and request/session round trips retain deterministic
+              coverage; live image interpretation is not claimed.
           weekly_benchmark:
             status: not_applicable
         gaps:
@@ -1266,12 +1264,10 @@ flow_groups:
           merge_queue:
             status: not_applicable
           nightly:
-            status: covered
+            status: partial
             nodeids:
-              - tests/integration/models/test_qwen_model.py
-              - tests/integration/models/test_other_models.py
               - tests/integration/models/test_deepseek_model.py
-              - tests/integration/models/test_custom_model_preflight.py::test_self_hosted_model_reads_code_from_image
+            notes: CI runs live provider checks only for DeepSeek; other providers retain deterministic coverage only.
           weekly_benchmark:
             status: covered
             notes: Weekly benchmark records model/target metadata for quality trend tracking.
@@ -1535,6 +1531,7 @@ execution:
       paths:
         - datus/agent/node/
       targets:
+        - tests/unit_tests/ci/test_skill_stream.py
         - tests/unit_tests/ci/test_llm_skill_fixture.py
         - tests/unit_tests/ci/test_bi_diagnostics.py
         - tests/unit_tests/agent/
@@ -1549,6 +1546,7 @@ execution:
       paths:
         - datus/agent/
       targets:
+        - tests/unit_tests/ci/test_skill_stream.py
         - tests/unit_tests/ci/test_llm_skill_fixture.py
         - tests/unit_tests/ci/test_bi_diagnostics.py
         - tests/unit_tests/agent/
@@ -1638,6 +1636,7 @@ execution:
       paths:
         - datus/cli/
       targets:
+        - tests/unit_tests/ci/test_skill_stream.py
         - tests/unit_tests/agent/
         - tests/unit_tests/api/
         - tests/unit_tests/cli/
@@ -2103,6 +2102,7 @@ execution:
       targets:
         - tests/unit_tests/agent/
         - tests/unit_tests/api/
+        - tests/unit_tests/ci/test_skill_stream.py
         - tests/unit_tests/cli/
         - tests/unit_tests/configuration/
         - tests/unit_tests/models/
@@ -2830,7 +2830,8 @@ execution:
       live_targets: [tests/integration/agent/test_sql_summary_agentic.py]
     - id: init-skill
       paths: [datus/cli/init_commands.py, datus/cli/init_context.py, datus/resources/skills/init/, tests/integration/cli/test_init_live.py]
-      live_targets: [tests/integration/cli/test_init_live.py::test_qwen_scoped_init_supplements_existing_documents]
+      # Qwen-only init acceptance is outside the DeepSeek-only CI scope.
+      live_targets: []
     - id: product-fixtures
       paths: [tests/helpers/, tests/integration/agent/test_core_live.py]
       live_targets: [tests/integration/agent/test_core_live.py]

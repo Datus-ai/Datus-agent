@@ -15,6 +15,100 @@ from _pytest.reports import TestReport
 from ci import pytest_gate_plugin as gate
 
 
+@pytest.mark.parametrize("absolute", [False, True])
+@pytest.mark.parametrize("remove_report_directory", [False, True])
+@pytest.mark.parametrize("fails", [False, True])
+def test_evidence_path_survives_test_cwd_and_directory_changes(tmp_path, absolute, remove_report_directory, fails):
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / "other").mkdir()
+    source = tmp_path / "test_chdir.py"
+    source.write_text(
+        "import os, shutil\nfrom pathlib import Path\n"
+        "def test_changes_directory():\n"
+        "    root = Path(__file__).parent\n"
+        f"    if {remove_report_directory!r}: shutil.rmtree(root / 'reports')\n"
+        "    os.chdir(root / 'other')\n"
+        f"    assert not {fails!r}, 'EXPECTED_TEST_FAILURE'\n"
+    )
+    evidence_path = tmp_path / "reports" / "execution.json"
+    evidence_path.parent.mkdir()
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--noconftest",
+            "-p",
+            "ci.pytest_gate_plugin",
+            "--gate-report",
+            str(evidence_path if absolute else evidence_path.relative_to(tmp_path)),
+            "-q",
+            str(source),
+        ],
+        cwd=tmp_path,
+        env={
+            **{key: value for key, value in os.environ.items() if key not in {"PYTEST_ADDOPTS", "PYTEST_PLUGINS"}},
+            "PYTHONPATH": str(Path(__file__).resolve().parents[3]),
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        },
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == int(fails), result.stdout + result.stderr
+    assert "INTERNALERROR" not in result.stdout
+    evidence = json.loads(evidence_path.read_text())
+    assert evidence["completed"] is True
+    assert evidence["exit_code"] == int(fails)
+    assert evidence["executed"] == ["test_chdir.py::test_changes_directory"]
+    assert evidence["outcomes"] == {"test_chdir.py::test_changes_directory": "failed" if fails else "passed"}
+    assert not (tmp_path / "other" / "reports").exists()
+
+
+def test_execution_evidence_survives_a_hard_timeout(tmp_path):
+    """pytest-timeout's thread watchdog bypasses every session-finish hook."""
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / "test_timeout.py").write_text(
+        "import time\ndef test_completed():\n    time.sleep(1.1)\ndef test_hangs():\n    time.sleep(60)\n"
+    )
+    evidence_path = tmp_path / "execution.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--noconftest",
+            "-p",
+            "ci.pytest_gate_plugin",
+            "-p",
+            "pytest_timeout",
+            "--timeout=2",
+            "--timeout-method=thread",
+            "--gate-report",
+            str(evidence_path),
+            "-q",
+            str(tmp_path / "test_timeout.py"),
+        ],
+        cwd=tmp_path,
+        env={
+            **{key: value for key, value in os.environ.items() if key != "PYTEST_ADDOPTS"},
+            "PYTHONPATH": str(Path(__file__).resolve().parents[3]),
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        },
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "Timeout" in result.stdout
+    evidence = json.loads(evidence_path.read_text())
+    assert evidence["collected"] == ["test_timeout.py::test_completed", "test_timeout.py::test_hangs"]
+    assert evidence["executed"] == ["test_timeout.py::test_completed"]
+    assert evidence["outcomes"] == {"test_timeout.py::test_completed": "passed"}
+    assert evidence["exit_code"] != 0
+    assert evidence["completed"] is False
+
+
 @pytest.mark.parametrize("showlocals", [False, True])
 def test_failure_traceback_is_printed_before_the_next_test(tmp_path, showlocals, monkeypatch):
     # Nightly exports parent-only options, including a basetemp above this cwd.
@@ -82,7 +176,10 @@ def test_failure_accounting_survives_missing_reporter_or_worker(worker, monkeypa
             isolated.setattr(gate, name, {})
         isolated.setattr(gate, "_config", None)
         reporter = Mock()
-        config = SimpleNamespace(pluginmanager=SimpleNamespace(get_plugin=lambda _name: reporter if worker else None))
+        config = SimpleNamespace(
+            pluginmanager=SimpleNamespace(get_plugin=lambda _name: reporter if worker else None),
+            getoption=lambda _: None,
+        )
         if worker:
             config.workerinput = {}
         gate.pytest_sessionstart(SimpleNamespace(config=config))

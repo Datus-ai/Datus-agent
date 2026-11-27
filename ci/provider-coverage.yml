@@ -11,9 +11,8 @@ providers:
         - tests/unit_tests/models/test_base.py::TestCreateModelCache
         - tests/unit_tests/configuration/test_agent_config.py::TestProviderConfigurationDispatch
     live_provider_health:
-      mode: warn-only
-      nodeids:
-        - tests/integration/models/test_other_models.py::TestOpenAIModel
+      mode: not-tested
+      nodeids: []
 
   deepseek:
     required_env:
@@ -36,9 +35,8 @@ providers:
         - tests/unit_tests/models/test_claude_model.py::TestClaudeModelGenerate
         - tests/unit_tests/models/test_claude_model.py::TestClaudeModelGenerateWithTools
     live_provider_health:
-      mode: warn-only
-      nodeids:
-        - tests/integration/models/test_claude_model.py::TestClaudeModel
+      mode: not-tested
+      nodeids: []
 
   kimi:
     required_env:
@@ -47,9 +45,8 @@ providers:
       nodeids:
         - tests/unit_tests/models/test_openai_model.py::TestKimiModel
     live_provider_health:
-      mode: warn-only
-      nodeids:
-        - tests/integration/models/test_other_models.py::TestKimiModel
+      mode: not-tested
+      nodeids: []
 
   qwen:
     required_env:
@@ -59,9 +56,8 @@ providers:
       nodeids:
         - tests/unit_tests/models/test_openai_model.py::TestQwenModel
     live_provider_health:
-      mode: warn-only
-      nodeids:
-        - tests/integration/models/test_qwen_model.py::TestQwenModel
+      mode: not-tested
+      nodeids: []
 
   gemini:
     required_env:
@@ -71,9 +67,8 @@ providers:
       nodeids:
         - tests/unit_tests/models/test_openai_model.py::TestGeminiModel
     live_provider_health:
-      mode: warn-only
-      nodeids:
-        - tests/integration/models/test_other_models.py::TestGeminiModel
+      mode: not-tested
+      nodeids: []
 
   minimax:
     required_env:
@@ -159,10 +154,8 @@ providers:
         - tests/unit_tests/models/test_claude_model.py::TestClaudeModelSubscriptionAuth
         - tests/unit_tests/models/test_claude_model.py::TestClaudeModelOAuthHeaders
     live_provider_health:
-      mode: warn-only
-      nodeids:
-        - tests/integration/models/test_claude_subscription.py::TestClaudeSubscriptionModel
-        - tests/integration/models/test_claude_subscription.py::TestClaudeSubscriptionMultiModel
+      mode: not-tested
+      nodeids: []
 
   codex:
     required_env:
@@ -173,6 +166,5 @@ providers:
         - tests/unit_tests/models/test_codex_model.py::TestCodexModelGenerate
         - tests/unit_tests/models/test_codex_model.py::TestCodexModelGenerateWithTools
     live_provider_health:
-      mode: warn-only
-      nodeids:
-        - tests/integration/models/test_codex_model.py::TestCodexModel
+      mode: not-tested
+      nodeids: []

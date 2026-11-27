@@ -11,7 +11,12 @@ import pytest
 
 from datus.agent.node.node_factory import create_interactive_node, create_node_input
 from datus.schemas.action_history import ActionRole, ActionStatus
-from datus.tools.func_tool.sub_agent_task_tool import BUILTIN_SUBAGENT_DESCRIPTIONS
+
+SEMANTIC_PROPOSAL_CAPABILITIES = (
+    "Draft and revise semantic model and metric definition proposals from supplied schemas and definitions. "
+    "Return proposed definitions without live discovery, file changes or publication. "
+    "Does not answer ordinary questions about existing data."
+)
 
 
 @pytest.mark.nightly
@@ -52,7 +57,10 @@ async def test_configurable_subagent_real_model(nightly_agent_config, query_data
         await node.aclose()
 
 
-def _routing_chat(config, description):
+def _routing_chat(config, description=SEMANTIC_PROPOSAL_CAPABILITIES):
+    # This configurable replacement only drafts supplied definitions. Advertising
+    # the builtin author's mandatory discovery/reconciliation would conflict with
+    # both its actual implementation and the live test's no-discovery request.
     config.agentic_nodes["semantic_modeling"] = {
         "node_class": "configurable",
         "description": description,
@@ -99,7 +107,7 @@ def _arguments(call):
 @pytest.mark.timeout(120)
 @pytest.mark.skipif(not os.getenv("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY is not configured")
 async def test_chat_answers_data_question_without_modeling_handoff(nightly_agent_config):
-    node = _routing_chat(nightly_agent_config, BUILTIN_SUBAGENT_DESCRIPTIONS["semantic_modeling"])
+    node = _routing_chat(nightly_agent_config)
     try:
         actions = await _run_chat(
             node, "How many rows are in the schools table? Answer from the database without changing definitions."
@@ -118,7 +126,7 @@ async def test_chat_answers_data_question_without_modeling_handoff(nightly_agent
 @pytest.mark.skipif(not os.getenv("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY is not configured")
 async def test_chat_delegates_semantic_proposal_using_capabilities(nightly_agent_config):
     """Exercise real routing, with a definition proposal rather than asset publication."""
-    node = _routing_chat(nightly_agent_config, BUILTIN_SUBAGENT_DESCRIPTIONS["semantic_modeling"])
+    node = _routing_chat(nightly_agent_config)
     try:
         actions = await _run_chat(
             node,
@@ -127,7 +135,15 @@ async def test_chat_delegates_semantic_proposal_using_capabilities(nightly_agent
             "No live discovery is requested. Return the proposal without writing or publishing assets.",
         )
         calls = _task_calls(actions)
-        assert len(calls) == 1
+        assert len(calls) == 1, {
+            "tool_actions": [
+                {"name": action.action_type, "status": action.status, "output": action.output}
+                for action in actions
+                if action.role == ActionRole.TOOL
+            ],
+            "response": node.result.response,
+            "task_description": node.sub_agent_task_tool.available_tools()[0].description,
+        }
         assert _arguments(calls[0])["type"] == "semantic_modeling"
     finally:
         await node.aclose()

@@ -10,7 +10,7 @@
 | Capacity, image round-trip and native observability model contracts | Affected model / shared-runtime PRs | Real initialized adapters and SDK paths with external IO replaced. Includes nested JSON tool schemas and native model calls. |
 | Remaining affected unit tests | PR diff | Exact-file / longest-prefix unit owners retain explicit consumers, including harness-marked unit tests. Shared model adapters include observability and node consumers. |
 | `tests/integration/agent/test_core_live.py` | Scheduled Nightly; explicit branch evaluation | Real LLM answers independent business questions: total 350 and East-region total 150. Checks SQL tool results and answers through Chat, then runs GenSQL and independently executes its generated query. Credentials missing means failure. |
-| Existing node-specific real-model suites | Scheduled Nightly and affected branch evaluation | The live plan expands for nodes, models, configuration, prompts, skills, tools, storage, context, API and CLI changes. Semantic modeling, Superset and Airflow retain dedicated service setup. Init evaluates the ordinary scoped case; the large-catalog scale case remains opt-in. |
+| Existing node-specific real-model suites | Scheduled Nightly and affected branch evaluation | The live plan expands for nodes, models, configuration, prompts, skills, tools, storage, context, API and CLI changes. Semantic modeling, Superset and Airflow retain dedicated service setup. CI calls only DeepSeek. Qwen init/capacity and other provider health cases and the provisioned vision model are explicitly excluded in `nightly_manifest.py`; their coverage is not claimed. Local HTTP adapter checks and all provider unit tests remain enabled. |
 
 `tests/helpers/product_acceptance.py` owns a small independent business dataset:
 three orders total 350, East customers contribute 150 and West customers 200.
@@ -153,8 +153,8 @@ gh workflow run run-nightly.yml --ref main \
 ```
 
 The comparison selects product targets and required service groups. In this mode
-the derived group filter takes precedence over `nightly_group_filter`, selected
-tests cannot silently skip, and scoped init is explicitly enabled when selected.
+the derived group filter takes precedence over `nightly_group_filter`;
+selected tests cannot silently skip. Qwen-only init evaluation is excluded by the DeepSeek-only CI policy.
 The base fetch restores shallow history before computing the merge-base diff.
 Each executed pytest group writes a report under a fresh
 `ci/product-execution.*` directory. The final verification checks every planned

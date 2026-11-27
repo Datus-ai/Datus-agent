@@ -118,6 +118,22 @@ def test_unit_owners_cover_all_visible_test_consumers():
 
 
 @pytest.mark.parametrize(
+    "source",
+    [
+        "datus/agent/__init__.py",
+        "datus/agent/node/__init__.py",
+        "datus/agent/node/agentic_node.py",
+        "datus/cli/__init__.py",
+        "datus/cli/execution_state.py",
+    ],
+)
+def test_interactive_stream_changes_select_skill_driver_regression(source):
+    consumer = "tests/unit_tests/ci/test_skill_stream.py"
+    for targets in (unit_test_plan([source])["targets"], impact_plan([source])["unit_targets"]):
+        assert any(consumer == target or (target.endswith("/") and consumer.startswith(target)) for target in targets)
+
+
+@pytest.mark.parametrize(
     "source,expected",
     [
         (

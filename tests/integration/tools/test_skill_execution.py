@@ -29,6 +29,7 @@ from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools import SkillFuncTool, SkillManager
 from datus.utils.loggings import get_logger
 from tests.helpers.skill_actions import successful_skill_loads
+from tests.helpers.skill_stream import run_skill_stream
 
 logger = get_logger(__name__)
 
@@ -117,9 +118,7 @@ class TestRealLLMSkillExecution:
         node.permission_manager.approve_for_session("skills", "*")
 
         action_manager = ActionHistoryManager()
-        actions = []
-        async for action in node.execute_stream(action_manager):
-            actions.append(action)
+        await run_skill_stream(node, action_manager)
 
         all_actions = action_manager.get_actions()
         assert len(all_actions) >= 2, f"Expected at least 2 actions, got {len(all_actions)}"
