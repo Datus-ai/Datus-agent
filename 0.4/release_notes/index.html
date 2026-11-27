@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/0.4/release_notes/">
       
       
         <link rel="prev" href="../vscode_extension/introduction/">
@@ -16,9 +16,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -55,13 +55,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/0.4/release_notes/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/release_notes/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/release_notes/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/release_notes/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -2218,6 +2212,8 @@
       
         
       
+        
+      
     
     
     
@@ -2276,6 +2272,34 @@
     
   
     Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gateway/wecom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WeCom
   
 
     
@@ -3366,10 +3390,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -4044,62 +4064,6 @@
     
   
     SAP HANA
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../configuration/datasources/gaussdb/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    GaussDB / openGauss
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../configuration/datasources/dws/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    GaussDB(DWS)
   
 
     
@@ -4910,6 +4874,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#046" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.4.6
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#045" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5320,6 +5295,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#046" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.4.6
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#045" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5700,7 +5686,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/release_notes.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.6/docs/release_notes.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5710,6 +5696,33 @@
 
 <h1 id="release-notes">Release notes<a class="headerlink" href="#release-notes" title="Permanent link">&para;</a></h1>
 <h2 id="04">0.4<a class="headerlink" href="#04" title="Permanent link">&para;</a></h2>
+<h3 id="046">0.4.6<a class="headerlink" href="#046" title="Permanent link">&para;</a></h3>
+<p><strong>New Features</strong></p>
+<ul>
+<li><strong>Define Subagents in Project Configuration and Plugins</strong> - Combine prompts, tools, skills, and MCP, and discover and run these subagents from the CLI. The new <code>configurable</code> type requires explicit scopes for business data and project files. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1667">#1667</a>) Docs: <a href="https://docs.datus.ai/dev/subagent/configurable_subagent/">Configurable Subagents</a>.</li>
+<li><strong>Explain Metric Changes by Formula and Dimension</strong> - <code>attribute_metrics</code> breaks down the contributions of formula inputs. <code>attribute_dimensions</code> groups contributions by dimension and supports multi-level drill-down. This release upgrades the Dosi engine to 0.2.2. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1642">#1642</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1665">#1665</a>) Docs: <a href="https://docs.datus.ai/dev/subagent/ask_metrics/">AskMetrics</a>.</li>
+<li><strong>Discover Views in the Datasource Catalog</strong> - The catalog distinguishes tables, views, and materialized views supported by the connector. Chat preserves the selected object's fully qualified path and respects the subagent's access scope. If view enumeration fails, the catalog still shows available tables and marks the result as incomplete. StarRocks 0.1.14 distinguishes listing failures from successful empty results. User documentation is missing. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1691">Agent #1691</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/201">DB #201</a>)</li>
+</ul>
+<p><strong>Enhancements</strong></p>
+<ul>
+<li><strong>Set a Timeout for a Single <code>SELECT</code></strong> - On supported connectors, the <code>timeout</code> argument to <code>execute_sql</code> sets the time limit for one read statement, in seconds. Ordinary SQLite and DuckDB reads can also be interrupted when the default tool deadline expires. If that deadline expires while waiting for a connection lock, the tool does not submit the SQL. See the upgrade notes for adapter versions. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1690">Agent #1690</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1694">Agent #1694</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/200">DB #200</a>) Docs: <a href="https://docs.datus.ai/dev/tools/query_exports/#wait-longer-for-a-select">Query Timeouts</a>.</li>
+<li><strong>Show More Rows in SQL Result Previews</strong> - The <code>execute_sql</code> row truncation threshold rises from 20 to 50. Results with more than 50 rows show the first and last 10 rows by default, subject to a compression budget of approximately 2,048 tokens per call. User documentation is missing. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1693">#1693</a>)</li>
+<li><strong>Limit Each Query Export to 100,000 Rows and 100 MB</strong> - <code>export_query</code> stops the entire export if either limit is exceeded. Reduce any existing settings above these limits. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1634">#1634</a>) Docs: <a href="https://docs.datus.ai/dev/tools/query_exports/">Query Result Exports</a>.</li>
+<li><strong>Support Larger Persistent Memory Files and Concurrent Writes</strong> - Writes to <code>MEMORY.md</code> are serialized per file to prevent concurrent updates from overwriting one another. The Agent warns that memory should be consolidated above 20,000 bytes and rejects writes that would grow the file beyond 25,000 bytes. Hand-edited files above the limit are loaded up to the last complete line that fits. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1697">#1697</a>) Docs: <a href="https://docs.datus.ai/dev/integration/memory/">Persistent Memory</a>.</li>
+<li><strong>Continue the Conversation After a Tool Call Is Denied</strong> - A call denied by the user or policy returns an error for that call. Other authorized calls in the batch and subsequent reasoning can continue. <code>datus --print</code> also explains permission handling in unattended mode. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1669">#1669</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1579">#1579</a>) Docs: <a href="https://docs.datus.ai/dev/cli/introduction/">CLI</a>.</li>
+<li><strong>Support Custom OpenAI-Compatible Embedding Services</strong> - Set the vector width explicitly for a custom model and separately control whether to send the <code>dimensions</code> parameter to the API. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1633">#1633</a>) Docs: <a href="https://docs.datus.ai/dev/configuration/storage/">Storage Configuration</a>.</li>
+</ul>
+<p><strong>Bug Fixes</strong></p>
+<ul>
+<li><strong>Keep Messages and Subagent Steps Available After Context Compaction</strong> - Sessions created after the upgrade archive compacted history. The history API can restore subagent steps from that archive. The CLI also fixes repeatedly nested action history that slowed down the end of each turn. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1681">#1681</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1682">#1682</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1649">#1649</a>)</li>
+<li><strong>Fix Semantic Model Publishing, Review, and Diagnostics</strong> - Concurrent publishing no longer deadlocks the workspace. Reviews preserve existing metrics when proposing new ones. If the model returns a compilation diagnostic as a blocker code, it gets one attempt to fix the model, and the original diagnostic is preserved if that attempt fails. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1672">#1672</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1668">#1668</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1692">#1692</a>)</li>
+</ul>
+<p><strong>Upgrade Notes</strong></p>
+<ul>
+<li><strong>Update Custom Attribution Configuration</strong> - Replace <code>semantic_tools.attribution_analyze</code> with <code>semantic_tools.attribute_metrics</code> and <code>semantic_tools.attribute_dimensions</code>. The legacy tool name and permission rules are mapped during the transition. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1642">#1642</a>) Docs: <a href="https://docs.datus.ai/dev/subagent/ask_metrics/">AskMetrics</a>.</li>
+<li><strong>Check Existing Export Settings</strong> - <code>bulk_query.max_rows</code> is capped at 100,000 and <code>bulk_query.max_bytes</code> at 100,000,000. Reduce any settings above these limits. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1634">#1634</a>) Docs: <a href="https://docs.datus.ai/dev/tools/query_exports/">Query Result Exports</a>.</li>
+<li><strong>Use Compatible Agent and Adapter Versions for Per-Query <code>SELECT</code> Timeouts</strong> - PyPI provides <code>datus-db-core</code> 0.1.12 and <code>datus-sqlalchemy</code> 0.1.14. The released adapter versions are MySQL 0.1.12, StarRocks 0.1.14, Doris 0.1.5, PostgreSQL 0.1.13, ClickHouse 0.1.6, Hive 0.1.6, and Spark 0.1.6. The built-in SQLite and DuckDB connectors require <code>datus-db-core</code> 0.1.12 or later for an explicit timeout. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1690">Agent #1690</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/200">DB #200</a>) <a href="https://pypi.org/project/datus-db-core/0.1.12/">datus-db-core on PyPI</a>. Docs: <a href="https://docs.datus.ai/dev/tools/query_exports/#wait-longer-for-a-select">Query Timeouts</a>.</li>
+</ul>
 <h3 id="045">0.4.5<a class="headerlink" href="#045" title="Permanent link">&para;</a></h3>
 <p><strong>New Features</strong></p>
 <ul>

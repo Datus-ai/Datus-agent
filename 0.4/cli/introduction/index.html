@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/0.4/cli/introduction/">
       
       
         <link rel="prev" href="../../getting_started/dashboard_copilot/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/0.4/cli/introduction/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/cli/introduction/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/cli/introduction/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/cli/introduction/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -910,6 +904,17 @@
     <span class="md-ellipsis">
       
         Getting Started
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unattended-print-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unattended Print Mode
       
     </span>
   </a>
@@ -2340,6 +2345,8 @@
       
         
       
+        
+      
     
     
     
@@ -2398,6 +2405,34 @@
     
   
     Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../gateway/wecom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WeCom
   
 
     
@@ -3488,10 +3523,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -4166,62 +4197,6 @@
     
   
     SAP HANA
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/datasources/gaussdb/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    GaussDB / openGauss
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/datasources/dws/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    GaussDB(DWS)
   
 
     
@@ -5072,6 +5047,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#unattended-print-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unattended Print Mode
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5089,7 +5075,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/cli/introduction.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.6/docs/cli/introduction.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5141,6 +5127,42 @@
 <p>You first need to install and initialize Datus-CLI through the installation process, and then you can start Datus-CLI by running:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>datus-cli<span class="w"> </span>--datasource<span class="w"> </span>duckdb-demo
 </span></code></pre></div>
+<h2 id="unattended-print-mode">Unattended Print Mode<a class="headerlink" href="#unattended-print-mode" title="Permanent link">&para;</a></h2>
+<p><code>datus --print</code> streams JSON lines to stdout. Its default execution mode is
+<code>workflow</code>, which cannot ask a person to approve a tool call. Choose a permission
+profile explicitly when running unattended jobs:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>datus<span class="w"> </span>--datasource<span class="w"> </span>duckdb-demo<span class="w"> </span>--print<span class="w"> </span><span class="s2">"Summarize the tree table"</span><span class="w"> </span>--permission-mode<span class="w"> </span>auto
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Profile</th>
+<th>Behavior in non-interactive print mode</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>normal</code> (default when not configured)</td>
+<td>Allow rules run directly. ASK calls without automatic approval fail with <code>PERMISSION_DENIED</code>; AI review is disabled by default.</td>
+</tr>
+<tr>
+<td><code>auto</code></td>
+<td>Enable AI review for eligible Bash/SQL ASK calls. Review can allow or deny a call; unavailable, timed-out, or inconclusive review still fails closed.</td>
+</tr>
+<tr>
+<td><code>dangerous</code></td>
+<td>Allow actions by default, without AI review. This is a broad permission grant; explicit deny rules and non-interactive filesystem protections still apply.</td>
+</tr>
+</tbody>
+</table>
+<p>The selected profile comes from <code>permissions.profile</code> in <code>agent.yml</code> unless
+overridden by <code>--permission-mode</code>. User and node permission overrides can change
+review settings. Print mode warns on stderr before execution when the effective
+<code>normal</code> profile has both shared AI review and the legacy Bash classifier disabled.
+The warning leaves stdout available for JSON consumers and does not change permissions.</p>
+<p>For a program that can answer approval requests, use <code>--execution-mode interactive</code>
+and implement the stdin/stdout interaction protocol instead. <code>auto</code> does not
+provide automatic approval for every tool or bypass explicit denials.</p>
 
 
 

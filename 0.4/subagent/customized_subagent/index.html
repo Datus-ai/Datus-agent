@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/0.4/subagent/customized_subagent/">
       
       
         <link rel="prev" href="../builtin_subagents/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/0.4/subagent/customized_subagent/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/subagent/customized_subagent/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/subagent/customized_subagent/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/subagent/customized_subagent/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -2401,6 +2395,8 @@
       
         
       
+        
+      
     
     
     
@@ -2459,6 +2455,34 @@
     
   
     Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../gateway/wecom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WeCom
   
 
     
@@ -3549,10 +3573,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -4227,62 +4247,6 @@
     
   
     SAP HANA
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/datasources/gaussdb/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    GaussDB / openGauss
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/datasources/dws/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    GaussDB(DWS)
   
 
     
@@ -5211,7 +5175,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/subagent/customized_subagent.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.6/docs/subagent/customized_subagent.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5220,6 +5184,7 @@
 
 
 <h1 id="customized-subagents">Customized Subagents<a class="headerlink" href="#customized-subagents" title="Permanent link">&para;</a></h1>
+<p>For generic definitions with explicit skills, tools, MCP and <code>scoped_context</code>, or private plugin runtimes, see <a href="../configurable_subagent/">Configurable subagents</a>. The TUI workflow below manages existing typed custom agents.</p>
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
 <p>Both <code>/agent</code> and <code>/subagent</code> open the <strong>unified agent management TUI</strong>. The TUI has two tabs:</p>
 <ul>
@@ -5234,7 +5199,6 @@
 <li>A new entry under <code>agent.agentic_nodes</code></li>
 <li>A prompt template file named like <code>{agent_name}_system_{prompt_version}.j2</code></li>
 </ol>
-<p><code>gen_report</code> is no longer available. Configurations referencing it return a subagent-not-found error and recommend <code>gen_visual_report</code>.</p>
 <p>The wizard currently supports three custom node styles:</p>
 <ul>
 <li><code>gen_sql</code> (default)</li>

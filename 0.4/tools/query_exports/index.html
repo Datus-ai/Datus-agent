@@ -8,15 +8,15 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/0.4/tools/query_exports/">
       
       
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -53,12 +53,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/0.4/tools/query_exports/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/tools/query_exports/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/tools/query_exports/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -2213,6 +2208,8 @@
       
         
       
+        
+      
     
     
     
@@ -2271,6 +2268,34 @@
     
   
     Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../gateway/wecom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WeCom
   
 
     
@@ -3361,10 +3386,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -4039,62 +4060,6 @@
     
   
     SAP HANA
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/datasources/gaussdb/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    GaussDB / openGauss
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/datasources/dws/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    GaussDB(DWS)
   
 
     
@@ -4880,6 +4845,28 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#wait-longer-for-a-select" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wait longer for a SELECT
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#export-result-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export result metadata
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#excel-matching-workflow" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4929,7 +4916,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/tools/query_exports.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.6/docs/tools/query_exports.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4958,6 +4945,27 @@ Exports require a server-side project workspace. VS Code sessions whose
 workspace lives on the client are refused before querying or writing files.
 SQL-file inputs are limited to 16 MiB, including permission inspection, and
 must resolve to regular project files.</p>
+<h2 id="wait-longer-for-a-select">Wait longer for a SELECT<a class="headerlink" href="#wait-longer-for-a-select" title="Permanent link">&para;</a></h2>
+<p>Agent <code>execute_sql</code> accepts an optional positive integer <code>timeout</code> in seconds for
+MySQL, TiDB, StarRocks, Doris, PostgreSQL, Greenplum, Apache Hive, Spark,
+ClickHouse, Trino, SQLite, and DuckDB. The first rollout covers the Docker
+development editions and embedded databases. Use <code>timeout</code> on a known slow
+SELECT when the deployment allows a longer wait.</p>
+<p>The Agent waits for at most the requested time and the adapter replaces the
+datasource's default query timeout for that SELECT. SQL-level settings and hints
+follow the database's own precedence rules and can take precedence over the
+adapter's value. Leave out timeout hints or settings in the SQL when relying on
+the tool argument.</p>
+<p>With no value, the Agent waits at most 300 seconds and the adapter uses its
+datasource settings. Set <code>DATUS_SQL_TOOL_MAX_TIMEOUT_SECONDS</code> on the Agent process
+to allow values above 300. Driver and server limits can still end the query
+sooner. If the Agent's wait expires, the tool returns an error and the
+conversation can continue while the database may still be running the query.</p>
+<p>The tool exposes the argument when an installed connector for an available
+datasource supports it. Built-in SQLite and DuckDB require
+<code>datus-db-core&gt;=0.1.12</code>. For other databases, install an adapter release that
+supports per-query timeouts and its required dependencies.</p>
+<h2 id="export-result-metadata">Export result metadata<a class="headerlink" href="#export-result-metadata" title="Permanent link">&para;</a></h2>
 <p>The tool returns only a project-relative path, byte/row counts, SQL hashes,
 policy scope and completion status. Query rows never enter the tool response.
 SQL read permissions and the uploads catalog file-access restrictions also apply
@@ -4995,11 +5003,16 @@ instead of overwriting them or silently incorporating them into the merge.</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">bulk_query</span><span class="p">:</span>
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">batch_rows</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5000</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">max_rows</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1000000</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nt">max_bytes</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1073741824</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">max_rows</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100000</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nt">max_bytes</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100000000</span>
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span><span class="nt">max_batch_bytes</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">33554432</span>
 </span></code></pre></div>
-<p>These limits apply to file exports during source consumption and staging,
+<p>Each export has hard ceilings of <strong>100,000 rows</strong> and <strong>100 MB (100,000,000 bytes)</strong>.
+Configuration may lower <code>max_rows</code> and <code>max_bytes</code>; values above these ceilings
+are rejected. Exceeding either limit fails the entire export without truncating
+the result. Size checks cover source Arrow data, staging data and the final
+CSV/Parquet file, so a compressed file below 100 MB can still exceed the data limit.</p>
+<p>These limits apply during source consumption, staging and output serialization,
 before output publication. For buffered reads, source row/byte limits can only
 be checked after the full result arrives; they do not cap the driver's peak
 memory allocation. Failed/cancelled exports do not publish a successful

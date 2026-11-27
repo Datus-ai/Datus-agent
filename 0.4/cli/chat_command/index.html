@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/0.4/cli/chat_command/">
       
       
         <link rel="prev" href="../introduction/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/0.4/cli/chat_command/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/cli/chat_command/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/cli/chat_command/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/cli/chat_command/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -2418,6 +2412,8 @@
       
         
       
+        
+      
     
     
     
@@ -2476,6 +2472,34 @@
     
   
     Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../gateway/wecom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WeCom
   
 
     
@@ -3566,10 +3590,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -4244,62 +4264,6 @@
     
   
     SAP HANA
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/datasources/gaussdb/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    GaussDB / openGauss
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/datasources/dws/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    GaussDB(DWS)
   
 
     
@@ -5245,7 +5209,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/cli/chat_command.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.6/docs/cli/chat_command.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5277,7 +5241,7 @@
 <hr />
 <h2 id="3-advanced-features">3. Advanced Features<a class="headerlink" href="#3-advanced-features" title="Permanent link">&para;</a></h2>
 <h3 id="metric-queries-and-attribution">Metric Queries and Attribution<a class="headerlink" href="#metric-queries-and-attribution" title="Permanent link">&para;</a></h3>
-<p>Chat can directly discover and query existing semantic metrics and run attribution with <code>list_metrics</code>, <code>get_metric</code>, <code>get_dataset</code>, <code>query_metrics</code>, and <code>attribution_analyze</code>. Follow-up questions and longer analysis stay in the same chat; these capabilities do not require an AskMetrics handoff.</p>
+<p>Chat can directly discover and query existing semantic metrics and run attribution with <code>list_metrics</code>, <code>get_metric</code>, <code>get_dataset</code>, <code>query_metrics</code>, <code>attribute_metrics</code> and <code>attribute_dimensions</code>. Follow-up questions and longer analysis stay in the same chat; these capabilities do not require an AskMetrics handoff.</p>
 <p>For complete tables, chat continues <code>query_metrics</code> with the same <code>result_id</code>, the next <code>offset</code> and a <code>page_size</code>. It can also read bounded cached pages with <code>get_query_metrics_result</code>. Both paths read the existing cache without rerunning the query; cached rows remain subject to the current policy, datasource and metric scope.</p>
 <p>When no suitable metric exists, chat can generate and execute read-only SQL using available schema and business knowledge. A missing metric does not require creating one. Metric authoring starts only when you explicitly request creating or changing definitions.</p>
 <p>Use AskMetrics or another scoped business agent when you select its particular context or published interface. Its configured tool and data permissions continue to apply. A non-empty chat <code>tools</code> allowlist replaces the defaults; add the desired <code>semantic_tools.&lt;method&gt;</code> entries to enable metric capabilities in an existing allowlist. Omitting <code>tools</code> or setting <code>tools: []</code> uses the default tools.</p>

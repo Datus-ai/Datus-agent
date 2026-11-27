@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/0.4/configuration/datasources/postgresql/">
       
       
         <link rel="prev" href="../mysql/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/0.4/configuration/datasources/postgresql/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/configuration/datasources/postgresql/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/configuration/datasources/postgresql/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/configuration/datasources/postgresql/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -2225,6 +2219,8 @@
       
         
       
+        
+      
     
     
     
@@ -2283,6 +2279,34 @@
     
   
     Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../gateway/wecom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WeCom
   
 
     
@@ -3377,10 +3401,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -4196,62 +4216,6 @@
     
   
     SAP HANA
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../gaussdb/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    GaussDB / openGauss
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../dws/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    GaussDB(DWS)
   
 
     
@@ -5147,7 +5111,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/configuration/datasources/postgresql.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.6/docs/configuration/datasources/postgresql.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5338,7 +5302,7 @@
 </span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="nt">connect_timeout_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span>
 </span></code></pre></div>
 <p>Both <code>aurora: true</code> and <code>auth_mode: iam</code> require an explicit CA path. When omitted, <code>sslmode</code> becomes <code>verify-full</code>; explicitly selecting another mode is rejected. IAM tokens are generated for new physical connections. Password authentication can instead use <code>secret_ref</code> with <code>auth_mode: password</code>: the Secret must contain a JSON <code>password</code> string, and any <code>username</code> must match the configured role. Secret refresh follows the TTL and changed versions dispose old pools before new checkouts. Enable the matching server-side IAM login and AWS permissions separately.</p>
-<p><a href="../gaussdb/">GaussDB</a> and <a href="../dws/">DWS</a> use separate adapters and certificate constraints. Follow their datasource pages; the PostgreSQL <code>verify-full</code> template does not establish hostname verification for those products.</p>
+<p>GaussDB and DWS use separate adapters and certificate constraints; the PostgreSQL <code>verify-full</code> template does not establish hostname verification for those products.</p>
 <p>The configured <code>database</code> is the initial PostgreSQL database and <code>schema</code> defaults to <code>public</code>. Datus filters system databases/schemas during normal discovery. Access to additional databases still depends on network reachability and role permissions.</p>
 <h2 id="verify-the-connection">Verify the connection<a class="headerlink" href="#verify-the-connection" title="Permanent link">&para;</a></h2>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>warehouse_pg
