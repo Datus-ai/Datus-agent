@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/0.4/release_notes/">
       
       
         <link rel="prev" href="../vscode_extension/introduction/">
@@ -16,9 +16,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -55,13 +55,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/0.4/release_notes/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/release_notes/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/release_notes/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/release_notes/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -2218,6 +2212,8 @@
       
         
       
+        
+      
     
     
     
@@ -2276,6 +2272,34 @@
     
   
     介绍
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gateway/wecom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WeCom
   
 
     
@@ -4910,6 +4934,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#046" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.4.6
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#045" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5320,6 +5355,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#046" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.4.6
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#045" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5700,7 +5746,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/release_notes.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.6/docs/release_notes.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5710,6 +5756,33 @@
 
 <h1 id="_1">发布说明<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
 <h2 id="04">0.4<a class="headerlink" href="#04" title="Permanent link">&para;</a></h2>
+<h3 id="046">0.4.6<a class="headerlink" href="#046" title="Permanent link">&para;</a></h3>
+<p><strong>新功能</strong></p>
+<ul>
+<li><strong>通过项目配置和插件定义子代理。</strong> 可组合提示词、工具、Skill 和 MCP，并在 CLI 发现和调用。使用新的 <code>configurable</code> 类型时，需要显式授权业务数据和项目文件范围。(<a href="https://github.com/Datus-ai/Datus-agent/pull/1667">#1667</a>) 文档：<a href="https://docs.datus.ai/dev/subagent/configurable_subagent/">配置指南</a>。</li>
+<li><strong>按公式和维度解释指标变化。</strong> <code>attribute_metrics</code> 拆解各公式输入的贡献，<code>attribute_dimensions</code> 按维度分组并支持多级下钻。Dosi 引擎升级到 0.2.2。(<a href="https://github.com/Datus-ai/Datus-agent/pull/1642">#1642</a>、<a href="https://github.com/Datus-ai/Datus-agent/pull/1665">#1665</a>) 文档：<a href="https://docs.datus.ai/zh/dev/subagent/ask_metrics/">指标问答</a>。</li>
+<li><strong>数据源目录可发现视图。</strong> 目录区分表、视图及连接器支持的物化视图，Chat 可保留所选对象的完整路径和子代理的访问范围。视图枚举失败时仍展示已有表，并标记目录结果不完整。StarRocks 0.1.14 支持区分枚举失败和确实没有视图。用户文档缺失。(<a href="https://github.com/Datus-ai/Datus-agent/pull/1691">Agent #1691</a>、<a href="https://github.com/Datus-ai/datus-db-adapters/pull/201">DB #201</a>)</li>
+</ul>
+<p><strong>增强</strong></p>
+<ul>
+<li><strong>单条 <code>SELECT</code> 可指定超时。</strong> 在支持的连接器上，<code>execute_sql</code> 的 <code>timeout</code> 参数按秒设置单条读取语句的时限。SQLite 和 DuckDB 的普通读取也能在默认工具时限到期时中断执行，等待连接锁超时则不会提交 SQL。适配器版本见升级说明。(<a href="https://github.com/Datus-ai/Datus-agent/pull/1690">Agent #1690</a>、<a href="https://github.com/Datus-ai/Datus-agent/pull/1694">Agent #1694</a>、<a href="https://github.com/Datus-ai/datus-db-adapters/pull/200">DB #200</a>) 文档：<a href="https://docs.datus.ai/dev/tools/query_exports/#wait-longer-for-a-select">超时说明</a>。</li>
+<li><strong>SQL 结果预览可展示更多行。</strong> <code>execute_sql</code> 的行数截断门槛从 20 提到 50。结果超过 50 行时默认取首尾各 10 行，随后仍按每次调用约 2,048 token 的预算压缩。用户文档缺失。(<a href="https://github.com/Datus-ai/Datus-agent/pull/1693">#1693</a>)</li>
+<li><strong>单次查询导出上限为 10 万行、100 MB。</strong> <code>export_query</code> 超过任一上限会终止整次导出，已有超限配置需要调低。(<a href="https://github.com/Datus-ai/Datus-agent/pull/1634">#1634</a>) 文档：<a href="https://docs.datus.ai/dev/tools/query_exports/">查询导出</a>。</li>
+<li><strong>持久记忆支持更大的文件和并发写入。</strong> <code>MEMORY.md</code> 的写入按文件串行处理，避免并发更新互相覆盖。超过 20,000 字节会提示整理，Agent 拒绝把文件写大到 25,000 字节以上。手工编辑超限时，载入的记忆按完整行截断。(<a href="https://github.com/Datus-ai/Datus-agent/pull/1697">#1697</a>) 文档：<a href="https://docs.datus.ai/zh/dev/integration/memory/">持久记忆</a>。</li>
+<li><strong>工具被拒绝后，对话可以继续。</strong> 被用户或策略拒绝的调用返回单次失败，同批获准调用及后续推理仍能继续。<code>datus --print</code> 增加无人值守模式的权限提示。(<a href="https://github.com/Datus-ai/Datus-agent/pull/1669">#1669</a>、<a href="https://github.com/Datus-ai/Datus-agent/pull/1579">#1579</a>) 文档：<a href="https://docs.datus.ai/zh/dev/cli/introduction/">CLI 文档</a>。</li>
+<li><strong>支持自定义 OpenAI-compatible Embedding 服务。</strong> 可以显式配置自定义模型的向量维度，并单独决定是否向接口发送 <code>dimensions</code> 参数。(<a href="https://github.com/Datus-ai/Datus-agent/pull/1633">#1633</a>) 文档：<a href="https://docs.datus.ai/zh/dev/configuration/storage/">存储配置</a>。</li>
+</ul>
+<p><strong>Bug 修复</strong></p>
+<ul>
+<li><strong>长对话压缩后仍能回看消息和子代理步骤。</strong> 升级后新建的会话会归档被压缩的历史，历史接口可恢复归档中的子代理步骤。CLI 也修复了操作记录不断嵌套、拖慢每轮收尾的问题。(<a href="https://github.com/Datus-ai/Datus-agent/pull/1681">#1681</a>、<a href="https://github.com/Datus-ai/Datus-agent/pull/1682">#1682</a>、<a href="https://github.com/Datus-ai/Datus-agent/pull/1649">#1649</a>)</li>
+<li><strong>修复语义建模发布卡死、审阅误报和诊断丢失。</strong> 并发发布避免锁死工作区，审阅新增指标时保留原有指标。模型把编译诊断误填为阻塞码时可尝试修复一次，失败仍会保留原始诊断。(<a href="https://github.com/Datus-ai/Datus-agent/pull/1672">#1672</a>、<a href="https://github.com/Datus-ai/Datus-agent/pull/1668">#1668</a>、<a href="https://github.com/Datus-ai/Datus-agent/pull/1692">#1692</a>)</li>
+</ul>
+<p><strong>升级说明</strong></p>
+<ul>
+<li><strong>检查自定义归因配置。</strong> 将 <code>semantic_tools.attribution_analyze</code> 更新为 <code>semantic_tools.attribute_metrics</code> 和 <code>semantic_tools.attribute_dimensions</code>。旧工具名和权限规则有过渡映射。(<a href="https://github.com/Datus-ai/Datus-agent/pull/1642">#1642</a>) 文档：<a href="https://docs.datus.ai/zh/dev/subagent/ask_metrics/">指标问答</a>。</li>
+<li><strong>检查已有导出配置。</strong> <code>bulk_query.max_rows</code> 最大为 100,000，<code>bulk_query.max_bytes</code> 最大为 100,000,000，超过上限的配置需要调低。(<a href="https://github.com/Datus-ai/Datus-agent/pull/1634">#1634</a>) 文档：<a href="https://docs.datus.ai/dev/tools/query_exports/">查询导出</a>。</li>
+<li><strong>单条 <code>SELECT</code> 超时需要相应的 Agent 和适配器版本。</strong> PyPI 已有 <code>datus-db-core</code> 0.1.12、<code>datus-sqlalchemy</code> 0.1.14，以及 MySQL 0.1.12、StarRocks 0.1.14、Doris 0.1.5、PostgreSQL 0.1.13、ClickHouse／Hive／Spark 0.1.6。Agent 内置的 SQLite 和 DuckDB 使用 <code>datus-db-core</code> 0.1.12 或更高版本提供显式超时参数。(<a href="https://github.com/Datus-ai/Datus-agent/pull/1690">Agent #1690</a>、<a href="https://github.com/Datus-ai/datus-db-adapters/pull/200">DB #200</a>) <a href="https://pypi.org/project/datus-db-core/0.1.12/">PyPI · datus-db-core</a>。 文档：<a href="https://docs.datus.ai/dev/tools/query_exports/#wait-longer-for-a-select">超时说明</a>。</li>
+</ul>
 <h3 id="045">0.4.5<a class="headerlink" href="#045" title="Permanent link">&para;</a></h3>
 <p><strong>新功能</strong></p>
 <ul>

@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/0.4/integration/memory/">
       
       
         <link rel="prev" href="../validation/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/0.4/integration/memory/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/integration/memory/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/integration/memory/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/integration/memory/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -2225,6 +2219,8 @@
       
         
       
+        
+      
     
     
     
@@ -2283,6 +2279,34 @@
     
   
     介绍
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../gateway/wecom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WeCom
   
 
     
@@ -5255,7 +5279,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/integration/memory.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.6/docs/integration/memory.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5266,12 +5290,12 @@
 <h1 id="auto-memory">Auto Memory<a class="headerlink" href="#auto-memory" title="Permanent link">&para;</a></h1>
 <p>Auto Memory 是 Datus-agent 的持久化记忆系统，使 Agent 能够跨对话自动保留有价值的信息。该机制完全基于文件和 prompt 驱动，无需向量数据库或 embedding。</p>
 <h2 id="_1">概述<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<p>用户与 Agent 交互时，Agent 能够自动识别有价值的信息，并将其持久化到工作目录下的单个 Markdown 文件中。在后续对话中，这份记忆会被完整自动加载，使 Agent 能够回忆先前的上下文。</p>
+<p>用户与 Agent 交互时，Agent 能够自动识别有价值的信息，并将其持久化到工作目录下的单个 Markdown 文件中。在后续对话中，Agent 会自动加载记忆，以回忆先前的上下文。</p>
 <p><strong>核心特征：</strong></p>
 <ul>
 <li><strong>纯文件存储</strong>：记忆以单个 Markdown 文件（<code>MEMORY.md</code>）形式存储</li>
 <li><strong>专用工具</strong>：记忆只能通过 <code>add_memory</code> / <code>edit_memory</code> 写入，通用文件系统工具无法访问记忆目录</li>
-<li><strong>硬字节上限</strong>：单个扁平文件，上限 <strong>2000 字节</strong>，没有主题子文件、没有索引，因此整份记忆始终能放进 system prompt</li>
+<li><strong>20 KB 软上限，25 KB 硬上限</strong>。超过 20 KB 时会提示 Agent 整理记忆。Agent 的写入如果会让文件超过 25 KB，会被拒绝，因此文件不会超出系统提示词能显示的范围。例外是手动编辑到超过 25 KB 的文件：缩小文件的编辑仍然允许，但改动可能落在提示词显示范围之外。</li>
 <li><strong>按 subagent 隔离</strong>：每个 subagent 拥有独立的记忆目录</li>
 <li><strong>零配置</strong>：无需额外设置，符合条件的 Agent 自动启用</li>
 </ul>
@@ -5281,7 +5305,7 @@
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>└── .datus/
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    └── memory/
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>        ├── chat/                       # 内置 chat agent
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>        │   └── MEMORY.md              # 单文件，自动加载（≤2000 字节）
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>        │   └── MEMORY.md              # 单文件，自动加载
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>        └── my_custom_agent/           # 自定义 subagent
 </span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>            └── MEMORY.md
 </span></code></pre></div>
@@ -5319,11 +5343,12 @@
 <h2 id="_3">单文件记忆<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <p>每个 Agent 的记忆是一个扁平的 <code>MEMORY.md</code> 文件：</p>
 <ul>
-<li>每次对话开始时<strong>完整自动加载</strong>到 Agent 上下文</li>
-<li>上限 <strong>2000 字节</strong>，专用工具会拒绝任何会超限的写入；外部编辑导致超限的文件会在加载时被截断</li>
+<li>生成系统提示词时自动加载记忆。文件在 <strong>25 KB（25,000 个 UTF-8 字节）</strong>以内时完整注入。</li>
+<li>文件超过 <strong>20 KB（20,000 个 UTF-8 字节）</strong>时，提示词会要求 Agent 合并重复条目、删掉过时内容，直到文件小于 20 KB。手动编辑后的文件也一样。</li>
+<li>只有手动编辑才会让文件超过 25 KB。这时提示词只放入前面能完整放下的若干行，并标明内容不完整。</li>
 <li>适合存储简洁、稳定的事实：用户偏好、关键项目决策、外部系统引用</li>
 </ul>
-<p>没有主题子文件、也没有索引——请保持条目简短，使整份文件始终在上限以内。</p>
+<p>条目尽量简短，以减少每次对话加载的内容。</p>
 <h2 id="_4">记忆工具<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
 <p>Agent 通过两个专用工具维护记忆：</p>
 <table>
@@ -5344,7 +5369,7 @@
 </tr>
 </tbody>
 </table>
-<p>当 <code>add_memory</code> 会使文件超过 2000 字节时，写入会被拒绝并提示先释放空间；Agent 随后用 <code>edit_memory</code> 删掉一条过时记忆再重试。</p>
+<p>两个工具会依次处理不同会话和进程对同一文件的写入。如果要替换的文字已被改掉，或匹配到多处，编辑会报错并保留原文件。工具结果只返回 <code>used_bytes</code> 和 <code>remaining_budget</code>，不返回文件内容。写入超过 20 KB 时仍会成功，结果附带 <code>warning</code>；达到或超过这个阈值时，<code>remaining_budget</code> 为零。如果写入会让文件超过 25 KB，就会被拒绝，文件保持不变；让文件变小的编辑始终允许。</p>
 <h2 id="_5">使用方式<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
 <h3 id="agent_1">让 Agent 记住信息<a class="headerlink" href="#agent_1" title="Permanent link">&para;</a></h3>
 <p>直接用自然语言告诉 Agent：</p>
@@ -5431,10 +5456,10 @@
 </span></code></pre></div>
 <h2 id="_9">最佳实践<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
 <ol>
-<li><strong>保持条目简洁</strong>：整份文件上限 2000 字节，每条事实一行短句</li>
+<li><strong>保持条目简洁</strong>。每条事实尽量用一行短句。</li>
 <li><strong>定期清理</strong>：过时或错误的记忆应及时让 Agent 删除或更正以释放空间</li>
 <li><strong>善用显式请求</strong>：重要信息直接告诉 Agent "记住这个"，确保被持久化</li>
-<li><strong>手动编辑也可以</strong>：记忆文件是普通 Markdown，随时可手动查看和修改（注意保持在 2000 字节以内）</li>
+<li><strong>也可以手动编辑</strong>。请在 Agent 未写入时修改 Markdown 文件，避免覆盖刚保存的内容。</li>
 </ol>
 
 

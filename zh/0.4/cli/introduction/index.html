@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/0.4/cli/introduction/">
       
       
         <link rel="prev" href="../../getting_started/dashboard_copilot/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/0.4/cli/introduction/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/cli/introduction/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/cli/introduction/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/cli/introduction/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -910,6 +904,17 @@
     <span class="md-ellipsis">
       
         快速上手
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#print" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        无人值守的 Print 模式
       
     </span>
   </a>
@@ -2340,6 +2345,8 @@
       
         
       
+        
+      
     
     
     
@@ -2398,6 +2405,34 @@
     
   
     介绍
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../gateway/wecom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WeCom
   
 
     
@@ -5072,6 +5107,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#print" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        无人值守的 Print 模式
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5089,7 +5135,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/cli/introduction.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.6/docs/cli/introduction.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5140,6 +5186,39 @@
 <p>完成安装与初始化后，可通过以下方式启动 Datus-CLI：</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>datus-cli<span class="w"> </span>--datasource<span class="w"> </span>duckdb-demo
 </span></code></pre></div>
+<h2 id="print">无人值守的 Print 模式<a class="headerlink" href="#print" title="Permanent link">&para;</a></h2>
+<p><code>datus --print</code> 向 stdout 输出 JSON 行，默认使用无法向用户请求批准的
+<code>workflow</code> 执行模式。运行无人值守任务时，可明确指定权限档位：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>datus<span class="w"> </span>--datasource<span class="w"> </span>duckdb-demo<span class="w"> </span>--print<span class="w"> </span><span class="s2">"汇总 tree 表的数据"</span><span class="w"> </span>--permission-mode<span class="w"> </span>auto
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th>非交互 Print 模式下的行为</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>normal</code>（未配置时的默认值）</td>
+<td>允许规则命中的调用直接运行；未获自动批准的 ASK 调用以 <code>PERMISSION_DENIED</code> 失败。默认关闭 AI 复核。</td>
+</tr>
+<tr>
+<td><code>auto</code></td>
+<td>对符合条件的 Bash/SQL ASK 调用启用 AI 复核。复核可允许或拒绝调用；复核不可用、超时或无法确定时仍拒绝执行。</td>
+</tr>
+<tr>
+<td><code>dangerous</code></td>
+<td>默认允许操作，不经过 AI 复核。这会授予较广权限；显式拒绝规则及非交互模式的文件系统保护仍然生效。</td>
+</tr>
+</tbody>
+</table>
+<p>权限档位读取自 <code>agent.yml</code> 的 <code>permissions.profile</code>，也可通过
+<code>--permission-mode</code> 覆盖。用户及节点配置可覆盖复核设置。当节点实际生效的
+<code>normal</code> 档位同时关闭通用 AI 复核和旧版 Bash 分类器时，Print 模式会在执行前
+向 stderr 输出提示。该提示不影响 stdout 的 JSON 输出，也不改变权限设置。</p>
+<p>若驱动程序能够响应批准请求，可使用 <code>--execution-mode interactive</code>，并实现
+stdin/stdout 交互协议。<code>auto</code> 不会自动批准所有工具，也不会绕过显式拒绝规则。</p>
 
 
 

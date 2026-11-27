@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/0.4/getting_started/dashboard_copilot/">
       
       
         <link rel="prev" href="../data_engineering_quickstart/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/0.4/getting_started/dashboard_copilot/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/getting_started/dashboard_copilot/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/getting_started/dashboard_copilot/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/getting_started/dashboard_copilot/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -2636,6 +2630,8 @@
       
         
       
+        
+      
     
     
     
@@ -2694,6 +2690,34 @@
     
   
     介绍
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../gateway/wecom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WeCom
   
 
     
@@ -5679,7 +5703,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/getting_started/dashboard_copilot.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.6/docs/getting_started/dashboard_copilot.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5973,11 +5997,12 @@
 <p>归因报告应包含：</p>
 <ul>
 <li>总体人口变化；</li>
-<li>地区和国家级贡献者；</li>
-<li>维度级贡献或重要性；</li>
+<li>贡献最大的地区，以及工具在这些地区下列出的国家；</li>
+<li>每个贡献者占总变化的比例；</li>
 <li>最主要的驱动因素及相关限制；</li>
 <li>基于 metric 查询结果得出的结论。</li>
 </ul>
+<p>按地区再按国家拆分时，两层加起来最多列 <code>top_groups</code> 个组，按效应大小挑选，每个国家显示在它所属的地区下面。所以某个地区可能只显示下面有几个国家，一个也没列出。想看更多国家，就把 <code>top_groups</code> 调大（最多 200），不要另发一次只筛一个地区的调用。</p>
 <p>简化示例：</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a>世界人口增长：2003 年与 2013 年对比
 </span><span id="__span-30-2"><a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>

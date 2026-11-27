@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/0.4/subagent/ask_metrics/">
       
       
         <link rel="prev" href="../semantic_modeling/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/0.4/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/0.4/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/0.4/subagent/ask_metrics/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/0.4/subagent/ask_metrics/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/0.4/subagent/ask_metrics/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/0.4/subagent/ask_metrics/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -2379,6 +2373,8 @@
       
         
       
+        
+      
     
     
     
@@ -2437,6 +2433,34 @@
     
   
     介绍
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../gateway/wecom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WeCom
   
 
     
@@ -5167,7 +5191,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.5/docs/subagent/ask_metrics.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.6/docs/subagent/ask_metrics.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5231,7 +5255,7 @@
 <li>查询用到的每个数据集都先调用 <code>get_dataset</code>。数据集和字段的描述里写着查询它时要遵守的约定，比如快照取哪一天、编码值代表什么。</li>
 <li>分组和过滤的字段写成 <code>dataset.field</code>，字段名用 <code>get_dataset</code> 显示的名字。</li>
 <li><code>query_metrics</code> 是查询指标值的主要工具。</li>
-<li>变化解释和贡献分析问题使用 <code>attribution_analyze</code>。</li>
+<li>变化解释和贡献分析问题用 <code>attribute_metrics</code> 把变化分给指标公式里的各个输入，用 <code>attribute_dimensions</code> 把变化分给一个或几个维度的分组（比较不同维度时每个维度调用一次；一次给几个维度是按顺序逐层下钻）。</li>
 <li>默认工具面不包含原始 SQL 工具。</li>
 </ul>
 <h2 id="_5">默认工具<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
@@ -5268,8 +5292,12 @@
 <td>查询指标值</td>
 </tr>
 <tr>
-<td><code>semantic_tools.attribution_analyze</code></td>
-<td>按候选维度解释指标变化</td>
+<td><code>semantic_tools.attribute_metrics</code></td>
+<td>按公式解释指标变化：每个输入贡献了多少</td>
+</tr>
+<tr>
+<td><code>semantic_tools.attribute_dimensions</code></td>
+<td>按维度分组解释指标变化：每个分组贡献了多少</td>
 </tr>
 <tr>
 <td><code>filesystem_tools.read_file</code></td>
