@@ -2,6 +2,34 @@
 
 ## 0.4
 
+### 0.4.6
+
+**New Features**
+
+- **Define Subagents in Project Configuration and Plugins** - Combine prompts, tools, skills, and MCP, and discover and run these subagents from the CLI. The new `configurable` type requires explicit scopes for business data and project files. ([#1667](https://github.com/Datus-ai/Datus-agent/pull/1667)) Docs: [Configurable Subagents](https://docs.datus.ai/dev/subagent/configurable_subagent/).
+- **Explain Metric Changes by Formula and Dimension** - `attribute_metrics` breaks down the contributions of formula inputs. `attribute_dimensions` groups contributions by dimension and supports multi-level drill-down. This release upgrades the Dosi engine to 0.2.2. ([#1642](https://github.com/Datus-ai/Datus-agent/pull/1642), [#1665](https://github.com/Datus-ai/Datus-agent/pull/1665)) Docs: [AskMetrics](https://docs.datus.ai/dev/subagent/ask_metrics/).
+- **Discover Views in the Datasource Catalog** - The catalog distinguishes tables, views, and materialized views supported by the connector. Chat preserves the selected object's fully qualified path and respects the subagent's access scope. If view enumeration fails, the catalog still shows available tables and marks the result as incomplete. StarRocks 0.1.14 distinguishes listing failures from successful empty results. User documentation is missing. ([Agent #1691](https://github.com/Datus-ai/Datus-agent/pull/1691), [DB #201](https://github.com/Datus-ai/datus-db-adapters/pull/201))
+
+**Enhancements**
+
+- **Set a Timeout for a Single `SELECT`** - On supported connectors, the `timeout` argument to `execute_sql` sets the time limit for one read statement, in seconds. Ordinary SQLite and DuckDB reads can also be interrupted when the default tool deadline expires. If that deadline expires while waiting for a connection lock, the tool does not submit the SQL. See the upgrade notes for adapter versions. ([Agent #1690](https://github.com/Datus-ai/Datus-agent/pull/1690), [Agent #1694](https://github.com/Datus-ai/Datus-agent/pull/1694), [DB #200](https://github.com/Datus-ai/datus-db-adapters/pull/200)) Docs: [Query Timeouts](https://docs.datus.ai/dev/tools/query_exports/#wait-longer-for-a-select).
+- **Show More Rows in SQL Result Previews** - The `execute_sql` row truncation threshold rises from 20 to 50. Results with more than 50 rows show the first and last 10 rows by default, subject to a compression budget of approximately 2,048 tokens per call. User documentation is missing. ([#1693](https://github.com/Datus-ai/Datus-agent/pull/1693))
+- **Limit Each Query Export to 100,000 Rows and 100 MB** - `export_query` stops the entire export if either limit is exceeded. Reduce any existing settings above these limits. ([#1634](https://github.com/Datus-ai/Datus-agent/pull/1634)) Docs: [Query Result Exports](https://docs.datus.ai/dev/tools/query_exports/).
+- **Support Larger Persistent Memory Files and Concurrent Writes** - Writes to `MEMORY.md` are serialized per file to prevent concurrent updates from overwriting one another. The Agent warns that memory should be consolidated above 20,000 bytes and rejects writes that would grow the file beyond 25,000 bytes. Hand-edited files above the limit are loaded up to the last complete line that fits. ([#1697](https://github.com/Datus-ai/Datus-agent/pull/1697)) Docs: [Persistent Memory](https://docs.datus.ai/dev/integration/memory/).
+- **Continue the Conversation After a Tool Call Is Denied** - A call denied by the user or policy returns an error for that call. Other authorized calls in the batch and subsequent reasoning can continue. `datus --print` also explains permission handling in unattended mode. ([#1669](https://github.com/Datus-ai/Datus-agent/pull/1669), [#1579](https://github.com/Datus-ai/Datus-agent/pull/1579)) Docs: [CLI](https://docs.datus.ai/dev/cli/introduction/).
+- **Support Custom OpenAI-Compatible Embedding Services** - Set the vector width explicitly for a custom model and separately control whether to send the `dimensions` parameter to the API. ([#1633](https://github.com/Datus-ai/Datus-agent/pull/1633)) Docs: [Storage Configuration](https://docs.datus.ai/dev/configuration/storage/).
+
+**Bug Fixes**
+
+- **Keep Messages and Subagent Steps Available After Context Compaction** - Sessions created after the upgrade archive compacted history. The history API can restore subagent steps from that archive. The CLI also fixes repeatedly nested action history that slowed down the end of each turn. ([#1681](https://github.com/Datus-ai/Datus-agent/pull/1681), [#1682](https://github.com/Datus-ai/Datus-agent/pull/1682), [#1649](https://github.com/Datus-ai/Datus-agent/pull/1649))
+- **Fix Semantic Model Publishing, Review, and Diagnostics** - Concurrent publishing no longer deadlocks the workspace. Reviews preserve existing metrics when proposing new ones. If the model returns a compilation diagnostic as a blocker code, it gets one attempt to fix the model, and the original diagnostic is preserved if that attempt fails. ([#1672](https://github.com/Datus-ai/Datus-agent/pull/1672), [#1668](https://github.com/Datus-ai/Datus-agent/pull/1668), [#1692](https://github.com/Datus-ai/Datus-agent/pull/1692))
+
+**Upgrade Notes**
+
+- **Update Custom Attribution Configuration** - Replace `semantic_tools.attribution_analyze` with `semantic_tools.attribute_metrics` and `semantic_tools.attribute_dimensions`. The legacy tool name and permission rules are mapped during the transition. ([#1642](https://github.com/Datus-ai/Datus-agent/pull/1642)) Docs: [AskMetrics](https://docs.datus.ai/dev/subagent/ask_metrics/).
+- **Check Existing Export Settings** - `bulk_query.max_rows` is capped at 100,000 and `bulk_query.max_bytes` at 100,000,000. Reduce any settings above these limits. ([#1634](https://github.com/Datus-ai/Datus-agent/pull/1634)) Docs: [Query Result Exports](https://docs.datus.ai/dev/tools/query_exports/).
+- **Use Compatible Agent and Adapter Versions for Per-Query `SELECT` Timeouts** - PyPI provides `datus-db-core` 0.1.12 and `datus-sqlalchemy` 0.1.14. The released adapter versions are MySQL 0.1.12, StarRocks 0.1.14, Doris 0.1.5, PostgreSQL 0.1.13, ClickHouse 0.1.6, Hive 0.1.6, and Spark 0.1.6. The built-in SQLite and DuckDB connectors require `datus-db-core` 0.1.12 or later for an explicit timeout. ([Agent #1690](https://github.com/Datus-ai/Datus-agent/pull/1690), [DB #200](https://github.com/Datus-ai/datus-db-adapters/pull/200)) [datus-db-core on PyPI](https://pypi.org/project/datus-db-core/0.1.12/). Docs: [Query Timeouts](https://docs.datus.ai/dev/tools/query_exports/#wait-longer-for-a-select).
+
 ### 0.4.5
 
 **New Features**
