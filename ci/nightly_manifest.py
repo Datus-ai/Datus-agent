@@ -132,18 +132,31 @@ def env_value(name: str) -> str:
 
 
 def nightly_case_scope() -> list[dict[str, str]]:
-    """Declare daily requirements and deliberate frequency/protocol exclusions.
+    """Declare the DeepSeek-only CI policy and service/protocol exclusions.
 
-    Credentials never determine applicability. Explicit capacity opt-ins bring
-    the weekly scenarios into this run and make them ordinary required tests.
+    Provider exclusions are intentional and independent of credentials or weekly
+    opt-ins. Local HTTP adapter tests and all provider unit tests remain enabled.
     """
+    excluded = [
+        "tests/integration/models/test_claude_model.py",
+        "tests/integration/models/test_claude_subscription.py",
+        "tests/integration/models/test_codex_model.py",
+        "tests/integration/models/test_openrouter_model.py",
+        "tests/integration/models/test_other_models.py",
+        "tests/integration/models/test_qwen_model.py",
+        "tests/integration/models/test_qwen_capacity_live.py",
+        "tests/integration/models/test_custom_model_preflight.py::test_self_hosted_model_reads_code_from_image",
+        "tests/integration/cli/test_init_live.py::test_qwen_scoped_init_supplements_existing_documents",
+        "tests/integration/cli/test_init_live.py::test_qwen_init_large_catalog_in_one_loop",
+    ]
     cases = [
         {
-            "nodeid": "tests/integration/cli/test_init_live.py::test_qwen_scoped_init_supplements_existing_documents",
-            "status": "required",
+            "nodeid": nodeid,
+            "status": "not_applicable",
             "frequency": "nightly",
-            "reason": "Scoped init is a core user-facing flow in the daily product baseline.",
+            "reason": "CI real-provider tests are restricted to DeepSeek; other providers are deliberately excluded.",
         }
+        for nodeid in excluded
     ]
     for nodeid, target in (
         (
@@ -152,10 +165,6 @@ def nightly_case_scope() -> list[dict[str, str]]:
         ),
         ("tests/integration/agent/test_hana_chat_agentic.py::test_hana_chat_join_aggregate", "hana-express"),
         ("tests/integration/agent/test_hana_chat_agentic.py::test_hana_chat_multi_turn", "hana-express"),
-        (
-            "tests/integration/models/test_custom_model_preflight.py::test_self_hosted_model_reads_code_from_image",
-            "self-hosted-vision",
-        ),
     ):
         cases.append(
             {
@@ -164,27 +173,6 @@ def nightly_case_scope() -> list[dict[str, str]]:
                 "frequency": "nightly",
                 "reason": "A dedicated service group provisions the required real Docker test dependency.",
                 "target": target,
-            }
-        )
-    for nodeid, opt_in, reason in (
-        (
-            "tests/integration/cli/test_init_live.py::test_qwen_init_large_catalog_in_one_loop",
-            "DATUS_RUN_LIVE_INIT_SCALE",
-            "The 20,000-table catalog extends the daily init flow as a weekly capacity scenario.",
-        ),
-        (
-            "tests/integration/models/test_qwen_capacity_live.py::test_qwen_long_input_and_automatic_compaction",
-            "DATUS_RUN_LIVE_CAPACITY",
-            "Long-input and compaction capacity extend the daily model baseline on the weekly schedule.",
-        ),
-    ):
-        cases.append(
-            {
-                "nodeid": nodeid,
-                "status": "required" if os.environ.get(opt_in) == "1" else "scheduled_out",
-                "frequency": "weekly",
-                "opt_in_env": opt_in,
-                "reason": reason,
             }
         )
     cases.append(
